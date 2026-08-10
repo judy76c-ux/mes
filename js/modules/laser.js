@@ -6148,12 +6148,10 @@ var LaserStandbyModule = (function() {
                 : '');
             let note = w.note || '';
             let confirm = null;
-            let pendingConfirm = false;
 
             // ── 확인 후 입고 게이팅 ──
-            // 전환 기준선 이후 도장 실적: 확인되면 실입고수량 사용.
-            // 미확인이어도 산출수량으로 재고에 먼저 반영하고(대기 누락 방지),
-            // 상단 "입고 대기"에서 레이저 운영자가 재확인할 수 있게 한다.
+            // 전환 기준선 이후 도장 실적: 입고 확인된 건만 실입고수량으로 재고 반영.
+            // 미확인(입고 대기)은 재고에 넣지 않는다 — 상단 "입고 확인 대기"에서 처리 후 반영.
             const paintQty = Number(w.productionQty) || 0;
             let actualQty = null;
             if (_isConfirmGated(stamp)) {
@@ -6168,8 +6166,8 @@ var LaserStandbyModule = (function() {
                     }
                     note = _inboundConfirmNote(confirm) + (w.note ? ' · ' + w.note : '');
                 } else {
-                    pendingConfirm = true;
-                    note = '입고확인 대기' + (w.note ? ' · ' + w.note : '');
+                    // 입고 미확인 → 재고 집계 제외 (대기 목록에만 표시)
+                    return;
                 }
             } else {
                 // 레거시(기준선 이전): 산출 = 처리로 간주
@@ -6216,7 +6214,7 @@ var LaserStandbyModule = (function() {
                 paintLot: paintLot || '',
                 line: w.line || '',
                 note: note,
-                pendingConfirm: pendingConfirm,
+                pendingConfirm: false,
                 confirmedBy: confirm ? (confirm.operator || '') : '',
                 inboundDiff: inboundDiff
             });
@@ -6240,7 +6238,6 @@ var LaserStandbyModule = (function() {
             const paintLot = String(w.date || '').replace(/-/g, '').slice(2, 8);
             let note = w.note || w.memo || '';
             let confirm = null;
-            let pendingConfirm = false;
             let actualQty = null;
 
             if (_isConfirmGated(stamp)) {
@@ -6250,8 +6247,8 @@ var LaserStandbyModule = (function() {
                     qty = actualQty;
                     note = _inboundConfirmNote(confirm) + (w.note ? ' · ' + w.note : '');
                 } else {
-                    pendingConfirm = true;
-                    note = '입고확인 대기' + (w.note ? ' · ' + w.note : '');
+                    // 입고 미확인 → 재고 집계 제외
+                    return;
                 }
             } else {
                 actualQty = rawQty;
@@ -6297,7 +6294,7 @@ var LaserStandbyModule = (function() {
                 paintLot: paintLot || '',
                 line: '레이져',
                 note: note || '사출 창고 출고(레이져 직행)',
-                pendingConfirm: pendingConfirm,
+                pendingConfirm: false,
                 confirmedBy: confirm ? (confirm.operator || '') : '',
                 inboundDiff: inboundDiff
             });
@@ -6985,8 +6982,10 @@ var LaserStandbyModule = (function() {
                             };
                         }).filter(function(l) { return l.lotNo && l.qty > 0; });
                     }
+                } else {
+                    // 입고 미확인 → LOT 잔량(재고)에 반영하지 않음
+                    return;
                 }
-                // 미확인: 산출수량으로 LOT 잔량에도 반영 (재고 누락 방지)
             }
             if (totalQty <= 0) return;
             const paintLot = String(_paintingWorkDateTime(w) || w.date || '').replace(/-/g, '').slice(2, 8);
@@ -7025,6 +7024,9 @@ var LaserStandbyModule = (function() {
                                 };
                             }).filter(function(l) { return l.lotNo && l.qty > 0; });
                         }
+                    } else {
+                        // 입고 미확인 → LOT 잔량(재고)에 반영하지 않음
+                        return;
                     }
                 }
                 if (totalQty <= 0) return;
@@ -7704,11 +7706,10 @@ var LaserStandbyModule = (function() {
                         </span>
                     </div>
                     <div style="margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.18);font-size:0.78rem;line-height:1.5;color:var(--text-secondary);">
-                        <div>재공 재고에는 <strong>도장 산출수량</strong>이 이미 반영되어 있습니다.</div>
+                        <div>아래 건은 <strong>아직 재공 재고에 반영되지 않았습니다.</strong></div>
                         <div style="margin-top:2px;">
-                            <strong style="color:${accent};">입고 수량이 다르면</strong>
-                            → 오른쪽 <strong style="color:${accent};">「입고처리 · 수량보정」</strong> 버튼을 눌러
-                            모달의 <strong>실입고수량</strong>을 수정하세요.
+                            오른쪽 <strong style="color:${accent};">「입고처리 · 수량보정」</strong>으로 입고 확인하면
+                            실입고수량이 재공 재고에 반영됩니다.
                         </div>
                     </div>
                 </div>
@@ -8010,9 +8011,16 @@ var LaserStandbyModule = (function() {
         paintingWorks.forEach(w => {
             const prod = findProduct(products, w) || _resolveProductForStandby(w, products, []);
             if (!_isPaintingWorkLaserStandbyInbound(w, prod)) return;
-            // 미확인 실적도 산출수량으로 재고 반영하므로 이상 감지에 포함한다.
-            const conf = _getInboundConfirm(w.id);
-            const qty = conf ? _normalizeQty(conf.actualQty) : (Number(w.productionQty) || 0);
+            const stamp = _inventoryEventStamp(w, w.date || '', w.endTime || w.startTime || '');
+            // 입고 확인된 건(또는 기준선 이전 레거시)만 재고 이상으로 본다 — 미확인은 재고 미반영이 정상
+            let qty = 0;
+            if (_isConfirmGated(stamp)) {
+                const conf = _getInboundConfirm(w.id);
+                if (!conf) return;
+                qty = _normalizeQty(conf.actualQty);
+            } else {
+                qty = Number(w.productionQty) || 0;
+            }
             if (qty <= 0) return;
             inboundQty += qty;
             inboundRecords += 1;

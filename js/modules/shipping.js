@@ -3497,8 +3497,21 @@ const ProductWarehouseModule = (function() {
             const srcRec = incomingByLot[l.lotNo] || {};
             const work = _findPaintingWorkForInv(srcRec);
             const injPartName = work ? (work.injPartName || work.partName || part) : part;
-            const inspDates = _injectionInspDatesForLot(injPartName, car, l.lotNo);
-            const paintLots = _paintLotsForPaintingWork(work && work.id);
+            // 계보(trace)에 확정 저장된 검사일을 1순위로 쓴다 — 상위 기록이 삭제·수정돼도
+            // 이미 생산된 제품의 이력은 그대로 유지되어야 한다. 없으면 기존 조회로 폴백.
+            let inspDates = [];
+            if (typeof Trace !== 'undefined') {
+                const t = Trace.of(work) || {};
+                const fromTrace = (t.injLots || [])
+                    .filter(function (r) { return r.lot === l.lotNo && r.inspDate; })
+                    .map(function (r) { return r.inspDate; });
+                if (fromTrace.length) inspDates = [...new Set(fromTrace)];
+                else if (t.inj && t.inj.lot === l.lotNo && t.inj.inspDate) inspDates = [t.inj.inspDate];
+            }
+            if (!inspDates.length) inspDates = _injectionInspDatesForLot(injPartName, car, l.lotNo);
+            // 도료도 동일 — 확정 저장된 계보에는 도료명·제조LOT·수입검사일이 함께 들어 있다
+            let paintLots = (typeof Trace !== 'undefined') ? Trace.paintMaterialLabels(work) : [];
+            if (!paintLots.length) paintLots = _paintLotsForPaintingWork(work && work.id);
             const paintLotsText = paintLots.length ? paintLots.join(', ') : '-';
 
             return `

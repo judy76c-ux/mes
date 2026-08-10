@@ -186,6 +186,298 @@ const PaintInventoryModule = (function() {
         return '';
     }
 
+    /** 도료명 정규화 — 수입검사 paintName ↔ 마스터 name 매칭 */
+    function _normPaintName(name) {
+        return String(name || '').trim().replace(/\s+/g, ' ').toLowerCase();
+    }
+
+    /** 제조 LOT(YYMMDD) 여부 — 유효한 날짜 형식만 인정 */
+    function _isPaintProdLot(value) {
+        const s = String(value || '').trim();
+        if (!/^\d{6}$/.test(s)) return false;
+        const yy = 2000 + parseInt(s.slice(0, 2), 10);
+        const mm = parseInt(s.slice(2, 4), 10);
+        const dd = parseInt(s.slice(4, 6), 10);
+        if (mm < 1 || mm > 12 || dd < 1 || dd > 31) return false;
+        const d = new Date(yy, mm - 1, dd);
+        return d.getFullYear() === yy && d.getMonth() === mm - 1 && d.getDate() === dd;
+    }
+
+    function _prodLotFromMfgDate(mfgDate) {
+        const iso = _toIsoDate(mfgDate);
+        const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+        return m ? (m[1].slice(2) + m[2] + m[3]) : '';
+    }
+
+    /**
+     * 제조 LOT(prodLot=YYMMDD) / 제조사 표기 LOT(lotNo) 표시 분리.
+     * 과거 데이터에서 lotNo만 있거나 둘이 뒤섞인 경우에도 컬럼을 바로잡는다.
+     */
+    function _normalizeLotDisplayFields(meta, balanceKey) {
+        meta = meta || {};
+        let prodLot = String(meta.prodLot || '').trim();
+        let lotNo = String(meta.lotNo || '').trim();
+        const key = String(balanceKey || '').trim();
+        const mfgDate = _toIsoDate(meta.mfgDate) || '';
+        const fromMfg = _prodLotFromMfgDate(mfgDate);
+
+        // 비-YYMMDD 값이 prodLot에 들어 있으면 제조사 LOT로 이동
+        if (prodLot && !_isPaintProdLot(prodLot)) {
+            if (!lotNo) lotNo = prodLot;
+            prodLot = '';
+        }
+
+        if (!prodLot && fromMfg) prodLot = fromMfg;
+        if (!prodLot && _isPaintProdLot(key)) prodLot = key;
+        if (!prodLot && _isPaintProdLot(lotNo)) {
+            prodLot = lotNo;
+        }
+
+        // 잔고 키가 제조사 LOT(비 YYMMDD)인 경우
+        if (key && key !== '무표기' && !_isPaintProdLot(key)) {
+            if (!lotNo) lotNo = key;
+        }
+
+        // 제조 LOT와 동일하면 제조사 표기 칸은 비움(중복 표기 오류 방지)
+        if (lotNo && prodLot && lotNo === prodLot) lotNo = '';
+
+        return {
+            prodLot: prodLot,
+            lotNo: lotNo,
+            mfgDate: mfgDate,
+            expDate: _toIsoDate(meta.expDate) || meta.expDate || ''
+        };
+    }
+
+    /** LOT 키에 연결된 수입검사 ID — 입고 스탬프 → LOT/제조일 매칭 */
+    function _findLinkedPaintInspectionId(matId, prodLot, lotNo, mat, mfgDate) {
+        const lotKeys = [prodLot, lotNo].map(function(v) { return String(v || '').trim(); }).filter(Boolean);
+        const mfgIso = _toIsoDate(mfgDate) || '';
+        const prodFromMfg = _prodLotFromMfgDate(mfgIso);
+        if (prodFromMfg && lotKeys.indexOf(prodFromMfg) < 0) lotKeys.push(prodFromMfg);
+
+        const inbounds = (Storage.getAll(STORE) || [])
+            .filter(function(r) {
+                if (!r || r.type === '출고' || r.materialId !== matId) return false;
+                if (!r.sourceInspectionId) return false;
+                const rk = String(r.prodLot || r.lotNo || '').trim();
+                const rLot = String(r.lotNo || '').trim();
+                const rMfg = _toIsoDate(r.mfgDate) || '';
+                if (!lotKeys.length && !mfgIso) return true;
+                if (lotKeys.indexOf(rk) >= 0 || lotKeys.indexOf(rLot) >= 0) return true;
+                if (mfgIso && rMfg && mfgIso === rMfg) return true;
+                return false;
+            })
+            .sort(function(a, b) {
+                return String(b.date || '').localeCompare(String(a.date || ''));
+            });
+        if (inbounds.length && inbounds[0].sourceInspectionId) return String(inbounds[0].sourceInspectionId);
+
+        const paintName = mat ? mat.name : '';
+        const supplier = mat ? (mat.supplier || '') : '';
+        if (!paintName) return '';
+        const nameKey = _normPaintName(paintName);
+        const inspections = (Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [])
+            .filter(function(insp) {
+                if (_normPaintName(insp.paintName) !== nameKey) return false;
+                if (supplier && insp.supplier && String(insp.supplier).trim() !== String(supplier).trim()) return false;
+                const inspLot = String(insp.lotNo || '').trim();
+                const inspMfg = _toIsoDate(insp.mfgDate) || '';
+                const inspProd = _prodLotFromMfgDate(inspMfg);
+                if (!lotKeys.length && !mfgIso) return true;
+                if (inspLot && lotKeys.indexOf(inspLot) >= 0) return true;
+                if (inspProd && lotKeys.indexOf(inspProd) >= 0) return true;
+                if (mfgIso && inspMfg && mfgIso === inspMfg) return true;
+                return false;
+            })
+            .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+        return inspections[0] ? String(inspections[0].id) : '';
+    }
+
+    function openLinkedPaintInspection(inspId) {
+        const id = String(inspId || '').trim();
+        if (!id) {
+            UIUtils.toast('연결된 도료 수입검사가 없습니다.', 'warning');
+            return;
+        }
+        if (typeof PaintIncomingInspectionModule === 'undefined' || typeof PaintIncomingInspectionModule.view !== 'function') {
+            UIUtils.toast('도료 수입검사 모듈을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id);
+        if (!insp) {
+            UIUtils.toast('도료 수입검사 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        // 상세 팝업이 이미 열린 상태면 자식 모달로 검사 상세를 연다
+        if (typeof UIUtils.isPrimaryModalOpen === 'function' && UIUtils.isPrimaryModalOpen()
+            && typeof UIUtils.showChildModal === 'function') {
+            // view()는 showModal을 쓰므로, 직접 열기 전에 안내만 — view가 기본 모달을 교체하면 상세가 닫힘.
+            // 따라서 asChild 경로에서는 view 대신 간단한 링크용 래퍼를 쓴다.
+            PaintIncomingInspectionModule.view(id);
+            return;
+        }
+        PaintIncomingInspectionModule.view(id);
+    }
+
+    function _inspDateLinkHtml(inspDate, inspId) {
+        const dateHtml = inspDate ? _fmtDateCell(inspDate) : '<span style="color:var(--text-muted);">-</span>';
+        if (!inspId) return dateHtml;
+        const escId = String(inspId).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+        return `<a href="javascript:void(0)"
+            onclick="event.preventDefault();event.stopPropagation();PaintInventoryModule.openLinkedPaintInspection('${escId}')"
+            style="color:var(--accent-blue);text-decoration:underline;cursor:pointer;display:inline-block;"
+            title="도료 수입검사 보기">${dateHtml}
+            <span style="font-size:0.72rem;font-weight:600;margin-left:4px;white-space:nowrap;">보기</span>
+        </a>`;
+    }
+
+    /**
+     * 도료 수입검사 이력 — 현재 보관 중인 LOT에 연결된 검사·입고만 표시
+     * (소진·대기·타 LOT 검사는 제외)
+     */
+    function _buildPaintInspHistorySection(mat, matId, records, activeLots) {
+        const paintName = mat ? mat.name : '';
+        if (!paintName) return '';
+        const nameKey = _normPaintName(paintName);
+        const supplier = mat ? String(mat.supplier || '').trim() : '';
+        activeLots = Array.isArray(activeLots) ? activeLots : [];
+
+        const activeKeys = new Set();
+        const activeInspIds = new Set();
+        activeLots.forEach(function(l) {
+            [l.prodLot, l.lotNo].forEach(function(k) {
+                const s = String(k || '').trim();
+                if (s && s !== '무표기') activeKeys.add(s);
+            });
+            const fromMfg = _prodLotFromMfgDate(l.mfgDate);
+            if (fromMfg) activeKeys.add(fromMfg);
+            if (l.sourceInspectionId) activeInspIds.add(String(l.sourceInspectionId));
+        });
+
+        // 현재 보관 LOT에 속하는 입고 원장 (검사 ID 승계용)
+        const linkedById = {};
+        const inboundInspIds = new Set();
+        (records || []).forEach(function(r) {
+            if (!r || r.type === '출고' || r.materialId !== matId) return;
+            const rk = String(r.prodLot || r.lotNo || '').trim();
+            const rLot = String(r.lotNo || '').trim();
+            const rProd = String(r.prodLot || '').trim();
+            const rMfgProd = _prodLotFromMfgDate(r.mfgDate);
+            const onActiveLot = (rk && activeKeys.has(rk))
+                || (rLot && activeKeys.has(rLot))
+                || (rProd && activeKeys.has(rProd))
+                || (rMfgProd && activeKeys.has(rMfgProd));
+            if (!onActiveLot && !(r.sourceInspectionId && activeInspIds.has(String(r.sourceInspectionId)))) {
+                return;
+            }
+            if (r.sourceInspectionId) {
+                const sid = String(r.sourceInspectionId);
+                inboundInspIds.add(sid);
+                if (!linkedById[sid]) linkedById[sid] = r;
+            }
+        });
+
+        function _inspOnActiveLot(insp) {
+            if (!insp) return false;
+            if (activeInspIds.has(String(insp.id)) || inboundInspIds.has(String(insp.id))) return true;
+            const inspLot = String(insp.lotNo || '').trim();
+            const inspProd = _prodLotFromMfgDate(insp.mfgDate);
+            if (inspLot && activeKeys.has(inspLot)) return true;
+            if (inspProd && activeKeys.has(inspProd)) return true;
+            return false;
+        }
+
+        let inspections = [];
+        if (activeKeys.size || activeInspIds.size || inboundInspIds.size) {
+            inspections = (Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [])
+                .filter(function(insp) {
+                    if (_normPaintName(insp.paintName) !== nameKey) return false;
+                    if (supplier && insp.supplier && String(insp.supplier).trim() !== supplier) return false;
+                    return _inspOnActiveLot(insp);
+                })
+                .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+        }
+
+        const emptyHint = !activeLots.length
+            ? '현재 보관 중인 LOT이 없어 표시할 수입검사 이력이 없습니다.'
+            : '현재 보관 LOT에 연결된 수입검사 이력이 없습니다.';
+
+        if (!inspections.length) {
+            return `
+            <div style="margin-top:16px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">fact_check</span>
+                    <strong style="font-size:0.9rem;">도료 수입검사 이력</strong>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">0건 · 현재 보관 LOT</span>
+                </div>
+                <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.82rem;
+                            background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
+                    ${emptyHint}
+                </div>
+            </div>`;
+        }
+
+        const rows = inspections.map(function(insp) {
+            const verdict = insp.verdict || '-';
+            const vColor = verdict === '합격' ? 'var(--accent-green)'
+                : verdict === '특채' ? 'var(--accent-orange,#f59e0b)'
+                : verdict === '불합격' ? 'var(--accent-red)' : 'var(--text-muted)';
+            const linked = linkedById[String(insp.id)] || null;
+            const whStatus = insp.warehouseStatus === '입고완료' || linked
+                ? '<span style="color:var(--accent-green);font-weight:700;white-space:nowrap;">창고입고</span>'
+                : '<span style="color:var(--text-muted);white-space:nowrap;">대기</span>';
+            const escId = String(insp.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            // 제조 LOT(YYMMDD)도 함께 표기 — 현재 보관 LOT과 대조하기 쉽게
+            const inspProd = _prodLotFromMfgDate(insp.mfgDate);
+            const lotLabel = insp.lotNo
+                ? _escapeHtml(insp.lotNo) + (inspProd ? ' <span style="color:var(--text-muted);font-weight:500;font-size:0.75rem;">/ ' + _escapeHtml(inspProd) + '</span>' : '')
+                : _escapeHtml(inspProd || '-');
+            return `<tr style="cursor:pointer;" onclick="PaintInventoryModule.openLinkedPaintInspection('${escId}')"
+                        onmouseover="this.style.background='rgba(37,99,235,0.05)'" onmouseout="this.style.background=''"
+                        title="수입검사 상세 보기">
+                <td style="white-space:nowrap;">${_fmtDateCell(insp.date)}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(insp.inspector || '-')}</td>
+                <td style="font-family:monospace;font-weight:700;white-space:nowrap;">${lotLabel}</td>
+                <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(insp.incomingQty || 0)}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(insp.mfgDate || '-')}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(insp.expDate || '-')}</td>
+                <td style="white-space:nowrap;font-weight:700;color:${vColor};">${_escapeHtml(verdict)}</td>
+                <td style="white-space:nowrap;">${whStatus}</td>
+                <td style="text-align:center;white-space:nowrap;">
+                    <span style="font-size:0.72rem;color:var(--accent-blue);font-weight:600;">보기</span>
+                </td>
+            </tr>`;
+        }).join('');
+
+        return `
+            <div style="margin-top:16px;">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">fact_check</span>
+                    <strong style="font-size:0.9rem;">도료 수입검사 이력</strong>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">${inspections.length}건 · 현재 보관 LOT 기준</span>
+                </div>
+                <div class="data-table-wrapper" style="overflow-x:auto;border:1px solid var(--border-color);border-radius:8px;">
+                    <table class="data-table data-table--content" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <thead>
+                            <tr>
+                                <th style="white-space:nowrap;padding:8px 10px;">검사일</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">검사자</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">제조사 LOT</th>
+                                <th style="text-align:right;white-space:nowrap;padding:8px 10px;">수량</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">제조일</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">유효기한</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">판정</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">창고</th>
+                                <th style="white-space:nowrap;padding:8px 10px;"></th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            </div>`;
+    }
+
     function _outWorkerName(d) {
         if (!d) return '-';
         return String(d.issuedBy || d.processedBy || '').trim() || '-';
@@ -841,20 +1133,25 @@ const PaintInventoryModule = (function() {
         const balance = InvCalc.lotBalances(invRecords);
         const totalStock = balance.total;
 
-        // 표시용 메타(제조사 LOT, 제조/유효기한)는 원본 입고 기록에서 승계
+        // 표시용 메타(제조사 LOT, 제조/유효기한, 수입검사)는 원본 입고 기록에서 승계
         const lotMeta = {};
         records.forEach(function(d) {
             const key = String(d.prodLot || d.lotNo || '').trim() || '무표기';
             const lotDates = _resolveLotDates(d, mat);
             if (!lotMeta[key]) {
                 lotMeta[key] = {
-                    prodLot: d.prodLot || key,
+                    prodLot: d.prodLot || '',
                     lotNo: d.lotNo || '',
                     mfgDate: lotDates.mfgDate || '',
-                    expDate: lotDates.expDate || ''
+                    expDate: lotDates.expDate || '',
+                    inspDate: '',
+                    sourceInspectionId: ''
                 };
             } else {
-                if (d.lotNo && d.prodLot && d.lotNo !== d.prodLot && !lotMeta[key].lotNo) {
+                if (d.prodLot && _isPaintProdLot(d.prodLot) && !lotMeta[key].prodLot) {
+                    lotMeta[key].prodLot = d.prodLot;
+                }
+                if (d.lotNo && d.lotNo !== d.prodLot && !lotMeta[key].lotNo) {
                     lotMeta[key].lotNo = d.lotNo;
                 }
                 if (lotDates.mfgDate && (!lotMeta[key].mfgDate || lotDates.mfgDate < lotMeta[key].mfgDate)) {
@@ -862,6 +1159,16 @@ const PaintInventoryModule = (function() {
                 }
                 if (lotDates.expDate && (!lotMeta[key].expDate || lotDates.expDate < lotMeta[key].expDate)) {
                     lotMeta[key].expDate = lotDates.expDate;
+                }
+            }
+            // 입고 건의 수입검사 연동 정보를 LOT에 승계 (출고/보정으로 덮어쓰지 않음)
+            if (d.type !== '출고') {
+                const inspDate = _resolveInspDate(d);
+                if (inspDate && (!lotMeta[key].inspDate || String(inspDate) > String(lotMeta[key].inspDate))) {
+                    lotMeta[key].inspDate = inspDate;
+                }
+                if (d.sourceInspectionId && !lotMeta[key].sourceInspectionId) {
+                    lotMeta[key].sourceInspectionId = d.sourceInspectionId;
                 }
             }
         });
@@ -877,17 +1184,68 @@ const PaintInventoryModule = (function() {
             })
             .map(function(l) {
                 const meta = lotMeta[l.lotNo] || {};
+                const disp = _normalizeLotDisplayFields(meta, l.lotNo);
+                let inspId = meta.sourceInspectionId
+                    || _findLinkedPaintInspectionId(matId, disp.prodLot, disp.lotNo, mat, disp.mfgDate);
+                let inspDate = meta.inspDate || '';
+                let mfgDate = disp.mfgDate;
+                let expDate = disp.expDate;
+                let lotNo = disp.lotNo;
+                let prodLot = disp.prodLot;
+
+                // 수입검사에서 누락된 제조일·유효기한·제조사 LOT·검사일 승계
+                if (inspId) {
+                    const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
+                    if (insp) {
+                        if (!inspDate && insp.date) inspDate = insp.date;
+                        if (!mfgDate && insp.mfgDate) mfgDate = _toIsoDate(insp.mfgDate) || insp.mfgDate;
+                        if (!expDate && insp.expDate) expDate = _toIsoDate(insp.expDate) || insp.expDate;
+                        if (!prodLot) prodLot = _prodLotFromMfgDate(mfgDate || insp.mfgDate);
+                        const inspLot = String(insp.lotNo || '').trim();
+                        if (inspLot && (!lotNo || lotNo === prodLot)) {
+                            // 검사의 제조사 LOT이 제조 LOT(YYMMDD)과 다르면 제조사 표기로 승계
+                            if (!_isPaintProdLot(inspLot) || inspLot !== prodLot) {
+                                lotNo = (inspLot === prodLot) ? '' : inspLot;
+                            }
+                        }
+                    }
+                } else {
+                    // 스탬프 없이 검사만 있는 경우 — 제조일/LOT로 재조회
+                    inspId = _findLinkedPaintInspectionId(matId, prodLot, lotNo, mat, mfgDate) || '';
+                    if (inspId) {
+                        const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId);
+                        if (insp) {
+                            inspDate = insp.date || '';
+                            if (!mfgDate && insp.mfgDate) mfgDate = _toIsoDate(insp.mfgDate) || insp.mfgDate;
+                            if (!expDate && insp.expDate) expDate = _toIsoDate(insp.expDate) || insp.expDate;
+                            if (!prodLot) prodLot = _prodLotFromMfgDate(mfgDate || insp.mfgDate);
+                            const inspLot = String(insp.lotNo || '').trim();
+                            if (inspLot && inspLot !== prodLot) lotNo = lotNo || inspLot;
+                        }
+                    }
+                }
+
+                // 최종 한 번 더 정규화 (검사 승계 후)
+                const finalDisp = _normalizeLotDisplayFields({
+                    prodLot: prodLot,
+                    lotNo: lotNo,
+                    mfgDate: mfgDate,
+                    expDate: expDate
+                }, l.lotNo);
+
                 return {
-                    prodLot: meta.prodLot || l.lotNo,
-                    lotNo: meta.lotNo && meta.lotNo !== (meta.prodLot || l.lotNo) ? meta.lotNo : (meta.lotNo || ''),
-                    mfgDate: meta.mfgDate || '',
-                    expDate: meta.expDate || '',
+                    prodLot: finalDisp.prodLot,
+                    lotNo: finalDisp.lotNo,
+                    mfgDate: finalDisp.mfgDate,
+                    expDate: finalDisp.expDate,
                     inDate: l.date || '',
-                    qty: Number(l.qty) || 0
+                    qty: Number(l.qty) || 0,
+                    inspDate: inspDate,
+                    sourceInspectionId: inspId || ''
                 };
             })
             .sort(function(a, b) {
-                return String(a.prodLot || a.lotNo).localeCompare(String(b.prodLot || b.lotNo));
+                return String(a.prodLot || a.lotNo || '').localeCompare(String(b.prodLot || b.lotNo || ''));
             });
 
         const lotRows = activeLots.length > 0
@@ -917,6 +1275,7 @@ const PaintInventoryModule = (function() {
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''"`}>
                         <td style="white-space:nowrap;font-size:0.8rem;">${l.inDate || '-'}</td>
+                        <td style="white-space:nowrap;" onclick="event.stopPropagation();">${_inspDateLinkHtml(l.inspDate, l.sourceInspectionId)}</td>
                         <td style="font-family:monospace;font-weight:700;white-space:nowrap;">${l.prodLot || '-'}</td>
                         <td style="font-family:monospace;color:var(--text-muted);white-space:nowrap;">${l.lotNo || '-'}</td>
                         <td style="text-align:center;white-space:nowrap;">${l.mfgDate || '-'}</td>
@@ -925,7 +1284,7 @@ const PaintInventoryModule = (function() {
                         ${outCol}
                     </tr>`;
             }).join('')
-            : `<tr><td colspan="7" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
+            : `<tr><td colspan="8" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
         // 입출고 이력 (전체 · 최신순 · 기존/현재 수량)
         const historySection = StockDetailUI.buildInvHistorySection(invRecords, {
@@ -944,6 +1303,8 @@ const PaintInventoryModule = (function() {
                 return worker || processedBy || '-';
             }
         });
+
+        const inspHistorySection = _buildPaintInspHistorySection(mat, matId, records, activeLots);
 
         const typeColors = { 'Primer': '#6366f1', 'Color': '#ec4899', '희석제': '#0ea5e9', '경화제': '#f59e0b' };
         const typeBg  = typeColors[mat.paintType || mat.type || ''] || '#6b7280';
@@ -999,14 +1360,15 @@ const PaintInventoryModule = (function() {
             ${StockDetailUI.buildLotTableSection({
                 title: '현재 보관 LOT',
                 headers: asChild
-                    ? ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '']
-                    : ['입고일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
-                colSpan: 7,
-                qtyColIndex: 5,
+                    ? ['입고일', '수입검사일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '']
+                    : ['입고일', '수입검사일', '제조 LOT', '제조사 표기 LOT', '제조일자', '유효기한', '현재 수량', '출고'],
+                colSpan: 8,
+                qtyColIndex: 6,
                 totalQty: totalStock,
                 totalLabel: '보관 합계',
                 rowsHtml: lotRows
             })}
+            ${inspHistorySection}
             ${historySection}
             `,
             closeBtn,
@@ -1246,7 +1608,7 @@ const PaintInventoryModule = (function() {
         const diff = newQty - available;
         if (diff === 0) { UIUtils.toast('변경된 수량이 없습니다.', 'info'); return; }
 
-        // 입고 조정 시 LOT의 제조/유효기한을 기존 입고 기록에서 승계
+        // 입고 조정 시 LOT의 제조/유효기한·수입검사 연동을 기존 입고 기록에서 승계
         const refIn = lotLogs.find(l => l.type === '입고') || {};
         const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
 
@@ -1259,10 +1621,11 @@ const PaintInventoryModule = (function() {
             quantity:   Math.abs(diff),
             mfgDate:    diff > 0 ? (refIn.mfgDate || '') : '',
             expDate:    diff > 0 ? (refIn.expDate || '') : '',
+            inspDate:   diff > 0 ? (_resolveInspDate(refIn) || refIn.inspDate || '') : '',
             memo:       '[재고수정] ' + (memo || `${UIUtils.formatNumber(available)} → ${UIUtils.formatNumber(newQty)}`),
             adjust:     true,
             processedBy: loginUser.displayName || loginUser.username || '',
-            sourceInspectionId: ''
+            sourceInspectionId: diff > 0 ? (refIn.sourceInspectionId || '') : ''
         };
 
         await Storage.executeTransaction([
@@ -4899,6 +5262,7 @@ const PaintInventoryModule = (function() {
         cancelAllPaintOutgoingStandby,
         renderSupplierTiles,
         showPaintDetail,
+        openLinkedPaintInspection,
         _openDetailOutgoing,
         _saveDetailOutgoing,
         _openDetailAdjust,

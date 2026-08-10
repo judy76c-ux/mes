@@ -263,6 +263,18 @@ const ProductionPlanModule = (function() {
         if (date === UIUtils.today()) autoUpdateStatus();
     }
 
+    /** 일별 그리드 키 — startTime 우선(슬롯 비어 있어도 표시). 동일 키 중복 시 최신 문서 유지 */
+    function _planSlotKey(item) {
+        return String((item && (item.startTime || item.slot)) || '').trim();
+    }
+
+    function _isNewerPlan(a, b) {
+        const ta = String((a && (a.updatedAt || a.createdAt)) || '');
+        const tb = String((b && (b.updatedAt || b.createdAt)) || '');
+        if (ta && tb && ta !== tb) return ta > tb;
+        return String((a && a.id) || '') > String((b && b.id) || '');
+    }
+
     function _getDaySlotData(date) {
         const allData = Storage.getAll(STORE);
         const slotDataA = {};
@@ -275,8 +287,12 @@ const ProductionPlanModule = (function() {
                 if (item.line === '도장-B') targetSlotData = slotDataB;
 
                 if (targetSlotData) {
-                    if (item.slot) {
-                        targetSlotData[item.slot] = item;
+                    const key = _planSlotKey(item);
+                    if (key) {
+                        const prev = targetSlotData[key];
+                        if (!prev || _isNewerPlan(item, prev)) {
+                            targetSlotData[key] = item;
+                        }
                     } else if (item.hourlyPlans) {
                         for (let s of Object.keys(item.hourlyPlans)) {
                             if (!targetSlotData[s] && item.hourlyPlans[s]) {
@@ -409,7 +425,17 @@ const ProductionPlanModule = (function() {
                     return '계획';
                 };
                 const lineSummary = (plans, line, label, color) => {
-                    const items = plans.filter(p => p.carModel || p.partName || Number(p.planQty));
+                    // 동일 시작시각 중복은 최신만 표시 (구 계획 잔존 UI 혼선 방지)
+                    const bySlot = {};
+                    const noSlot = [];
+                    plans.forEach(p => {
+                        if (!(p.carModel || p.partName || Number(p.planQty))) return;
+                        const key = _planSlotKey(p);
+                        if (!key) { noSlot.push(p); return; }
+                        if (!bySlot[key] || _isNewerPlan(p, bySlot[key])) bySlot[key] = p;
+                    });
+                    const items = Object.values(bySlot).concat(noSlot)
+                        .sort((a, b) => (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || ''));
                     const itemLabel = p => {
                         const statusLabel = planActualStatus(p);
                         return `${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
@@ -505,10 +531,43 @@ const ProductionPlanModule = (function() {
         `, `
             <button class="btn btn-secondary" onclick="ProductionPlanModule.closeDayPlan()">닫기</button>
         `, 'xl');
-        setTimeout(() => {
+        // 동일 시작시각 중복 문서가 있으면 최신만 남기고 정리 (지시서/도장현황에 구 계획 잔존 방지)
+        _cleanupSlotDupesForDay(date, line).then(function(n) {
+            if (n > 0) {
+                search();
+                UIUtils.toast(`같은 시간대 중복 계획 ${n}건을 정리했습니다.`, 'info');
+            }
             _decoratePlanDayModalHeader(date, line);
             renderDayGrid(date, line);
-        }, 0);
+        }).catch(function() {
+            _decoratePlanDayModalHeader(date, line);
+            renderDayGrid(date, line);
+        });
+    }
+
+    /** 동일 date+line+시작시각에 여러 문서가 있으면 최신 1건만 남김 */
+    async function _cleanupSlotDupesForDay(date, line) {
+        const all = (Storage.getAll(STORE) || []).filter(p => p.date === date && p.line === line);
+        const byKey = {};
+        all.forEach(p => {
+            const key = _planSlotKey(p);
+            if (!key) return;
+            if (!byKey[key]) byKey[key] = [];
+            byKey[key].push(p);
+        });
+        let removed = 0;
+        for (const key of Object.keys(byKey)) {
+            const group = byKey[key];
+            if (group.length < 2) continue;
+            let keep = group[0];
+            group.forEach(p => { if (_isNewerPlan(p, keep)) keep = p; });
+            for (const p of group) {
+                if (p.id === keep.id) continue;
+                await Storage.remove(STORE, p.id);
+                removed++;
+            }
+        }
+        return removed;
     }
 
     function _decoratePlanDayModalHeader(date, line) {
@@ -1561,7 +1620,8 @@ const ProductionPlanModule = (function() {
             return [...planColors].some(c => pc === c || pc.includes(c) || c.includes(pc));
         }
 
-        const allPlans = Storage.getAll(STORE) || [];
+        // 수정으로 대체된 구 계획은 예약 수량에서 제외 (_dedupePlanDocs 주석 참조)
+        const allPlans = _dedupePlanDocs(Storage.getAll(STORE) || []);
 
         // ── 진단: 품목명이 일치하는 계획 목록 ───────────────────────
         // ★ .trim() — planPartNames에는 이미 trim된 값이 들어있으므로 p.partName도 trim 비교
@@ -2261,12 +2321,13 @@ const ProductionPlanModule = (function() {
         const allData = Storage.getAll(STORE);
         let currentItem = null;
 
-        // 해당 시간대의 데이터 찾기
+        // 해당 시간대의 데이터 찾기 (slot 또는 startTime 일치, 동일 키 중복 시 최신)
         for (const item of allData) {
             if (item.date === date && item.line === line) {
-                if (item.slot === slot) {
-                    currentItem = item;
-                    break;
+                if (item.slot === slot || item.startTime === slot) {
+                    if (!currentItem || _isNewerPlan(item, currentItem)) {
+                        currentItem = item;
+                    }
                 } else if (!currentItem && item.hourlyPlans && item.hourlyPlans[slot]) {
                     currentItem = {
                         carModel: item.carModel,
@@ -2726,20 +2787,39 @@ const ProductionPlanModule = (function() {
         let oldDataParentId = null;
         let oldEndTime = '';
 
-        for (const item of allData) {
-            if (item.date === date && item.line === line) {
-                if (item.slot === originalSlot) {
-                    existingId = item.id;
-                    oldEndTime = item.endTime || '';
-                } else if (!existingId && item.hourlyPlans && item.hourlyPlans[originalSlot]) {
-                    oldDataParentId = item.id;
+        // 편집 폼에 심어 둔 계획 ID를 최우선으로 사용 — 없으면 slot/startTime으로 조회
+        // (기존에는 slot===originalSlot 만 매칭해, startTime만 있는 계획·슬롯 불일치 시
+        //  Storage.add 로 새 문서가 생기고 구 계획이 지시서/도장현황에 남았다)
+        const formPlanId = (
+            document.getElementById('injStockPanel')?.getAttribute('data-current-plan-id') ||
+            document.getElementById('laserWipPanel')?.getAttribute('data-current-plan-id') ||
+            ''
+        ).trim();
+        if (formPlanId) {
+            const formPlan = Storage.getById(STORE, formPlanId);
+            if (formPlan && formPlan.date === date && formPlan.line === line) {
+                existingId = formPlanId;
+                oldEndTime = formPlan.endTime || '';
+            }
+        }
+        if (!existingId) {
+            for (const item of allData) {
+                if (item.date === date && item.line === line) {
+                    if (item.slot === originalSlot || item.startTime === originalSlot) {
+                        if (!existingId || _isNewerPlan(item, Storage.getById(STORE, existingId) || { id: existingId })) {
+                            existingId = item.id;
+                            oldEndTime = item.endTime || '';
+                        }
+                    } else if (!existingId && item.hourlyPlans && item.hourlyPlans[originalSlot]) {
+                        oldDataParentId = item.id;
+                    }
                 }
             }
         }
 
         // ① 이후 계획 Cascade shift (Overlap 체크 전에 먼저 실행)
         if (partName && planQty > 0) {
-            const currentPlanId = document.getElementById('injStockPanel')?.getAttribute('data-current-plan-id') || existingId || '';
+            const currentPlanId = existingId || formPlanId || '';
 
             if (_usesLaserWipForLine(_prodMatch, line)) {
                 // 레이져→도장 공정 품목: 사출 창고가 아닌 레이져 후 재공품 재고 검사
@@ -2790,12 +2870,16 @@ const ProductionPlanModule = (function() {
         }
 
         // ② Overlap 체크 (cascade shift 후 최신 데이터 기준)
+        // 동일 시작시각(슬롯) 문서는 저장 시 교체/정리 대상이므로 겹침으로 막지 않는다
         const freshData = Storage.getAll(STORE);
         if (endTime && newSlot && (carModel || partName || planQty > 0)) {
             for (const item of freshData) {
                 if (item.date === date && item.line === line && item.id !== existingId) {
                     const iStart = item.startTime || item.slot;
                     const iEnd = item.endTime;
+                    if (iStart && (iStart === newSlot || iStart === originalSlot || item.slot === newSlot || item.slot === originalSlot)) {
+                        continue;
+                    }
                     if (iStart && iEnd) {
                         if (newSlot < iEnd && endTime > iStart) {
                             UIUtils.toast(`[${iStart} ~ ${iEnd}] 시간대에 이미 다른 작업이 있습니다.`, 'warning');
@@ -2823,11 +2907,44 @@ const ProductionPlanModule = (function() {
             }
         }
 
-        const _commitSlotSave = async () => {
-            // ④ 현재 계획 저장
+        /** 동일 일자·라인·시작시각(슬롯)의 다른 문서 제거 — 수정 시 구 계획 잔존 방지 */
+        const _removeSlotDupes = async (keepId, slotKey) => {
+            if (!slotKey) return 0;
+            const keys = new Set([slotKey, originalSlot, newSlot].filter(Boolean));
+            let removed = 0;
+            const latest = Storage.getAll(STORE) || [];
+            for (const item of latest) {
+                if (!item || item.id === keepId) continue;
+                if (item.date !== date || item.line !== line) continue;
+                const itemKey = _planSlotKey(item);
+                if (itemKey && keys.has(itemKey)) {
+                    await Storage.remove(STORE, item.id);
+                    removed++;
+                }
+            }
+            return removed;
+        };
+
+        const _sameProductOthers = () => (Storage.getAll(STORE) || []).filter(item =>
+            item.date === date && item.line === line &&
+            item.id !== existingId &&
+            item.carModel === carModel && item.partName === partName &&
+            (item.color || '') === color &&
+            _planSlotKey(item) !== newSlot
+        );
+
+        const _commitSlotSave = async (opts) => {
+            const replaceProductIds = (opts && opts.replaceProductIds) || [];
+            for (const rid of replaceProductIds) {
+                if (rid && rid !== existingId) await Storage.remove(STORE, rid);
+            }
+
+            // ④ 현재 계획 저장 — 기존 ID가 있으면 반드시 update (add 금지)
+            let savedId = existingId;
             if (existingId) {
                 if (!carModel && !partName && planQty === 0) {
                     await Storage.remove(STORE, existingId);
+                    savedId = null;
                 } else {
                     await Storage.update(STORE, existingId, {
                         slot: newSlot, carModel, partName, color, itemType, planQty,
@@ -2836,13 +2953,30 @@ const ProductionPlanModule = (function() {
                     });
                 }
             } else {
-                if (carModel || partName || planQty > 0) {
-                    await Storage.add(STORE, {
+                // 신규처럼 보여도 같은 시작시각 문서가 있으면 update로 흡수
+                const collision = (Storage.getAll(STORE) || []).find(item =>
+                    item.date === date && item.line === line &&
+                    (_planSlotKey(item) === newSlot || item.slot === newSlot || item.startTime === newSlot)
+                );
+                if (collision) {
+                    savedId = collision.id;
+                    await Storage.update(STORE, collision.id, {
+                        slot: newSlot, carModel, partName, color, itemType, planQty,
+                        startTime, endTime, status, mealTimeWork,
+                        productId: productId || undefined
+                    });
+                } else if (carModel || partName || planQty > 0) {
+                    const added = await Storage.add(STORE, {
                         date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
                         startTime, endTime, status, mealTimeWork,
                         productId: productId || undefined
                     });
+                    savedId = (added && added.id) || null;
                 }
+            }
+
+            if (savedId) {
+                await _removeSlotDupes(savedId, newSlot);
             }
 
             UIUtils.closeModal();
@@ -2858,29 +2992,53 @@ const ProductionPlanModule = (function() {
             }
         };
 
+        // 신규 등록인데 동일 품목이 다른 시간대에 있으면 교체 여부 확인
+        const _askSameProductThenSave = () => {
+            if (existingId) {
+                _commitSlotSave({});
+                return;
+            }
+            const others = _sameProductOthers();
+            if (!others.length) {
+                _commitSlotSave({});
+                return;
+            }
+            const labels = others.map(p =>
+                `${p.startTime || p.slot || '?'} ${UIUtils.formatNumber(Number(p.planQty) || 0)}EA`
+            ).join(', ');
+            UIUtils.confirm(
+                `이 라인에 동일 품목 계획이 이미 있습니다.\n(${labels})\n\n기존 계획을 이 내용으로 교체할까요?\n(취소하면 기존 계획을 유지한 채 추가 등록합니다)`,
+                () => { _commitSlotSave({ replaceProductIds: others.map(p => p.id) }); },
+                () => { _commitSlotSave({}); }
+            );
+        };
+
         // 오늘 날짜에 이미 지나간 시작 시간으로 등록하려는 경우 — 실수 방지 확인
         const _now = new Date();
         const _nowHHMM = String(_now.getHours()).padStart(2, '0') + ':' + String(_now.getMinutes()).padStart(2, '0');
         if (date === UIUtils.today() && startTime && startTime < _nowHHMM) {
-            UIUtils.confirm('지나간 시간에 등록을 하려고 하는데 등록 하시겠습니까?', _commitSlotSave);
+            UIUtils.confirm('지나간 시간에 등록을 하려고 하는데 등록 하시겠습니까?', _askSameProductThenSave);
             return;
         }
 
-        await _commitSlotSave();
+        _askSameProductThenSave();
     }
 
     function removeSlot(slot, line) {
         UIUtils.confirm(`${slot} 시간대 계획을 삭제하시겠습니까?`, async () => {
             const date = document.getElementById('planDateFilter').value;
             const allData = Storage.getAll(STORE);
+            let removed = 0;
             for (const item of allData) {
                 if (item.date === date && item.line === line) {
-                    if (item.slot === slot) {
+                    if (item.slot === slot || item.startTime === slot) {
                         await Storage.remove(STORE, item.id);
+                        removed++;
                     } else if (item.hourlyPlans && item.hourlyPlans[slot]) {
                         delete item.hourlyPlans[slot];
                         item.planQty = Object.values(item.hourlyPlans).reduce((a, b) => a + (Number(b) || 0), 0);
                         await Storage.update(STORE, item.id, item);
+                        removed++;
                     }
                 }
             }
@@ -2888,7 +3046,7 @@ const ProductionPlanModule = (function() {
             if (_activePlanDateModal) {
                 setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
             }
-            UIUtils.toast('삭제되었습니다.', 'success');
+            UIUtils.toast(removed > 0 ? '삭제되었습니다.' : '삭제할 계획이 없습니다.', removed > 0 ? 'success' : 'warning');
         });
     }
 
@@ -2990,8 +3148,10 @@ const ProductionPlanModule = (function() {
         const slotData = {};
         allData.forEach(item => {
             if (item.date === date && item.line === line) {
-                if (item.slot) {
-                    slotData[item.slot] = item;
+                const key = _planSlotKey(item);
+                if (key) {
+                    const prev = slotData[key];
+                    if (!prev || _isNewerPlan(item, prev)) slotData[key] = item;
                 } else if (item.hourlyPlans) {
                     for (let s of Object.keys(item.hourlyPlans)) {
                         if (!slotData[s] && item.hourlyPlans[s]) {
@@ -3357,6 +3517,29 @@ const ProductionPlanModule = (function() {
     // 반환: { pendingPlans, inProgressPlans, pendingTotal, inProgressTotal }
     //   pendingPlans    : 대기 상태 계획 목록 (당일 계획)
     //   inProgressPlans : 진행중 + 완료-미실적 목록 (미입력 실적)
+    /**
+     * 수정으로 대체된 구 계획 문서 제거 — 일자+라인+시작시각이 같으면 최신 1건만 남긴다.
+     * 생산계획 수정이 새 문서를 만들고 옛 문서를 지우지 않아 같은 시간대 계획이 중복 존재한다.
+     * (도장 작업현황·대시보드·사출창고가 모두 같은 규칙을 써야 화면 간 숫자가 일치한다)
+     */
+    function _dedupePlanDocs(plans) {
+        const byKey = {};
+        const noKey = [];
+        (plans || []).forEach(function (p) {
+            if (!p) return;
+            const slot = String(p.startTime || p.slot || '').trim();
+            if (!slot) { noKey.push(p); return; }
+            const key = String(p.date || '').slice(0, 10) + '||'
+                + String(p.line || '').replace(/\s/g, '') + '||' + slot;
+            const prev = byKey[key];
+            if (!prev) { byKey[key] = p; return; }
+            const newer = String(p.updatedAt || p.createdAt || '') > String(prev.updatedAt || prev.createdAt || '')
+                || (!(prev.updatedAt || prev.createdAt) && String(p.id || '') > String(prev.id || ''));
+            if (newer) byKey[key] = p;
+        });
+        return Object.values(byKey).concat(noKey);
+    }
+
     function _getInjReserveDetail(injPartName, carModel, injColor, options) {
         options = options || {};
         const skipWarehouseConsume = !!options.skipWarehouseConsume;
@@ -3434,7 +3617,10 @@ const ProductionPlanModule = (function() {
             return [...planColors].some(c => pc === c || pc.includes(c) || c.includes(pc));
         }
 
-        const allPlans       = Storage.getAll(STORE) || [];
+        // 생산계획을 수정하면 구 문서가 남는 구조라, 걸러내지 않으면 수정 전 계획까지
+        // 예약·미실적으로 집계된다(사출창고 타일의 "도장 실적 미입력", 현장 입고 계획수량 등).
+        // 일자+라인+시작시각이 같으면 최신 1건만 유효 계획으로 본다.
+        const allPlans       = _dedupePlanDocs(Storage.getAll(STORE) || []);
         const pendingPlans   = [];
         const inProgressPlans = [];
 
@@ -3448,8 +3634,11 @@ const ProductionPlanModule = (function() {
             if (_isPostLaserRepaintPlan(p, _allProducts)) return;
 
             const qty  = Number(p.planQty) || 0;
+            // 생산 시작/종료 시각도 함께 넘긴다 — 현장 입고 부족 경고에서 "언제까지 소재가
+            // 필요한지"를 보여주려면 날짜만으로는 부족하다.
             const info = { id: p.id, date: p.date || '', partName: p.partName || '', color: p.color || '',
-                           planQty: qty, status: p.status || '', line: p.line || '' };
+                           planQty: qty, status: p.status || '', line: p.line || '',
+                           startTime: p.startTime || p.slot || '', endTime: p.endTime || '' };
             if (p.status === '대기') {
                 pendingPlans.push(info);
             } else if (p.status === '진행') {

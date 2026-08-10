@@ -587,6 +587,38 @@ const UIUtils = (function () {
         _releaseModalBackGuard();
     }
 
+    /** 중첩 스택·자식 모달까지 모두 닫고 오버레이를 비운다 (삭제 완료 후 등) */
+    function closeAllModals() {
+        try { if (isChildModalOpen()) closeChildModal(); } catch (e) { /* ignore */ }
+        _modalStack = [];
+        _modalCurrentOptions = null;
+        const overlay = document.getElementById('modal');
+        if (overlay) {
+            overlay.classList.remove('active');
+            const header = overlay.querySelector('.modal-header');
+            const container = overlay.querySelector('.modal-container');
+            if (header) {
+                header.classList.remove('plan-day-modal-header');
+                header.querySelector('.plan-day-line-switch')?.remove();
+            }
+            if (container) {
+                container.style.borderTop = '';
+                container.style.boxShadow = '';
+                _resetModalPosition(container);
+            }
+            const titleEl = document.getElementById('modalTitle');
+            const bodyEl = document.getElementById('modalBody');
+            const footerEl = document.getElementById('modalFooter');
+            if (titleEl) titleEl.innerHTML = '';
+            if (bodyEl) bodyEl.innerHTML = '';
+            if (footerEl) footerEl.innerHTML = '';
+        }
+        const child = document.getElementById('modalChild');
+        if (child) child.classList.remove('active');
+        // history.back() 없이 가드만 해제 — 닫기 직후 popstate로 창이 다시 보이는 경합 방지
+        modalBackGuardArmed = false;
+    }
+
     // ── 확인 다이얼로그 ───────────────────────────────────────────────────
     function confirm(message, onConfirm, onCancel) {
         let settled = false;
@@ -805,6 +837,7 @@ const UIUtils = (function () {
         toast,
         openModal,
         closeModal,
+        closeAllModals,
         showModal,
         openChildModal,
         closeChildModal,

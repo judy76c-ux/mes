@@ -18552,12 +18552,41 @@ var PaintMixModule = (function() {
         const err = _validate(data);
         if (err) { UIUtils.toast(err, 'warning'); return; }
         const mixId = Storage.generateId();
+        _attachPaintTrace(data, mixId);
         await Storage.executeTransaction([
             { store: STORE, op: 'add', data: { id: mixId, ...data } }
         ]);
+        await _propagateTraceToWork(data);
         UIUtils.closeModal();
         UIUtils.toast('도료 배합 사용량이 등록되었습니다.', 'success');
         search();
+    }
+
+    /** 도료 계보 확정 — 사용 도료별 제조LOT·수입검사일을 배합 기록에 박아 저장한다.
+     *  조회 방식이면 도료 창고·수입검사 기록이 정리·수정될 때 과거 생산분의 이력이 바뀌거나 끊긴다. */
+    function _attachPaintTrace(data, mixId) {
+        if (typeof Trace === 'undefined' || !data) return;
+        data.trace = Trace.merge(data.trace, Trace.buildPaintStage(data.usages, {
+            mixId: mixId || '',
+            workId: data.workId || '',
+            productionLot: data.productionLot || '',
+            line: data.line || '',
+            color: data.color || ''
+        }));
+    }
+
+    /** 배합에서 확정한 도료 계보를 도장 작업 실적에도 승계 — 완제품 이력의 단일 출처가 된다 */
+    async function _propagateTraceToWork(data) {
+        if (typeof Trace === 'undefined' || !data || !data.workId || !data.trace) return;
+        try {
+            const work = Storage.getById(PAINT_WORK_STORE, data.workId);
+            if (!work) return;
+            await Storage.update(PAINT_WORK_STORE, work.id, {
+                trace: Trace.merge(work.trace, { paint: data.trace.paint })
+            });
+        } catch (e) {
+            console.warn('[PaintMix] 도장 실적 계보 승계 실패:', e);
+        }
     }
 
     function edit(id) {
@@ -18576,10 +18605,12 @@ var PaintMixModule = (function() {
         const data = _collectData();
         const err = _validate(data, id);
         if (err) { UIUtils.toast(err, 'warning'); return; }
+        _attachPaintTrace(data, id);
         await Storage.executeTransaction([
             ..._inventoryOutRemoveOps(id),
             { store: STORE, op: 'update', id, data }
         ]);
+        await _propagateTraceToWork(data);
         UIUtils.closeModal();
         UIUtils.toast('도료 배합 기록이 수정되었습니다.', 'success');
         search();

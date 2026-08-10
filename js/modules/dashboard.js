@@ -174,7 +174,7 @@ const DashboardModule = (function() {
         renderQualityStdWarnings();
         renderShippingStandby();
         renderPaintPending();
-        renderAlertRow();
+        renderAlertRow().catch(e => console.warn('[Dashboard] 경보 렌더 실패:', e));
         _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
         renderImprovementTiles();
         renderBoardSection();
@@ -302,31 +302,38 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        경보 3열 (사출 입고 대기 / 실적 미입력 / 도료 사용 미등록)
     ══════════════════════════════════════════════════════════ */
-    function renderAlertRow() {
+    async function renderAlertRow() {
         const el = document.getElementById('dashAlertRow');
         if (!el) return;
         const today = UIUtils.today();
 
         /* ① 사출 입고 대기 */
-        const injInsp = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
-        const injInv  = Storage.getAll(DB.STORES.INJECTION_INVENTORY)   || [];
-        const inStockSet = new Set();
-        injInv.filter(i => i.type === '입고').forEach(i => {
-            if (i.lots && i.lots.length) {
-                i.lots.forEach(l => { if ((Number(l.qty)||0) > 0) inStockSet.add(`${i.partName}||${l.lotNo}`); });
-            } else if (i.lotNo && (Number(i.quantity)||0) > 0) {
-                inStockSet.add(`${i.partName}||${i.lotNo}`);
+        // 검사 후 며칠째 창고 입고가 안 된 건지 — 대기가 길수록 그 사이 출고가 "입고 없이 나간
+        // 출고"가 되어 미차감(과다출고)으로 잡힌다. 오래된 건을 눈에 띄게 하려고 경과일을 붙인다.
+        function _waitDaysSince(dateLike) {
+            const day = String(dateLike || '').slice(0, 10);
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+            const from = new Date(day + 'T00:00:00');
+            const to = new Date(String(today).slice(0, 10) + 'T00:00:00');
+            if (isNaN(from.getTime()) || isNaN(to.getTime())) return null;
+            return Math.max(0, Math.round((to - from) / 86400000));
+        }
+        // 대기 목록은 사출 창고 모듈의 판정을 그대로 쓴다 — 여기서 따로 계산하면
+        // 숨김 처리·컷오버·검사건(inspId) 매칭이 빠져 창고 화면과 건수가 어긋난다
+        // (창고에서는 사라진 항목이 대시보드에는 계속 남아 있는 문제).
+        let injPending = [];
+        if (typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.getPendingInboundRows === 'function') {
+            try {
+                injPending = (await InjectionWarehouseModule.getPendingInboundRows()).map(r => ({
+                    date: r.date, carModel: r.carModel, partName: r.partName, color: r.color,
+                    lotNo: r.lotNo, qty: r.qty,
+                    waitDays: r.waitDays != null ? r.waitDays : _waitDaysSince(r.date)
+                }));
+            } catch (e) {
+                console.warn('[Dashboard] 입고 대기 조회 실패:', e);
             }
-        });
-        const injPending = [];
-        injInsp.sort((a,b) => (b.date||'').localeCompare(a.date||'')).forEach(insp => {
-            const lots = (insp.lots && insp.lots.length) ? insp.lots : [{ lotNo: insp.lotNo, qty: insp.passQty || 0 }];
-            lots.forEach(l => {
-                if ((Number(l.qty)||0) <= 0) return;
-                const k = `${insp.partName}||${l.lotNo}`;
-                if (!inStockSet.has(k)) injPending.push({ date: insp.date, carModel: insp.carModel, partName: insp.partName, color: insp.color, lotNo: l.lotNo, qty: l.qty });
-            });
-        });
+        }
 
         /* ② 실적 미입력 (전일·금일 시작분 — 수량 있는 작업실적 없음)
            - status '완료'는 종료시각 자동갱신일 수 있음
@@ -345,7 +352,26 @@ const DashboardModule = (function() {
                 ? w.lots.reduce(function (s, l) { return s + (Number(l && l.qty) || 0); }, 0) : 0;
             return (input + prod + lotSum) > 0;
         }
-        const unenteredPlans = plans
+        // 생산계획 수정 시 구 문서가 남는 구조 — 일자+라인+시작시각 최신 1건만 남겨야
+        // 수정 전 계획이 '실적 미입력'으로 계속 잡히지 않는다 (도장 작업현황과 동일 규칙)
+        const _dashLivePlans = (function () {
+            const byKey = {};
+            const noKey = [];
+            plans.forEach(function (p) {
+                if (!p) return;
+                const slot = String(p.startTime || p.slot || '').trim();
+                if (!slot) { noKey.push(p); return; }
+                const key = _dashPlanDay(p) + '||' + String(p.line || '').replace(/\s/g, '') + '||' + slot;
+                const prev = byKey[key];
+                if (!prev) { byKey[key] = p; return; }
+                const newer = String(p.updatedAt || p.createdAt || '') > String(prev.updatedAt || prev.createdAt || '')
+                    || (!(prev.updatedAt || prev.createdAt) && String(p.id || '') > String(prev.id || ''));
+                if (newer) byKey[key] = p;
+            });
+            return Object.values(byKey).concat(noKey);
+        })();
+
+        const unenteredPlans = _dashLivePlans
             .filter(function (p) {
                 const day = _dashPlanDay(p);
                 if (!day || day > today) return false;
@@ -405,13 +431,23 @@ const DashboardModule = (function() {
         }
 
         function _paintHtml(list) {
-            const injRows = injPending.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
-                injPending.slice(0, 20).map(r => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+            const injOverdue = injPending.filter(r => (r.waitDays || 0) >= 3);
+            const injRows = injPending.length ? (injOverdue.length ? `
+                <div style="padding:6px 10px;margin-bottom:4px;border-radius:6px;background:rgba(220,38,38,.08);
+                            color:#dc2626;font-size:0.74rem;font-weight:700;">
+                    3일 이상 대기 ${injOverdue.length}건 · 최장 ${Math.max(...injOverdue.map(r => r.waitDays || 0))}일
+                    <span style="font-weight:400;color:var(--text-muted);">— 늦게 입고하면 그 사이 출고가 미차감으로 잡힙니다</span>
+                </div>` : '') + `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
+                injPending.slice(0, 20).map(r => {
+                    const wd = r.waitDays;
+                    const wdColor = wd >= 7 ? '#dc2626' : (wd >= 3 ? '#b45309' : 'var(--text-muted)');
+                    return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
                     <td style="padding:4px 10px;white-space:nowrap;color:var(--text-muted);">${r.date||'-'}</td>
+                    <td style="padding:4px 6px;white-space:nowrap;font-size:0.72rem;font-weight:${wd >= 3 ? '700' : '400'};color:${wdColor};">${wd != null ? wd + '일' : ''}</td>
                     <td style="padding:4px 8px;font-weight:600;">${r.partName||'-'}</td>
                     <td style="padding:4px 8px;font-size:0.72rem;color:var(--text-muted);">${r.carModel||''} ${r.color||''}</td>
                     <td style="padding:4px 10px;text-align:right;font-weight:700;color:#8b5cf6;">${UIUtils.formatNumber(r.qty||0)}</td>
-                </tr>`).join('') + `</table>` : '';
+                </tr>`; }).join('') + `</table>` : '';
 
             const unenteredRows = unenteredPlans.length ? `<table style="width:100%;border-collapse:collapse;font-size:0.78rem;">` +
                 unenteredPlans.slice(0, 20).map(p => `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">

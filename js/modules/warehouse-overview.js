@@ -44,6 +44,18 @@ var WarehouseOverviewModule = (function () {
         return d.getFullYear() === year && d.getMonth() === mm - 1 && d.getDate() === dd;
     }
 
+    /** 도료 LOT 집계 키 — 제조 LOT(prodLot) 우선, 없으면 제조사 표기 LOT(lotNo) */
+    function _paintLotKey(r) {
+        return String((r && (r.prodLot || r.lotNo)) || '').trim() || '__nolot__';
+    }
+
+    /** 화면 표시용 LOT — 내부 센티널(__nolot__ 등)은 무표기로 */
+    function _formatLotDisplay(lot) {
+        const s = String(lot || '').trim();
+        if (!s || s === '__nolot__' || s === '__') return '무표기';
+        return s;
+    }
+
     function _findProductForItem(carModel, partName, color) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         return products.find(p => p.carModel === carModel && p.partName === partName && (!color || !p.color || p.color === color))
@@ -347,22 +359,34 @@ var WarehouseOverviewModule = (function () {
         const materials = Storage.getAll(DB.STORES.PAINT_MATERIALS) || [];
         const today     = new Date(); today.setHours(0, 0, 0, 0);
 
-        // 재료별 LOT 단위 재고 계산
-        const matMap = {}; // materialId → { [lot]: { qty, firstDate, expDate, mfgDate } }
+        // 재료별 LOT 단위 재고 계산 (키 = prodLot || lotNo, paint-inventory/warehouse-hub와 동일)
+        const matMap = {}; // materialId → { [lot]: { qty, firstDate, expDate, mfgDate, prodLot, lotNo } }
         all.forEach(r => {
             const mid = r.materialId || '__noid__';
-            const lot = r.lotNo || '__nolot__';
+            const lot = _paintLotKey(r);
             if (!matMap[mid]) matMap[mid] = {};
-            if (!matMap[mid][lot]) matMap[mid][lot] = { qty: 0, firstDate: r.date || '', expDate: r.expDate || '', mfgDate: r.mfgDate || '' };
+            if (!matMap[mid][lot]) {
+                matMap[mid][lot] = {
+                    qty: 0,
+                    firstDate: r.date || '',
+                    expDate: r.expDate || '',
+                    mfgDate: r.mfgDate || '',
+                    prodLot: r.prodLot || '',
+                    lotNo: r.lotNo || ''
+                };
+            }
+            const entry = matMap[mid][lot];
+            if (r.prodLot && !entry.prodLot) entry.prodLot = r.prodLot;
+            if (r.lotNo && !entry.lotNo) entry.lotNo = r.lotNo;
             const qty = Number(r.quantity) || 0;
             if (r.type === '출고') {
-                matMap[mid][lot].qty -= qty;
+                entry.qty -= qty;
             } else {
-                matMap[mid][lot].qty += qty;
-                if (!matMap[mid][lot].firstDate || r.date < matMap[mid][lot].firstDate)
-                    matMap[mid][lot].firstDate = r.date || '';
-                if (r.expDate && (!matMap[mid][lot].expDate || r.expDate < matMap[mid][lot].expDate))
-                    matMap[mid][lot].expDate = r.expDate; // 가장 빠른 만료일 추적
+                entry.qty += qty;
+                if (!entry.firstDate || r.date < entry.firstDate)
+                    entry.firstDate = r.date || '';
+                if (r.expDate && (!entry.expDate || r.expDate < entry.expDate))
+                    entry.expDate = r.expDate; // 가장 빠른 만료일 추적
             }
         });
 
@@ -385,17 +409,18 @@ var WarehouseOverviewModule = (function () {
                 .sort(([, a], [, b]) => (a.firstDate || '').localeCompare(b.firstDate || ''));
 
             activeLots.forEach(([lot, v]) => {
+                const lotLabel = v.prodLot || v.lotNo || lot;
                 // 유효기간 체크
                 if (v.expDate) {
                     const exp  = new Date(v.expDate); exp.setHours(0, 0, 0, 0);
                     const diff = Math.round((exp - today) / 86400000);
                     if (diff < 0) {
                         expiredCount++;
-                        expiredItems.push({ matName, supplier, lot, qty: v.qty, expDate: v.expDate,
+                        expiredItems.push({ matName, supplier, lot: lotLabel, qty: v.qty, expDate: v.expDate,
                             daysPast: Math.abs(diff) });
                     } else if (diff <= 30) {
                         expiringCount++;
-                        expiringItems.push({ matName, supplier, lot, qty: v.qty, expDate: v.expDate,
+                        expiringItems.push({ matName, supplier, lot: lotLabel, qty: v.qty, expDate: v.expDate,
                             daysLeft: diff });
                     }
                 }
@@ -404,7 +429,7 @@ var WarehouseOverviewModule = (function () {
                     const diff = Math.round((today - new Date(v.firstDate)) / 86400000);
                     if (diff >= LONG_STOCK_DAYS) {
                         longStock++;
-                        longItems.push({ matName, supplier, lot, qty: v.qty, firstDate: v.firstDate, days: diff });
+                        longItems.push({ matName, supplier, lot: lotLabel, qty: v.qty, firstDate: v.firstDate, days: diff });
                     }
                 }
             });
@@ -508,7 +533,7 @@ var WarehouseOverviewModule = (function () {
                 : '';
             return '<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;' +
                 'background:' + bg + ';border:1px solid ' + border + ';white-space:nowrap;font-size:0.78rem;line-height:1.3;">' +
-                '<strong style="font-family:monospace;color:' + color + ';">' + _esc(l.lot || '-') + '</strong>' +
+                '<strong style="font-family:monospace;color:' + color + ';">' + _esc(_formatLotDisplay(l.lot)) + '</strong>' +
                 '<span style="color:var(--text-muted);font-size:0.72rem;" title="입고일시">' + _esc(_shortDate(l.firstDate)) + '</span>' +
                 qtyHtml +
                 '</span>';
@@ -521,10 +546,10 @@ var WarehouseOverviewModule = (function () {
 
     function _fifoSummaryLine(oldLot, consumedLot) {
         return '<div style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;font-size:0.76rem;color:#9a3412;line-height:1.35;">' +
-            '<span style="font-family:monospace;font-weight:700;color:#2563eb;">' + _esc(oldLot.lot || '-') + '</span>' +
+            '<span style="font-family:monospace;font-weight:700;color:#2563eb;">' + _esc(_formatLotDisplay(oldLot.lot)) + '</span>' +
             '<span style="color:var(--text-muted);">잔량</span>' +
             '<span class="material-symbols-outlined" style="font-size:14px;color:#ea580c;">arrow_forward</span>' +
-            '<span style="font-family:monospace;font-weight:700;color:#ea580c;">' + _esc(consumedLot.lot || '-') + '</span>' +
+            '<span style="font-family:monospace;font-weight:700;color:#ea580c;">' + _esc(_formatLotDisplay(consumedLot.lot)) + '</span>' +
             '<span style="color:var(--text-muted);">선소진</span>' +
             '</div>';
     }
@@ -609,7 +634,7 @@ var WarehouseOverviewModule = (function () {
                 <tr style="background:rgba(220,38,38,0.04);">
                     <td><strong>${d.matName}</strong></td>
                     <td>${d.supplier}</td>
-                    <td style="font-family:monospace;">${d.lot}</td>
+                    <td style="font-family:monospace;">${_esc(_formatLotDisplay(d.lot))}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.qty)}</td>
                     <td>${d.expDate}</td>
                     <td style="color:var(--accent-red);font-weight:700;">${d.daysPast}일 경과</td>
@@ -630,7 +655,7 @@ var WarehouseOverviewModule = (function () {
                 <tr style="background:rgba(245,158,11,0.04);">
                     <td><strong>${d.matName}</strong></td>
                     <td>${d.supplier}</td>
-                    <td style="font-family:monospace;">${d.lot}</td>
+                    <td style="font-family:monospace;">${_esc(_formatLotDisplay(d.lot))}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.qty)}</td>
                     <td>${d.expDate}</td>
                     <td style="color:var(--accent-orange,#f59e0b);font-weight:700;">${d.daysLeft}일 남음</td>
@@ -651,7 +676,7 @@ var WarehouseOverviewModule = (function () {
                 <tr style="background:rgba(220,38,38,0.03);">
                     <td><strong>${d.matName}</strong></td>
                     <td>${d.supplier}</td>
-                    <td style="font-family:monospace;">${d.lot}</td>
+                    <td style="font-family:monospace;">${_esc(_formatLotDisplay(d.lot))}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.qty)}</td>
                     <td>${d.firstDate}</td>
                     <td style="color:var(--accent-red);font-weight:700;">${d.days}일</td>

@@ -237,8 +237,13 @@ var PaintIncomingInspectionModule = (function() {
     }
 
     function search() {
-        const start = document.getElementById('piFilterStart').value;
-        const end = document.getElementById('piFilterEnd').value;
+        const startEl = document.getElementById('piFilterStart');
+        const endEl = document.getElementById('piFilterEnd');
+        // 도료창고 상세 등 검사 페이지 DOM이 없으면 목록 갱신 스킵
+        if (!startEl || !endEl || !document.getElementById('piStats')) return;
+
+        const start = startEl.value;
+        const end = endEl.value;
         const supplier = (document.getElementById('piFilterSupplier') || {}).value || '';
         const paintName = (document.getElementById('piFilterPaintName') || {}).value || '';
 
@@ -1679,27 +1684,83 @@ var PaintIncomingInspectionModule = (function() {
         if (!reason.trim()) { UIUtils.toast('삭제 사유를 입력하세요.', 'warning'); return; }
         const d = Storage.getById(STORE, id);
         if (!d) { UIUtils.toast('레코드를 찾을 수 없습니다.', 'error'); return; }
-        UIUtils.closeModal();
-        AuthModule.requireAdminAuth(async function() {
-            const user = AuthModule.getCurrentUser();
-            const logEntry = {
-                id: Storage.generateId(),
-                type: 'paint',
-                typeLabel: '도료 수입검사',
-                deletedAt: new Date().toISOString(),
-                deletedBy: user ? user.displayName : '알 수 없음',
-                reason: reason,
-                originalId: id,
-                originalData: Object.assign({}, d),
-                summary: `${d.date || ''} / ${d.paintName || ''} / 입고${UIUtils.formatNumber(d.incomingQty)}`,
-            };
-            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
-            await Storage.remove(STORE, id);
-            if (typeof PaintInventoryModule !== 'undefined' && PaintInventoryModule.renderPaintInspStandby) {
-                PaintInventoryModule.renderPaintInspStandby();
+
+        const mat = _findPaintMaterial(d.paintName, d.supplier);
+        const matId = mat && mat.id ? mat.id : '';
+        const pageBefore = (typeof Router !== 'undefined' && Router.getCurrentPage)
+            ? Router.getCurrentPage()
+            : '';
+
+        // 인증/삭제 전에 도료창고 상세·검사상세·확인창을 먼저 전부 닫는다.
+        // (스택에 남겨 두면 로그인 창을 닫을 때 도료 상세가 다시 복원됨)
+        if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals();
+        else {
+            for (let i = 0; i < 8; i++) {
+                try { UIUtils.closeModal(); } catch (e) { break; }
+                const ov = document.getElementById('modal');
+                if (!ov || !ov.classList.contains('active')) break;
             }
-            UIUtils.toast('삭제 완료. 이력이 기록되었습니다.', 'success');
-            search();
+        }
+
+        AuthModule.requireAdminAuth(async function() {
+            let deleted = false;
+            try {
+                const user = AuthModule.getCurrentUser();
+                const logEntry = {
+                    id: Storage.generateId(),
+                    type: 'paint',
+                    typeLabel: '도료 수입검사',
+                    deletedAt: new Date().toISOString(),
+                    deletedBy: user ? user.displayName : '알 수 없음',
+                    reason: reason,
+                    originalId: id,
+                    originalData: Object.assign({}, d),
+                    summary: `${d.date || ''} / ${d.paintName || ''} / 입고${UIUtils.formatNumber(d.incomingQty)}`,
+                };
+                await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
+                await Storage.remove(STORE, id);
+                deleted = true;
+                UIUtils.toast('삭제 완료. 이력이 기록되었습니다.', 'success');
+            } catch (err) {
+                console.error('[PaintIncoming] delete failed', err);
+                UIUtils.toast('삭제 중 오류가 발생했습니다.', 'error');
+            } finally {
+                if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals();
+
+                // 삭제 성공 시 현재 화면을 강제 재렌더 (도료창고 대기품·검사목록·이력 등)
+                if (deleted && typeof Router !== 'undefined' && Router.navigate) {
+                    const page = pageBefore || (Router.getCurrentPage && Router.getCurrentPage()) || '';
+                    if (page === 'paint-inventory' || page === 'paint-incoming-inspection'
+                        || page === 'warehouse-overview' || page === 'incoming-hub') {
+                        Router.navigate(page);
+                    } else {
+                        try { search(); } catch (e) { /* ignore */ }
+                        if (typeof PaintInventoryModule !== 'undefined') {
+                            try {
+                                if (PaintInventoryModule.renderPaintInspStandby) PaintInventoryModule.renderPaintInspStandby();
+                                if (PaintInventoryModule.loadData) PaintInventoryModule.loadData();
+                            } catch (e2) { /* ignore */ }
+                        }
+                    }
+                } else {
+                    try { search(); } catch (e) { /* ignore */ }
+                    if (typeof PaintInventoryModule !== 'undefined') {
+                        try {
+                            if (PaintInventoryModule.renderPaintInspStandby) PaintInventoryModule.renderPaintInspStandby();
+                            if (PaintInventoryModule.loadData) PaintInventoryModule.loadData();
+                        } catch (e2) { /* ignore */ }
+                    }
+                }
+
+                // 도료창고에서 연 삭제: 목록 갱신 후 상세를 다시 열어 수입검사 이력도 즉시 반영
+                if (deleted && matId && pageBefore === 'paint-inventory'
+                    && typeof PaintInventoryModule !== 'undefined'
+                    && typeof PaintInventoryModule.showPaintDetail === 'function') {
+                    setTimeout(function() {
+                        try { PaintInventoryModule.showPaintDetail(matId); } catch (e3) { /* ignore */ }
+                    }, 150);
+                }
+            }
         });
     }
 

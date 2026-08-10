@@ -270,6 +270,10 @@ const App = (function() {
         Router.registerModule('painting-input', {
             render: function(c) { PaintingProcessModule.render(c); }
         });
+        // 라인별 현장 자재 화면은 폐지. 화면에서 임의로 과거 생산분을 반납하면 이미 다른
+        // 곳에서 소진된 자재를 되돌리는 등 데이터 오류의 원인이 된다. 반납은 그 자재를 실제로
+        // 사용한 도장 실적의 「보기」에서 그 실적 몫으로만 처리한다.
+        // (구 북마크/링크가 남아 있어도 깨지지 않도록 도장 작업 메인으로 보낸다)
         Router.registerModule('painting-input-a', {
             render: function(c) { PaintingProcessModule.render(c); }
         });

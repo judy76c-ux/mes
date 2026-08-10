@@ -1735,8 +1735,16 @@ var InjectionIncomingModule = (function() {
         };
         await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
         await Storage.remove(STORE, id);
-        if (alsoDeleteInventory && ctx.linked.length > 0 && typeof InjectionWarehouseModule !== 'undefined') {
-            await InjectionWarehouseModule.removeLinkedInventoryRecords(ctx.linked.map(l => l.invId));
+        if (ctx.linked.length > 0 && typeof InjectionWarehouseModule !== 'undefined') {
+            if (alsoDeleteInventory) {
+                await InjectionWarehouseModule.removeLinkedInventoryRecords(ctx.linked.map(l => l.invId));
+            } else if (typeof InjectionWarehouseModule.markLinkedInventoryInspDeleted === 'function') {
+                // 창고 기록을 남기는 경우 — 검사 이력 없는 입고로 보이지 않도록 삭제 사유·삭제자를 남긴다
+                await InjectionWarehouseModule.markLinkedInventoryInspDeleted(
+                    ctx.linked.map(l => l.invId),
+                    { deletedAt: logEntry.deletedAt, deletedBy: logEntry.deletedBy, reason: ctx.reason }
+                );
+            }
         }
         UIUtils.closeModal();
         _pendingDeleteCtx = null;

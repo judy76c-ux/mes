@@ -71,15 +71,34 @@ var PaintingInputModule = (function () {
                 if (!map[k]) map[k] = _dateKey(insp.date);
             });
         });
+        // 창고 입고 기록의 inspDate 폴백 — 검사 기록이 삭제/정리된 뒤에도 후공정에서
+        // 수입검사일을 잃지 않게 한다. 최상위 lotNo만 보면 다중 LOT 입고의 나머지 LOT이
+        // 통째로 누락되므로(1건에 3개 LOT이면 2개는 '-') lots[] 까지 훑는다.
         (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).forEach(function (r) {
-            if (String(r.type || '') === '출고' || !r.partName || !r.lotNo) return;
-            const k = String(r.partName) + '||' + String(r.lotNo);
-            if (!map[k] && r.inspDate) map[k] = _dateKey(r.inspDate);
+            if (String(r.type || '') === '출고' || !r.partName) return;
+            const part = String(r.partName);
+            const rows = (r.lots && r.lots.length)
+                ? r.lots
+                : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+            rows.forEach(function (l) {
+                const lotNo = String(l.lotNo || '').trim();
+                if (!lotNo) return;
+                const inspDate = l.inspDate || r.inspDate;
+                if (!inspDate) return;
+                const k = part + '||' + lotNo;
+                if (!map[k]) map[k] = _dateKey(inspDate);
+            });
         });
         return map;
     }
 
-    function _resolveInspDate(partName, lotNo, direct, inspMap) {
+    // 우선순위: 레코드에 확정 저장된 계보(trace) → 레코드의 inspDate 평면 필드 → 조회 폴백.
+    // trace 가 있으면 상위 기록이 지워져도, LOT이 재사용돼도 그 시점 값이 그대로 나온다.
+    function _resolveInspDate(partName, lotNo, direct, inspMap, record) {
+        if (typeof Trace !== 'undefined' && record) {
+            const fromTrace = Trace.injInspDate(record);
+            if (fromTrace) return _dateKey(fromTrace);
+        }
         if (direct) return _dateKey(direct);
         const k = String(partName || '') + '||' + String(lotNo || '');
         return inspMap[k] || '-';
@@ -112,7 +131,7 @@ var PaintingInputModule = (function () {
     /** 수입검사일 셀 — 사내생산품은 "-"(누락처럼 보임) 대신 "사내생산" 배지로 명시한다.
      *  실제 외부 입고품인데 매칭이 안 된 경우만 순수 "-"로 남아 진짜 이상 신호로 보이게 한다. */
     function _inspDateCellHtml(record, lotNo, inspMap) {
-        const inspDate = _resolveInspDate(record.partName, lotNo, record.inspDate, inspMap);
+        const inspDate = _resolveInspDate(record.partName, lotNo, record.inspDate, inspMap, record);
         if (inspDate !== '-') return _esc(inspDate);
         if (_isInHouseInjMaterial(record.carModel, record.partName, record.color)) {
             return '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
@@ -878,18 +897,48 @@ var PaintingInputModule = (function () {
         return ta.some(function (x) { return tb.indexOf(x) >= 0; });
     }
 
-    /** 금일 생산계획 중 출고 건과 매칭되는 계획 목록 */
+    /**
+     * 같은 시작시각 계획이 여러 건이면 최신 1건만 남긴다.
+     * 생산계획을 수정하면 구 문서가 그대로 남는 구조라, 걸러내지 않으면 옛 계획까지
+     * 합산되어 계획수량·오차가 부풀려진다. (생산계획 현황 카드와 동일한 규칙)
+     */
+    function _dedupePlansBySlot(plans) {
+        const bySlot = {};
+        const noSlot = [];
+        (plans || []).forEach(function (p) {
+            const key = String((p && (p.startTime || p.slot)) || '').trim();
+            if (!key) { noSlot.push(p); return; }
+            const prev = bySlot[key];
+            if (!prev) { bySlot[key] = p; return; }
+            const newer = String(p.updatedAt || p.createdAt || '') > String(prev.updatedAt || prev.createdAt || '')
+                || (!(prev.updatedAt || prev.createdAt) && String(p.id || '') > String(prev.id || ''));
+            if (newer) bySlot[key] = p;
+        });
+        return Object.values(bySlot).concat(noSlot);
+    }
+
+    /** 금일 생산계획 중 출고 건과 매칭되는 계획 목록 (수정으로 대체된 구 계획은 제외) */
     function findPlansForShipment(record, line, date) {
         if (!record) return [];
         const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
         const want = _normLine(line || record.paintLine || record.line);
-        const plans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).filter(function (p) {
+        const rawPlans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).filter(function (p) {
             if (!p || String(p.date || '').slice(0, 10) !== today) return false;
             return _normLine(p.line) === want;
         });
+        const plans = _dedupePlansBySlot(rawPlans);
+
         if (record.planId) {
-            const byId = plans.find(function (p) { return p.id === record.planId; });
-            if (byId) return [byId];
+            const byId = rawPlans.find(function (p) { return p.id === record.planId; });
+            if (byId) {
+                // 출고 시점의 계획이 이후 수정돼 대체됐다면 현재 유효한 계획으로 따라간다.
+                // (계획 16,590 → 9,000 으로 줄였는데 출고가 옛 문서를 가리켜 오차가 허수로 뜨는 문제)
+                const slot = String(byId.startTime || byId.slot || '').trim();
+                const current = slot
+                    ? plans.find(function (p) { return String(p.startTime || p.slot || '').trim() === slot; })
+                    : null;
+                return [current || byId];
+            }
         }
         const car = String(record.carModel || '').trim();
         const injPart = String(record.partName || '').trim();
@@ -905,6 +954,22 @@ var PaintingInputModule = (function () {
             if (pPart && !productNames[pPart] && pPart !== injPart) return false;
             return true;
         });
+    }
+
+    /** 계획수량 근거 — 어떤 계획을 몇 건 더했는지 툴팁으로 보여준다 (허수 오차 추적용) */
+    function _planBreakdownText(record, line, date) {
+        const plans = findPlansForShipment(record, line, date);
+        if (!plans.length) return '매칭된 계획 없음';
+        const lines = plans.map(function (p) {
+            const slot = String(p.startTime || p.slot || '').trim();
+            const end = String(p.endTime || '').trim();
+            return (slot ? slot + (end ? '~' + end : '') + ' · ' : '')
+                + (p.partName || '-') + ' · ' + (Number(p.planQty) || 0).toLocaleString('ko-KR') + ' EA';
+        });
+        const total = plans.reduce(function (s, p) { return s + (Number(p.planQty) || 0); }, 0);
+        return '계획 ' + plans.length + '건 합산 (수정으로 대체된 구 계획 제외)\n'
+            + lines.join('\n')
+            + '\n합계 ' + total.toLocaleString('ko-KR') + ' EA';
     }
 
     function getPlanQtyForShipment(record, line, date) {
@@ -944,9 +1009,12 @@ var PaintingInputModule = (function () {
     function getTodayLinePlanTotal(line, date) {
         const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
         const want = _normLine(line);
-        return (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).reduce(function (s, p) {
-            if (!p || String(p.date || '').slice(0, 10) !== today) return s;
-            if (_normLine(p.line) !== want) return s;
+        const plans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).filter(function (p) {
+            if (!p || String(p.date || '').slice(0, 10) !== today) return false;
+            return _normLine(p.line) === want;
+        });
+        // 수정으로 대체된 구 계획을 빼야 계획 카드 합계와 일치한다
+        return _dedupePlansBySlot(plans).reduce(function (s, p) {
             return s + (Number(p.planQty) || 0);
         }, 0);
     }
@@ -1149,7 +1217,9 @@ var PaintingInputModule = (function () {
                 <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_lotCellHtml(r)}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${inspDateHtml}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:800;">${_fmt(shipQty)}</td>
-                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${planQty ? _fmt(planQty) : '<span style="color:var(--text-muted);cursor:help;border-bottom:1px dotted var(--text-muted);" title="' + _esc(_debugPlanMatchInfo(r, want, today)) + '">—</span>'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${planQty
+                    ? '<span style="cursor:help;border-bottom:1px dotted var(--text-muted);" title="' + _esc(_planBreakdownText(r, want, today)) + '">' + _fmt(planQty) + '</span>'
+                    : '<span style="color:var(--text-muted);cursor:help;border-bottom:1px dotted var(--text-muted);" title="' + _esc(_debugPlanMatchInfo(r, want, today)) + '">—</span>'}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_fmtVarianceHtml(shipQty, planQty)}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(endTime || '—')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;">${statusHtml}</td>
@@ -1254,6 +1324,36 @@ var PaintingInputModule = (function () {
             </div>`;
     }
 
+    /**
+     * 이 LOT이 이미 도장 작업에 투입된 적이 있는가 — 있으면 "생산이 끝난 뒤 남은 잔량"이다.
+     * 이 경우 잔량은 (a) 실물이 진짜 남았거나 (b) 실적 투입수량을 적게 등록해 장부에만 남은 것
+     * 둘 중 하나인데 시스템은 구분할 수 없다. (b)를 반납하면 사출창고에 없는 재고가 생기므로
+     * 화면에 표시해 실물 확인을 강제한다.
+     */
+    function _lotUsedInProduction(line, carModel, partName, lotNo) {
+        const want = _normLine(line);
+        const lot = String(lotNo || '').trim();
+        if (!lot) return false;
+        return (_recordsForLine(want) || []).some(function (r) {
+            if (!r || String(r.type || '') === '입고') return false;
+            if (!/작업 투입/.test(String(r.source || ''))) return false;
+            if (carModel && r.carModel && String(r.carModel) !== String(carModel)) return false;
+            if (partName && r.partName && String(r.partName) !== String(partName)) return false;
+            const rows = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+            return rows.some(function (l) { return String(l.lotNo || '').trim() === lot; });
+        });
+    }
+
+    /** 기준일로부터 경과 일수 (날짜 불명이면 null) — 오래 방치된 잔량을 눈에 띄게 하기 위함 */
+    function _daysSinceDate(dateLike) {
+        const day = String(dateLike || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return null;
+        const from = new Date(day + 'T00:00:00');
+        const to = new Date(String(UIUtils.today ? UIUtils.today() : '').slice(0, 10) + 'T00:00:00');
+        if (isNaN(from.getTime()) || isNaN(to.getTime())) return null;
+        return Math.max(0, Math.round((to - from) / 86400000));
+    }
+
     function renderForLine(container, line) {
         const want = _normLine(line);
         const accent = _lineAccent(want);
@@ -1263,20 +1363,45 @@ var PaintingInputModule = (function () {
             ? PaintingNavUI.render('painting-input', '')
             : '';
 
-        const rows = items.length
-            ? items.map(function (g) {
-                const lotTxt = (g.lots || []).slice(0, 4).map(function (l) {
-                    return `<span style="font-family:monospace;font-size:0.78rem;background:var(--bg-secondary);padding:1px 6px;border-radius:4px;margin-right:4px;">${_esc(l.lotNo)} ${_fmt(l.qty)}</span>`;
-                }).join('') + (g.lots.length > 4 ? `<span style="font-size:0.72rem;color:var(--text-muted);">+${g.lots.length - 4}</span>` : '');
-                return `<tr>
-                    <td><strong>${_esc(g.carModel)}</strong></td>
-                    <td>${_esc(g.partName)}</td>
-                    <td>${_esc(g.color || '-')}</td>
-                    <td style="text-align:right;font-weight:800;color:${accent};">${_fmt(g.stock)}</td>
-                    <td>${lotTxt || '-'}</td>
+        // LOT 단위로 펼쳐 각 행에서 바로 반납할 수 있게 한다.
+        // 반납 입구가 "도장 실적의 계획 미달 블록" 하나뿐이라, 실적 저장 후에 남은 자재를
+        // 발견하면 되돌릴 방법이 없었다(그 수량이 계속 '유실'로 잡힘).
+        const lotRows = [];
+        items.forEach(function (g) {
+            (g.lots || []).forEach(function (l) {
+                if (!(Number(l.qty) > 0)) return;
+                lotRows.push({
+                    carModel: g.carModel, partName: g.partName, color: g.color || '',
+                    lotNo: l.lotNo, qty: Number(l.qty) || 0, date: l.date || ''
+                });
+            });
+        });
+
+        const rows = lotRows.length
+            ? lotRows.map(function (r) {
+                const days = _daysSinceDate(r.date);
+                const dayColor = days >= 7 ? 'var(--accent-red)' : (days >= 3 ? '#b45309' : 'var(--text-muted)');
+                const used = _lotUsedInProduction(want, r.carModel, r.partName, r.lotNo);
+                return `<tr${used ? ' style="background:rgba(180,83,9,.05);"' : ''}>
+                    <td><strong>${_esc(r.carModel)}</strong></td>
+                    <td>${_esc(r.partName)}</td>
+                    <td>${_esc(r.color || '-')}</td>
+                    <td style="font-family:monospace;font-weight:700;">${_esc(r.lotNo)}
+                        ${used ? `<div style="font-size:0.68rem;font-weight:700;color:#b45309;"
+                            title="이 LOT은 이미 도장 작업에 투입된 적이 있습니다. 남은 수량이 실물인지, 실적 투입수량을 적게 등록한 것인지 확인이 필요합니다.">
+                            생산 완료분 · 실물 확인 필요</div>` : ''}</td>
+                    <td style="text-align:right;font-weight:800;color:${accent};">${_fmt(r.qty)}</td>
+                    <td style="white-space:nowrap;font-size:0.8rem;">
+                        ${r.date ? _esc(String(r.date).slice(0, 10)) : '-'}
+                        ${days != null ? `<div style="font-size:0.7rem;font-weight:${days >= 3 ? '700' : '400'};color:${dayColor};">${days}일 경과</div>` : ''}
+                    </td>
+                    <td style="text-align:center;white-space:nowrap;font-size:0.76rem;color:var(--text-muted);"
+                        title="반납은 이 자재를 실제로 사용한 도장 실적의 「보기」에서 그 실적 몫으로만 처리합니다.">
+                        ${used ? '생산 투입됨' : '미투입'}
+                    </td>
                 </tr>`;
             }).join('')
-            : `<tr><td colspan="5" style="text-align:center;padding:28px;color:var(--text-muted);">
+            : `<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--text-muted);">
                 투입 대기 자재가 없습니다. 사출 창고에서 <strong>생산출고</strong> 시 도착 라인을 선택하세요.
                </td></tr>`;
 
@@ -1299,14 +1424,22 @@ var PaintingInputModule = (function () {
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header"><h4 style="margin:0;">${want} 현장 투입 자재</h4></div>
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <h4 style="margin:0;">${want} 현장 잔량 (투입 대기 자재)</h4>
+                        <span style="font-size:0.76rem;color:var(--text-muted);">
+                            현장 입고 − 작업 투입 − 반납 = 잔량.
+                            <strong>미투입 LOT</strong>은 여기서 바로 반납하고,
+                            <strong>생산에 투입된 LOT</strong>은 해당 실적 「보기」에서 그 실적 몫으로 반납합니다.
+                        </span>
+                    </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
                             <table class="data-table">
                                 <thead>
                                     <tr>
-                                        <th>차종</th><th>품명</th><th>컬러</th>
-                                        <th style="text-align:right;">재고(EA)</th><th>LOT</th>
+                                        <th>차종</th><th>사출명</th><th>컬러</th><th>사출 LOT</th>
+                                        <th style="text-align:right;">잔량(EA)</th><th>입고일</th>
+                                        <th style="text-align:center;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody>${rows}</tbody>
@@ -1396,6 +1529,50 @@ var PaintingInputModule = (function () {
         } catch (e) {
             return '진단 오류: ' + (e && e.message ? e.message : e);
         }
+    }
+
+    /**
+     * 이 작업 조건(일자·라인·차종·사출자재/LOT)으로 **사출창고에 반납된 수량**.
+     * 자재과잉/유실은 `분출 − 투입`으로만 계산돼 왔는데, 남은 자재를 반납하면 그 수량이
+     * 그대로 "유실"로 잡힌다(반납했는데 잃어버린 것으로 표시됨). 반납분은 빼야 한다.
+     */
+    function getReturnedQtyForWork(line, opts) {
+        opts = opts || {};
+        const want = _normLine(line);
+        const day = String(opts.date || '').slice(0, 10);
+        if (!day) return 0;
+
+        const lotSet = {};
+        (opts.lots || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) lotSet[n] = true;
+        });
+        if (opts.lotNo) lotSet[String(opts.lotNo).trim()] = true;
+        const hasLots = Object.keys(lotSet).length > 0;
+        const injPart = String(opts.injPartName || opts.partName || '').trim();
+
+        let total = 0;
+        (_recordsForLine(want) || []).forEach(function (r) {
+            if (!r || String(r.type || '') === '입고') return;
+            if (!/반납/.test(String(r.source || ''))) return;
+            if (String(r.date || '').slice(0, 10) !== day) return;
+            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
+
+            const rLots = Array.isArray(r.lots) && r.lots.length
+                ? r.lots
+                : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
+            if (hasLots) {
+                rLots.forEach(function (l) {
+                    const n = String(l.lotNo || '').trim();
+                    if (n && lotSet[n]) total += Number(l.qty) || 0;
+                });
+                return;
+            }
+            // LOT 정보가 없으면 사출자재명으로 매칭 (구 데이터 안전망)
+            if (injPart && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPart) return;
+            total += Number(r.quantity) || 0;
+        });
+        return total;
     }
 
     function getIssuedQtyForWork(line, opts) {
@@ -1744,7 +1921,10 @@ var PaintingInputModule = (function () {
             returnReason: opts.reason || '',
             returnStatus: 'pending',
             refWorkId: opts.workId || undefined,
-            returnedBy: opts.returnedBy || ''
+            returnedBy: opts.returnedBy || '',
+            // 실물 확인 여부 — 창고에서 「입고 처리」할 때 판단 근거가 된다
+            physicalVerified: !!opts.physicalVerified,
+            verifiedAt: opts.verifiedAt || ''
         });
     }
 
@@ -1808,6 +1988,7 @@ var PaintingInputModule = (function () {
         openInboundMatchView: openInboundMatchView,
         refreshInboundMatchPanel: refreshInboundMatchPanel,
         getIssuedQtyForWork: getIssuedQtyForWork,
+        getReturnedQtyForWork: getReturnedQtyForWork,
         debugIssuedQtyInfo: _debugIssuedQtyInfo,
         canConfirmInbound: _canConfirmInbound,
         groupStock: _groupStock,
