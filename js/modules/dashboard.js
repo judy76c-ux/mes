@@ -375,9 +375,15 @@ const DashboardModule = (function() {
             .filter(function (p) {
                 const day = _dashPlanDay(p);
                 if (!day || day > today) return false;
+                // 도장 완료 예정 시각(종료시각)이 지나야 "미입력" 후보다. 시작 시각만 보면
+                // 아직 생산 중인 계획도 즉시 실적 누락으로 잡혀 담당자를 혼란스럽게 한다.
                 if (day === today) {
-                    const start = String(p.startTime || p.slot || '').trim();
-                    if (start && start > nowHm) return false;
+                    const end = String(p.endTime || '').trim();
+                    if (end) { if (end > nowHm) return false; }
+                    else {
+                        const start = String(p.startTime || p.slot || '').trim();
+                        if (start && start > nowHm) return false;
+                    }
                 }
                 if (!(p.carModel || p.partName)) return false;
                 if (!(Number(p.planQty) > 0)) return false;

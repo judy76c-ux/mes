@@ -830,6 +830,16 @@ var PaintingInputModule = (function () {
                 PaintingWorkModule.renderInputStockSection();
             }
         } catch (e) { /* ignore */ }
+        try {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.renderPlanSummary === 'function') {
+                PaintingWorkModule.renderPlanSummary();
+            }
+        } catch (e) { /* ignore */ }
+        try {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.renderUnenteredPlans === 'function') {
+                PaintingWorkModule.renderUnenteredPlans();
+            }
+        } catch (e) { /* ignore */ }
     }
 
     function _nowHm() {
@@ -862,7 +872,9 @@ var PaintingInputModule = (function () {
         };
         try {
             const strict = collect(true);
-            if (Object.keys(strict).length > 1) return strict; // inj 자기 자신 외에 뭔가 더 찾았으면 성공
+            // inj 자기 자신만 있어도 아래 정방향 매칭에서 다시 잡을 수 있다.
+            // 제품명이 하나라도 더 붙었으면 그걸 우선 반환.
+            if (Object.keys(strict).length > 1) return strict;
             const loose = collect(false);
             return Object.keys(loose).length > 1 ? loose : strict;
         } catch (e) {
@@ -870,6 +882,28 @@ var PaintingInputModule = (function () {
             if (inj) names[inj] = true;
             return names;
         }
+    }
+
+    /** 계획 품명 → 사출명 정방향 집합 (역매핑 실패 시 보완) */
+    function _resolveInjPartNamesFromProduct(carModel, planPartName) {
+        const part = String(planPartName || '').trim();
+        const names = {};
+        if (!part) return names;
+        const collect = function (matchCarModel) {
+            (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
+                if (!m || !m.injPartName) return;
+                if (matchCarModel && carModel && m.carModel && m.carModel !== carModel) return;
+                const mfg1 = String(m.mfgProductName || '').trim();
+                const mfg2 = String(m.mfgProductName2 || '').trim();
+                if (mfg1 !== part && mfg2 !== part) return;
+                names[String(m.injPartName).trim()] = true;
+            });
+        };
+        try {
+            collect(true);
+            if (!Object.keys(names).length) collect(false);
+        } catch (e) { /* ignore */ }
+        return names;
     }
 
     /** 복합 컬러 호환 판정 — BLACK ↔ BK+CLEAR, BK ↔ BLACK 등 */
@@ -948,12 +982,29 @@ var PaintingInputModule = (function () {
         // 다른 개념이다 — 흰 원료가 AZ3로 도장되는 게 정상이므로 여기서 직접 비교하면 항상
         // 불일치해 매칭이 통째로 실패한다(계획수량 "—" 표시 원인). carModel+제품명 매핑으로
         // 이미 충분히 좁혀지므로 컬러는 비교하지 않는다.
-        return plans.filter(function (p) {
+        const matched = plans.filter(function (p) {
             if (car && p.carModel && p.carModel !== car) return false;
             const pPart = String(p.partName || '').trim();
-            if (pPart && !productNames[pPart] && pPart !== injPart) return false;
-            return true;
+            if (!pPart) return true;
+            // ① 역매핑: 사출명 → 계획 품명
+            if (productNames[pPart] || pPart === injPart) return true;
+            // ② 정방향: 계획 품명 → 사출명에 이 출고 사출명이 있으면 매칭
+            //    (마스터에 제품명만 등록되고 역매핑 키가 안 잡히는 경우 보완)
+            if (injPart) {
+                const injNames = _resolveInjPartNamesFromProduct(p.carModel || car, pPart);
+                if (injNames[injPart]) return true;
+            }
+            return false;
         });
+        if (matched.length) return matched;
+
+        // ③ 같은 차종·라인에 유효 계획이 1건뿐이면 그 계획으로 폴백
+        //    (사출자재 마스터 미등록이어도 헤더 계획합계와 행 계획수량이 어긋나지 않게)
+        const sameCar = plans.filter(function (p) {
+            return !car || !p.carModel || String(p.carModel).trim() === car;
+        });
+        if (sameCar.length === 1) return sameCar;
+        return [];
     }
 
     /** 계획수량 근거 — 어떤 계획을 몇 건 더했는지 툴팁으로 보여준다 (허수 오차 추적용) */
@@ -1536,6 +1587,10 @@ var PaintingInputModule = (function () {
      * 자재과잉/유실은 `분출 − 투입`으로만 계산돼 왔는데, 남은 자재를 반납하면 그 수량이
      * 그대로 "유실"로 잡힌다(반납했는데 잃어버린 것으로 표시됨). 반납분은 빼야 한다.
      */
+    // 반납은 작업일 당일이 아니라 다음날 등 나중에 처리되는 게 정상이다(현장 정리 후 반납,
+    // 창고 확인 대기 등). 반납 레코드를 작업일과 같은 날짜로 제한하면, 하루만 지나도 이미
+    // 반납된 수량을 "아직 반납 안 됨"으로 다시 세어 중복 반납을 유도하는 사고가 난다.
+    // 그래서 날짜 대신 LOT 번호로만 범위를 좁힌다 — LOT은 그 자체로 유일한 실물 단위다.
     function getReturnedQtyForWork(line, opts) {
         opts = opts || {};
         const want = _normLine(line);
@@ -1555,7 +1610,20 @@ var PaintingInputModule = (function () {
         (_recordsForLine(want) || []).forEach(function (r) {
             if (!r || String(r.type || '') === '입고') return;
             if (!/반납/.test(String(r.source || ''))) return;
-            if (String(r.date || '').slice(0, 10) !== day) return;
+
+            // ① 이 실적이 직접 만든 반납(「이 실적 몫 반납」)은 refWorkId로 확정 매칭한다.
+            // LOT 기준 매칭만 쓰면, 이 실적이 투입한 LOT이 아니라 "같은 입고 배치의 다른
+            // LOT"을 반납한 경우(예: LH 실적은 260623만 썼는데 같은 배치의 260625·260629를
+            // 반납) 그 반납이 이 실적 소관인데도 LOT이 안 겹쳐 0으로 보이는 문제가 있었다.
+            if (opts.workId && r.refWorkId && String(r.refWorkId) === String(opts.workId)) {
+                total += Number(r.quantity) || 0;
+                return;
+            }
+            if (r.refWorkId) return;   // 다른 실적이 만든 반납은 LOT매칭 폴백에서도 제외
+
+            // LOT 정보가 있으면 LOT 번호로만 매칭(날짜 무관). LOT 정보가 없는 구 데이터일 때만
+            // 날짜를 폴백 기준으로 쓴다.
+            if (!hasLots && String(r.date || '').slice(0, 10) !== day) return;
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
 
             const rLots = Array.isArray(r.lots) && r.lots.length

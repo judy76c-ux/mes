@@ -5711,13 +5711,26 @@ var LaserStandbyModule = (function() {
         return rec;
     }
 
-    // 도장 담당자가 작업일보를 정정한 뒤 배지를 해제할 때 사용.
-    async function resolveInboundConfirmDiff(paintingWorkId) {
+    // 도장 담당자가 재확인 후 배지를 해제할 때 사용.
+    // opts.asLoss=true 이면 수정 없이 오차를 유실로 확정한 것으로 기록한다.
+    async function resolveInboundConfirmDiff(paintingWorkId, opts) {
+        opts = opts || {};
         await _ensureInboundConfirmLoaded();
         const rec = _getInboundConfirm(paintingWorkId);
         if (!rec) return false;
         rec.resolved = true;
         rec.resolvedAt = new Date().toISOString();
+        try {
+            const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+                ? AuthModule.getCurrentUser()
+                : null;
+            rec.resolvedBy = (user && (user.displayName || user.username)) || '';
+        } catch (e) { /* ignore */ }
+        if (opts.asLoss) {
+            rec.resolvedAsLoss = true;
+            rec.lossQty = Number(opts.lossQty) || Math.abs(Number(rec.diff) || 0);
+            rec.diffReason = opts.note || rec.diffReason || '도장 실적 미수정 — 유실 확정';
+        }
         await _saveInboundConfirms();
         return true;
     }

@@ -2290,6 +2290,27 @@ input[type="time"] {
     animation: manualAdjustBlink 1.4s ease-in-out infinite;
 }
 
+/* 생산 진행 중인데 현장 사출 입고 확인이 없을 때 */
+@keyframes pwMissingInboundBlink {
+    0%, 100% {
+        background-color: rgba(220, 38, 38, 0.07);
+    }
+
+    50% {
+        background-color: rgba(220, 38, 38, 0.32);
+    }
+}
+
+.pw-missing-inbound-row {
+    animation: pwMissingInboundBlink 1.2s ease-in-out infinite;
+}
+
+.pw-missing-inbound-card {
+    animation: pwMissingInboundBlink 1.2s ease-in-out infinite;
+    outline: 2px solid rgba(220, 38, 38, 0.55);
+    outline-offset: -2px;
+}
+
 @keyframes slideUp {
     from {
         opacity: 0;

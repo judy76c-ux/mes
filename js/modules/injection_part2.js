@@ -1367,7 +1367,7 @@ var InjectionWarehouseModule = (function() {
     function _formatDeductionSummary(deductions) {
         if (!deductions || !deductions.length) return '';
         return deductions.map(function(d) {
-            if (d.lotNo === InvCalc.UNMATCHED) return '미차감 ' + UIUtils.formatNumber(d.qty);
+            if (d.lotNo === InvCalc.UNMATCHED) return '자동 리셋 ' + UIUtils.formatNumber(d.qty);
             return d.lotNo + ' −' + UIUtils.formatNumber(d.qty);
         }).join(', ');
     }

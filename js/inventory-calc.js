@@ -9,12 +9,14 @@
  * (B)는 차감하지 못한 출고를 조용히 버렸기 때문에 (A)와 영구히 어긋났다.
  *
  * 이 모듈의 규칙:
- *   1) LOT 잔량 = 해당 LOT의 (입고 − 출고).  음수도 그대로 둔다(= 데이터 이상의 신호).
- *   2) 총 재고 = 모든 LOT 잔량의 합.  따라서 총 재고와 LOT 합계는 정의상 항상 일치한다.
+ *   1) LOT 잔량 = 해당 LOT의 (입고 − 출고).  잔량은 0 밑으로 내려가지 않는다.
+ *   2) 총 재고 = 모든 LOT 잔량(실물)의 합.  따라서 총 재고와 LOT 합계는 정의상 항상 일치한다.
  *   3) 수량의 진실은 lots[] 이다. lots[] 가 있으면 quantity 는 무시한다.
  *      (quantity 가 lots[] 합계와 다른 손상된 레코드가 실제로 존재한다)
  *   4) 날짜는 'YYYY-MM-DD' 와 'YYYY-MM-DD HH:MM' 이 섞여 저장된다.
  *      문자열 정렬 시 같은 날 'YYYY-MM-DD' 가 앞서므로, 항상 normDate()로 정규화해 비교한다.
+ *   5) 보유 LOT에서 차감하지 못한 출고(구 미차감)는 자동 리셋한다 — 부채로 쌓지 않고
+ *      표시 재고는 실물 LOT 합만 유지한다. (관리자 수동 반영/리셋 불필요)
  */
 var InvCalc = (function () {
 
@@ -128,9 +130,10 @@ var InvCalc = (function () {
                         return remaining <= 0;
                     });
             }
-            if (remaining > 0) {
-                unmatchedRef.value += remaining;
-                if (deductionsRef) deductionsRef.push({ lotNo: UNMATCHED, qty: remaining });
+            // 자동 리셋: 차감 못 한 출고는 미차감 부채로 쌓지 않는다.
+            // 표시 재고 = 실물 LOT 합만 유지(= 구 미차감 리셋과 동일). unmatchedRef는 쓰지 않음.
+            if (remaining > 0 && deductionsRef) {
+                deductionsRef.push({ lotNo: UNMATCHED, qty: remaining, autoReset: true });
             }
         });
     }
@@ -148,11 +151,8 @@ var InvCalc = (function () {
     }
 
     // 총 재고 = LOT 잔량(map)의 합만 쓴다. map의 각 LOT은 이미 0 밑으로 안 내려가게
-    // 드레인됐으므로(_applyOutgoing) 이 합은 항상 실물 잔량이다. 과거에는 여기서 미차감(debt)을
-    // 다시 빼서 "총재고 = 단순 누적(입고-출고)"과 억지로 맞췄는데, 그러면 과거 어느 시점의
-    // 과다출고 한 건이 이후에 새로 들어온 정상 재고까지 영구히 깎아먹는 문제가 있었다.
-    // 미차감은 총재고에서 빼지 않고 unmatched로만 별도 추적 — LOT이 소진되면 그 LOT만 카운트를
-    // 멈추고, 못 맞춘 초과분은 미차감으로 표시해서 관리자가 반영/리셋으로 처리하게 한다.
+    // 드레인됐으므로(_applyOutgoing) 이 합은 항상 실물 잔량이다. 차감 못 한 출고는
+    // 자동 리셋되어 부채로 쌓이지 않으므로 총재고에서 다시 빼지 않는다.
     function _totalFromMap(map, unmatched, writeOff) {
         return Object.values(map).reduce((s, l) => s + l.qty, 0);
     }
@@ -238,9 +238,8 @@ var InvCalc = (function () {
      * 원장 기록 목록 → LOT별 잔량 + 총 재고.
      *
      * 차감 규칙: ① 출고가 지정한 LOT에서 먼저 차감 → ② 부족하면 오래된 LOT부터(FIFO)
-     *           → ③ 그래도 남으면 버리지 않고 UNMATCHED 가상 LOT에 음수로 쌓는다.
-     * ③ 덕분에 "총 재고 === LOT 잔량 합계" 불변식이 어떤 데이터에서도 깨지지 않는다.
-     * (과거에는 ③에서 조용히 버려서 상단 요약과 LOT 목록이 영구히 어긋났다)
+     *           → ③ 그래도 남으면 자동 리셋(미차감 부채로 쌓지 않음).
+     * 표시 재고 = 실물 LOT 잔량 합만. unmatched는 항상 0.
      *
      * 반환: { total, lots:[{lotNo,qty,date,supplier}], unmatched, negatives:[...], corrupted:[...] }
      */
@@ -254,7 +253,7 @@ var InvCalc = (function () {
             if (isQtyCorrupted(rec)) corrupted.push(rec);
 
             if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
-                // 미차감 clear/absorb
+                // 과거 미차감 clear/absorb 기록 호환(신규 출고는 자동 리셋이라 부채가 안 쌓임)
             } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, null);
             } else {
@@ -262,10 +261,11 @@ var InvCalc = (function () {
             }
         });
 
-        const unmatched = unmatchedRef.value;
+        // 자동 리셋 정책: 잔여 미차감 부채는 표시하지 않음
+        unmatchedRef.value = 0;
+        const unmatched = 0;
         const writeOff = writeOffRef.value;
         const lots = Object.values(map);
-        if (unmatched > 0) lots.push({ lotNo: UNMATCHED, qty: -unmatched, date: '', supplier: '' });
 
         const total = _totalFromMap(map, unmatched, writeOff);
         return { total, lots, unmatched, writeOff, negatives: lots.filter(l => l.qty < 0), corrupted };
