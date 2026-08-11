@@ -3766,23 +3766,85 @@ var LaserWipModule = (function() {
         let unmatched = 0;
         let unmatchedWriteOff = 0;
 
+        // ★ 버그 원인: 기존엔 사출LOT 번호만으로 잔량을 묶었다(wipMap[사출LOT]). 같은 사출LOT이
+        // 서로 다른 도장 생산 배치(도장LOT)에 걸쳐 여러 번 입고되면 — 예: 260526이 07-27에
+        // 도장LOT 260723으로 일부, 08-07에 도장LOT 260807로 나머지가 입고 — "처음 붙은 도장LOT
+        // 라벨이 계속 유지"됐다(`!wipMap[key].paintLot && paintLot`은 라벨이 비어 있을 때만
+        // 갱신). 그래서 07-27 출고로 260723 몫이 실제로는 0으로 다 빠졌는데도, 08-07에 새로
+        // 들어온 5,220개가 옛 라벨(260723) 밑에 계속 표시됐다 — 정작 화면엔 260807이 진짜
+        // 공급원인데도.
+        // 고친 방식: 잔량을 "사출LOT + 도장LOT" 조합으로 따로 묶는다. 각 도장 배치의 몫을
+        // 독립적으로 추적하므로, 옛 배치가 소진되면 그 조합은 자연히 잔량 0으로 빠지고
+        // (표시 시 balance>0만 보여주므로 목록에서 사라짐), 새 배치는 자기 라벨 그대로 남는다.
+        function _bucketKey(lotNo, paintLot) {
+            return String(lotNo || '').trim() + '||' + String(paintLot || '').trim();
+        }
+
         function _ensureLot(lotNo, paintLot) {
-            const key = String(lotNo || '').trim() || '-';
-            if (!wipMap[key]) wipMap[key] = { lotNo: key, paintLot: paintLot || '', balance: 0 };
-            else if (!wipMap[key].paintLot && paintLot) wipMap[key].paintLot = paintLot;
+            const injKey = String(lotNo || '').trim() || '-';
+            const key = _bucketKey(injKey, paintLot);
+            if (!wipMap[key]) wipMap[key] = { lotNo: injKey, paintLot: paintLot || '', balance: 0 };
             return wipMap[key];
+        }
+
+        // 이 사출LOT을 쓰는 모든 도장LOT 버킷 — 입고 순서(=이벤트 처리 순서, 즉 object 삽입
+        // 순서)를 그대로 FIFO로 쓴다. 배열 순서를 보존해야 "오래된 배치부터 먼저 빠진다"가
+        // 성립하므로 알파벳 정렬하지 않는다.
+        function _bucketsForInj(lotNo) {
+            const injKey = String(lotNo || '').trim() || '-';
+            return Object.keys(wipMap).filter(function(k) { return wipMap[k].lotNo === injKey; });
+        }
+
+        // 이 도장LOT에 속한 버킷들(사출LOT은 무엇이든) — 여러 사출LOT을 한 출고 건에 묶어서
+        // "260526,260528" 처럼 콤마 문자열로만 기록된 옛/단순 이력(사출LOT별로 안 쪼개진 경우)
+        // 대응용. 이때도 "어느 도장LOT에서 나갔는지"는 알고 있으므로, 최소한 그 도장LOT의
+        // 버킷들 안에서만 빠지게 한다 — 이게 없으면 알파벳 순으로 무관한 도장LOT까지 갉아먹는다.
+        function _bucketsForPaint(paintLot) {
+            const pl = String(paintLot || '').trim();
+            if (!pl) return [];
+            return Object.keys(wipMap).filter(function(k) { return wipMap[k].paintLot === pl; });
         }
 
         function _drainLots(preferredLotNo, qty, paintLot, trackUnmatched) {
             let remain = Math.max(0, Number(qty) || 0);
             if (remain <= 0) return 0;
             const pref = String(preferredLotNo || '').trim();
-            if (pref && pref !== '-' && wipMap[pref]) {
-                const avail = Math.max(0, wipMap[pref].balance);
-                const take = Math.min(avail, remain);
-                wipMap[pref].balance = Math.max(0, wipMap[pref].balance - take);
-                remain -= take;
-                if (!wipMap[pref].paintLot && paintLot) wipMap[pref].paintLot = paintLot;
+            if (pref && pref !== '-') {
+                // ① 이 출고가 어느 도장LOT에서 나갔는지 알면(paintLot 지정) 그 조합만 정확히 뺀다
+                const exactKey = paintLot ? _bucketKey(pref, paintLot) : '';
+                if (exactKey && wipMap[exactKey]) {
+                    const avail = Math.max(0, wipMap[exactKey].balance);
+                    const take = Math.min(avail, remain);
+                    wipMap[exactKey].balance = Math.max(0, wipMap[exactKey].balance - take);
+                    remain -= take;
+                }
+                // ② 정확히 못 뺐거나(다른 도장LOT 표기·미표기) 남았으면, 이 사출LOT의 나머지
+                //    도장LOT 버킷에서 오래된 것부터 FIFO로 뺀다 — 특정 배치를 지목 못 하는
+                //    출고라도 최소한 다른 사출LOT을 잘못 갉아먹지는 않는다.
+                if (remain > 0) {
+                    _bucketsForInj(pref).forEach(function(k) {
+                        if (remain <= 0 || k === exactKey) return;
+                        const avail = Math.max(0, wipMap[k].balance);
+                        if (avail <= 0) return;
+                        const take = Math.min(avail, remain);
+                        wipMap[k].balance = Math.max(0, wipMap[k].balance - take);
+                        remain -= take;
+                    });
+                }
+            }
+            // ②.5 사출LOT을 특정 못하는 콤마-결합 출고(예: "260526,260528" 하나로만 기록된
+            //     레거시 이력)라도, "이 출고가 어느 도장LOT에서 나갔는지"는 안다. 그 도장LOT의
+            //     버킷들 안에서만 빼서, 최소한 다른 도장 배치(예: 나중에 들어온 260807)를
+            //     잘못 갉아먹는 사고는 막는다 — 이 버그의 실제 재현 케이스가 이 경로였다.
+            if (remain > 0 && paintLot) {
+                _bucketsForPaint(paintLot).forEach(function(k) {
+                    if (remain <= 0) return;
+                    const avail = Math.max(0, wipMap[k].balance);
+                    if (avail <= 0) return;
+                    const take = Math.min(avail, remain);
+                    wipMap[k].balance = Math.max(0, wipMap[k].balance - take);
+                    remain -= take;
+                });
             }
             if (remain > 0) {
                 Object.keys(wipMap).sort(function(a, b) { return String(a).localeCompare(String(b)); }).forEach(function(k) {

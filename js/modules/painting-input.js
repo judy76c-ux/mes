@@ -1243,18 +1243,30 @@ var PaintingInputModule = (function () {
                         ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(37,99,235,0.12);color:#2563eb;" title="계획 종료시각 경과로 시스템이 자동 확정 — 실물 LOT별 수량 확인이 안 됐을 수 있습니다">자동입고</span>'
                         : '')
                 : '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(234,88,12,0.12);color:#ea580c;">미입고</span>';
+            const autoScheduleLabel = (!r.received && endTime)
+                ? (function () {
+                    const m = String(endTime).match(/^(\d{1,2}):(\d{2})/);
+                    if (!m) return String(endTime) + '에 자동입고 처리예정';
+                    return Number(m[1]) + '시' + m[2] + '분에 자동입고 처리예정';
+                })()
+                : '';
             const actionHtml = r.received
-                ? `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                ? `<div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
                     <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
                         title="도장일·생산계획 매칭 확인"
                         onclick="PaintingInputModule.openInboundMatchView('${_esc((recv && recv.id) || r.id)}','${_esc(want)}')">보기</button>
                     <span style="font-size:0.75rem;color:var(--text-muted);">${_esc((recv && recv.receivedBy) || '-')}${isAutoReceived ? ' (자동)' : ''}</span>
                    </div>`
                 : (canWrite
-                    ? `<button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;white-space:nowrap;"
-                        onclick="${confirmFn}('${_esc(r.id)}','${_esc(want)}')">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
-                       </button>`
+                    ? `<div style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
+                        <button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;white-space:nowrap;"
+                            onclick="${confirmFn}('${_esc(r.id)}','${_esc(want)}')">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
+                        </button>` +
+                        (autoScheduleLabel
+                            ? `<span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;" title="계획 완료시각 경과 시 자동 입고 처리">${_esc(autoScheduleLabel)}</span>`
+                            : '') +
+                       `</div>`
                     : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>');
             const endHint = endTime && !r.received
                 ? ' title="작업 완료 ' + _esc(endTime) + ' 이후 자동 입고"'

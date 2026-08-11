@@ -1532,7 +1532,7 @@ var InjectionWarehouseModule = (function() {
                                         <th>품명</th>
                                         <th>컬러</th>
                                         <th>사출처</th>
-                                        <th>LOT번호</th>
+                                        <th>사출 LOT</th>
                                         <th style="text-align:right;">수량</th>
                                         <th style="text-align:right;">금액</th>
                                         <th>유형</th>
