@@ -74,11 +74,36 @@ var InjectionWarehouseModule = (function() {
         return Math.max(0, Number(rec && rec.ackedQty) || 0);
     }
 
+    /**
+     * IL 계열 — 사출창고 생산출고가 아니라 리워크 재공품 → 도장현장 출고로 투입한다.
+     * (예: T1XX / IL / BLACK)
+     */
+    function _isReworkSourcedPart(partName) {
+        const p = String(partName || '').trim().toUpperCase().replace(/\s+/g, ' ');
+        if (!p) return false;
+        if (p === 'IL') return true;
+        if (/^IL[\s\-_\/]/.test(p)) return true;
+        return false;
+    }
+
+    function _getReworkWipStock(carModel, partName, color) {
+        try {
+            if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.getStockQty === 'function') {
+                return Math.max(0, Number(ReworkWipModule.getStockQty(carModel, partName, color)) || 0);
+            }
+        } catch (e) { /* ignore */ }
+        return 0;
+    }
+
     /** 현장 입고 필요 표시량·부족량 (창고 재고 대비, 에러 처리분 차감)
      *  대기+진행(미실적) 계획 합계 — 현장에 아직 안 넣은 전체 필요량
+     *  IL 등 리워크 투입품은 사출창고가 아니라 리워크 재공 재고로 부족을 판정한다.
      */
     function _calcSiteInboundNeed(item, reserved) {
-        const stock = Math.max(0, Number(item && item.stock) || 0);
+        const fromRework = _isReworkSourcedPart(item && item.partName);
+        const injStock = Math.max(0, Number(item && item.stock) || 0);
+        const reworkStock = fromRework ? _getReworkWipStock(item.carModel, item.partName, item.color) : 0;
+        const stock = fromRework ? reworkStock : injStock;
         const pending = Math.max(0, Number(reserved && reserved.pending) || 0);
         const inProgress = Math.max(0, Number(reserved && reserved.inProgress) || 0);
         const rawNeed = pending + inProgress;
@@ -91,6 +116,9 @@ var InjectionWarehouseModule = (function() {
             inProgress: inProgress,
             need: need,
             stock: stock,
+            injStock: injStock,
+            reworkStock: reworkStock,
+            fromRework: fromRework,
             shortage: shortage,
             acked: acked
         };
@@ -145,6 +173,7 @@ var InjectionWarehouseModule = (function() {
                 need: calc.need,
                 stock: calc.stock,
                 shortage: calc.shortage,
+                fromRework: !!calc.fromRework,
                 planDate: sched.date,
                 planTime: sched.time,
                 planLine: sched.line,
@@ -174,6 +203,13 @@ var InjectionWarehouseModule = (function() {
         }
         card.style.display = '';
         if (badge) badge.textContent = rows.length + '건';
+        const hasRework = rows.some(function (r) { return r.fromRework; });
+        const hint = document.querySelector('#injSiteInboundShortageCard .card-header > span:last-child');
+        if (hint) {
+            hint.textContent = hasRework
+                ? 'IL 등은 리워크 재공 재고 기준입니다. 부족 시 사유 입력 후 에러 처리하세요.'
+                : '계획 대비 현장 입고가 필요한데 창고 재고가 부족합니다. 사유 입력 후 에러 처리하세요.';
+        }
         body.innerHTML = rows.map(function (row) {
             const em = encodeURIComponent(row.carModel);
             const ep = encodeURIComponent(row.partName);
@@ -193,19 +229,25 @@ var InjectionWarehouseModule = (function() {
                     (row.planCount > 1 ? ' 외 ' + (row.planCount - 1) + '건' : '') +
                   '</div>'
                 : '<span style="color:var(--text-muted);">-</span>';
+            const stockLabel = row.fromRework
+                ? '<div style="font-size:0.68rem;color:#7c3aed;font-weight:700;">리워크재고</div>'
+                : '';
+            const partTag = row.fromRework
+                ? ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크</span>'
+                : '';
             return '<tr>' +
                 '<td style="white-space:nowrap;"><strong>' + (row.carModel || '-') + '</strong></td>' +
-                '<td style="white-space:nowrap;">' + (row.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + (row.partName || '-') + partTag + '</td>' +
                 '<td style="white-space:nowrap;">' + (row.color || '-') + '</td>' +
                 '<td style="white-space:nowrap;">' + schedHtml + '</td>' +
                 '<td style="text-align:right;font-weight:700;color:#ea580c;">' + UIUtils.formatNumber(row.need) + '</td>' +
                 '<td style="text-align:right;font-weight:700;color:' + (row.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)') + ';">' +
-                    UIUtils.formatNumber(row.stock) + '</td>' +
+                    stockLabel + UIUtils.formatNumber(row.stock) + '</td>' +
                 '<td style="text-align:right;font-weight:800;color:var(--accent-red);">' + UIUtils.formatNumber(row.shortage) + '</td>' +
                 '<td style="white-space:nowrap;">' +
                     '<button type="button" class="btn btn-sm" style="background:#ea580c;color:#fff;border:none;padding:4px 10px;"' +
                     ' onclick="InjectionWarehouseModule.openSiteInboundShortageResolve(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' +
-                    row.need + ',' + row.stock + ',' + row.shortage + ')">' +
+                    row.need + ',' + row.stock + ',' + row.shortage + ',' + (row.fromRework ? '1' : '0') + ')">' +
                     '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">task_alt</span> 에러 처리' +
                     '</button>' +
                 '</td></tr>';
@@ -342,40 +384,64 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
-    function openSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage) {
+    function openSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage, fromReworkFlag) {
         const carModel = decodeURIComponent(carEnc || '');
         const partName = decodeURIComponent(partEnc || '');
         const color = decodeURIComponent(colorEnc || '');
         const needQty = Number(need) || 0;
         const stockQty = Number(stock) || 0;
         const shortQty = Number(shortage) || 0;
+        const fromRework = fromReworkFlag === 1 || fromReworkFlag === '1' || fromReworkFlag === true
+            || _isReworkSourcedPart(partName);
+        const stockLabel = fromRework ? '리워크 재공 재고' : '현재고';
+        const modalTitle = fromRework ? '리워크 재공 부족 에러 처리' : '현장 입고 부족 에러 처리';
+        const guideText = fromRework
+            ? 'IL 등은 사출창고가 아니라 <strong>리워크 재공품 → 도장현장 출고</strong>로 투입합니다. 재공 재고가 부족하면 사유를 남기고 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)'
+            : '창고 재고가 부족해 현장 입고가 불가한 경우 사유를 남기고, 선택한 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)';
+        const placeholder = fromRework
+            ? '예: 리워크 재공품 부족 — 외관검사 리워크 입고 대기 / 도장현장 출고 지연'
+            : '예: 자재 부족으로 현장 입고 불가 — 추가 사출 대기';
+        const reworkActions = (fromRework && stockQty > 0)
+            ? '<div style="margin:10px 0 0;padding:10px 12px;border-radius:8px;border:1px solid rgba(124,58,237,.28);background:rgba(124,58,237,.06);font-size:0.82rem;">' +
+                '<div style="margin-bottom:8px;color:#7c3aed;font-weight:700;">리워크 재공 ' + UIUtils.formatNumber(stockQty) + ' EA 보유 — 먼저 현장 출고할 수 있습니다.</div>' +
+                '<button type="button" class="btn btn-sm btn-outline" style="border-color:#7c3aed;color:#7c3aed;" ' +
+                'onclick="InjectionWarehouseModule.openReworkDispatchFromShortage(\'' +
+                encodeURIComponent(carModel) + '\',\'' + encodeURIComponent(partName) + '\',\'' +
+                encodeURIComponent(color) + '\',' + stockQty + ')">' +
+                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">autorenew</span> 리워크 재공품에서 출고</button>' +
+              '</div>'
+            : (fromRework
+                ? '<div style="margin:10px 0 0;font-size:0.78rem;color:#7c3aed;">리워크 재공 재고가 없습니다. 「리워크 재공품」에서 입고(외관검사 리워크) 후 현장 출고하세요.</div>'
+                : '');
 
         function _show(savedIds) {
             UIUtils.showModal(
-                '현장 입고 부족 에러 처리',
+                modalTitle,
                 '<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(234,88,12,0.08);border:1px solid rgba(234,88,12,0.25);font-size:0.85rem;">' +
                     '<div><strong>' + _escapeHtml(carModel || '-') + '</strong> / ' + _escapeHtml(partName || '-') +
-                    (color ? ' / ' + _escapeHtml(color) : '') + '</div>' +
+                    (color ? ' / ' + _escapeHtml(color) : '') +
+                    (fromRework ? ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크 투입</span>' : '') +
+                    '</div>' +
                     '<div style="margin-top:6px;color:var(--text-secondary);">' +
                         '현장 입고 필요 <strong style="color:#ea580c;">' + UIUtils.formatNumber(needQty) + '</strong> EA · ' +
-                        '현재고 <strong>' + UIUtils.formatNumber(stockQty) + '</strong> EA · ' +
+                        stockLabel + ' <strong>' + UIUtils.formatNumber(stockQty) + '</strong> EA · ' +
                         '부족 <strong style="color:var(--accent-red);">' + UIUtils.formatNumber(shortQty) + '</strong> EA' +
                     '</div>' +
-                    '<div style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);">' +
-                        '창고 재고가 부족해 현장 입고가 불가한 경우 사유를 남기고, 선택한 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)' +
-                    '</div>' +
+                    '<div style="margin-top:6px;font-size:0.78rem;color:var(--text-muted);">' + guideText + '</div>' +
+                    reworkActions +
                 '</div>' +
                 '<div class="form-group">' +
                     '<label class="form-label">사유 <span style="color:var(--accent-red);">*</span></label>' +
                     '<textarea id="injSiteInboundShortageReason" class="form-input" rows="3" ' +
-                        'placeholder="예: IL 자재 부족으로 현장 입고 불가 — 추가 사출 대기" style="width:100%;resize:vertical;"></textarea>' +
+                        'placeholder="' + _escapeHtml(placeholder) + '" style="width:100%;resize:vertical;"></textarea>' +
                 '</div>' +
                 _buildSiteInboundShortageNotifyHtml(savedIds),
                 '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
                 '<button class="btn btn-primary" style="background:#ea580c;border-color:#ea580c;" ' +
                     'onclick="InjectionWarehouseModule.confirmSiteInboundShortageResolve(\'' +
                     encodeURIComponent(carModel) + '\',\'' + encodeURIComponent(partName) + '\',\'' +
-                    encodeURIComponent(color) + '\',' + needQty + ',' + stockQty + ',' + shortQty + ')">' +
+                    encodeURIComponent(color) + '\',' + needQty + ',' + stockQty + ',' + shortQty + ',' +
+                    (fromRework ? '1' : '0') + ')">' +
                     '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">send</span> 저장하고 보내기</button>',
                 'md'
             );
@@ -384,7 +450,25 @@ var InjectionWarehouseModule = (function() {
         _ensureSiteInboundShortageNotifyIdsLoaded().then(_show).catch(function () { _show([]); });
     }
 
-    async function confirmSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage) {
+    function openReworkDispatchFromShortage(carEnc, partEnc, colorEnc, availableQty) {
+        const carModel = decodeURIComponent(carEnc || '');
+        const partName = decodeURIComponent(partEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const max = Math.max(0, Number(availableQty) || 0);
+        UIUtils.closeModal();
+        if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.openDispatchModal === 'function') {
+            ReworkWipModule.openDispatchModal(carModel, partName, color, max);
+            return;
+        }
+        if (typeof Router !== 'undefined' && Router.navigate) {
+            Router.navigate('painting-rework-wip');
+            UIUtils.toast('리워크 재공품 화면에서 도장현장 출고를 진행하세요.', 'info');
+            return;
+        }
+        UIUtils.toast('리워크 재공품 모듈을 찾을 수 없습니다.', 'error');
+    }
+
+    async function confirmSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage, fromReworkFlag) {
         const reasonEl = document.getElementById('injSiteInboundShortageReason');
         const reason = reasonEl ? String(reasonEl.value || '').trim() : '';
         if (!reason) {
@@ -402,6 +486,8 @@ var InjectionWarehouseModule = (function() {
         const needQty = Number(need) || 0;
         const stockQty = Number(stock) || 0;
         const shortQty = Number(shortage) || 0;
+        const fromRework = fromReworkFlag === 1 || fromReworkFlag === '1' || fromReworkFlag === true
+            || _isReworkSourcedPart(partName);
         if (shortQty <= 0) {
             UIUtils.toast('처리할 부족 수량이 없습니다.', 'info');
             UIUtils.closeModal();
@@ -415,17 +501,22 @@ var InjectionWarehouseModule = (function() {
         const actorLabel = actor
             ? String(actor.displayName || actor.name || actor.username || actor.id || '')
             : '';
+        const stockLabel = fromRework ? '리워크 재공 재고' : '현재고';
+        const reportTitle = fromRework
+            ? '리워크 재공 부족 사유 보고 — ' + (partName || carModel || '')
+            : '현장 입고 부족 사유 보고 — ' + (partName || carModel || '');
         const reportBody =
-            '[현장 입고 부족 사유 보고]\n' +
+            (fromRework ? '[리워크 재공 부족 사유 보고]\n' : '[현장 입고 부족 사유 보고]\n') +
             '차종/사출명/컬러: ' + (carModel || '-') + ' / ' + (partName || '-') + (color ? ' / ' + color : '') + '\n' +
+            (fromRework ? '투입 경로: 리워크 재공품 → 도장현장 출고\n' : '') +
             '현장 입고 필요: ' + UIUtils.formatNumber(needQty) + ' EA\n' +
-            '현재고: ' + UIUtils.formatNumber(stockQty) + ' EA\n' +
+            stockLabel + ': ' + UIUtils.formatNumber(stockQty) + ' EA\n' +
             '부족: ' + UIUtils.formatNumber(shortQty) + ' EA\n' +
             '사유: ' + reason + '\n' +
             '보고자: ' + (actorLabel || '-');
         const sendResult = _sendSiteInboundShortageReport({
             recipientIds: recipientIds,
-            title: '현장 입고 부족 사유 보고 — ' + (partName || carModel || ''),
+            title: reportTitle,
             body: reportBody
         });
         if (!sendResult.ok) {
@@ -446,6 +537,7 @@ var InjectionWarehouseModule = (function() {
             needAtResolve: needQty,
             stockAtResolve: stockQty,
             shortageAtResolve: shortQty,
+            fromRework: !!fromRework,
             notifiedUserIds: recipientIds,
             resolvedAt: (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')),
             resolvedBy: actorLabel,
@@ -454,6 +546,7 @@ var InjectionWarehouseModule = (function() {
                 shortage: shortQty,
                 need: needQty,
                 stock: stockQty,
+                fromRework: !!fromRework,
                 notifiedUserIds: recipientIds,
                 at: UIUtils.now ? UIUtils.now() : new Date().toISOString(),
                 by: actorLabel
@@ -1651,7 +1744,9 @@ var InjectionWarehouseModule = (function() {
                                                 <div style="font-weight:400;font-size:0.68rem;color:var(--text-muted);">가장 빠른 계획 · 라인</div>
                                             </th>
                                             <th style="text-align:right;white-space:nowrap;">현장 입고 필요</th>
-                                            <th style="text-align:right;white-space:nowrap;">현재고</th>
+                                            <th style="text-align:right;white-space:nowrap;">현재고
+                                                <div style="font-weight:400;font-size:0.68rem;color:var(--text-muted);">IL=리워크재고</div>
+                                            </th>
                                             <th style="text-align:right;white-space:nowrap;">부족</th>
                                             <th style="white-space:nowrap;">작업</th>
                                         </tr>
@@ -1885,14 +1980,17 @@ var InjectionWarehouseModule = (function() {
                 let stockHtml;
                 if (siteNeed.need > 0) {
                     const shortageHint = siteNeed.shortage > 0
-                        ? ' · 재고부족 ' + UIUtils.formatNumber(siteNeed.shortage)
+                        ? (siteNeed.fromRework ? ' · 리워크부족 ' : ' · 재고부족 ') + UIUtils.formatNumber(siteNeed.shortage)
                         : '';
+                    const needTitle = siteNeed.fromRework
+                        ? 'IL은 리워크 재공 재고 기준 · 대기 ' + UIUtils.formatNumber(siteNeed.pending) + ' + 진행 ' + UIUtils.formatNumber(siteNeed.inProgress) + ' = 현장 입고 필요' + shortageHint
+                        : '대기 ' + UIUtils.formatNumber(siteNeed.pending) + ' + 진행 ' + UIUtils.formatNumber(siteNeed.inProgress) + ' = 현장 입고 필요' + shortageHint;
                     stockHtml = `
                         <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;">
                             <span style="font-size:0.85rem;font-weight:700;color:${item.stock > 0 ? 'var(--accent-blue)' : 'var(--accent-red)'};">${UIUtils.formatNumber(item.stock)} EA</span>
                             <span onclick="event.stopPropagation();InjectionWarehouseModule.showReserveDetailPopup(event,'${_ep}','${_em}','${_ec}')"
                                   style="font-size:0.68rem;background:${siteNeed.shortage > 0 ? 'rgba(220,38,38,0.12)' : 'rgba(234,88,12,0.12)'};color:${siteNeed.shortage > 0 ? '#dc2626' : '#ea580c'};border:1px solid ${siteNeed.shortage > 0 ? 'rgba(220,38,38,0.35)' : 'rgba(234,88,12,0.3)'};border-radius:3px;padding:0 4px;white-space:nowrap;cursor:pointer;"
-                                  title="대기 ${UIUtils.formatNumber(siteNeed.pending)} + 진행 ${UIUtils.formatNumber(siteNeed.inProgress)} = 현장 입고 필요${shortageHint}">현장 입고 필요 -${UIUtils.formatNumber(siteNeed.need)} ℹ</span>
+                                  title="${needTitle}">현장 입고 필요 -${UIUtils.formatNumber(siteNeed.need)} ℹ</span>
                         </div>`;
                 } else if (paintUnentered > 0) {
                     stockHtml = `
@@ -9297,6 +9395,7 @@ var InjectionWarehouseModule = (function() {
         showReserveDetailPopup,
         openSiteInboundShortageResolve,
         confirmSiteInboundShortageResolve,
+        openReworkDispatchFromShortage,
         toggleSiteInboundShortageNotify,
         _goToPlan,
         editReservedPlan,

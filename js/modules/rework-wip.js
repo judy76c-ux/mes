@@ -134,6 +134,50 @@ var ReworkWipModule = (function () {
             });
     }
 
+    function _colorAlias(c) {
+        if (typeof UIUtils !== 'undefined' && typeof UIUtils.normalizeColorAlias === 'function') {
+            return UIUtils.normalizeColorAlias(c);
+        }
+        return String(c || '').trim().toLowerCase();
+    }
+
+    function _colorsEqual(a, b) {
+        const x = String(a || '').trim();
+        const y = String(b || '').trim();
+        if (!x || !y) return !x && !y;
+        return _colorAlias(x) === _colorAlias(y);
+    }
+
+    /**
+     * 차종·사출명·컬러 기준 리워크 재공 재고.
+     * 사출창고 「현장 입고 부족」에서 IL 등 리워크 투입품의 현재고로 쓴다.
+     * 재공 쪽 품명이 "IL BLACK"처럼 합쳐진 경우도 매칭한다.
+     */
+    function getStockQty(carModel, partName, color) {
+        const wantCar = String(carModel || '').trim();
+        const wantPart = String(partName || '').trim();
+        const wantColor = String(color || '').trim();
+        const combined = (wantPart + (wantColor ? ' ' + wantColor : '')).trim();
+        let total = 0;
+        _getAll().forEach(function (r) {
+            const rCar = String(r.carModel || '').trim();
+            const rPart = String(r.partName || '').trim();
+            const rColor = String(r.color || '').trim();
+            if (wantCar && rCar && rCar !== wantCar) return;
+            let partOk = rPart === wantPart;
+            if (!partOk && combined && rPart.replace(/\s+/g, ' ').toUpperCase() === combined.replace(/\s+/g, ' ').toUpperCase()) {
+                partOk = true;
+            }
+            if (!partOk) return;
+            // 합쳐진 품명으로 이미 컬러를 포함한 경우 컬러 추가 비교는 생략
+            const partIncludesColor = combined && rPart.replace(/\s+/g, ' ').toUpperCase() === combined.replace(/\s+/g, ' ').toUpperCase();
+            if (!partIncludesColor && wantColor && rColor && !_colorsEqual(wantColor, rColor)) return;
+            if (r.type === '입고') total += Number(r.qty) || 0;
+            else total -= Number(r.qty) || 0;
+        });
+        return Math.max(0, total);
+    }
+
     function _summaryCard(title, value, icon, color) {
         return `
         <div style="background:#ffffff;border:1px solid var(--border-color);border-radius:12px;
@@ -484,9 +528,9 @@ var ReworkWipModule = (function () {
     }
 
     // ── 리워크 재공품 → 도장현장 출고 ──────────────────────────────
-    // 사출 자재와 동일하게, 리워크 재공품도 도장현장(라인)으로 출고하면 그 라인의
-    // "도장 자재"(PAINTING_INPUT_INVENTORY) 현장 입고로 잡혀 도장 작업 투입에 쓸 수 있게 한다.
-    // 재공품 재고(WIP_STORE)에서는 출고로 차감하고, 동시에 현장 입고 기록을 만드는 2단계 처리다.
+    // 재공품 재고(WIP_STORE)에서 출고로 차감한다.
+    // 도장현장 입고는 자동 확정하지 않는다 — 해당 라인 「현장 사출 입고」에서
+    // 입고 처리를 해야 투입 LOT으로 쓸 수 있다(사출 창고 생산출고와 동일).
     function _normDispatchLine(v) {
         const s = String(v || '').trim();
         if (/-?b$/i.test(s) || s === '도장(B)') return '도장-B';
@@ -520,10 +564,12 @@ var ReworkWipModule = (function () {
                     <div><strong>${_esc(carModel || '-')} · ${_esc(partName)}</strong>${color ? ' · ' + _esc(color) : ''}</div>
                     <div style="color:var(--text-muted);">현재 재공 재고 <strong>${_fmt(max)} EA</strong></div>
                 </div>
-                <div style="margin-top:10px;padding:9px 11px;border-radius:8px;border:1px solid rgba(37,99,235,.3);
-                            background:rgba(37,99,235,.06);font-size:0.81rem;line-height:1.55;">
-                    출고하면 재공 재고에서 즉시 빠지고, 선택한 라인의 <strong>「도장 자재」 현장 입고</strong>로 바로 잡힙니다
-                    (사출 자재 생산출고와 동일한 방식). 별도 확인 절차 없이 즉시 투입 가능합니다.
+                <div style="margin-top:10px;padding:9px 11px;border-radius:8px;border:1px solid rgba(234,88,12,.35);
+                            background:rgba(234,88,12,.06);font-size:0.81rem;line-height:1.55;">
+                    출고하면 재공 재고에서 빠지고, 선택한 라인의 <strong>「현장 사출 입고」</strong>에
+                    <strong style="color:#ea580c;">미입고</strong>로 표시됩니다.
+                    도장 현장에서 <strong>입고 처리</strong>를 해야 실적 투입에 사용할 수 있습니다.
+                    (사출 창고 생산출고와 동일한 확인 절차)
                 </div>
                 <div class="form-group" style="margin-top:12px;">
                     <label class="form-label">도착 라인 <span style="color:var(--accent-red)">*</span></label>
@@ -592,10 +638,6 @@ var ReworkWipModule = (function () {
         }
         const note = String((noteEl && noteEl.value) || '').trim() || '리워크 재공품 도장현장 출고';
 
-        const actor = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
-            ? (AuthModule.getCurrentUser() || {}).displayName || '' : '';
-        const now = new Date().toISOString().slice(0, 16).replace('T', ' ');
-
         // 계보 승계 — 입고 원본 trace + 폼에서 고친 LOT를 합친다
         const defs = _defaultLotsForStock(carModel, partName, color);
         const outRec = {
@@ -603,6 +645,8 @@ var ReworkWipModule = (function () {
             type: '출고',
             carModel, partName, color,
             qty,
+            line: line,
+            paintLine: line,
             note: note + ' (' + line + ')',
             source: 'dispatch_to_line',
             createdAt: new Date().toISOString()
@@ -610,30 +654,13 @@ var ReworkWipModule = (function () {
         _applyLotFieldsToRec(outRec, lotFields, defs.trace);
 
         try {
-            // ① 재공 재고 차감
+            // ① 재공 재고 차감만 수행.
+            // ② 도장현장 입고는 자동 확정하지 않는다 — 해당 라인 「현장 사출 입고」에서
+            //    입고 처리해야 투입 LOT으로 쓸 수 있다(사출 생산출고와 동일).
             await Storage.add(WIP_STORE, outRec);
 
-            // ② 도장현장 입고 — 사출 자재와 동일하게 PAINTING_INPUT_INVENTORY에 반영
-            //    lots[].lotNo 는 사출LOT(현장 투입 선택 키). 계보(trace)에 수입검사일·도장LOT 유지.
-            if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_INPUT_INVENTORY) {
-                await Storage.add(DB.STORES.PAINTING_INPUT_INVENTORY, {
-                    date: now,
-                    type: '입고',
-                    line, paintLine: line,
-                    carModel, partName, color,
-                    lots: [{ lotNo: injLot, qty }],
-                    lotNo: injLot, quantity: qty, unit: 'EA',
-                    source: '리워크 재공품 출고',
-                    siteReceived: true,
-                    receivedBy: actor,
-                    receivedAt: now,
-                    trace: outRec.trace,
-                    note
-                });
-            }
-
             UIUtils.closeModal();
-            UIUtils.toast(`${_fmt(qty)} EA를 ${line} 현장으로 출고 처리했습니다.`, 'success');
+            UIUtils.toast(`${_fmt(qty)} EA를 ${line}으로 출고했습니다. 현장에서 입고 처리해 주세요.`, 'success');
             const el = document.getElementById('contentArea');
             if (el) render(el);
         } catch (e) {
@@ -753,6 +780,7 @@ var ReworkWipModule = (function () {
         openDispatchModal,
         submitDispatch,
         openStockDetailModal,
-        addFromPaintingInspection
+        addFromPaintingInspection,
+        getStockQty
     };
 })();

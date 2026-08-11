@@ -1361,7 +1361,7 @@ const PaintingWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
-                            <table class="data-table data-table--content compact" style="width:max-content;table-layout:auto;border-collapse:collapse;">
+                            <table class="data-table compact" style="width:100%;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
                                         <th style="white-space:nowrap;padding:8px 10px;">입고일</th>
@@ -2030,17 +2030,22 @@ const PaintingWorkModule = (function() {
         });
         if (hit) return true;
 
-        // 화면 「현장 사출 입고」표와 동일 판정 — 표에 입고완료로 보이는데
+        // 화면 「현장 사출 입고」표와 동일 소스 — 표에 입고완료로 보이는데
         // 소재입고 필요로 막히는 UI 모순을 없앤다.
+        // 제작품명(KNOB…) vs 사출명(1SPOT)·색상(BK vs WHITE) 표기 차이로
+        // 품명 매칭이 실패해도, 동일 라인·일자·차종 입고완료면 통과한다.
         try {
             if (typeof PaintingInputModule !== 'undefined'
                 && typeof PaintingInputModule.listTodayWarehouseShipments === 'function') {
                 var ships = PaintingInputModule.listTodayWarehouseShipments(line, dayStr) || [];
-                return ships.some(function (r) {
+                var receivedForModel = ships.filter(function (r) {
                     if (!r || !r.received) return false;
                     if (carModel && String(r.carModel || '').trim() !== carModel) return false;
-                    return _partMatchesInbound(r.partName);
+                    return true;
                 });
+                if (!receivedForModel.length) return false;
+                if (receivedForModel.some(function (r) { return _partMatchesInbound(r.partName); })) return true;
+                return !!carModel;
             }
         } catch (e3) { /* ignore */ }
 
@@ -3444,6 +3449,11 @@ const PaintingWorkModule = (function() {
 
         var lots = _collectLots();
         var totalLotQty = lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+
+        // ②에서 LOT을 고르거나 수량을 바꿀 때마다 ①번 "미반영" 표를 즉시 재계산한다.
+        // 그전까지는 저장된 실적 기준으로만 계산돼, 방금 화면에서 선택했는데도 여전히
+        // "미반영"으로 남아 있는 것처럼 보였다(실제로는 저장 시 반영됨).
+        _refreshUnmatchedInboundWarn(lots);
 
         // ★ 투입수량 기준 비교 (LOT = 사출부품 투입량 = IN PUT)
         var inputQtyEl = document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty');
@@ -5621,22 +5631,164 @@ const PaintingWorkModule = (function() {
             var day = String((d && d.date) || '').slice(0, 10);
             if (!line || !day) return res;
             var injPartName = _resolveInjPartNameForWork(carModel, d && d.partName, d && d.color);
+            var rows = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || [];
 
-            (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
-                if (!r || String(r.date || '').slice(0, 10) !== day) return;
+            // ① 당일 입고 LOT 집합 — 반납은 다음날 처리되는 게 정상이라 날짜로 걸러내면
+            // 이미 반납한 수량도 "미반납 잔량"으로 남는다. LOT으로만 연결한다.
+            var inboundLots = {};
+            rows.forEach(function (r) {
+                if (!r || String(r.type || '') !== '입고') return;
                 if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return;
                 if (carModel && String(r.carModel || '').trim() && String(r.carModel || '').trim() !== carModel) return;
                 if (injPartName && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPartName) return;
+                var rday = '';
+                try { rday = String(_resolveInboundStamp(r) || r.date || '').slice(0, 10); }
+                catch (e1) { rday = String(r.date || '').slice(0, 10); }
+                if (rday !== day) return;
                 var qty = Number(r.quantity) || 0;
                 if (qty <= 0) return;
                 res.hasLedger = true;
-                if (String(r.type || '') === '입고') res.inQty += qty;
-                else if (/반납/.test(String(r.source || ''))) res.returnQty += qty;
-                else res.usedQty += qty;
+                res.inQty += qty;
+                var lotRows = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo, qty: qty }] : []);
+                lotRows.forEach(function (l) {
+                    var n = String((l && l.lotNo) || '').trim();
+                    if (n) inboundLots[n] = true;
+                });
+            });
+
+            rows.forEach(function (r) {
+                if (!r || String(r.type || '') === '입고') return;
+                if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return;
+                if (carModel && String(r.carModel || '').trim() && String(r.carModel || '').trim() !== carModel) return;
+                var qty = Number(r.quantity) || 0;
+                if (qty <= 0) return;
+                if (/반납/.test(String(r.source || ''))) {
+                    var lotRows2 = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo, qty: qty }] : []);
+                    var matched = 0;
+                    var hasLot = false;
+                    lotRows2.forEach(function (l) {
+                        var n = String((l && l.lotNo) || '').trim();
+                        if (!n) return;
+                        hasLot = true;
+                        if (inboundLots[n]) matched += Number(l.qty) || 0;
+                    });
+                    // LOT이 없는 구 반납: 사출명·당일(또는 refWorkId)로만 폴백
+                    if (!hasLot) {
+                        if (injPartName && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPartName) return;
+                        if (String(r.date || '').slice(0, 10) !== day && String(r.refWorkId || '') !== String(d.id || '')) return;
+                        matched = qty;
+                    }
+                    if (matched > 0) {
+                        res.hasLedger = true;
+                        res.returnQty += matched;
+                    }
+                    return;
+                }
+                // 작업 투입 등 출고 — 당일 원장만
+                if (String(r.date || '').slice(0, 10) !== day) return;
+                if (injPartName && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPartName) return;
+                res.hasLedger = true;
+                res.usedQty += qty;
             });
             res.remain = res.inQty - res.usedQty - res.returnQty;
         } catch (e) { /* 원장 조회 실패 시 경고는 기존대로 */ }
         return res;
+    }
+
+    /** 이 실적(당일 입고 LOT)과 연결된 반납 이력 — 보기 화면에 표시 */
+    function _listReturnsForWorkView(d) {
+        var out = [];
+        try {
+            if (typeof DB === 'undefined' || !DB.STORES || !DB.STORES.PAINTING_INPUT_INVENTORY) return out;
+            var line = String((d && d.line) || '').replace(/\s/g, '');
+            var carModel = String((d && d.carModel) || '').trim();
+            var day = String((d && d.date) || '').slice(0, 10);
+            if (!line || !day) return out;
+            var injPart = _resolveInjPartNameForWork(carModel, d && d.partName, d && d.color);
+            var inboundLots = {};
+            (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
+                if (!r || String(r.type || '') !== '입고') return;
+                if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return;
+                if (carModel && String(r.carModel || '').trim() !== carModel) return;
+                if (injPart && String(r.partName || '').trim() !== injPart) return;
+                var rday = '';
+                try { rday = String(_resolveInboundStamp(r) || '').slice(0, 10); }
+                catch (e2) { rday = String(r.date || '').slice(0, 10); }
+                if (rday !== day) return;
+                var rows = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+                rows.forEach(function (l) {
+                    var n = String((l && l.lotNo) || '').trim();
+                    if (n) inboundLots[n] = true;
+                });
+            });
+            (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
+                if (!r || String(r.type || '') === '입고') return;
+                if (!/반납/.test(String(r.source || ''))) return;
+                if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return;
+                if (carModel && String(r.carModel || '').trim() !== carModel) return;
+                var byWork = r.refWorkId && String(r.refWorkId) === String(d.id || '');
+                var lots = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo, qty: r.quantity }] : []);
+                var hitLots = lots.filter(function (l) {
+                    var n = String((l && l.lotNo) || '').trim();
+                    return n && inboundLots[n];
+                });
+                if (!byWork && !hitLots.length) return;
+                var qty = byWork
+                    ? (Number(r.quantity) || 0)
+                    : hitLots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+                if (!(qty > 0)) return;
+                out.push({
+                    id: r.id,
+                    date: String(r.date || '').slice(0, 16).replace('T', ' '),
+                    qty: qty,
+                    lots: byWork ? lots : hitLots,
+                    reason: r.returnReason || r.note || '',
+                    status: r.returnStatus || (r.isSiteReturn ? 'pending' : ''),
+                    by: r.returnedBy || '',
+                    refWorkId: r.refWorkId || ''
+                });
+            });
+            out.sort(function (a, b) { return String(b.date).localeCompare(String(a.date)); });
+        } catch (e3) { /* ignore */ }
+        return out;
+    }
+
+    function _buildReturnHistoryAlertHtml(d, returns) {
+        returns = returns || _listReturnsForWorkView(d);
+        if (!returns.length) return '';
+        var total = returns.reduce(function (s, r) { return s + (Number(r.qty) || 0); }, 0);
+        var rows = returns.map(function (r) {
+            var lotTxt = (r.lots || []).map(function (l) {
+                return String(l.lotNo || '') + '(' + UIUtils.formatNumber(l.qty) + ')';
+            }).filter(Boolean).join(', ') || '-';
+            var st = r.status === 'confirmed'
+                ? '<span style="color:#16a34a;font-weight:700;">창고확정</span>'
+                : (r.status === 'pending'
+                    ? '<span style="color:#b45309;font-weight:700;">창고대기</span>'
+                    : '<span style="color:var(--text-muted);">기록</span>');
+            return '<tr>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.date || '-') + '</td>' +
+                '<td style="padding:5px 8px;font-family:monospace;white-space:nowrap;">' + _pwEsc(lotTxt) + '</td>' +
+                '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' + UIUtils.formatNumber(r.qty) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + st + '</td>' +
+                '<td style="padding:5px 8px;font-size:0.78rem;color:var(--text-muted);">' + _pwEsc(r.reason || r.by || '-') + '</td>' +
+                '</tr>';
+        }).join('');
+        return '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(8,145,178,.06);' +
+            'border:1px solid rgba(8,145,178,.35);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+            '<span class="material-symbols-outlined" style="color:#0891b2;font-size:22px;flex-shrink:0;margin-top:1px;">undo</span>' +
+            '<div style="flex:1;min-width:0;">' +
+            '<div style="font-weight:700;color:#0e7490;margin-bottom:4px;">↩ 자재 반납 이력 · 합계 ' +
+            UIUtils.formatNumber(total) + ' EA</div>' +
+            '<div style="overflow-x:auto;border:1px solid rgba(8,145,178,.2);border-radius:6px;background:#fff;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.8rem;">' +
+            '<thead><tr style="background:rgba(8,145,178,.06);color:var(--text-muted);text-align:left;">' +
+            '<th style="padding:4px 8px;white-space:nowrap;">반납일시</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사출LOT</th>' +
+            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">수량</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">상태</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사유/담당</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table></div></div></div>';
     }
 
     /**
@@ -5890,21 +6042,29 @@ const PaintingWorkModule = (function() {
         var alerts = [];
         var actualInput = _actualInputMaterialQty(d);   // 현장에 실제 입고된 사출자재 합계
         var loggedInput = _siblingLoggedInputQty(d);
-        var shortfall = actualInput - loggedInput;
         var site = _siteMaterialBalance(d);
+        var rb = _lotReturnBreakdown(d);
+        var returns = _listReturnsForWorkView(d);
+        var returnedQty = Math.max(Number(rb.returned) || 0, Number(site.returnQty) || 0);
+        // 미정산 잔량 = 당일 입고 − 투입 − 반납 (반납을 빼지 않으면 이미 돌려보낸 수량까지
+        // "남은 소재"로 오진한다)
+        var unsettled = Math.max(0, Number(rb.returnable) || 0);
+        if (!(unsettled > 0) && site.hasLedger) {
+            unsettled = Math.max(0, Number(site.remain) || 0);
+        }
         // 이 실적에 연동된 생산계획 수량 — "계획 대비 얼마나 더 들어왔나"가 현장에서 가장
         // 바로 와닿는 비교 기준이다(작업일지 투입수량 합계보다 계획수량이 직관적).
         var _linkedPlan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
         var planQty = _linkedPlan ? Number(_linkedPlan.planQty || 0) : Number(d.planQty || 0);
-        if (actualInput > 0 && shortfall > Math.max(1, actualInput * 0.01)) {
-            // 남은 소재 추정치: 계획을 알면 "입고 − 계획"(생산은 계획만큼만 썼다고 가정),
-            // 계획을 모르면 현장 원장 잔량으로 대체
-            var estRemain = planQty > 0 ? Math.max(0, actualInput - planQty) : Math.max(0, site.remain);
-            // 이 실적이 자기 몫(같은 planId로 분출된 자재)을 다 썼다면 반납 버튼이 안 뜬다 —
-            // 그건 버그가 아니라 남은 수량이 "이 실적"이 아니라 아직 어떤 실적에도 투입되지
-            // 않은 다른 LOT이라는 뜻이다. 그런 미투입 LOT은 그 LOT을 실제로 쓰는 실적에서
-            // 정산해야 한다(오래된 생산분을 화면에서 임의로 반납하면 오류의 원인이 된다).
-            var rb = _lotReturnBreakdown(d);
+        var shortfallRaw = actualInput - loggedInput;
+        var shortfall = Math.max(0, shortfallRaw - returnedQty);
+
+        if (returns.length) {
+            alerts.push(_buildReturnHistoryAlertHtml(d, returns));
+        }
+
+        if (actualInput > 0 && unsettled > Math.max(1, actualInput * 0.01)) {
+            var estRemain = unsettled;
             alerts.push(
                 '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(220,38,38,.07);' +
                 'border:1px solid rgba(220,38,38,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
@@ -5912,16 +6072,19 @@ const PaintingWorkModule = (function() {
                 '<div style="flex:1;"><div style="font-weight:700;color:#dc2626;margin-bottom:4px;">⚠ 실적 오류 의심 — 실제 입고 자재가 실적보다 많습니다</div>' +
                 '<div style="font-size:0.86rem;line-height:1.7;">' +
                 (planQty > 0
-                    ? '생산 계획은 <strong>' + UIUtils.formatNumber(planQty) + ' EA</strong>인데 현장 투입자재는 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong>임.<br>'
-                    : '작업일지 투입수량 합계 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong> · 현장 투입자재 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong>임.<br>') +
+                    ? '생산 계획은 <strong>' + UIUtils.formatNumber(planQty) + ' EA</strong>인데 현장 투입자재는 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong>임.' +
+                      (returnedQty > 0 ? ' (반납 <strong>' + UIUtils.formatNumber(returnedQty) + ' EA</strong> 반영)' : '') + '<br>'
+                    : '작업일지 투입수량 합계 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong> · 현장 투입자재 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong>임.' +
+                      (returnedQty > 0 ? ' (반납 <strong>' + UIUtils.formatNumber(returnedQty) + ' EA</strong> 반영)' : '') + '<br>') +
                 (site.laserWip
                     ? '이 제품은 레이져 후 도장 제품이라 레이저 재공품에서 자동 관리됩니다. <strong>반납 조작이 필요 없습니다.</strong>'
-                    : '남은 소재는 <strong style="color:#b45309;">' + UIUtils.formatNumber(estRemain) + ' EA</strong>로 추정됨.<br>' +
+                    : '아직 정산되지 않은 잔량은 <strong style="color:#b45309;">' + UIUtils.formatNumber(estRemain) + ' EA</strong>입니다.<br>' +
+                      (returns.length
+                        ? '일부 반납 이력이 있으나 잔량이 남아 있습니다. '
+                        : '<strong style="color:#dc2626;">반납 이력이 없습니다.</strong> ') +
                       (rb.returnable > 0
                         ? '<strong style="color:var(--accent-red);">창고로 반납 하셔야 합니다.</strong>'
-                        : '이 실적이 쓴 LOT은 전량 소진됐습니다. 남은 수량은 <strong>아직 투입되지 않은 다른 LOT</strong>이므로, ' +
-                          '아래 <strong>당일 현장 입고 LOT</strong>에서 미반영 LOT을 확인해 <strong>실제 사용한 실적에 반영</strong>하거나 ' +
-                          '해당 실적에서 반납하세요.')) +
+                        : '아래 <strong>사출LOT</strong>에서 미반영 LOT을 확인해 <strong>실제 사용한 실적에 반영</strong>하거나 반납하세요.')) +
                 '</div>' +
                 (rb.returnable > 0
                     ? '<div style="margin-top:9px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
@@ -5930,10 +6093,37 @@ const PaintingWorkModule = (function() {
                         '<span class="material-symbols-outlined" style="font-size:0.9rem;vertical-align:-3px;">undo</span> 이 실적 몫 반납' +
                         '</button>' +
                         '<span style="font-size:0.78rem;color:var(--text-muted);">반납 가능 <strong>' +
-                        UIUtils.formatNumber(rb.returnable) + ' EA</strong> (분출 ' + UIUtils.formatNumber(rb.issued) +
+                        UIUtils.formatNumber(rb.returnable) + ' EA</strong> (입고 ' + UIUtils.formatNumber(rb.issued) +
                         ' − 투입 ' + UIUtils.formatNumber(rb.used) +
                         (rb.returned > 0 ? ' − 기반납 ' + UIUtils.formatNumber(rb.returned) : '') + ')</span></div>'
-                    : '') +
+                    : (returns.length === 0
+                        ? '<div style="margin-top:8px;font-size:0.78rem;color:#7c2d12;font-weight:600;">남은 자재를 사출창고로 반납하면 이곳에 반납 이력이 표시됩니다.</div>'
+                        : '')) +
+                '</div></div>'
+            );
+        } else if (actualInput > 0 && returnedQty > 0 && shortfallRaw > Math.max(1, actualInput * 0.01)) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(22,163,74,.07);' +
+                'border:1px solid rgba(22,163,74,.35);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#16a34a;font-size:22px;flex-shrink:0;margin-top:1px;">check_circle</span>' +
+                '<div style="flex:1;font-size:0.86rem;line-height:1.7;">' +
+                '<div style="font-weight:700;color:#15803d;margin-bottom:4px;">입고·실적 차이는 반납으로 정산되었습니다</div>' +
+                '현장 입고 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong> · ' +
+                '실적 투입 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong> · ' +
+                '반납 <strong>' + UIUtils.formatNumber(returnedQty) + ' EA</strong>' +
+                (unsettled > 0 ? ' · 잔여 <strong style="color:#b45309;">' + UIUtils.formatNumber(unsettled) + ' EA</strong>' : '') +
+                '</div></div>'
+            );
+        } else if (actualInput > 0 && shortfall > Math.max(1, actualInput * 0.01) && unsettled <= 0 && returns.length === 0) {
+            alerts.push(
+                '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(245,158,11,.08);' +
+                'border:1px solid rgba(245,158,11,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                '<span class="material-symbols-outlined" style="color:#f59e0b;font-size:22px;flex-shrink:0;margin-top:1px;">info</span>' +
+                '<div style="flex:1;font-size:0.86rem;line-height:1.7;">' +
+                '<div style="font-weight:700;color:#b45309;margin-bottom:4px;">입고 수량과 이 실적 투입이 다릅니다</div>' +
+                '현장 입고 <strong>' + UIUtils.formatNumber(actualInput) + ' EA</strong> · ' +
+                '관련 실적 투입 합계 <strong>' + UIUtils.formatNumber(loggedInput) + ' EA</strong>. ' +
+                '현재 미정산 잔량/반납 이력은 없습니다(다른 실적에서 소진됐을 수 있음).' +
                 '</div></div>'
             );
         }
@@ -6590,8 +6780,13 @@ const PaintingWorkModule = (function() {
         // 판단하면, 실제로는 "같은 날 다른 실적"이 이미 정상적으로 소진한 LOT까지 "이 실적에
         // 반영 안 됨"으로 잘못 표시된다. 그래서 같은 날 같은 조건의 작업일지 전체가 이미 사용한
         // 수량을 합산해서 빼야 진짜 미반영분만 남는다.
+        // d.lots가 라이브(미저장) 폼 스냅샷으로 전달된 경우, 아래 루프가 이 실적을 저장된
+        // 옛 lots로 다시 세면 방금 화면에서 고른 LOT이 반영되지 않은 것처럼 보인다.
+        // 자기 자신(id 일치)은 루프에서 건너뛰고, 대신 전달받은 d.lots로 직접 합산한다.
+        var selfId = d.id;
         var usedQtyByLot = {};
         (Storage.getAll(STORE) || []).forEach(function (w) {
+            if (selfId != null && String(w.id) === String(selfId)) return;
             if (String(w.date || '').slice(0, 10) !== day) return;
             if (String(w.line || '').replace(/\s/g, '') !== line) return;
             if (String(w.carModel || '') !== carModel) return;
@@ -6606,6 +6801,16 @@ const PaintingWorkModule = (function() {
                 usedQtyByLot[soloLot] = (usedQtyByLot[soloLot] || 0) + (Number(w.inputQty) || 0);
             }
         });
+        if (Array.isArray(d.lots) && d.lots.length) {
+            d.lots.forEach(function (l) {
+                if (!l || !l.lotNo) return;
+                var lotNo = String(l.lotNo).trim();
+                usedQtyByLot[lotNo] = (usedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
+            });
+        } else if (d.lotNo && d.inputQty) {
+            var soloSelfLot = String(d.lotNo).trim();
+            usedQtyByLot[soloSelfLot] = (usedQtyByLot[soloSelfLot] || 0) + (Number(d.inputQty) || 0);
+        }
 
         var receivedQtyByLot = {};
         (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
@@ -7145,16 +7350,29 @@ const PaintingWorkModule = (function() {
             if (noInput) noInput.value = lotNo;
             if (qtyInput) qtyInput.value = qty;
         }
+        // _updateLotSummary가 ①번 경고 박스도 함께 재계산한다(방금 추가한 만큼 반영 처리).
         setTimeout(_updateLotSummary, 60);
+    }
 
-        // 방금 추가한 만큼 반영된 상태로 경고 박스 다시 계산
-        var d = _workViewId ? Storage.getById(STORE, _workViewId) : null;
+    /** ①번 "창고→도장현장 입고" 경고 박스를 ②번 LOT 선택의 현재 화면 상태로 즉시 재계산한다.
+     *  저장 전 폼 값 기준이라, 아직 저장하지 않았어도 선택한 만큼 "반영"/"일부 반영"으로 보인다. */
+    function _refreshUnmatchedInboundWarn(liveLots) {
         var warnEl = document.getElementById('pwUnmatchedInboundWarn');
-        if (d && warnEl) {
-            var liveLots = _collectLots();
-            var dSnapshot = Object.assign({}, d, { lots: liveLots });
-            warnEl.outerHTML = _buildUnmatchedInboundWarningHtml(dSnapshot);
+        if (!warnEl) return;
+        var base = _workViewId ? Storage.getById(STORE, _workViewId) : null;
+        if (!base) {
+            var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
+            var pn = (document.getElementById('addPwPartNameHidden') || {}).value || '';
+            var color = (document.getElementById('addPwColorHidden') || {}).value || '';
+            var line = (document.getElementById('addPwLineHidden') || {}).value
+                || (typeof _currentLine !== 'undefined' ? _currentLine : '') || '';
+            var date = (document.getElementById('addPwDateHidden') || {}).value
+                || (typeof _currentDate !== 'undefined' ? _currentDate : '') || '';
+            if (!cm || !pn || !date) return;
+            base = { carModel: cm, partName: pn, color: color, line: line, date: date };
         }
+        var dSnapshot = Object.assign({}, base, { lots: liveLots || _collectLots() });
+        warnEl.outerHTML = _buildUnmatchedInboundWarningHtml(dSnapshot);
     }
 
     // 수정 페이지 (입력 폼)

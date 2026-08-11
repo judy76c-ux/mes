@@ -6884,42 +6884,111 @@ var LaserStandbyModule = (function() {
             ? String((item && item.manualOverrideDate) || _formatWorkDateTime(override.date || override.updatedAt || UIUtils.today(), '') || '')
             : '';
 
+        // ★ 버그 원인: balanceMap이 사출LOT(lotNo)만으로 잔량을 묶었다. 같은 사출LOT이
+        // 서로 다른 도장 배치(도장LOT)에 걸쳐 여러 번 입고되면(예: 260526이 07-27에 도장LOT
+        // 260723으로 일부, 08-07에 도장LOT 260807로 나머지 입고) "처음 붙은 도장LOT 라벨이
+        // 계속 유지"됐다 — 07-27 출고로 260723 몫이 실제로는 0으로 다 빠졌는데도, 08-07에 새로
+        // 들어온 수량이 옛 라벨(260723) 밑에 계속 표시됐다(laser-wip.js와 동일한 버그 패턴).
+        // 고친 방식: 잔량을 "사출LOT + 도장LOT" 조합으로 따로 묶는다.
         const balanceMap = {};
         let unmatched = 0;
 
+        // 도장LOT은 소스에 따라 "260807"(YYMMDD)로도, "2026-08-07"(ISO 날짜)로도 들어온다
+        // — 형식이 다르면 같은 배치인데도 다른 버킷으로 갈라져 이 fix 자체가 무력화되므로
+        // 버킷 키/비교에 쓰기 전에 항상 YYMMDD로 정규화한다.
+        function _normPL(v) {
+            const s = String(v || '').trim();
+            if (!s) return '';
+            const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (m) return m[1].slice(2) + m[2] + m[3];
+            return s;
+        }
+
+        function _bucketKey(lotNo, paintLot) {
+            return String(lotNo || '(미확인)') + '||' + _normPL(paintLot);
+        }
+
         function addLot(lotNo, paintLot, qtyDelta) {
-            const lotKey = String(lotNo || '(미확인)');
-            if (!balanceMap[lotKey]) {
-                balanceMap[lotKey] = { lotNo: lotKey, paintLot: paintLot || '-', qty: 0 };
+            const injKey = String(lotNo || '(미확인)');
+            const normPaint = _normPL(paintLot);
+            const key = _bucketKey(injKey, normPaint);
+            if (!balanceMap[key]) {
+                balanceMap[key] = { lotNo: injKey, paintLot: normPaint || '-', qty: 0 };
             }
-            if ((!balanceMap[lotKey].paintLot || balanceMap[lotKey].paintLot === '-') && paintLot) {
-                balanceMap[lotKey].paintLot = paintLot;
-            }
-            balanceMap[lotKey].qty += Number(qtyDelta) || 0;
+            balanceMap[key].qty += Number(qtyDelta) || 0;
+        }
+
+        // 같은 사출LOT을 쓰는 모든 도장LOT 버킷 — 버킷 생성 순서(=이벤트 처리 순서, 즉
+        // 시간순)를 그대로 FIFO로 쓴다.
+        function _bucketsForInj(lotNo) {
+            const injKey = String(lotNo || '(미확인)');
+            return Object.keys(balanceMap).filter(function(k) { return balanceMap[k].lotNo === injKey; });
+        }
+
+        // 이 도장LOT에 속한 버킷들(사출LOT은 무엇이든) — 사출LOT을 특정 못 하는 출고
+        // (콤마 결합 레거시 이력 등)라도 최소한 그 도장 배치 안에서만 빠지게 한다.
+        function _bucketsForPaint(paintLot) {
+            const pl = _normPL(paintLot);
+            if (!pl) return [];
+            return Object.keys(balanceMap).filter(function(k) { return balanceMap[k].paintLot === pl; });
         }
 
         // trackUnmatched=true: 잔여를 미차감(부채)으로 남김. absorb용 false면 잔여 버림.
-        function drainLot(lotNo, qty, trackUnmatched) {
+        function drainLot(lotNo, qty, trackUnmatched, paintLot) {
             let remaining = Math.max(0, Number(qty) || 0);
             if (remaining <= 0) return 0;
             const requested = String(lotNo || '(미확인)');
-            const orderedKeys = Object.keys(balanceMap).sort(function(a, b) {
-                const rank = function(k) {
-                    if (k === requested) return 0;
-                    if (k === '(미확인)') return 1;
-                    return 2;
-                };
-                return rank(a) - rank(b);
-            });
-            orderedKeys.forEach(function(mapKey) {
-                if (remaining <= 0) return;
-                const row = balanceMap[mapKey];
-                const available = Math.max(0, Number(row && row.qty) || 0);
-                if (available <= 0) return;
+
+            // ① 이 출고가 어느 도장LOT에서 나갔는지 알면 그 조합만 정확히 뺀다
+            const exactKey = paintLot ? _bucketKey(requested, paintLot) : '';
+            if (exactKey && balanceMap[exactKey]) {
+                const row = balanceMap[exactKey];
+                const available = Math.max(0, Number(row.qty) || 0);
                 const used = Math.min(available, remaining);
                 row.qty = available - used;
                 remaining -= used;
-            });
+            }
+            // ② 정확히 못 뺐거나 남았으면, 이 사출LOT의 나머지 도장LOT 버킷에서 오래된
+            //    것부터 FIFO로 뺀다
+            if (remaining > 0) {
+                _bucketsForInj(requested).forEach(function(k) {
+                    if (remaining <= 0 || k === exactKey) return;
+                    const row = balanceMap[k];
+                    const available = Math.max(0, Number(row.qty) || 0);
+                    if (available <= 0) return;
+                    const used = Math.min(available, remaining);
+                    row.qty = available - used;
+                    remaining -= used;
+                });
+            }
+            // ③ 사출LOT을 특정 못 하는 출고라도 도장LOT은 알면 그 배치 안에서만 뺀다
+            if (remaining > 0 && paintLot) {
+                _bucketsForPaint(paintLot).forEach(function(k) {
+                    if (remaining <= 0) return;
+                    const row = balanceMap[k];
+                    const available = Math.max(0, Number(row.qty) || 0);
+                    if (available <= 0) return;
+                    const used = Math.min(available, remaining);
+                    row.qty = available - used;
+                    remaining -= used;
+                });
+            }
+            // ④ 그래도 남으면 "(미확인)" 버킷 → 나머지 전체 순으로 최종 폴백
+            if (remaining > 0) {
+                const orderedKeys = Object.keys(balanceMap).sort(function(a, b) {
+                    const rank = function(k) { return balanceMap[k].lotNo === '(미확인)' ? 0 : 1; };
+                    return rank(a) - rank(b) || String(a).localeCompare(String(b));
+                });
+                orderedKeys.forEach(function(mapKey) {
+                    if (remaining <= 0) return;
+                    const row = balanceMap[mapKey];
+                    const available = Math.max(0, Number(row && row.qty) || 0);
+                    if (available <= 0) return;
+                    const used = Math.min(available, remaining);
+                    row.qty = available - used;
+                    remaining -= used;
+                });
+            }
             if (trackUnmatched && remaining > 0) unmatched += remaining;
             return remaining;
         }
@@ -7105,7 +7174,7 @@ var LaserStandbyModule = (function() {
             }
             if (ev.kind === 'out') {
                 (ev.lots || []).forEach(function(lot) {
-                    drainLot(lot.lotNo, lot.qty, true);
+                    drainLot(lot.lotNo, lot.qty, true, lot.paintLot);
                 });
                 return;
             }
