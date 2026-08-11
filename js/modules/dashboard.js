@@ -335,13 +335,12 @@ const DashboardModule = (function() {
             }
         }
 
-        /* ② 실적 미입력 (전일·금일 시작분 — 수량 있는 작업실적 없음)
+        /* ② 실적 미입력 (하루 이상 지난 계획 — 수량 있는 작업실적 없음)
            - status '완료'는 종료시각 자동갱신일 수 있음
-           - planId 연동 + 수량>0 인 실적만 "입력됨"으로 본다 */
+           - planId 연동 + 수량>0 인 실적만 "입력됨"으로 본다
+           - 당일 미입력은 아직 입력 가능 구간이므로 경보에서 제외 */
         const plans = Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [];
         const works = Storage.getAll(DB.STORES.PAINTING_WORK)    || [];
-        const nowD = new Date();
-        const nowHm = String(nowD.getHours()).padStart(2, '0') + ':' + String(nowD.getMinutes()).padStart(2, '0');
         function _dashPlanDay(p) { return String(p.date || '').trim().slice(0, 10); }
         function _dashWorkFulfills(w, planId) {
             if (!w || planId == null || planId === '') return false;
@@ -374,17 +373,7 @@ const DashboardModule = (function() {
         const unenteredPlans = _dashLivePlans
             .filter(function (p) {
                 const day = _dashPlanDay(p);
-                if (!day || day > today) return false;
-                // 도장 완료 예정 시각(종료시각)이 지나야 "미입력" 후보다. 시작 시각만 보면
-                // 아직 생산 중인 계획도 즉시 실적 누락으로 잡혀 담당자를 혼란스럽게 한다.
-                if (day === today) {
-                    const end = String(p.endTime || '').trim();
-                    if (end) { if (end > nowHm) return false; }
-                    else {
-                        const start = String(p.startTime || p.slot || '').trim();
-                        if (start && start > nowHm) return false;
-                    }
-                }
+                if (!day || day >= today) return false;
                 if (!(p.carModel || p.partName)) return false;
                 if (!(Number(p.planQty) > 0)) return false;
                 if (!p.id) return false;

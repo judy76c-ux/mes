@@ -1361,7 +1361,7 @@ const PaintingWorkModule = (function() {
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; overflow-x:auto;">
-                            <table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                            <table class="data-table data-table--content compact" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
                                         <th style="white-space:nowrap;padding:8px 10px;">입고일</th>
@@ -1426,7 +1426,7 @@ const PaintingWorkModule = (function() {
                             실적 미입력 계획
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                         </h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">금일 시작·전일 이전 계획 중 도장 작업실적이 없는 항목입니다. (계획「완료」≠ 실적 입력)</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. (당일 미입력은 표시하지 않음 · 계획「완료」≠ 실적 입력)</span>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; max-height:280px; overflow-y:auto;">
@@ -1809,12 +1809,6 @@ const PaintingWorkModule = (function() {
         return (input + prod + lotSum) > 0;
     }
 
-    function _nowHm() {
-        var d = new Date();
-        return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
-    }
-
-    /** 미입력 대상 일자: 전일 이전 전부 + 금일(이미 시작했거나 시작시각 없는 계획) */
     /**
      * 수정으로 대체된 구 계획 문서 제거 — 일자+라인+시작시각이 같으면 최신 1건만 남긴다.
      * (생산계획 수정이 새 문서를 만들고 옛 문서를 지우지 않아, 같은 시간대 계획이 중복 존재한다)
@@ -1836,19 +1830,13 @@ const PaintingWorkModule = (function() {
         return Object.values(byKey).concat(noKey);
     }
 
-    // 실적 미입력 경고는 "도장이 끝났어야 할 시각이 지났는데 실적이 없다"는 뜻이어야 한다.
-    // 시작 시각만 보면 한창 생산 중인 계획(예: 08:30~14:45, 현재 10:00)도 즉시 미입력으로
-    // 잡혀 담당자를 혼란스럽게 한다 — 아직 끝나지도 않은 작업의 실적이 없는 건 당연하다.
-    function _isUnenteredCandidateDate(plan, today, nowHm) {
+    // 실적 미입력 경고는 "하루가 지났는데도 실적이 없다"는 누락 알림이다.
+    // 당일 계획은 아직 입력 중일 수 있으므로 목록에 넣지 않는다.
+    /** 미입력 대상 일자: 하루 이상 지난 계획만 (당일·미래 제외) */
+    function _isUnenteredCandidateDate(plan, today) {
         var day = _planDayKey(plan);
-        if (!day || day > today) return false;
-        if (day < today) return true;
-        var end = String(plan.endTime || '').trim();
-        if (end) return end <= nowHm;
-        // 종료 시각 정보가 없는 계획만 시작 시각 기준으로 폴백한다
-        var start = String(plan.startTime || plan.slot || '').trim();
-        if (!start) return true;
-        return start <= nowHm;
+        if (!day || day >= today) return false;
+        return true;
     }
 
     function renderUnenteredPlans() {
@@ -1862,7 +1850,6 @@ const PaintingWorkModule = (function() {
         const allPlans = Storage.getAll(PLAN_STORE) || [];
         const allWorks = Storage.getAll(STORE) || [];
         const today = UIUtils.today();
-        const nowHm = _nowHm();
 
         // ※ 생산계획 status '완료'는 종료시각 자동갱신 → 실적 유무와 무관
         // ※ planId만 있고 수량 0인 스텁 실적은 "미입력"으로 유지
@@ -1871,7 +1858,7 @@ const PaintingWorkModule = (function() {
         // 기준 최신 1건만 남긴다.
         const livePlans = _dedupePlanDocs(allPlans);
         const unentered = livePlans.filter(function (p) {
-            if (!_isUnenteredCandidateDate(p, today, nowHm)) return false;
+            if (!_isUnenteredCandidateDate(p, today)) return false;
             if (!(p.carModel || p.partName)) return false;
             if (!(Number(p.planQty) > 0)) return false;
             if (!_matchesCurrentLine(p.line)) return false;
@@ -1890,19 +1877,14 @@ const PaintingWorkModule = (function() {
         const makeRow = function (p) {
             const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
             const day = _planDayKey(p);
-            const isToday = day === today;
             const hasInbound = _hasConfirmedSiteInboundForPlan(p, day);
-            // 금일 계획은 아직 하루가 안 지났으니 "미입력"(누락 알림)이 아니라 "입력 대기"로만
-            // 안내한다 — 진짜 알림이 필요한 건 하루 이상 지나도록 실적이 없는 계획뿐이다.
             const statusHint = !hasInbound
                 ? '<span style="font-size:0.68rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">사출 입고 필요</span>'
-                : (isToday
-                    ? '<span style="font-size:0.68rem;font-weight:700;color:#2563eb;background:rgba(37,99,235,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">실적 입력 대기</span>'
-                    : '<span style="font-size:0.68rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">미입력 실적</span>');
+                : '<span style="font-size:0.68rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">미입력 실적</span>';
             const infoStr = '<strong>' + (p.carModel || '') + '</strong><br>' +
                 '<span style="font-size:0.75rem;color:var(--text-muted);">' + (p.partName || '') +
                 (p.color ? ' / ' + p.color : '') + '</span>' + statusHint;
-            const rowAccent = !hasInbound ? '#dc2626' : (isToday ? '#2563eb' : '#dc2626');
+            const rowAccent = '#dc2626';
             const inputBtn = hasInbound
                 ? ('<button class="btn btn-xs"' +
                     ' style="padding:6px 12px; font-size:0.82rem; background:var(--accent-blue); color:#fff; border:none; border-radius:4px; display:inline-flex; align-items:center; gap:6px; white-space:nowrap; height:32px; min-width:90px; justify-content:center;"' +
@@ -1942,9 +1924,53 @@ const PaintingWorkModule = (function() {
     // 생산계획 현황 렌더링
     // ──────────────────────────────────────────────
 
+    /** 품명 느슨 비교 — 공백·괄호 무시, 한쪽이 다른 쪽에 포함되면 동일 계열로 본다.
+     *  예: 계획 "KNOB [LED] BK 1spot" ↔ 입고 사출명 "1SPOT" */
+    function _partsLooselyRelated(a, b) {
+        var na = String(a || '').toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
+        var nb = String(b || '').toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
+        if (!na || !nb) return false;
+        if (na === nb) return true;
+        // 너무 짧은 토큰(1~2글자)은 오탐이 많아 제외
+        if (na.length >= 3 && nb.length >= 3 && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0)) return true;
+        return false;
+    }
+
+    /** 계획 품목에 대응하는 사출명 후보 집합 (마스터·직접 해석·느슨 매칭용) */
+    function _injPartCandidatesForPlan(plan) {
+        var set = {};
+        var carModel = String((plan && plan.carModel) || '').trim();
+        var planPart = String((plan && plan.partName) || '').trim();
+        var planColor = String((plan && plan.color) || '').trim();
+        if (planPart) set[planPart] = true;
+
+        try {
+            var resolved = _resolveInjPartNameForWork(carModel, planPart, planColor);
+            if (resolved) set[String(resolved).trim()] = true;
+        } catch (e) { /* ignore */ }
+
+        try {
+            if (typeof INJECTMAT_STORE !== 'undefined') {
+                (Storage.getAll(INJECTMAT_STORE) || []).forEach(function (m) {
+                    if (!m || !m.injPartName) return;
+                    var nameMatch = m.mfgProductName === planPart || m.mfgProductName2 === planPart
+                        || _partsLooselyRelated(m.mfgProductName, planPart)
+                        || _partsLooselyRelated(m.mfgProductName2, planPart)
+                        || _partsLooselyRelated(m.injPartName, planPart);
+                    var modelMatch = !carModel || !m.carModel || String(m.carModel) === carModel;
+                    if (nameMatch && modelMatch) set[String(m.injPartName).trim()] = true;
+                });
+            }
+        } catch (e2) { /* ignore */ }
+
+        return set;
+    }
+
     /**
      * 계획 품목의 당일 현장 사출 입고(확인 완료) 여부.
      * 레이져 후 도장(재공품)은 사출창고→현장 입고 경로가 아니므로 통과로 본다.
+     * 주의: 계획.partName은 제작품명(예: KNOB [LED] BK 1spot)이고 현장 입고.partName은
+     * 사출명(예: 1SPOT)이라 문자열이 다르다 — 사출자재 마스터·느슨 매칭으로 연결한다.
      */
     function _hasConfirmedSiteInboundForPlan(plan, day) {
         if (!plan) return false;
@@ -1964,19 +1990,20 @@ const PaintingWorkModule = (function() {
         var dayStr = String(day || plan.date || '').slice(0, 10);
         if (!line || !dayStr) return false;
 
-        var injPart = '';
-        try {
-            injPart = _resolveInjPartNameForWork(carModel, plan.partName, plan.color) || '';
-        } catch (e2) { injPart = ''; }
         var planPart = String(plan.partName || '').trim();
+        var candidates = _injPartCandidatesForPlan(plan);
 
         return (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).some(function (r) {
             if (!r || String(r.type || '') !== '입고') return false;
             if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return false;
             if (carModel && String(r.carModel || '').trim() !== carModel) return false;
             var rPart = String(r.partName || '').trim();
-            if (injPart && rPart !== injPart && rPart !== planPart) return false;
-            if (!injPart && planPart && rPart !== planPart) return false;
+            if (rPart) {
+                var partOk = !!candidates[rPart]
+                    || rPart === planPart
+                    || _partsLooselyRelated(planPart, rPart);
+                if (!partOk) return false;
+            }
             var rday = '';
             try {
                 rday = String(_resolveInboundStamp(r) || r.date || '').slice(0, 10);
@@ -5879,12 +5906,24 @@ const PaintingWorkModule = (function() {
                 '<div style="font-weight:600;color:#15803d;">✓ 도장 검사 완료</div></div>'
             );
         }
-        // 보기 화면에서만 당일 현장 입고 LOT·수량·반영 여부를 상태/알림에 붙인다
-        // (수정 화면은 사출LOT 섹션에 클릭 가능 표가 이미 있으므로 중복 표시하지 않음).
+        // 보기 화면: 당일 미반영 LOT 상세 표는 아래 「사출LOT」 통합 표로 옮겼다.
+        // 상태/알림에는 미반영 요약만 남겨 중복을 피한다.
         if (includeDayLots) {
-            var dayLotHtml = _buildUnmatchedInboundWarningHtml(d, { readOnly: true });
-            var hasDayLots = Object.keys(_computeSiteInboundLotMaps(d).receivedQtyByLot || {}).length > 0;
-            if (!alerts.length && !hasDayLots) {
+            var unmatchedLots = _findUnmatchedSiteInboundLots(d);
+            var unmatchedTotal = unmatchedLots.reduce(function (s, u) { return s + (Number(u.qty) || 0); }, 0);
+            if (unmatchedTotal > 0.001) {
+                alerts.push(
+                    '<div style="display:flex;align-items:flex-start;gap:10px;background:rgba(220,38,38,.07);' +
+                    'border:1px solid rgba(220,38,38,.4);border-radius:8px;padding:12px 14px;margin-bottom:8px;">' +
+                    '<span class="material-symbols-outlined" style="color:#dc2626;font-size:22px;flex-shrink:0;margin-top:1px;">report_problem</span>' +
+                    '<div style="flex:1;">' +
+                    '<div style="font-weight:700;color:#dc2626;margin-bottom:4px;">당일 현장 입고 LOT — 미반영 ' +
+                    UIUtils.formatNumber(unmatchedTotal) + ' EA</div>' +
+                    '<div style="font-size:0.84rem;color:var(--text-secondary);line-height:1.55;">' +
+                    '아래 <strong>사출LOT</strong> 표에서 생산 반영분과 미반영분을 함께 확인하세요. 반영이 필요하면 「수정」에서 LOT을 추가하세요.' +
+                    '</div></div></div>'
+                );
+            } else if (!alerts.length) {
                 alerts.push(
                     '<div style="display:flex;align-items:center;gap:10px;background:var(--bg-secondary);' +
                     'border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:8px;">' +
@@ -5892,7 +5931,6 @@ const PaintingWorkModule = (function() {
                     '<span style="font-size:0.88rem;color:var(--text-muted);">특이사항 없음</span></div>'
                 );
             }
-            alerts.push(dayLotHtml);
         } else if (!alerts.length) {
             alerts.push(
                 '<div style="display:flex;align-items:center;gap:10px;background:var(--bg-secondary);' +
@@ -6129,22 +6167,8 @@ const PaintingWorkModule = (function() {
 
         var alertsHtml = _buildWorkAlerts(d, { includeDayLots: true });
 
-        var lotItems = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{lotNo: d.lotNo, qty: 0}] : []);
         var lotMeta = _getInjectionMetaForWork(d);
-        var lotDisplayHtml = lotItems.length
-            ? lotItems.map(function(l) {
-                var partName = String(l.partName || '').trim();
-                var color = String(l.color || '').trim();
-                return '<div style="display:inline-flex;align-items:center;gap:6px;' +
-                    'background:var(--bg-secondary);border:1px solid var(--border);' +
-                    'border-radius:4px;padding:4px 12px;font-family:monospace;font-size:0.9rem;margin:3px 6px 3px 0;flex-wrap:wrap;">' +
-                    (partName ? '<span style="font-family:var(--font-family-base);font-weight:700;color:var(--text-primary);">' + partName + '</span><span style="color:var(--text-muted);">|</span>' : '') +
-                    (color ? '<span style="font-family:var(--font-family-base);font-weight:600;color:var(--text-secondary);">' + color + '</span><span style="color:var(--text-muted);">|</span>' : '') +
-                    '<span>' + l.lotNo + '</span>' +
-                    (l.qty ? '<span style="color:var(--text-muted);">—</span><span>' + UIUtils.formatNumber(l.qty) + ' 개</span>' : '') +
-                    '</div>';
-            }).join('')
-            : '<span style="color:var(--text-muted);">-</span>';
+        var lotDisplayHtml = _buildWorkInjectionLotUnifiedTableHtml(d);
 
         function _fmtDate(dateStr, timeStr) {
             var p = (dateStr || '').split('-');
@@ -6287,7 +6311,10 @@ const PaintingWorkModule = (function() {
             '</div>' +
 
             '<div class="card" style="margin-bottom:14px;">' +
-            '<div class="card-header" style="padding:10px 16px;"><h4 style="margin:0;font-size:0.9rem;">사출LOT</h4></div>' +
+            '<div class="card-header" style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;gap:8px;">' +
+            '<h4 style="margin:0;font-size:0.9rem;">사출LOT</h4>' +
+            '<span style="font-size:0.72rem;color:var(--text-muted);">생산 반영 · 미반영 통합</span>' +
+            '</div>' +
             '<div class="card-body" style="padding:14px 20px;">' +
             '<div style="display:flex;flex-wrap:wrap;gap:18px;margin-bottom:12px;">' +
             vf('사출명', lotMeta.partNameText) +
@@ -6326,6 +6353,17 @@ const PaintingWorkModule = (function() {
                 var nameMatch = m.mfgProductName === partName || m.mfgProductName2 === partName;
                 var modelMatch = !carModel || m.carModel === carModel;
                 return nameMatch && modelMatch && m.injPartName;
+            });
+        }
+        // 제작품명 표기가 마스터와 살짝 달라도(공백·괄호·대소문자) 사출명으로 연결
+        if (!found && partName) {
+            found = mats.find(function(m) {
+                if (!m || !m.injPartName) return false;
+                var modelMatch = !carModel || !m.carModel || m.carModel === carModel;
+                if (!modelMatch) return false;
+                return _partsLooselyRelated(m.mfgProductName, partName)
+                    || _partsLooselyRelated(m.mfgProductName2, partName)
+                    || _partsLooselyRelated(m.injPartName, partName);
             });
         }
         return found ? found.injPartName : '';
@@ -6671,6 +6709,149 @@ const PaintingWorkModule = (function() {
             });
         });
         return out;
+    }
+
+    // 도장 작업 실적 「보기」용 — 이 실적에 생산 반영된 사출LOT와 당일 현장 입고 미반영
+    // LOT을 한 표로 묶어, 위에서 알림 / 아래에서 사용 LOT로 나뉘어 보이던 정보를 한눈에 본다.
+    function _buildWorkInjectionLotUnifiedTableHtml(d) {
+        var lotMeta = _getInjectionMetaForWork(d);
+        var maps = _computeSiteInboundLotMaps(d);
+        var detailMap = maps.ok ? _dayInboundLotDetailMap(maps) : {};
+        var unmatched = _findUnmatchedSiteInboundLots(d);
+        var unmatchedByLot = {};
+        unmatched.forEach(function (u) {
+            unmatchedByLot[String(u.lotNo || '').trim()] = Number(u.qty) || 0;
+        });
+
+        var workLots = (d.lots && d.lots.length)
+            ? d.lots
+            : (d.lotNo ? [{ lotNo: d.lotNo, qty: Number(d.inputQty) || 0, partName: d.injPartName || '', color: d.injColor || '' }] : []);
+
+        var rows = [];
+        var seen = {};
+
+        function _rowTime(lotNo, detail) {
+            if (detail && detail.time) return detail.time;
+            var stamp = _findSiteInboundDateForLotScoped(lotNo, d.carModel, maps.injPartName || '')
+                || _findSiteInboundDateForLot(lotNo);
+            if (stamp && stamp.length > 11) return stamp.slice(11, 16);
+            if (stamp && stamp.length >= 16) return stamp.slice(11, 16);
+            return '-';
+        }
+
+        workLots.forEach(function (l) {
+            if (!l || !l.lotNo) return;
+            var lotNo = String(l.lotNo).trim();
+            if (!lotNo) return;
+            seen[lotNo] = true;
+            var detail = detailMap[lotNo] || {};
+            var usedQty = Number(l.qty) || 0;
+            var missQty = unmatchedByLot[lotNo] || 0;
+            var partName = String(l.partName || detail.partName || maps.injPartName || lotMeta.partNameText || '-').trim() || '-';
+            var color = String(l.color || detail.color || lotMeta.colorText || '-').trim() || '-';
+            var statusKind = missQty > 0.001 ? 'partial' : 'reflected';
+            rows.push({
+                time: _rowTime(lotNo, detail),
+                carModel: detail.carModel || d.carModel || '-',
+                partName: partName,
+                color: color,
+                lotNo: lotNo,
+                qty: usedQty,
+                missQty: missQty,
+                statusKind: statusKind,
+                sortKey: '0_' + lotNo
+            });
+        });
+
+        unmatched.forEach(function (u) {
+            var lotNo = String(u.lotNo || '').trim();
+            if (!lotNo || seen[lotNo]) return;
+            var detail = detailMap[lotNo] || {};
+            rows.push({
+                time: _rowTime(lotNo, detail),
+                carModel: detail.carModel || maps.carModel || d.carModel || '-',
+                partName: detail.partName || maps.injPartName || lotMeta.partNameText || '-',
+                color: detail.color || '-',
+                lotNo: lotNo,
+                qty: Number(u.qty) || 0,
+                missQty: Number(u.qty) || 0,
+                statusKind: 'unmatched',
+                sortKey: '1_' + lotNo
+            });
+        });
+
+        rows.sort(function (a, b) {
+            if (a.sortKey < b.sortKey) return -1;
+            if (a.sortKey > b.sortKey) return 1;
+            return 0;
+        });
+
+        if (!rows.length) {
+            return '<div style="padding:10px 12px;border:1px dashed var(--border);border-radius:8px;' +
+                'font-size:0.84rem;color:var(--text-muted);">등록된 사출LOT가 없습니다.</div>';
+        }
+
+        var reflectedTotal = 0;
+        var unmatchedTotal = 0;
+        var bodyHtml = rows.map(function (r) {
+            var statusCell;
+            var rowBg;
+            var rowBorder;
+            if (r.statusKind === 'reflected') {
+                reflectedTotal += r.qty;
+                statusCell = '<span style="display:inline-flex;align-items:center;gap:4px;font-size:0.74rem;font-weight:700;color:#16a34a;white-space:nowrap;">' +
+                    '✓ 생산 반영</span>';
+                rowBg = 'rgba(22,163,74,0.05)';
+                rowBorder = 'rgba(22,163,74,0.15)';
+            } else if (r.statusKind === 'partial') {
+                reflectedTotal += r.qty;
+                unmatchedTotal += r.missQty;
+                statusCell = '<span style="display:inline-flex;align-items:center;gap:6px;font-size:0.74rem;font-weight:700;color:#b45309;white-space:nowrap;flex-wrap:wrap;">' +
+                    '<span>일부 반영 · 미반영 +' + UIUtils.formatNumber(r.missQty) + ' EA</span>' +
+                    '<span style="font-size:0.68rem;font-weight:700;color:#0891b2;background:rgba(8,145,178,.08);' +
+                    'border:1px solid rgba(8,145,178,.3);border-radius:4px;padding:1px 6px;">사용 ' +
+                    UIUtils.formatNumber(r.qty) + ' EA</span></span>';
+                rowBg = 'rgba(180,83,9,0.05)';
+                rowBorder = 'rgba(180,83,9,0.2)';
+            } else {
+                unmatchedTotal += r.qty;
+                statusCell = '<span style="display:inline-flex;align-items:center;gap:3px;font-size:0.74rem;font-weight:700;color:#dc2626;white-space:nowrap;">' +
+                    '미반영 +' + UIUtils.formatNumber(r.qty) + ' EA</span>';
+                rowBg = 'rgba(220,38,38,0.04)';
+                rowBorder = 'rgba(220,38,38,0.2)';
+            }
+            return '<tr style="background:' + rowBg + ';border-bottom:1px solid ' + rowBorder + ';">' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.time) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.carModel) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.partName) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.color) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(r.lotNo) + '</td>' +
+                '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' +
+                UIUtils.formatNumber(r.qty) + '</td>' +
+                '<td style="padding:5px 8px;text-align:right;white-space:nowrap;">' + statusCell + '</td>' +
+                '</tr>';
+        }).join('');
+
+        return '<div style="overflow-x:auto;">' +
+            '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.78rem;">' +
+            '<thead><tr style="color:var(--text-muted);text-align:left;">' +
+            '<th style="padding:4px 8px;white-space:nowrap;">입고 시간</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사출 LOT</th>' +
+            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">수량</th>' +
+            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">상태</th>' +
+            '</tr></thead>' +
+            '<tbody>' + bodyHtml + '</tbody>' +
+            '</table></div>' +
+            '<div style="display:flex;justify-content:flex-end;gap:14px;padding-top:8px;margin-top:4px;border-top:1px solid var(--border);' +
+            'font-size:0.8rem;font-weight:700;flex-wrap:wrap;">' +
+            '<span style="color:#16a34a;">생산 반영 ' + UIUtils.formatNumber(reflectedTotal) + ' EA</span>' +
+            (unmatchedTotal > 0.001
+                ? '<span style="color:#dc2626;">미반영 ' + UIUtils.formatNumber(unmatchedTotal) + ' EA</span>'
+                : '<span style="color:var(--text-muted);">미반영 없음</span>') +
+            '</div>';
     }
 
     // 창고→현장 입고 LOT을 표로 보여준다(입고 시간|차종|사출명|컬러|사출 LOT|수량|상태).
@@ -11316,7 +11497,11 @@ const PaintingInspectionModule = (function() {
                     lotNo: baseData.lotNo,
                     paintingWorkId: workId,
                     inspectionId: savedInspection && savedInspection.id ? savedInspection.id : '',
-                    note: '도장 외관검사 리워크'
+                    note: '도장 외관검사 리워크',
+                    // 계보 승계 — 이 도장 실적(work)에 이미 확정 저장된 사출LOT·수입검사일·
+                    // 도료(도장) LOT 정보를 그대로 물려준다. 리워크품도 사출부터 이어지는
+                    // 완제품 이력의 일부이므로 여기서 끊기면 안 된다.
+                    trace: work.trace || undefined
                 });
             } catch (e) {
                 console.error('[PaintingInspection] rework WIP inbound failed:', e);
