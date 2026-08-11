@@ -1537,6 +1537,16 @@ var LaserWorkModule = (function() {
         renderLotRows();
     }
 
+    // 대기품에서 자동 선택된 행(manual:false)은 입력칸이 없어 도장LOT·사출LOT을 고칠 방법이
+    // 없었다 — 잘못된 배치를 선택해 저장된 뒤에도 삭제 후 재선택(같은 잘못된 대기품 재노출
+    // 가능) 외엔 정정 수단이 없었던 문제. "수정" 버튼으로 그 행만 manual 입력행으로 바꿔
+    // 직접 타이핑해 고칠 수 있게 한다 — 저장 시 _confirmUnverifiedStandbyLots가 실제
+    // 대기품 목록과 대조해 검증하므로 임의의 값이 그냥 통과하지는 않는다.
+    function convertLotRowToManual(idx) {
+        if (_selectedLots[idx]) _selectedLots[idx].manual = true;
+        renderLotRows();
+    }
+
     function updateLot(idx, field, value) {
         if (_selectedLots[idx]) {
             _selectedLots[idx][field] = field === 'qty' ? (Number(value) || 0) : value;
@@ -1608,6 +1618,11 @@ var LaserWorkModule = (function() {
                     <span style="font-size:0.68rem;color:var(--text-muted);font-weight:600;">작업수량</span>
                     <span style="font-size:0.92rem;font-weight:800;color:var(--accent-blue);">${UIUtils.formatNumber(Number(l.qty) || 0)} EA</span>
                 </div>
+                <button type="button" class="btn btn-sm btn-outline" onclick="LaserWorkModule.convertLotRowToManual(${i})"
+                        title="도장LOT · 사출LOT · 수량을 직접 고칩니다"
+                        style="padding:4px 8px;flex-shrink:0;">
+                    <span class="material-symbols-outlined" style="font-size:0.9rem;">edit</span>
+                </button>
                 <button type="button" class="btn btn-sm btn-danger" onclick="LaserWorkModule.removeLotRow(${i})"
                         style="padding:4px 8px;flex-shrink:0;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">close</span>
@@ -2722,6 +2737,7 @@ var LaserWorkModule = (function() {
         cancelAddExternalWorker,
         addLotRow,
         removeLotRow,
+        convertLotRowToManual,
         updateLot,
         saveNew,
         edit,

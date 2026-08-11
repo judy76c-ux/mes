@@ -17,7 +17,7 @@ var PaintingNavUI = (function() {
         { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
         { id: 'painting-inspection',   tab: 'completion',          icon: 'task_alt',        label: '검사완료 실적',          sub: '외관 검사 완료 이력 조회' },
-        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '리워크 재공품',         sub: '외관검사 리워크 재고 관리' },
+        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '리워크 재공품',         sub: '리워크 재고 관리' },
         { id: 'painting-inspection',   tab: 'nonconform-standard', icon: 'description',     label: '부적합품 처리 기준서',   sub: '기준서 업로드 및 인쇄' }
     ];
 
@@ -9813,7 +9813,7 @@ const PaintingInspectionModule = (function() {
                                 <!-- ✓ Case 1: 부분 검사 시 설명 (최대 입력 가능 수량 안내) -->
                                 <div id="piPartialInspectionInfo" style="display:none; margin-top:8px; padding:8px 10px; background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.25); border-radius:6px; font-size:0.75rem; color:var(--text-secondary); line-height:1.4;">
                                     <span class="material-symbols-outlined" style="font-size:16px; vertical-align:middle; color:var(--accent-orange);">info</span>
-                                    <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다. 리워크는 불량 중에서만 지정합니다.</span>
+                                    <span style="margin-left:4px;">부분 검사 시 입력한 수량(양품+불량, 최대 <strong>${UIUtils.formatNumber(baseInspQty)}</strong> EA)만 검사 완료되며, 나머지는 외관검사 대기로 유지됩니다.</span>
                                 </div>
                             </div>
                         </div>
@@ -9912,8 +9912,8 @@ const PaintingInspectionModule = (function() {
                     </div>
                 </div>
 
-                <!-- 하단 액션바: 포장 | 리워크 | 검사자 | 저장 -->
-                <div class="card" style="margin:0;">
+                <!-- 하단 액션바: 포장 | 검사자 | 저장 -->
+                    <div class="card" style="margin:0;">
                     <div class="card-body" style="padding:10px 14px;display:flex;align-items:flex-end;gap:10px;flex-wrap:nowrap;overflow-x:auto;">
                         <!-- ① 포장 단위 (제품 마스터 표시만) -->
                         <div style="display:flex;align-items:center;gap:8px;flex:0 0 auto;flex-wrap:nowrap;">
@@ -9929,21 +9929,7 @@ const PaintingInspectionModule = (function() {
                             </div>
                         </div>
                         <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
-                        <!-- ② 리워크 → 리워크 재공품 입고 -->
-                        <div style="display:flex;align-items:flex-end;gap:8px;flex:0 0 auto;flex-wrap:nowrap;" title="불량수 이내에서만 입력. 검사수량·양품수는 변경되지 않습니다.">
-                            <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;display:flex;align-items:center;gap:3px;align-self:center;padding-bottom:6px;">
-                                <span class="material-symbols-outlined" style="font-size:16px;color:#ea580c;">autorenew</span>리워크로 보내기
-                            </span>
-                            <div style="display:flex;flex-direction:column;gap:2px;min-width:88px;">
-                                <label class="form-label" style="font-size:0.68rem;margin:0;color:var(--text-muted);">리워크수 (EA)</label>
-                                <input type="text" inputmode="numeric" enterkeyhint="done" class="form-input" id="inpReworkQty" value="" placeholder="0"
-                                    style="text-align:right; font-weight:700; font-size:0.95rem; padding:6px 8px; color:#ea580c; width:100px;"
-                                    onfocus="this.select()"
-                                    oninput="this.value=this.value.replace(/[^0-9]/g,'');PaintingInspectionModule._onReworkQtyChange()">
-                            </div>
-                        </div>
-                        <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
-                        <!-- ③ 검사자 -->
+                        <!-- ② 검사자 -->
                         <div style="display:flex;align-items:flex-end;gap:6px;flex:0 1 auto;flex-wrap:nowrap;">
                             <span style="font-size:0.78rem;font-weight:700;color:var(--text-primary);white-space:nowrap;align-self:center;padding-bottom:6px;">
                                 검사자 <span style="color:var(--accent-red);">*</span>
@@ -9954,7 +9940,7 @@ const PaintingInspectionModule = (function() {
                             </button>
                         </div>
                         <div style="width:1px;align-self:stretch;background:var(--border-color);flex:0 0 1px;min-height:36px;"></div>
-                        <!-- ④ 저장 버튼 -->
+                        <!-- ③ 저장 버튼 -->
                         <div style="display:flex;gap:6px;flex:0 0 auto;flex-wrap:nowrap;align-items:flex-end;">
                             <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="white-space:nowrap;color:var(--accent-orange);border-color:var(--accent-orange);" title="검사 도중 다른 작업으로 변경시 임시 저장">
                                 <span class="material-symbols-outlined" style="font-size:16px;">bookmark_add</span> 임시 저장
@@ -11249,20 +11235,11 @@ const PaintingInspectionModule = (function() {
     }
 
     function _getReworkQtyFromForm() {
-        return Math.max(0, parseInt((document.getElementById('inpReworkQty') || {}).value || '0', 10) || 0);
+        // 외관검사 「리워크로 보내기」UI/기능 삭제 — 항상 0
+        return 0;
     }
 
     function _onReworkQtyChange() {
-        const reworkEl = document.getElementById('inpReworkQty');
-        // 빈칸은 0으로 취급하되, 입력란에 '0'을 강제하지 않음 (1 입력 시 10이 되는 문제 방지)
-        if (reworkEl) {
-            const raw = String(reworkEl.value || '').replace(/[^0-9]/g, '');
-            if (raw === '') {
-                reworkEl.value = '';
-            } else {
-                reworkEl.value = String(parseInt(raw, 10) || 0);
-            }
-        }
         _recalcInspQuantities();
     }
 
@@ -11272,13 +11249,6 @@ const PaintingInspectionModule = (function() {
         const failQty = _sumDefectTypeInputs();
         const failEl = document.getElementById('inpDefectQty');
         if (failEl) failEl.value = failQty;
-
-        let reworkQty = _getReworkQtyFromForm();
-        const reworkEl = document.getElementById('inpReworkQty');
-        if (reworkQty > failQty) {
-            reworkQty = failQty;
-            if (reworkEl) reworkEl.value = reworkQty > 0 ? String(reworkQty) : '';
-        }
 
         const goodEl = document.getElementById('inpGoodQty');
         const totalEl = document.getElementById('inpTotalQty');
@@ -11525,12 +11495,6 @@ const PaintingInspectionModule = (function() {
         // 불량수 자동 입력
         const defectQtyEl = document.getElementById('inpDefectQty');
         if (defectQtyEl) defectQtyEl.value = defectSum;
-        let reworkQty = _getReworkQtyFromForm();
-        const reworkEl = document.getElementById('inpReworkQty');
-        if (reworkQty > defectSum) {
-            reworkQty = defectSum;
-            if (reworkEl) reworkEl.value = reworkQty > 0 ? String(reworkQty) : '';
-        }
 
         const goodQtyEl = document.getElementById('inpGoodQty');
         if (inspectionQtyEl && goodQtyEl) {
@@ -11656,18 +11620,12 @@ const PaintingInspectionModule = (function() {
         const packUnit = parseInt(document.getElementById('piPackUnit')?.value || 0) ||
             _findPaintProductPackUnit(work.carModel, work.partName, work.color) || 0;
 
-        // ✓ 검사 수량 산정: 검사수량 = 양품 + 불량 (리워크는 불량 중 일부)
+        // ✓ 검사 수량 산정: 검사수량 = 양품 + 불량
         const effectiveInspQty = isPartial
             ? (goodQty + defectQty)
             : (availableQty > 0 ? availableQty : (goodQty + defectQty));
         if (effectiveInspQty === 0) {
             UIUtils.toast('검사수량이 0입니다. 양품수를 입력해주세요.', 'warning');
-            return;
-        }
-        if (reworkQty > defectQty) {
-            UIUtils.toast(`리워크수(${UIUtils.formatNumber(reworkQty)})는 불량수(${UIUtils.formatNumber(defectQty)})를 초과할 수 없습니다.`, 'warning');
-            const reworkEl = document.getElementById('inpReworkQty');
-            if (reworkEl) reworkEl.focus();
             return;
         }
         // ✓ 부분완료 시 이번 회차 검사수량이 남은 수량을 초과할 수 없음
@@ -11792,30 +11750,7 @@ const PaintingInspectionModule = (function() {
             createdAt: new Date().toISOString()
         });
 
-        // 리워크수 → 리워크 재공품 입고
-        if (reworkQty > 0 && typeof ReworkWipModule !== 'undefined' && ReworkWipModule.addFromPaintingInspection) {
-            try {
-                await ReworkWipModule.addFromPaintingInspection({
-                    date: inspectionDate,
-                    carModel: work.carModel,
-                    partName: work.partName,
-                    color: work.color,
-                    qty: reworkQty,
-                    lotNo: baseData.lotNo,
-                    paintingDate: work.date || '',
-                    paintingWorkId: workId,
-                    inspectionId: savedInspection && savedInspection.id ? savedInspection.id : '',
-                    note: '도장 외관검사 리워크',
-                    // 계보 승계 — 이 도장 실적(work)에 이미 확정 저장된 사출LOT·수입검사일·
-                    // 도료(도장) LOT 정보를 그대로 물려준다. 리워크품도 사출부터 이어지는
-                    // 완제품 이력의 일부이므로 여기서 끊기면 안 된다.
-                    trace: work.trace || undefined
-                });
-            } catch (e) {
-                console.error('[PaintingInspection] rework WIP inbound failed:', e);
-                UIUtils.toast('리워크 재공 입고에 실패했습니다. 검사 기록은 저장되었습니다.', 'warning');
-            }
-        }
+        // 리워크로 보내기(외관검사 → 리워크 재공 입고)는 UI/기능 삭제됨
 
         // ✓ Case 1: 부분 완료 처리
         if (isPartial) {
