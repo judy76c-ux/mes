@@ -1281,21 +1281,6 @@ var LaserWorkModule = (function() {
                     </div>
                 </div>
             </div>
-            <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
-                    <div style="display:flex;align-items:center;gap:5px;">
-                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">checklist</span>
-                        <span style="font-weight:700;font-size:0.85rem;">선택된 작업 LOT</span>
-                    </div>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addLotRow('', '', 0)">
-                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 직접 추가
-                    </button>
-                </div>
-                <div id="lwLotContainer"></div>
-                <div id="lwPackUnitDisplay" style="margin-top:8px;padding:9px 12px;border:1px solid rgba(37,99,235,0.25);border-radius:8px;background:rgba(37,99,235,0.06);font-size:1rem;font-weight:800;color:var(--text-primary);text-align:right;">
-                    박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">-</strong> 개
-                </div>
-            </div>
             <div id="lwResidualInfo" style="display:none;margin-bottom:8px;"></div>
             <div id="lwSplitPanel" style="display:none;margin-bottom:8px;padding:8px 12px;background:rgba(109,40,217,0.06);border:1px solid rgba(109,40,217,0.25);border-radius:8px;">
                 <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
@@ -1321,6 +1306,26 @@ var LaserWorkModule = (function() {
                 <input type="hidden" id="lwSplitLinkedProductId">
             </div>
             `}
+            <!-- ★ "선택된 작업 LOT"은 수정 모드에서도 반드시 보여야 한다 — 예전엔 위 isEditMode
+                 삼항식의 else(신규 등록) 쪽에만 있어서, 기존 실적을 수정할 땐 이 박스 자체가
+                 DOM에 없었다(lwLotContainer가 없으니 renderLotRows()도 조용히 아무 일도 안 함).
+                 그래서 "대기품에서 잘못 선택된 도장LOT"을 실적 수정 화면에서 고칠 방법이
+                 아예 없었다 — 이게 "수정이 안 됨" 문제의 진짜 원인이라 조건 밖으로 뺐다. -->
+            <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px 12px;margin-bottom:8px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px;">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                        <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">checklist</span>
+                        <span style="font-weight:700;font-size:0.85rem;">선택된 작업 LOT</span>
+                    </div>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.addLotRow('', '', 0)">
+                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 직접 추가
+                    </button>
+                </div>
+                <div id="lwLotContainer"></div>
+                <div id="lwPackUnitDisplay" style="margin-top:8px;padding:9px 12px;border:1px solid rgba(37,99,235,0.25);border-radius:8px;background:rgba(37,99,235,0.06);font-size:1rem;font-weight:800;color:var(--text-primary);text-align:right;">
+                    박스당 포장 수량은 : <strong style="font-size:1.18rem;color:var(--accent-blue);">-</strong> 개
+                </div>
+            </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr${isEditMode ? ' 1fr' : ''};gap:8px;margin-bottom:8px;">
                 <div class="form-group" style="margin:0;">
                     <label class="form-label">작업일자 <span style="color:var(--accent-red)">*</span></label>

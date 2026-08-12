@@ -4814,7 +4814,7 @@ const PaintingWorkModule = (function() {
         // 먼저 걸려서 자동으로 채워지고, 정작 오늘 들어온(아직 미입고 처리 중인) 새 LOT은
         // 화면에 안 보인 채 조용히 묻혀버리는 사고로 이어진다.
         var unmatchedInboundHtml = (!isLaserWipProduct && carModel && partName)
-            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고에서 이 라인으로 실제 입고된 LOT·수량)') +
+            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
                _buildUnmatchedInboundWarningHtml({ carModel: carModel, partName: partName, color: color, line: effectiveLine, date: (p.planDate || _currentDate) }))
             : '';
 
@@ -6978,6 +6978,25 @@ const PaintingWorkModule = (function() {
             '</div>';
     }
 
+    // 리워크 재공품 → 도장현장 출고로 들어온 입고분(isReworkInbound)임을 표시하는 배지.
+    // 창고 생산출고와 뒤섞여 보이면 이 LOT이 사출 창고 재고가 아니라 리워크 재공품에서 온
+    // 것을 놓쳐, 사출 창고 재고와 대조하며 혼란스러워하는 문제가 있었다.
+    // 플래그(isReworkInbound)는 이 기능 이후 확인된 입고 건에만 붙어 있어, 그전 건이나 자동
+    // 입고 경로 건은 리워크인데도 플래그가 없다 — 실제 리워크 출고 원장까지 대조해 판정한다.
+    function _isReworkInbound(r) {
+        if (!r) return false;
+        if (r.isReworkInbound || r.refReworkOutId) return true;
+        if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.isReworkSiteInbound) {
+            try { return !!PaintingInputModule.isReworkSiteInbound(r); } catch (e) { /* ignore */ }
+        }
+        return false;
+    }
+
+    function _reworkInboundBadgeHtml() {
+        return ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;' +
+            'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">리워크</span>';
+    }
+
     // 이 도장작업일·차종·라인·사출명으로 실제 입고된 기록에서 LOT별 입고 시각·차종·사출명·컬러를
     // 뽑는다(같은 LOT이 여러 건 나뉘어 들어왔으면 가장 이른 시각을 대표값으로 쓴다).
     // _buildUnmatchedInboundWarningHtml의 요약 목록과 _buildDayInboundListHtml의 상세 표가
@@ -6998,7 +7017,7 @@ const PaintingWorkModule = (function() {
                 var lotNo = String((l && l.lotNo) || '').trim();
                 if (!lotNo) return;
                 if (!out[lotNo] || time < out[lotNo].time) {
-                    out[lotNo] = { time: time, carModel: r.carModel || '', partName: r.partName || '', color: r.color || '' };
+                    out[lotNo] = { time: time, carModel: r.carModel || '', partName: r.partName || '', color: r.color || '', isRework: _isReworkInbound(r) };
                 }
             });
         });
@@ -7053,6 +7072,7 @@ const PaintingWorkModule = (function() {
                 qty: usedQty,
                 missQty: missQty,
                 statusKind: statusKind,
+                isRework: !!detail.isRework,
                 sortKey: '0_' + lotNo
             });
         });
@@ -7070,6 +7090,7 @@ const PaintingWorkModule = (function() {
                 qty: Number(u.qty) || 0,
                 missQty: Number(u.qty) || 0,
                 statusKind: 'unmatched',
+                isRework: !!detail.isRework,
                 sortKey: '1_' + lotNo
             });
         });
@@ -7117,7 +7138,8 @@ const PaintingWorkModule = (function() {
             return '<tr style="background:' + rowBg + ';border-bottom:1px solid ' + rowBorder + ';">' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.time) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.carModel) + '</td>' +
-                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.partName) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.partName) +
+                    (r.isRework ? _reworkInboundBadgeHtml() : '') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.color) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(r.lotNo) + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' +
@@ -7223,7 +7245,8 @@ const PaintingWorkModule = (function() {
             var cells =
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.time || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.carModel || maps.carModel || '-') + '</td>' +
-                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.partName || maps.injPartName || '-') + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.partName || maps.injPartName || '-') +
+                    (detail.isRework ? _reworkInboundBadgeHtml() : '') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.color || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(lotNo) + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' + UIUtils.formatNumber(received) + '</td>' +
@@ -7500,7 +7523,7 @@ const PaintingWorkModule = (function() {
             '<label class="form-label">사출LOT</label>' +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +
@@ -7699,7 +7722,7 @@ const PaintingWorkModule = (function() {
             '<label class="form-label" style="font-size:0.84rem;">사출LOT</label>' +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +

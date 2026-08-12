@@ -318,6 +318,84 @@ var PaintingInputModule = (function () {
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
     }
 
+    /** 컬러 비교 — 사출 소재 컬러는 "BK+CLEAR"처럼 도장 후공정 표기가 붙어 오고, 계획·창고
+     *  쪽은 "BLACK"으로 들어온다. 문자열 그대로 비교하면 같은 색인데도 전부 불일치가 된다.
+     *  UIUtils.normalizeColorAlias가 BK/BK+CLEAR/블랙 → black 으로 정규화해 준다. */
+    function _colorLooseMatch(a, b) {
+        var x = String(a || '').trim();
+        var y = String(b || '').trim();
+        if (!x || !y) return true;
+        if (typeof UIUtils !== 'undefined' && typeof UIUtils.normalizeColorAlias === 'function') {
+            return UIUtils.normalizeColorAlias(x) === UIUtils.normalizeColorAlias(y);
+        }
+        return x.toLowerCase() === y.toLowerCase();
+    }
+
+    /** 리워크 재공품 → 도장현장으로 출고된 LOT 번호 집합.
+     *  현장 입고 기록의 isReworkInbound 플래그는 이 기능이 생긴 뒤 확인된 건에만 붙어 있어,
+     *  그전에 입고 처리된 건이나 자동 입고 경로로 들어온 건은 리워크인데도 플래그가 없다.
+     *  실제 출고 원장(REWORK_WIP)의 LOT과 대조해 그런 건까지 리워크로 인식한다. */
+    function _reworkDispatchedLotSet(carModel, partName, color) {
+        var set = {};
+        if (!DB.STORES || !DB.STORES.REWORK_WIP) return set;
+        (Storage.getAll(DB.STORES.REWORK_WIP) || []).forEach(function (r) {
+            if (!r || String(r.type || '') !== '출고') return;
+            if (String(r.source || '') !== 'dispatch_to_line') return;
+            if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
+            if (partName && String(r.partName || '').trim() !== String(partName).trim()) return;
+            if (color && !_colorLooseMatch(r.color, color)) return;
+            var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : [];
+            var names = lots.map(function (l) { return String((l && l.lotNo) || '').trim(); });
+            names.push(String(r.lotNo || '').trim());
+            try {
+                if (typeof Trace !== 'undefined') names.push(String((Trace.of(r).inj || {}).lot || '').trim());
+            } catch (e) { /* ignore */ }
+            names.forEach(function (n) { if (n) set[n] = true; });
+        });
+        return set;
+    }
+
+    function _isReworkInboundRecord(r, lotSet) {
+        if (r.isReworkInbound || r.refReworkOutId) return true;
+        if (/리워크/.test(String(r.source || ''))) return true;
+        var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+        return lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; });
+    }
+
+    /** 이 입고 기록이 리워크 재공품에서 온 것인지 — 화면 배지 표시용(painting.js). */
+    function isReworkSiteInbound(record) {
+        if (!record) return false;
+        if (record.isReworkInbound || record.refReworkOutId) return true;
+        if (/리워크/.test(String(record.source || ''))) return true;
+        var lotSet = _reworkDispatchedLotSet(record.carModel, record.partName, record.color);
+        return _isReworkInboundRecord(record, lotSet);
+    }
+
+    /** 리워크 재공품 → 도장현장 경로로 실제 입고 확인(현장 입고 처리)된 뒤 아직 생산에
+     *  소진되지 않은 잔량(도장-A + 도장-B 합산). IL 등 리워크 투입품은 재공품 재고에서는
+     *  출고돼 사라졌지만 도장현장에는 이미 도착·확인돼 있는 구간이 있는데, 사출 창고 「현장
+     *  입고 부족」 판정이 재공품 재고(ReworkWipModule.getStockQty)만 보면 이 구간을 놓쳐
+     *  이미 현장에 있는 자재를 중복으로 "부족"이라 잡는다. 이 함수로 그 구간을 메운다. */
+    function getReworkSiteBalance(carModel, partName, color) {
+        var lotSet = _reworkDispatchedLotSet(carModel, partName, color);
+        if (!Object.keys(lotSet).length) return 0;
+        var lines = ['도장-A', '도장-B'];
+        var total = 0;
+        lines.forEach(function (line) {
+            var records = _recordsForLine(line).filter(function (r) {
+                if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return false;
+                if (partName && String(r.partName || '').trim() !== String(partName).trim()) return false;
+                if (color && !_colorLooseMatch(r.color, color)) return false;
+                // 입고는 리워크 경로 건만, 출고(생산 투입·반납)는 전부 차감 대상으로 본다.
+                if (String(r.type || '') === '입고' && !_isReworkInboundRecord(r, lotSet)) return false;
+                return true;
+            });
+            var bal = (typeof InvCalc !== 'undefined' && InvCalc.lotBalances) ? InvCalc.lotBalances(records) : { total: 0 };
+            total += Math.max(0, Number(bal.total) || 0);
+        });
+        return total;
+    }
+
     /** getLotsByCarPart와 달리 InvCalc 스필오버 잔량(balance>0)으로 거르지 않고, 이 차종·
      *  사출명으로 "입고" 기록이 한 번이라도 있었던 LOT을 전부 반환한다 — 다른 LOT 출고가
      *  스필오버로 이 LOT 잔량을 갉아먹어 0으로 보이는 경우에도(반납 화면처럼 LOT별 정확
@@ -2208,6 +2286,8 @@ var PaintingInputModule = (function () {
         groupStock: _groupStock,
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,
+        getReworkSiteBalance: getReworkSiteBalance,
+        isReworkSiteInbound: isReworkSiteInbound,
         getReceivedLotNosByCarPart: getReceivedLotNosByCarPart,
         getExactLotLedger: getExactLotLedger,
         createSiteReturn: createSiteReturn,

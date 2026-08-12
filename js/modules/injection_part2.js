@@ -86,13 +86,23 @@ var InjectionWarehouseModule = (function() {
         return false;
     }
 
+    /** 리워크 재공 재고(재공품 창고에 아직 남아있는 분) + 도장현장에 이미 입고 확인된 분(양쪽 라인
+     *  합산, 아직 미소진)의 합. 재공품은 도장현장으로 출고되는 순간 재공 재고에서는 빠지지만
+     *  실제로는 현장에 도착해 있으므로, 현장 확인분을 더하지 않으면 이미 도착한 자재를
+     *  중복으로 "부족"이라 잡는다(리워크 → 도장현장 입고 경로가 반영되면 부족이 자동 해소돼야 함). */
     function _getReworkWipStock(carModel, partName, color) {
+        let stock = 0;
         try {
             if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.getStockQty === 'function') {
-                return Math.max(0, Number(ReworkWipModule.getStockQty(carModel, partName, color)) || 0);
+                stock += Math.max(0, Number(ReworkWipModule.getStockQty(carModel, partName, color)) || 0);
             }
         } catch (e) { /* ignore */ }
-        return 0;
+        try {
+            if (typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.getReworkSiteBalance === 'function') {
+                stock += Math.max(0, Number(PaintingInputModule.getReworkSiteBalance(carModel, partName, color)) || 0);
+            }
+        } catch (e) { /* ignore */ }
+        return stock;
     }
 
     /** 현장 입고 필요 표시량·부족량 (창고 재고 대비, 에러 처리분 차감)
@@ -207,7 +217,7 @@ var InjectionWarehouseModule = (function() {
         const hint = document.querySelector('#injSiteInboundShortageCard .card-header > span:last-child');
         if (hint) {
             hint.textContent = hasRework
-                ? 'IL 등은 리워크 재공 재고 기준입니다. 부족 시 사유 입력 후 에러 처리하세요.'
+                ? 'IL 등은 리워크 재공 재고(+도장현장 입고 확인분) 기준입니다. 부족 시 사유 입력 후 현장 사출 요청하세요.'
                 : '계획 대비 현장 입고가 필요한데 창고 재고가 부족합니다. 사유 입력 후 에러 처리하세요.';
         }
         body.innerHTML = rows.map(function (row) {
@@ -248,7 +258,8 @@ var InjectionWarehouseModule = (function() {
                     '<button type="button" class="btn btn-sm" style="background:#ea580c;color:#fff;border:none;padding:4px 10px;"' +
                     ' onclick="InjectionWarehouseModule.openSiteInboundShortageResolve(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' +
                     row.need + ',' + row.stock + ',' + row.shortage + ',' + (row.fromRework ? '1' : '0') + ')">' +
-                    '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">task_alt</span> 에러 처리' +
+                    '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">task_alt</span> ' +
+                    (row.fromRework ? '현장 사출 요청' : '에러 처리') +
                     '</button>' +
                 '</td></tr>';
         }).join('');
@@ -394,7 +405,7 @@ var InjectionWarehouseModule = (function() {
         const fromRework = fromReworkFlag === 1 || fromReworkFlag === '1' || fromReworkFlag === true
             || _isReworkSourcedPart(partName);
         const stockLabel = fromRework ? '리워크 재공 재고' : '현재고';
-        const modalTitle = fromRework ? '리워크 재공 부족 에러 처리' : '현장 입고 부족 에러 처리';
+        const modalTitle = fromRework ? '현장 사출 요청 (리워크 재공 부족)' : '현장 입고 부족 에러 처리';
         const guideText = fromRework
             ? 'IL 등은 사출창고가 아니라 <strong>리워크 재공품 → 도장현장 출고</strong>로 투입합니다. 재공 재고가 부족하면 사유를 남기고 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)'
             : '창고 재고가 부족해 현장 입고가 불가한 경우 사유를 남기고, 선택한 관리자에게 쪽지로 보고합니다. (재고 수량은 변경되지 않습니다)';
@@ -442,7 +453,8 @@ var InjectionWarehouseModule = (function() {
                     encodeURIComponent(carModel) + '\',\'' + encodeURIComponent(partName) + '\',\'' +
                     encodeURIComponent(color) + '\',' + needQty + ',' + stockQty + ',' + shortQty + ',' +
                     (fromRework ? '1' : '0') + ')">' +
-                    '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">send</span> 저장하고 보내기</button>',
+                    '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">send</span> ' +
+                    (fromRework ? '요청 보내기' : '저장하고 보내기') + '</button>',
                 'md'
             );
         }
@@ -503,10 +515,10 @@ var InjectionWarehouseModule = (function() {
             : '';
         const stockLabel = fromRework ? '리워크 재공 재고' : '현재고';
         const reportTitle = fromRework
-            ? '리워크 재공 부족 사유 보고 — ' + (partName || carModel || '')
+            ? '현장 사출 요청 (리워크 재공 부족) — ' + (partName || carModel || '')
             : '현장 입고 부족 사유 보고 — ' + (partName || carModel || '');
         const reportBody =
-            (fromRework ? '[리워크 재공 부족 사유 보고]\n' : '[현장 입고 부족 사유 보고]\n') +
+            (fromRework ? '[현장 사출 요청 — 리워크 재공 부족]\n' : '[현장 입고 부족 사유 보고]\n') +
             '차종/사출명/컬러: ' + (carModel || '-') + ' / ' + (partName || '-') + (color ? ' / ' + color : '') + '\n' +
             (fromRework ? '투입 경로: 리워크 재공품 → 도장현장 출고\n' : '') +
             '현장 입고 필요: ' + UIUtils.formatNumber(needQty) + ' EA\n' +
@@ -555,11 +567,13 @@ var InjectionWarehouseModule = (function() {
         try {
             await Storage.setConfigValue(SITE_INBOUND_SHORTAGE_ACK_KEY, _siteInboundShortageAcks);
         } catch (e) {
-            UIUtils.toast('에러 처리 저장에 실패했습니다. (쪽지는 발송됨)', 'error');
+            UIUtils.toast((fromRework ? '현장 사출 요청' : '에러 처리') + ' 저장에 실패했습니다. (쪽지는 발송됨)', 'error');
             return;
         }
         UIUtils.closeModal();
-        UIUtils.toast('사유 보고 쪽지를 보내고 에러 처리했습니다. (' + sendResult.count + '명)', 'success');
+        UIUtils.toast(
+            (fromRework ? '현장 사출 요청 쪽지를 보냈습니다.' : '사유 보고 쪽지를 보내고 에러 처리했습니다.') +
+            ' (' + sendResult.count + '명)', 'success');
         loadData();
     }
 
@@ -1745,7 +1759,7 @@ var InjectionWarehouseModule = (function() {
                                             </th>
                                             <th style="text-align:right;white-space:nowrap;">현장 입고 필요</th>
                                             <th style="text-align:right;white-space:nowrap;">현재고
-                                                <div style="font-weight:400;font-size:0.68rem;color:var(--text-muted);">IL=리워크재고</div>
+                                                <div style="font-weight:400;font-size:0.68rem;color:var(--text-muted);">IL=리워크재고+현장입고확인분</div>
                                             </th>
                                             <th style="text-align:right;white-space:nowrap;">부족</th>
                                             <th style="white-space:nowrap;">작업</th>

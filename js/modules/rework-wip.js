@@ -10,7 +10,10 @@ var ReworkWipModule = (function () {
 
     // 리워크 종류 — 원인별로 재발 방지 조치가 다르므로(도장 누락→도장 공정 점검,
     // 사출재작업→사출 성형 조건, 세척누락→전처리 공정) 원인을 구분해 남긴다.
-    const REWORK_TYPES = ['도장 누락', '사출재작업', '세척누락', '기타'];
+    const REWORK_TYPES = ['도장 누락', '사출재작업', '세척누락', '소량 잔량'];
+
+    // 보관위치 — 자재창고 / 도장현장만 선택
+    const LOCATIONS = ['자재창고', '도장현장'];
 
     function _today() {
         return new Date().toISOString().slice(0, 10);
@@ -413,7 +416,15 @@ var ReworkWipModule = (function () {
           </div>
           <div>
             <label class="form-label">보관위치</label>
-            <input id="rwLocation" type="text" class="form-input" value="${_esc(r.location || '')}">
+            <select id="rwLocation" class="form-input">
+              <option value="">-- 선택 --</option>
+              ${LOCATIONS.map(function (loc) {
+                return `<option value="${_esc(loc)}" ${r.location === loc ? 'selected' : ''}>${_esc(loc)}</option>`;
+              }).join('')}
+              ${r.location && LOCATIONS.indexOf(r.location) < 0
+                ? `<option value="${_esc(r.location)}" selected>${_esc(r.location)} (기존)</option>`
+                : ''}
+            </select>
           </div>
           <div>
             <label class="form-label">리워크 종류</label>
@@ -422,6 +433,9 @@ var ReworkWipModule = (function () {
               ${REWORK_TYPES.map(function (t) {
                 return `<option value="${_esc(t)}" ${r.reworkType === t ? 'selected' : ''}>${_esc(t)}</option>`;
               }).join('')}
+              ${r.reworkType && REWORK_TYPES.indexOf(r.reworkType) < 0
+                ? `<option value="${_esc(r.reworkType)}" selected>${_esc(r.reworkType)} (기존)</option>`
+                : ''}
             </select>
           </div>
           <div style="grid-column:1/-1;">
