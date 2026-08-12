@@ -329,7 +329,8 @@ var ReworkWipModule = (function () {
                     <tbody>
                       ${records.map(function (r) {
                         const src = r.source === 'painting_inspection' ? '외관검사'
-                            : (r.source === 'dispatch_to_line' ? '현장출고' : (r.source || '-'));
+                            : (r.source === 'dispatch_to_line' ? '현장출고'
+                            : (r.source === 'site_return' ? '현장반납' : (r.source || '-')));
                         return `<tr style="border-top:1px solid var(--border-color);">
                           <td style="padding:8px 12px;white-space:nowrap;">${_esc(r.date)}</td>
                           <td style="padding:8px 12px;white-space:nowrap;">
@@ -682,6 +683,133 @@ var ReworkWipModule = (function () {
         }
     }
 
+    /** 도장 실적 입력에서 넘어온 컬러(도장 컬러, 예: BLACK)를 재공 재고에 실제 쌓여 있는
+     *  컬러 표기(사출 소재 컬러, 예: BK+CLEAR)로 되돌린다. 그대로 쓰면 재고 조회(getStockQty)는
+     *  느슨한 컬러 비교라 맞게 나오지만, 이 출고 기록 자체는 다른 컬러 문자열로 남아 부품별
+     *  현황 표(_calcStock, 정확 일치)에 엉뚱한 마이너스 행을 새로 만들고 _defaultLotsForStock
+     *  (정확 일치)도 기존 입고분의 LOT 계보를 못 찾아 매번 새 RST LOT을 만들게 된다. */
+    function _resolveStockColor(carModel, partName, color) {
+        const want = String(color || '').trim();
+        if (!want) return want;
+        const match = _getAll().find(function (r) {
+            return r.type === '입고' && (r.carModel || '') === carModel && r.partName === partName
+                && _colorsEqual(r.color, want);
+        });
+        return match ? String(match.color || '').trim() : want;
+    }
+
+    /** 도장 작업 실적 입력 화면에서 "리워크 재공품 사용"을 적용했을 때 호출 — 별도 출고 모달
+     *  없이 즉시 재공 재고를 차감한다. 재공 재고가 모자라도 막지 않는다(부품별 리워크 재공
+     *  현황 표에 음수/마이너스로 표시되어 리워크 담당자에게 출고가 밀렸다는 신호가 된다 —
+     *  기존 표시 로직 그대로 재사용). 도장현장 입고 확정(현장 입고 처리)은 호출한 쪽에서
+     *  PaintingInputModule.receiveFromWarehouseOut로 이어서 처리한다(사출 창고 생산출고
+     *  확인과 동일한 구조를 재사용). */
+    async function dispatchFromPaintingWork(opts) {
+        opts = opts || {};
+        const carModel = String(opts.carModel || '').trim();
+        const partName = String(opts.partName || '').trim();
+        const color = _resolveStockColor(carModel, partName, String(opts.color || '').trim());
+        const qty = Math.max(0, Math.floor(Number(opts.qty) || 0));
+        if (!partName || qty <= 0) return null;
+        const line = _normDispatchLine(opts.line || '도장-A');
+
+        const defs = _defaultLotsForStock(carModel, partName, color);
+        const lotFields = {
+            injLot: String(opts.injLot || defs.injLot || '').trim(),
+            inspDate: String(opts.inspDate || defs.inspDate || '').trim(),
+            paintLot: String(opts.paintLot || defs.paintLot || '').trim()
+        };
+        if (!lotFields.injLot) {
+            // submitDispatch와 동일한 RST 접두어 규칙 — 사출 LOT 형식(YYMMDD)과 겹치지 않게.
+            lotFields.injLot = 'RST' + Date.now().toString().slice(-8);
+        }
+        const note = String(opts.note || '').trim() || '도장 실적 입력 — 리워크 재공품 사용';
+        const outRec = {
+            date: _today(),
+            type: '출고',
+            carModel, partName, color,
+            qty,
+            line: line,
+            paintLine: line,
+            note: note + ' (' + line + ')',
+            source: 'dispatch_to_line',
+            createdAt: new Date().toISOString()
+        };
+        _applyLotFieldsToRec(outRec, lotFields, defs.trace);
+
+        const rec = await Storage.add(WIP_STORE, outRec);
+        const el = document.getElementById('contentArea');
+        if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
+        return rec;
+    }
+
+    /** 도장현장 반납(사출 창고 물류담당자의 「입고 처리」)에서 호출 — 리워크 재공 재고를
+     *  다시 늘린다. IL 등 리워크 투입품은 애초에 사출 창고 재고가 아니므로, 반납분을 사출
+     *  창고(INJECTION_INVENTORY)로 입고시키면 엉뚱한 품목이 그 창고에 쌓이고 리워크 재공
+     *  재고는 영영 복구되지 않는다(이 실적에서 도장현장 출고로 빠진 만큼 재공 재고가
+     *  줄어든 채 그대로 남는 버그) — 반드시 이 재공 재고로 돌아와야 한다.
+     *  opts.lots가 있으면 LOT별로(원래 계보 재사용) 각각 입고 기록을 만들고,
+     *  없으면 opts.quantity 전체를 단일 건으로 처리한다. */
+    async function receiveSiteReturn(opts) {
+        opts = opts || {};
+        const carModel = String(opts.carModel || '').trim();
+        const partName = String(opts.partName || '').trim();
+        const color = _resolveStockColor(carModel, partName, String(opts.color || '').trim());
+        const lotsIn = (Array.isArray(opts.lots) ? opts.lots : [])
+            .map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: Math.max(0, Math.floor(Number(l && l.qty) || 0)) };
+            })
+            .filter(function (l) { return l.qty > 0; });
+        const totalQty = Math.max(0, Math.floor(Number(opts.quantity != null ? opts.quantity : opts.qty) || 0));
+        const list = lotsIn.length ? lotsIn : (totalQty > 0 ? [{ lotNo: '', qty: totalQty }] : []);
+        if (!partName || !list.length) return null;
+
+        const note = String(opts.note || '').trim() || '도장현장 반납 입고';
+        const created = [];
+        for (let i = 0; i < list.length; i++) {
+            const l = list[i];
+            let injLot = l.lotNo;
+            let inspDate = '';
+            let paintLot = '';
+            let trace;
+            if (injLot) {
+                // 반납분은 원래 출고됐던 것과 같은 물리적 자재이므로, 같은 사출LOT을 쓴 기존
+                // 입고분에서 계보(수입검사일·도장LOT)를 그대로 이어받는다.
+                const src = _getAll().find(function (rec) {
+                    return rec.type === '입고' && rec.partName === partName && _lotFieldsOf(rec).injLot === injLot;
+                });
+                if (src) {
+                    const f = _lotFieldsOf(src);
+                    inspDate = f.inspDate;
+                    paintLot = f.paintLot;
+                    trace = src.trace;
+                }
+            }
+            if (!injLot) {
+                const defs = _defaultLotsForStock(carModel, partName, color);
+                injLot = defs.injLot;
+                inspDate = defs.inspDate;
+                paintLot = defs.paintLot;
+                trace = defs.trace;
+            }
+            const rec = {
+                date: _today(),
+                type: '입고',
+                carModel, partName, color,
+                qty: l.qty,
+                location: '도장현장',
+                note: note,
+                source: 'site_return',
+                createdAt: new Date().toISOString()
+            };
+            _applyLotFieldsToRec(rec, { injLot: injLot, inspDate: inspDate, paintLot: paintLot }, trace);
+            created.push(await Storage.add(WIP_STORE, rec));
+        }
+        const el = document.getElementById('contentArea');
+        if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
+        return created;
+    }
+
     function _reworkTypeBadge(t) {
         if (!t) return '<span style="color:var(--text-muted);">-</span>';
         return `<span style="padding:1px 8px;border-radius:20px;font-size:.72rem;font-weight:700;
@@ -717,7 +845,8 @@ var ReworkWipModule = (function () {
                 </thead>
                 <tbody>
                   ${inboundRows.map(function (r) {
-                    const src = r.source === 'painting_inspection' ? '외관검사' : (r.source || '-');
+                    const src = r.source === 'painting_inspection' ? '외관검사'
+                        : (r.source === 'site_return' ? '현장반납' : (r.source || '-'));
                     return `<tr style="border-top:1px solid var(--border-color);">
                       <td style="padding:7px 10px;white-space:nowrap;">${_esc(r.date)}</td>
                       <td style="padding:7px 10px;text-align:right;font-weight:700;white-space:nowrap;">${_fmt(r.qty)}</td>
@@ -793,6 +922,8 @@ var ReworkWipModule = (function () {
         deleteRecord,
         openDispatchModal,
         submitDispatch,
+        dispatchFromPaintingWork,
+        receiveSiteReturn,
         openStockDetailModal,
         addFromPaintingInspection,
         getStockQty

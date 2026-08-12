@@ -4844,9 +4844,46 @@ const PaintingWorkModule = (function() {
             }
         }
 
+        // 리워크 재공품 사용 — IL 등 리워크 대상 사출명일 때만, ①(창고→도장현장 입고)과
+        // ②(도장 투입) 사이에 노출. 체크 후 수량을 적용하면 리워크 재공품에서 즉시 출고·
+        // 현장 입고 확정까지 처리되고, 사출 창고 「현장 사출 요청」은 그만큼 자동 취소된다
+        // (기본은 여전히 사출 창고 요청 — 이 박스를 쓰지 않으면 기존과 동일하게 동작).
+        var reworkUseHtml = '';
+        if (!isLaserWipProduct && carModel && autoInjPartName &&
+            typeof InjectionWarehouseModule !== 'undefined' &&
+            typeof InjectionWarehouseModule.isReworkSourcedPart === 'function' &&
+            InjectionWarehouseModule.isReworkSourcedPart(autoInjPartName)) {
+            var _reworkStockNow = (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty)
+                ? ReworkWipModule.getStockQty(carModel, autoInjPartName, color) : 0;
+            reworkUseHtml =
+                '<div id="pwReworkUseBox" style="margin-bottom:12px;padding:12px 14px;border-radius:8px;' +
+                'border:1px solid rgba(124,58,237,.3);background:rgba(124,58,237,.05);">' +
+                '<label style="display:flex;align-items:center;gap:8px;font-size:0.86rem;font-weight:700;color:#7c3aed;cursor:pointer;">' +
+                '<input type="checkbox" id="pwUseReworkMaterial" onchange="PaintingWorkModule.toggleReworkUseBox(this)" style="width:16px;height:16px;accent-color:#7c3aed;">' +
+                '<span class="material-symbols-outlined" style="font-size:17px;">autorenew</span>' +
+                '리워크 재공품 사용 (사출 창고 대신 리워크 재공품에서 투입)' +
+                '</label>' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;margin-left:24px;">' +
+                '현재 리워크 재공 재고 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(_reworkStockNow) + ' EA</strong>' +
+                ' · 체크 후 수량을 적용하면 리워크에서 즉시 출고·현장 입고 처리되고, 사출 창고 「현장 사출 요청」은 취소됩니다.' +
+                '</div>' +
+                '<div id="pwReworkUseQtyRow" style="display:none;margin-top:10px;margin-left:24px;">' +
+                '<div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">' +
+                '<div><label class="form-label" style="font-size:0.76rem;">사용 수량 (EA)</label>' +
+                '<input type="number" class="form-input" id="pwReworkUseQty" min="1" style="max-width:160px;text-align:right;font-weight:700;"></div>' +
+                '<button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none;padding:7px 14px;" ' +
+                'onclick="PaintingWorkModule.applyReworkMaterial(this)">' +
+                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">bolt</span> 리워크에서 투입 처리</button>' +
+                '</div>' +
+                '<div id="pwReworkUseStatus" style="margin-top:6px;font-size:0.76rem;"></div>' +
+                '</div>' +
+                '</div>';
+        }
+
         var lotSectionHtml =
             pendingShipmentHtml +
             (unmatchedInboundHtml ? '<div style="margin-bottom:12px;">' + unmatchedInboundHtml + '</div>' : '') +
+            reworkUseHtml +
             '<div class="form-group" style="margin-bottom:14px;">' +
             (unmatchedInboundHtml ? _lotFlowStepHeaderHtml('2', '#7c3aed', '도장 투입', '(이 작업에 실제 투입할 LOT·수량)') : '') +
             '<label class="form-label" style="font-size:0.84rem;display:flex;align-items:center;gap:6px;">' +
@@ -7398,6 +7435,96 @@ const PaintingWorkModule = (function() {
         warnEl.outerHTML = _buildUnmatchedInboundWarningHtml(dSnapshot);
     }
 
+    function toggleReworkUseBox(checkboxEl) {
+        var row = document.getElementById('pwReworkUseQtyRow');
+        if (!row) return;
+        row.style.display = (checkboxEl && checkboxEl.checked) ? '' : 'none';
+        if (checkboxEl && checkboxEl.checked) {
+            var qtyEl = document.getElementById('pwReworkUseQty');
+            if (qtyEl) qtyEl.focus();
+        }
+    }
+
+    /** "리워크 재공품 사용" 박스의 [리워크에서 투입 처리] 버튼 — 별도 화면 이동 없이 그 자리에서
+     *  ① 리워크 재공품 출고(즉시 차감) → ② 도장현장 입고 확정(자동) → ③ 사출 창고 「현장 사출
+     *  요청」 취소(acked 반영)까지 한 번에 처리하고, 방금 확정된 LOT을 ②투입 목록에 자동
+     *  추가한다. 기본 흐름(사출 창고에서 공급)은 이 박스를 쓰지 않으면 그대로 유지된다. */
+    async function applyReworkMaterial(btnEl) {
+        var cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
+        var pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
+        var color = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
+        var line = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value
+            || (typeof _currentLine !== 'undefined' ? _currentLine : '') || '');
+        var date = (document.getElementById('addPwDateHidden') || {}).value
+            || (typeof _currentDate !== 'undefined' ? _currentDate : '');
+        var injPartSel = document.getElementById('pwInjPartSelect');
+        var injPartName = (injPartSel && injPartSel.value) || '';
+        if (!injPartName && typeof _resolveInjPartNameForWork === 'function') {
+            injPartName = _resolveInjPartNameForWork(cm, pn, color) || '';
+        }
+        injPartName = injPartName || pn;
+
+        var qtyEl = document.getElementById('pwReworkUseQty');
+        var qty = Math.floor(Number(qtyEl && qtyEl.value) || 0);
+        var statusEl = document.getElementById('pwReworkUseStatus');
+        if (!(qty > 0)) {
+            UIUtils.toast('사용 수량을 입력하세요.', 'warning');
+            if (qtyEl) qtyEl.focus();
+            return;
+        }
+        if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.dispatchFromPaintingWork !== 'function') {
+            UIUtils.toast('리워크 재공품 모듈을 사용할 수 없습니다.', 'error');
+            return;
+        }
+
+        if (btnEl) btnEl.disabled = true;
+        try {
+            var actor = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            var actorLabel = actor ? String(actor.displayName || actor.name || actor.username || actor.id || '') : '';
+
+            var outRec = await ReworkWipModule.dispatchFromPaintingWork({
+                carModel: cm, partName: injPartName, color: color, qty: qty, line: line,
+                note: '도장 실적 입력 — 리워크 재공품 사용'
+            });
+            if (!outRec) {
+                UIUtils.toast('리워크 출고 처리에 실패했습니다.', 'error');
+                return;
+            }
+
+            if (typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.receiveFromWarehouseOut === 'function') {
+                await PaintingInputModule.receiveFromWarehouseOut(outRec, {
+                    useDate: date, receivedBy: actorLabel, isAutoReceived: true
+                });
+            }
+
+            if (typeof InjectionWarehouseModule !== 'undefined' && typeof InjectionWarehouseModule.ackReworkUsageFromWork === 'function') {
+                await InjectionWarehouseModule.ackReworkUsageFromWork(cm, injPartName, color, qty, {
+                    note: '도장 실적 입력 — 리워크 재공품 사용 (' + line + ')'
+                });
+            }
+
+            UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 리워크 재공품에서 투입 처리했습니다. 사출 창고 요청도 취소됩니다.', 'success');
+
+            var lotNo = outRec.lotNo || (Array.isArray(outRec.lots) && outRec.lots[0] && outRec.lots[0].lotNo) || '';
+            if (lotNo) {
+                addMissingLotRow({ dataset: { lot: lotNo, qty: String(qty) } });
+            } else {
+                _refreshUnmatchedInboundWarn();
+            }
+
+            if (statusEl) {
+                statusEl.style.color = '#16a34a';
+                statusEl.textContent = '✓ ' + UIUtils.formatNumber(qty) + ' EA 적용됨' +
+                    (UIUtils.now ? ' (' + UIUtils.now() + ')' : '');
+            }
+            if (qtyEl) qtyEl.value = '';
+        } catch (e) {
+            UIUtils.toast('리워크 재공품 적용 실패: ' + (e && e.message ? e.message : e), 'error');
+        } finally {
+            if (btnEl) btnEl.disabled = false;
+        }
+    }
+
     // 수정 페이지 (입력 폼)
     function openWorkEditPage(id) {
         try {
@@ -8315,6 +8442,8 @@ const PaintingWorkModule = (function() {
         goToWorkFromPlan,
         addLotRow,
         addMissingLotRow,
+        toggleReworkUseBox,
+        applyReworkMaterial,
         removeLotRow,
         onLotRowSelect,
         checkFifoWarning,

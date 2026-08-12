@@ -577,6 +577,47 @@ var InjectionWarehouseModule = (function() {
         loadData();
     }
 
+    /** 도장 실적 입력 화면에서 "리워크 재공품 사용"을 적용했을 때 호출 — 사유 입력·쪽지 발송
+     *  없이, 그 실적 입력 자체를 처리 근거로 삼아 「현장 사출 요청」(부족)을 즉시 그만큼
+     *  줄인다. 내부적으로 기존 수동 "에러 처리" 확인과 같은 acked 저장소를 공유하므로,
+     *  need(=계획 대비 미해결 필요량) 계산에서 자동으로 빠진다. */
+    async function ackReworkUsageFromWork(carModel, partName, color, qty, opts) {
+        opts = opts || {};
+        const q = Math.max(0, Number(qty) || 0);
+        if (q <= 0) return { ok: false, reason: 'invalid_qty' };
+        const actor = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        const actorLabel = actor
+            ? String(actor.displayName || actor.name || actor.username || actor.id || '')
+            : '';
+        const reason = String(opts.note || '').trim() || '도장 실적 입력 — 리워크 재공품 사용';
+        try {
+            await _ensureSiteInboundShortageAcksLoaded();
+            const key = _siteInboundShortageKey(carModel, partName, color);
+            const prev = _siteInboundShortageAcks[key] || {};
+            _siteInboundShortageAcks[key] = {
+                ackedQty: Math.max(0, Number(prev.ackedQty) || 0) + q,
+                reason: reason,
+                fromRework: true,
+                resolvedAt: (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')),
+                resolvedBy: actorLabel,
+                history: (Array.isArray(prev.history) ? prev.history : []).concat([{
+                    reason: reason,
+                    shortage: q,
+                    fromRework: true,
+                    at: UIUtils.now ? UIUtils.now() : new Date().toISOString(),
+                    by: actorLabel,
+                    source: 'painting_work_input'
+                }]).slice(-20)
+            };
+            await Storage.setConfigValue(SITE_INBOUND_SHORTAGE_ACK_KEY, _siteInboundShortageAcks);
+        } catch (e) {
+            console.warn('[InjectionWarehouse] 리워크 사용 반영 실패:', e);
+            return { ok: false, reason: 'save_failed' };
+        }
+        return { ok: true };
+    }
+
     // ── 수량 보정 시점(컷오버) 이전 검사건은 입고 대기에서 제외 ──────────────
     // 보정 시점 이전의 과거 검사건은 창고 재고가 이미 (수동)정합 처리된 것으로 보고, 입고 대기 목록과
     // 일괄입고 대상에서 제외한다. LOT번호가 생산일자 기준으로 재사용되는 탓에 과거 항목이 다시 대기로
@@ -4142,7 +4183,9 @@ var InjectionWarehouseModule = (function() {
             return `<tr>
                 <td style="white-space:nowrap;font-size:0.82rem;">${_escapeHtml(String(r.date || '-').slice(0, 16))}</td>
                 <td style="white-space:nowrap;"><strong>${_escapeHtml(r.carModel || '-')}</strong></td>
-                <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}${_isReworkSourcedPart(r.partName)
+                    ? ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크</span>'
+                    : ''}</td>
                 <td style="white-space:nowrap;">${_escapeHtml(r.color || '-')}</td>
                 <td>${_escapeHtml(lotsTxt)}</td>
                 <td style="text-align:right;font-weight:800;white-space:nowrap;">${UIUtils.formatNumber(r.quantity)}</td>
@@ -4181,10 +4224,15 @@ var InjectionWarehouseModule = (function() {
             : (r.lotNo || '-');
         const knownColors = _knownColorsFor(r.carModel, r.partName);
         const colorMissing = !r.color;
+        const isRework = _isReworkSourcedPart(r.partName);
+        const destText = isRework
+            ? '처리 즉시 이 소재가 <strong>리워크 재공 재고</strong>로 반영됩니다. (IL 등은 사출 창고 재고가 아니라 리워크 재공품이 원래 출처입니다)'
+            : '처리 즉시 이 사출 소재가 창고 재고(입고)로 반영됩니다.';
 
         UIUtils.showModal('도장현장 반납 입고 처리', `
             <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;margin-bottom:14px;line-height:1.6;">
-                <div><strong>${_escapeHtml(r.carModel || '-')}</strong> / <strong>${_escapeHtml(r.partName || '-')}</strong></div>
+                <div><strong>${_escapeHtml(r.carModel || '-')}</strong> / <strong>${_escapeHtml(r.partName || '-')}</strong>
+                    ${isRework ? ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크</span>' : ''}</div>
                 <div>반납 LOT: ${_escapeHtml(lotsTxt)}</div>
                 <div>합계 수량: <strong>${UIUtils.formatNumber(r.quantity)} EA</strong></div>
                 <div>반납 사유: ${_escapeHtml(r.returnReason || '-')}</div>
@@ -4197,10 +4245,10 @@ var InjectionWarehouseModule = (function() {
                 <datalist id="injSiteReturnColorList">
                     ${knownColors.map(function (c) { return `<option value="${_escapeHtml(c)}">`; }).join('')}
                 </datalist>
-                ${colorMissing ? '<div style="font-size:0.74rem;color:var(--accent-red);margin-top:3px;">이 반납 건에는 컬러 정보가 없습니다. 실물을 보고 정확한 컬러를 입력해야 같은 창고 품목으로 입고됩니다.</div>' : ''}
+                ${colorMissing ? '<div style="font-size:0.74rem;color:var(--accent-red);margin-top:3px;">이 반납 건에는 컬러 정보가 없습니다. 실물을 보고 정확한 컬러를 입력해야 같은 품목으로 입고됩니다.</div>' : ''}
             </div>
             <div style="font-size:0.82rem;color:var(--text-secondary);background:rgba(124,45,18,.07);border:1px solid rgba(124,45,18,.25);border-radius:6px;padding:9px 12px;">
-                실물을 확인한 뒤 입고 처리하세요. 처리 즉시 이 사출 소재가 창고 재고(입고)로 반영됩니다.
+                실물을 확인한 뒤 입고 처리하세요. ${destText}
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -4218,26 +4266,48 @@ var InjectionWarehouseModule = (function() {
         const actor = _getResetActorFields();
         const colorInput = document.getElementById('injSiteReturnColorInput');
         const confirmedColor = colorInput ? colorInput.value.trim() : (r.color || '');
+        // IL 등 리워크 투입품은 애초에 사출 창고 재고가 아니다 — 이 반납을
+        // INJECTION_INVENTORY로 입고시키면 사출 창고에 엉뚱한 품목이 쌓이고, 정작 도장현장
+        // 출고로 줄어든 리워크 재공 재고는 영영 복구되지 않는다(사용자 보고: "반납 시
+        // 수량이 증가되는 문제"). 리워크 대상은 리워크 재공 재고로 되돌린다.
+        const isRework = _isReworkSourcedPart(r.partName);
 
         try {
-            await _addInventoryRecord({
-                date: InvCalc.stampFor(UIUtils.today()),
-                type: '입고',
-                carModel: r.carModel || '',
-                partName: r.partName || '',
-                color: confirmedColor,
-                lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
-                lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
-                quantity: Number(r.quantity) || 0,
-                unit: 'EA',
-                source: '도장현장 반납',
-                receivedBy: actor.receivedBy,
-                refReturnId: r.id
-            });
+            if (isRework) {
+                if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
+                    throw new Error('리워크 재공품 모듈을 사용할 수 없습니다.');
+                }
+                await ReworkWipModule.receiveSiteReturn({
+                    carModel: r.carModel || '',
+                    partName: r.partName || '',
+                    color: confirmedColor,
+                    lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
+                    quantity: Number(r.quantity) || 0,
+                    note: '도장현장 반납 입고',
+                    receivedBy: actor.receivedBy
+                });
+            } else {
+                await _addInventoryRecord({
+                    date: InvCalc.stampFor(UIUtils.today()),
+                    type: '입고',
+                    carModel: r.carModel || '',
+                    partName: r.partName || '',
+                    color: confirmedColor,
+                    lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
+                    lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
+                    quantity: Number(r.quantity) || 0,
+                    unit: 'EA',
+                    source: '도장현장 반납',
+                    receivedBy: actor.receivedBy,
+                    refReturnId: r.id
+                });
+            }
             await PaintingInputModule.confirmSiteReturn(r.id, { confirmedBy: actor.resetBy });
 
             UIUtils.closeModal();
-            UIUtils.toast(`입고 처리 완료 — ${UIUtils.formatNumber(r.quantity)} EA`, 'success');
+            UIUtils.toast(
+                `입고 처리 완료 — ${UIUtils.formatNumber(r.quantity)} EA` +
+                (isRework ? ' (리워크 재공품으로 반영)' : ''), 'success');
             renderSiteReturns();
             loadData();
         } catch (e) {
@@ -9411,6 +9481,8 @@ var InjectionWarehouseModule = (function() {
         confirmSiteInboundShortageResolve,
         openReworkDispatchFromShortage,
         toggleSiteInboundShortageNotify,
+        ackReworkUsageFromWork,
+        isReworkSourcedPart: _isReworkSourcedPart,
         _goToPlan,
         editReservedPlan,
         _saveReservedPlanQty,
