@@ -5049,12 +5049,45 @@ var InjectionWarehouseModule = (function() {
         return map;
     }
 
+    /** 생산현장으로 나간 출고인지 — 재고 보정·초기화는 제외 */
+    function _isProductionOutbound(d) {
+        if (!d || d.type !== '출고') return false;
+        if (_isStockErrorResetRecord(d) || _isUnmatchedActionRecord(d) || _isStockBaselineRecord(d)) return false;
+        const src = String(d.source || '').trim();
+        const oType = String(d.outgoingType || '').trim();
+        if (/재고 수정 보정|일괄 현재고 보정|재고 오류|현재고 확정/.test(src)) return false;
+        return oType === '생산출고'
+            || src === '사출 창고 생산출고'
+            || src === '도장 작업 출고'
+            || src === '도장 입고';
+    }
+
+    /** LOT별 생산출고 수량 합계 (품명||LOT) — 수동입고 후 바로 현장 출고한 건은 창고에 남은 초과가 아님 */
+    function _productionOutQtyMap() {
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(function(d) {
+            if (!_isProductionOutbound(d)) return;
+            const lots = (d.lots && d.lots.length > 0)
+                ? d.lots
+                : (d.lotNo ? [{ lotNo: d.lotNo, qty: d.quantity }] : []);
+            lots.forEach(function(l) {
+                const lotNo = String(l.lotNo || '').trim();
+                const qty = _lotNum(l.qty);
+                if (!lotNo || qty <= 0) return;
+                const k = _normKeyStr(d.partName) + '||' + lotNo;
+                map[k] = (map[k] || 0) + qty;
+            });
+        });
+        return map;
+    }
+
     /**
      * 중복(이중) 입고 판정 — "같은 LOT이 2회 입고"는 중복이 아니다.
      * LOT번호는 생산일자 기준이라 한 LOT이 여러 번 나눠 들어오는 분할 입고가 정상이다.
      * 그래서 다음 두 가지 객관적 신호만 잡는다.
-     *   ① 초과 입고 — 수입검사·수동 입고 합계 > 수입검사 합격수량 (그 차이가 곧 이중 계상분)
+     *   ① 초과 입고 — (수입검사·수동 입고 − 생산출고) > 수입검사 합격수량
      *      도장현장 반납 입고는 출고분의 재입고이므로 합계에서 제외한다.
+     *      수동입고 후 같은 LOT을 현장으로 출고한 수량도 창고에 남은 초과가 아니므로 뺀다.
      *      (검사 1000 · 현장 출고 500 · 반납 200 → 창고 700. 반납 200을 초과로 보면 안 된다)
      *   ② 완전 중복 — 같은 검사건(inspId)·같은 LOT·같은 수량이 2건 이상 (자동+수동 이중 등록)
      */
@@ -5067,6 +5100,7 @@ var InjectionWarehouseModule = (function() {
                 && !_isSiteReturnInbound(d);
         });
         const inspQtyMap = _inspectionLotQtyMap();
+        const shippedMap = _productionOutQtyMap();
         const groups = {};
         inventory.forEach(function(d) {
             const lots = (d.lots && d.lots.length > 0)
@@ -5093,7 +5127,8 @@ var InjectionWarehouseModule = (function() {
             });
             g.totalQty = g.entries.reduce(function(s, e) { return s + e.qty; }, 0);
             g.inspQty = Number(inspQtyMap[key]) || 0;
-            g.excess = g.inspQty > 0 ? (g.totalQty - g.inspQty) : 0;
+            g.shippedQty = Number(shippedMap[key]) || 0;
+            g.excess = g.inspQty > 0 ? Math.max(0, g.totalQty - g.shippedQty - g.inspQty) : 0;
 
             // ② 완전 중복 — 같은 검사건·같은 수량이 2건 이상
             const seen = {};
@@ -5158,13 +5193,16 @@ var InjectionWarehouseModule = (function() {
                 ? `<span style="color:var(--accent-red);font-weight:700;">검사 합격 ${UIUtils.formatNumber(g.inspQty)} EA 대비
                      ${UIUtils.formatNumber(g.excess)} EA 초과</span>`
                 : `<span style="color:#b45309;font-weight:700;">같은 검사건·같은 수량 ${g.exactDuplicates.length + 1}건 중복 등록</span>`;
+            const shippedHtml = g.shippedQty
+                ? ` · 생산출고 ${UIUtils.formatNumber(g.shippedQty)} EA`
+                : '';
             return `<div style="margin-top:14px;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;">
                 <div style="font-size:0.86rem;font-weight:700;">
                     ${_escapeHtml(g.carModel || '-')} · ${_escapeHtml(g.partName || '-')} · ${_escapeHtml(g.color || '-')}
                     <span style="font-family:monospace;margin-left:6px;">LOT ${_escapeHtml(g.lotNo)}</span>
                 </div>
                 <div style="margin-top:3px;font-size:0.8rem;">
-                    입고 ${g.entries.length}회 · 합계 <strong>${UIUtils.formatNumber(g.totalQty)} EA</strong>
+                    입고 ${g.entries.length}회 · 합계 <strong>${UIUtils.formatNumber(g.totalQty)} EA</strong>${shippedHtml}
                     <span style="margin-left:8px;">${reasonHtml}</span>
                 </div>
                 <div class="data-table-wrapper" style="margin-top:6px;">
@@ -5186,7 +5224,8 @@ var InjectionWarehouseModule = (function() {
                     <strong>수입검사 합격수량보다 많이 입고</strong>됐거나, <strong>같은 검사건·같은 수량이 두 번 등록</strong>된 LOT입니다.
                     <div style="margin-top:6px;color:var(--text-muted);">
                         같은 LOT을 여러 번 나눠 받는 <strong>분할 입고는 정상</strong>이므로 목록에 뜨지 않습니다.
-                        <strong>도장현장 반납</strong>은 출고분의 재입고라 검사 합격수량과 비교하지 않습니다.
+                        <strong>도장현장 반납</strong>은 출고분의 재입고라 비교하지 않습니다.
+                        수동입고 후 <strong>생산출고로 이미 나간 수량</strong>도 창고에 남은 초과가 아니므로 뺍니다.
                         빨갛게 표시된 <strong>삭제 후보</strong>는 초과 수량과 정확히 일치하는 기록입니다 —
                         실물을 확인한 뒤 삭제하세요. 수입검사 기록은 변경되지 않습니다.
                     </div>
@@ -5473,7 +5512,7 @@ var InjectionWarehouseModule = (function() {
                         <span style="color:var(--accent-red);font-weight:700;margin-left:6px;">${dupTargets.length}건 · ${UIUtils.formatNumber(dupQty)} EA</span>
                         <div style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">
                             의심 LOT ${dupGroups.length}개 중 <strong>초과분과 수량이 정확히 일치하는 기록만</strong> 삭제합니다.
-                            분할 입고와 도장현장 반납(출고 후 재입고)은 건드리지 않습니다.
+                            분할 입고, 도장현장 반납, 생산출고로 이미 나간 수량은 건드리지 않습니다.
                         </div>
                         <div style="margin-top:8px;font-size:0.8rem;">
                             남길 기록:
@@ -5725,8 +5764,8 @@ var InjectionWarehouseModule = (function() {
                     </div>
                 </div>
                 <div class="card-body" style="padding:10px 14px;font-size:0.82rem;color:var(--text-secondary);">
-                    수입검사 합격수량보다 많이 입고된 LOT입니다. 재고가 실물보다 많을 수 있습니다.
-                    분할 입고와 도장현장 반납(출고 후 재입고)은 제외했습니다.
+                    수입검사 합격수량보다 창고에 더 많이 남은 LOT입니다. 재고가 실물보다 많을 수 있습니다.
+                    분할 입고, 도장현장 반납, 생산출고로 이미 나간 수량은 제외했습니다.
                 </div>
             </div>` : '';
 
