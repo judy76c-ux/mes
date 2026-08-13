@@ -717,11 +717,16 @@ var InjectionWarehouseModule = (function() {
     }
 
     // 검사일(day)이 컷오버 이전이면 true → 입고 대기·일괄입고에서 제외
+    //
+    // ⚠ 필터링을 일부러 비활성화해뒀다(항상 false). 서버 config의 이 값이 반복해서
+    // "오늘 날짜"로 재오염되는 사고가 있었다 — 코드 쪽 자동 저장 로직은 이미 제거했지만
+    // (_ensurePendingCutoverLoaded 참고), 이 기능이 배포되기 전의 예전 코드를 여전히 메모리에
+    // 띄워둔 브라우저 탭(새로고침을 안 한 탭)이 하나라도 열려 있으면 그 탭이 계속 값을
+    // 덮어써서, 관리자가 값을 지워도 몇 분 안에 다시 몇 주치 입고 대기 backlog가 화면에서
+    // 사라지는 일이 반복됐다. 모든 클라이언트가 새 코드로 넘어왔다고 확신하기 전까지는
+    // 이 값을 신뢰하지 않고 전부 보여주는 쪽이 안전하다(숨겨서 놓치는 것보다 낫다).
     function _isBeforePendingCutover(inspDate) {
-        if (!_pendingCutover) return false;
-        const d = _cutoverDay(inspDate);
-        if (!d) return false;                 // 날짜 불명은 제외하지 않음
-        return d < _pendingCutover;
+        return false;
     }
 
     // key/표시용 문자열 정규화 (콤마/공백/트림)
@@ -8300,7 +8305,9 @@ var InjectionWarehouseModule = (function() {
             color: resolvedColor || color || '',
             supplier: material ? (material.supplier || '') : '',
             lots: lots,
-            lotNo: lots.length === 1 ? lots[0].lotNo : (lots.length ? 'MULTI' : ''),
+            // 여러 LOT이면 대표 lotNo는 첫 LOT. 'MULTI'는 YYMMDD가 아니라 대시보드가
+            // 형식 오류로 잡는다. 실제 LOT 목록은 lots[]가 진실이다.
+            lotNo: lots.length ? lots[0].lotNo : '',
             quantity: total,
             unit: 'EA',
             source: '현재고 확정',

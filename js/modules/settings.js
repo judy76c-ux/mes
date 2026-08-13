@@ -8985,6 +8985,13 @@ const SettingsModule = (function() {
         return false;
     }
 
+    /** lots[]에 수량>0 LOT이 있으면 그게 재고 진실. 최상위 lotNo는 대표값(MULTI 등)이라 따로 검사하지 않는다. */
+    function _hasLiveLotEntries(item) {
+        return Array.isArray(item && item.lots) && item.lots.some(function(lot) {
+            return _lotQty(lot) > 0;
+        });
+    }
+
     /**
      * 사출 LOT 형식 오류 스캔 — DOM에 손대지 않는 순수 함수.
      * scanInjLotNumbers(설정 화면)와 대시보드 알림 카드가 같은 스캔 로직을 공유하도록 분리했다.
@@ -8992,6 +8999,9 @@ const SettingsModule = (function() {
      * 소진되어(qty ≤ 0) 창고 목록에 나타나지 않는 lots[] 잔재는 검사하지 않는다.
      * 창고는 InvCalc.entries() 규칙(qty>0 인 LOT만 진실)으로 재고를 계산하므로,
      * qty 0 짜리 빈 LOT을 오류로 잡으면 "바로가기 해도 창고에 그 오류가 없는" 유령이 된다.
+     *
+     * 현재고 확정이 LOT이 여러 개일 때 대표 lotNo를 'MULTI'로 남기던 건도 같은 유령이다.
+     * lots[]가 있으면 최상위 lotNo는 검사하지 않는다.
      */
     function scanInjLotErrorsData() {
         const invenItems = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
@@ -9001,7 +9011,8 @@ const SettingsModule = (function() {
 
         invenItems.forEach(item => {
             if (_isInjLotFormatExempt(item)) return;
-            if (!item.lotNo || !_isValidLot(item.lotNo)) {
+            const liveLots = _hasLiveLotEntries(item);
+            if (!liveLots && (!item.lotNo || !_isValidLot(item.lotNo))) {
                 const fixed = _fixLot(item.lotNo, item.date);
                 errors.push({
                     src: '재고',
@@ -9036,7 +9047,8 @@ const SettingsModule = (function() {
         });
 
         inspItems.forEach(item => {
-            if (!item.lotNo || !_isValidLot(item.lotNo)) {
+            const liveLots = _hasLiveLotEntries(item);
+            if (!liveLots && (!item.lotNo || !_isValidLot(item.lotNo))) {
                 const fixed = _fixLot(item.lotNo, item.date);
                 errors.push({
                     src: '수입검사',
@@ -9100,8 +9112,8 @@ const SettingsModule = (function() {
             let changed = false;
             const original = { lotNo: item.lotNo, lots: item.lots ? item.lots.map(l => ({...l})) : [] };
 
-            // 최상위 lotNo
-            if (!_isValidLot(item.lotNo)) {
+            // 최상위 lotNo — lots[]에 실LOT이 있으면 대표값(MULTI 등)이므로 고치지 않는다
+            if (!_hasLiveLotEntries(item) && !_isValidLot(item.lotNo)) {
                 const f = _fixLot(item.lotNo, item.date);
                 if (f) {
                     const prev = item.lotNo;
@@ -9140,7 +9152,7 @@ const SettingsModule = (function() {
         for (const item of inspItems) {
             let changed = false;
 
-            if (!_isValidLot(item.lotNo)) {
+            if (!_hasLiveLotEntries(item) && !_isValidLot(item.lotNo)) {
                 const f = _fixLot(item.lotNo, item.date);
                 if (f) {
                     const prev = item.lotNo;
