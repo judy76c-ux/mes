@@ -261,6 +261,13 @@ var InjectionWarehouseModule = (function() {
                     '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">task_alt</span> ' +
                     (row.fromRework ? '현장 사출 요청' : '에러 처리') +
                     '</button>' +
+                    (row.fromRework
+                        ? ' <button type="button" class="btn btn-sm btn-outline" style="padding:4px 8px;font-size:0.76rem;margin-left:4px;border-color:#7c3aed;color:#7c3aed;"' +
+                          ' title="이미 리워크 자재를 사용해 도장했다면 눌러서 취소 처리하세요"' +
+                          ' onclick="InjectionWarehouseModule.cancelReworkShortage(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' + row.shortage + ')">' +
+                          '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">cancel</span> 리워크 사용됨(취소)' +
+                          '</button>'
+                        : '') +
                 '</td></tr>';
         }).join('');
     }
@@ -574,6 +581,35 @@ var InjectionWarehouseModule = (function() {
         UIUtils.toast(
             (fromRework ? '현장 사출 요청 쪽지를 보냈습니다.' : '사유 보고 쪽지를 보내고 에러 처리했습니다.') +
             ' (' + sendResult.count + '명)', 'success');
+        loadData();
+    }
+
+    /** 리워크 소재 부족 행을 "이미 리워크 자재를 사용해 도장 완료" 사유로 즉시 취소 처리한다.
+     *  현장 실적 입력 화면의 [리워크에서 투입 처리] 버튼을 거치지 않고(이미 보유 중이던 리워크
+     *  LOT을 그냥 ②투입 목록에서 골라 썼거나, 시스템 반영 전에 실물만 먼저 사용한 경우 등)
+     *  현장에서 실제로는 이미 자재를 확보·사용했는데 목록엔 부족으로 계속 남는 경우를 위한
+     *  수동 확인 버튼 — 사유 입력·관리자 쪽지 없이 즉시 처리된다(ackReworkUsageFromWork와 동일한
+     *  acked 저장소를 공유하므로 그만큼 need 계산에서 바로 빠진다). */
+    async function cancelReworkShortage(carEnc, partEnc, colorEnc, shortage) {
+        const carModel = decodeURIComponent(carEnc || '');
+        const partName = decodeURIComponent(partEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const qty = Math.max(0, Number(shortage) || 0);
+        if (qty <= 0) return;
+        if (!confirm(
+            '이미 리워크 재공품을 사용해 도장을 진행했다는 뜻으로, 이 부족 요청(' +
+            UIUtils.formatNumber(qty) + ' EA)을 취소 처리하시겠습니까?\n\n' +
+            carModel + ' / ' + partName + (color ? ' / ' + color : '') +
+            '\n\n재고 수량은 변경되지 않고, 목록에서만 사라집니다.'
+        )) return;
+        const r = await ackReworkUsageFromWork(carModel, partName, color, qty, {
+            note: '리워크 자재 사용 확인 — 목록에서 수동 취소 처리'
+        });
+        if (!r || !r.ok) {
+            UIUtils.toast('취소 처리에 실패했습니다.', 'error');
+            return;
+        }
+        UIUtils.toast('리워크 자재 사용으로 취소 처리했습니다.', 'success');
         loadData();
     }
 
@@ -1470,6 +1506,61 @@ var InjectionWarehouseModule = (function() {
         return !!(d && (d.isStockErrorReset || d.resetAction === 'stock_error_reset' || /재고 오류 초기화/.test(String(d.source || ''))));
     }
 
+    /** 현재고 확정(재고 기준점) — 이 시점 이후 입출고만 재고·LOT 계산에 사용 */
+    function _isStockBaselineRecord(d) {
+        return !!(d && (d.isStockBaseline || d.baselineAction === 'stock_baseline' || /현재고 확정/.test(String(d.source || ''))));
+    }
+
+    /** 도장현장 반납 입고 — 이미 출고한 재고를 창고로 되돌린 건.
+     *  수입검사 합격수량과 비교하는 "초과 입고"가 아니다.
+     *  예: 검사 1000 → 현장 출고 500 → 사용 300·반납 200 이면 창고는 700 (1000−500+200). */
+    function _isSiteReturnInbound(d) {
+        if (!d || d.type === '출고') return false;
+        if (d.refReturnId || d.isSiteReturn) return true;
+        const src = String(d.source || '').trim();
+        return src === '도장현장 반납' || src === '도장현장 반납 입고' || src === '현장 반납';
+    }
+
+    function _findLatestStockBaseline(records) {
+        const list = (records || []).filter(_isStockBaselineRecord);
+        if (!list.length) return null;
+        return list.slice().sort(function (a, b) {
+            return InvCalc.recordStamp(a).localeCompare(InvCalc.recordStamp(b))
+                || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+                || String(a.id || '').localeCompare(String(b.id || ''));
+        }).pop();
+    }
+
+    /**
+     * 재고·LOT 계산용 원장.
+     * 최신 「현재고 확정」이 있으면 그 기록 + 확정 시각 이후 이동만 재생한다.
+     * 입고/출고 이력 탭은 전체 원장을 그대로 쓰므로 이 함수를 쓰지 않는다.
+     */
+    function _recordsForStockCalc(records) {
+        const all = records || [];
+        const baseline = _findLatestStockBaseline(all);
+        if (!baseline) return all.slice();
+
+        const cut = InvCalc.recordStamp(baseline);
+        const cutCreated = String(baseline.createdAt || '');
+        const cutId = String(baseline.id || '');
+        const after = all.filter(function (r) {
+            if (!r || r === baseline) return false;
+            if (_isStockBaselineRecord(r)) return false;
+            const s = InvCalc.recordStamp(r);
+            if (s > cut) return true;
+            if (s < cut) return false;
+            const c = String(r.createdAt || '');
+            if (cutCreated && c) {
+                if (c > cutCreated) return true;
+                if (c < cutCreated) return false;
+            }
+            if (cutId && r.id) return String(r.id) > cutId;
+            return false;
+        });
+        return [baseline].concat(after);
+    }
+
     function _isUnmatchedActionRecord(d) {
         return !!(d && (d.unmatchedAction === 'clear' || d.unmatchedAction === 'absorb'));
     }
@@ -1562,6 +1653,7 @@ var InjectionWarehouseModule = (function() {
         const d = step.rec;
         const isOut = d.type === '출고';
         const isReset = _isStockErrorResetRecord(d);
+        const isBaseline = _isStockBaselineRecord(d);
         const isUnmatchedAct = _isUnmatchedActionRecord(d);
         const route = _invRoute(d);
         const lotText = isUnmatchedAct
@@ -1585,21 +1677,29 @@ var InjectionWarehouseModule = (function() {
                <span style="margin-left:4px;font-size:0.65rem;font-weight:700;background:${d.unmatchedAction === 'absorb' ? '#b45309' : '#0369a1'};color:#fff;padding:1px 6px;border-radius:10px;">
                  ${d.unmatchedAction === 'absorb' ? '미차감 반영' : '미차감 리셋'}
                </span>`
-            : `<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
+            : (isBaseline
+                ? `<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
+                    background:rgba(15,118,110,.12);color:#0f766e;">기준</span>
+                   <span style="margin-left:4px;font-size:0.65rem;font-weight:700;background:#0f766e;color:#fff;padding:1px 6px;border-radius:10px;">현재고 확정</span>`
+                : `<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;
                 background:${isOut ? 'rgba(220,38,38,.10)' : 'rgba(22,163,74,.10)'};
                 color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>
-               ${isReset ? `<span style="margin-left:4px;font-size:0.65rem;font-weight:700;background:#dc2626;color:#fff;padding:1px 6px;border-radius:10px;">재고오류 초기화</span>` : ''}`;
+               ${isReset ? `<span style="margin-left:4px;font-size:0.65rem;font-weight:700;background:#dc2626;color:#fff;padding:1px 6px;border-radius:10px;">재고오류 초기화</span>` : ''}`);
         const qtyHtml = isUnmatchedAct
             ? `<span style="color:#b45309;">${UIUtils.formatNumber(qty)}</span>
                <div style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">미차감 처리</div>`
-            : `${isOut ? '−' : '+'}${UIUtils.formatNumber(qty)}`;
+            : (isBaseline
+                ? `<span style="color:#0f766e;">${UIUtils.formatNumber(qty)}</span>
+                   <div style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">잔량 확정(가산 아님)</div>`
+                : `${isOut ? '−' : '+'}${UIUtils.formatNumber(qty)}`);
         const rowBg = isLast
             ? ' style="background:rgba(37,99,235,.05);"'
             : (isUnmatchedAct ? ' style="background:rgba(180,83,9,.06);"'
-                : (isReset ? ' style="background:rgba(220,38,38,.05);"' : ''));
+                : (isBaseline ? ' style="background:rgba(15,118,110,.06);"'
+                : (isReset ? ' style="background:rgba(220,38,38,.05);"' : '')));
         // 일시 열 = 창고 입출고 일시. 수입검사 연동 입고는 검사 일시를 아랫줄에 함께 보여준다.
         const stampText = InvCalc.normDate(d.date).stamp || (d.date || '-');
-        const stampLabel = isUnmatchedAct ? '창고 보정' : (isOut ? '창고 출고' : '창고 입고');
+        const stampLabel = isUnmatchedAct ? '창고 보정' : (isBaseline ? '현재고 확정' : (isOut ? '창고 출고' : '창고 입고'));
         const inspText = _inspDateTextFor(d);
         let inspLine = '';
         if (route.label === '수입검사') {
@@ -1609,6 +1709,8 @@ var InjectionWarehouseModule = (function() {
             inspLine = `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;margin-top:2px;"
                     title="연결된 수입검사 기록을 찾을 수 없습니다">
                     수입검사 ${inspText ? _escapeHtml(inspText) + ' · 이력 없음' : '이력 없음'}</div>`;
+        } else if (route.label === '현장 반납') {
+            inspLine = `<div style="font-size:0.68rem;color:#059669;font-weight:600;margin-top:2px;">출고분 재입고 (검사 입고 아님)</div>`;
         }
         return `
             <tr${rowBg}>
@@ -1624,7 +1726,7 @@ var InjectionWarehouseModule = (function() {
                         white-space:normal;line-height:1.35;" title="${_escapeHtml(String(route.detail || ''))}">${_escapeHtml(String(route.detail || ''))}</div>
                 </td>
                 <td style="font-size:0.8rem;">${lotText}</td>
-                <td style="text-align:right;font-weight:600;color:${isUnmatchedAct ? '#b45309' : (isOut ? 'var(--accent-red)' : 'var(--accent-green)')};">
+                <td style="text-align:right;font-weight:600;color:${isUnmatchedAct ? '#b45309' : (isBaseline ? '#0f766e' : (isOut ? 'var(--accent-red)' : 'var(--accent-green)'))};">
                     ${qtyHtml}
                 </td>
                 <td style="text-align:right;font-weight:700;color:${beforeColor};white-space:nowrap;">
@@ -1924,7 +2026,7 @@ var InjectionWarehouseModule = (function() {
 
         Object.keys(stockMap).forEach(function(key) {
             const g = stockMap[key];
-            const bal = InvCalc.lotBalances(_filterProductRecords(g.carModel, g.partName, g.color));
+            const bal = InvCalc.lotBalances(_recordsForStockCalc(_filterProductRecords(g.carModel, g.partName, g.color)));
             g.stock = bal.total;
             g.unmatched = bal.unmatched || 0;
         });
@@ -2324,6 +2426,8 @@ var InjectionWarehouseModule = (function() {
             if (car   && d.carModel !== car)      return false;
             if (part  && d.partName !== part)     return false;
             if (d.type !== typeFixed)             return false;
+            // 현재고 확정은 실물 입고가 아님 — 입고이력 탭에 넣지 않음(기존 type:'입고' 확정 건 포함)
+            if (typeFixed === '입고' && _isStockBaselineRecord(d)) return false;
             return true;
         });
 
@@ -2456,7 +2560,7 @@ var InjectionWarehouseModule = (function() {
     }
 
     // 입출고 기록 1건의 '경로'를 분류한다.
-    //   입고 → 수입검사 / 수동입고,  출고 → 생산 차감 / 수동 차감
+    //   입고 → 수입검사 / 현장 반납 / 수동입고,  출고 → 생산 차감 / 수동 차감
     // (source 문자열이 시기별로 제각각이라 한 곳에서만 판별한다)
     function _invRoute(d) {
         const src  = String((d && d.source) || '').trim();
@@ -2494,6 +2598,21 @@ var InjectionWarehouseModule = (function() {
         if (d && _isStockErrorResetRecord(d)) {
             return { label: '재고 오류 초기화', color: '#dc2626', detail: _formatResetHistoryDetail(d) };
         }
+        if (d && _isStockBaselineRecord(d)) {
+            const reason = String(d.baselineReason || d.resetReason || d.note || '').trim();
+            return {
+                label: '현재고 확정',
+                color: '#0f766e',
+                detail: reason || '재고 계산 기준점 · 이전 이력은 조회만'
+            };
+        }
+        if (d && _isSiteReturnInbound(d)) {
+            return {
+                label: '현장 반납',
+                color: '#059669',
+                detail: src || '도장현장 반납 · 출고분의 재입고'
+            };
+        }
         // 입고: source 가 비어있어도 검사일(inspDate)이 있으면 수입검사 연동 건이다.
         const fromInsp = /수입검사/.test(src) || !!(d && (d.inspDate || d.inspId));
         if (!fromInsp) {
@@ -2530,12 +2649,12 @@ var InjectionWarehouseModule = (function() {
                 title: '도장 작업 실적으로 이동'
             };
         }
-        if (route.label === '수동입고') {
+        if (route.label === '수동입고' || route.label === '현장 반납') {
             const em = encodeURIComponent(d.carModel || '');
             const ep = encodeURIComponent(d.partName || '');
             return {
                 onclick: `InjectionWarehouseModule.openManualIncomingHistory('${em}','${ep}')`,
-                title: '입고 이력에서 이 품목 보기'
+                title: route.label === '현장 반납' ? '입고 이력에서 이 반납 건 보기' : '입고 이력에서 이 품목 보기'
             };
         }
         return null;
@@ -2793,11 +2912,13 @@ var InjectionWarehouseModule = (function() {
         const items = _filterProductRecords(carModel, partName, color)
             .slice()
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+        const stockItems = _recordsForStockCalc(items);
+        const baselineRec = _findLatestStockBaseline(items);
 
         const mat   = mats.find(m => m.carModel === carModel && m.injPartName === partName);
         const price = Number(mat ? mat.unitPrice : 0) || 0;
 
-        const { balance, lots: lotList } = StockDetailUI.lotBalancesFromRecords(items, { positiveOnly: false });
+        const { balance, lots: lotList } = StockDetailUI.lotBalancesFromRecords(stockItems, { positiveOnly: false });
         const stock = balance.total;
 
         const currentLots = lotList
@@ -2815,6 +2936,7 @@ var InjectionWarehouseModule = (function() {
         const physicalLotSum = currentLots
             .filter(function(l) { return l.lot !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
             .reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
+        // 입출고 이력 표는 전체 원장 유지(기준점 이전 포함). 재고 숫자만 기준점 이후.
         const historySteps = InvCalc.replaySteps(items).slice().reverse();
         const historyRows = historySteps.map(function(step, idx) {
             return _renderInvHistoryRow(step, idx === 0);
@@ -2831,6 +2953,19 @@ var InjectionWarehouseModule = (function() {
             _colorsMatch(color, _resolvedDetailColor);
         const canEditLot = _canEditWarehouseLot();
         const canDeleteLot = _isAdminUser();
+        const baselineStamp = baselineRec ? InvCalc.recordStamp(baselineRec) : '';
+        const baselineBanner = baselineRec ? `
+            <div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;border:1px solid rgba(15,118,110,.3);
+                        background:rgba(15,118,110,.07);font-size:0.8rem;line-height:1.5;color:var(--text-secondary);">
+                <strong style="color:#0f766e;">재고 계산 기준</strong>
+                · ${ _escapeHtml(baselineStamp || String(baselineRec.date || '').slice(0, 16)) }
+                확정 이후 입출고만 현재 재고·LOT에 반영됩니다. 아래 입출고 이력·입고/출고 이력 탭의 과거 기록은 그대로 조회됩니다.
+            </div>` : `
+            <div style="margin-bottom:14px;padding:10px 12px;border-radius:8px;border:1px solid rgba(245,158,11,.35);
+                        background:rgba(245,158,11,.07);font-size:0.8rem;line-height:1.5;color:var(--text-secondary);">
+                아직 <strong>현재고 확정</strong>이 없습니다. 과거 전체 이력으로 재고를 계산 중입니다.
+                ${_isAdminUser() ? '관리자는 상단 <strong>현재고 확정</strong>으로 기준점을 만들 수 있습니다.' : ''}
+            </div>`;
 
         // LOT별 수입검사 정보 — 그 LOT을 들여온 입고 기록에 박힌 값을 우선 쓰고,
         // 없으면 검사 테이블에서 찾는다(구 데이터). 사출 LOT 옆에 검사일이 같이 보여야
@@ -2945,6 +3080,12 @@ var InjectionWarehouseModule = (function() {
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">delete_sweep</span>
                         ${color} 별칭 이력 삭제
                     </button>` : ''}
+                    ${_isAdminUser() ? `
+                    <button class="btn btn-sm btn-outline" style="font-size:0.78rem;color:#0f766e;border-color:#0f766e;"
+                        title="현재 잔량 LOT을 재고 계산 기준점으로 확정합니다. 과거 이력은 삭제되지 않습니다."
+                        onclick="InjectionWarehouseModule.openConfirmStockBaselineModal('${_emJs}','${_epJs}','${_ecJs}')">
+                        <span class="material-symbols-outlined" style="font-size:0.9rem;">flag</span> 현재고 확정
+                    </button>` : ''}
                     <button class="btn btn-sm btn-outline" style="font-size:0.78rem;color:#dc2626;border-color:#dc2626;"
                         onclick="InjectionWarehouseModule.openBulkOutgoingListupModal('${_cmJs}','${_pnJs}','${_clJs}')">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">output</span> 전체 출고
@@ -2955,6 +3096,7 @@ var InjectionWarehouseModule = (function() {
                     </button>
                 </div>
             </div>
+            ${baselineBanner}
             <div style="margin-bottom:14px;padding:8px 12px;background:rgba(220,38,38,0.05);border-left:3px solid var(--accent-red);border-radius:0 6px 6px 0;font-size:0.8rem;color:var(--text-secondary);">
                 출고할 LOT 옆의 <strong style="color:#dc2626;">출고</strong> 버튼을 누르면 출고 목록에 담기고, 재고 현황 화면의 '출고 리스트업'에서 <strong>출고 완료</strong>를 눌러야 재고에서 차감됩니다.
                 <strong>생산출고</strong>는 도착 라인(도장-A/B)을 선택하면 해당 라인 작업현황의 <strong>입고 처리</strong> 대상이 됩니다.
@@ -3287,7 +3429,7 @@ var InjectionWarehouseModule = (function() {
                 const productItems = (all || []).filter(function(d) {
                     return d.carModel === carModel && d.partName === partName && (d.color || '') === (color || '');
                 });
-                const currentTotal = InvCalc.lotBalances(productItems).total;
+                const currentTotal = InvCalc.lotBalances(_recordsForStockCalc(productItems)).total;
                 const projected = currentTotal + delta;
                 if (projected < 0) {
                     UIUtils.confirm(
@@ -4176,6 +4318,7 @@ var InjectionWarehouseModule = (function() {
         }
         card.style.display = '';
         if (badge) badge.textContent = list.length + '건';
+        const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
         body.innerHTML = list.map(function (r) {
             const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
                 ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
@@ -4196,6 +4339,10 @@ var InjectionWarehouseModule = (function() {
                         onclick="InjectionWarehouseModule.openConfirmSiteReturnModal('${r.id}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
                     </button>
+                    ${isAdmin ? `<button type="button" class="btn btn-sm btn-danger" style="padding:4px 8px;font-size:0.78rem;margin-left:4px;"
+                        title="이 반납 건을 취소(삭제)합니다 — 관리자 전용" onclick="InjectionWarehouseModule.cancelSiteReturn('${r.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">delete</span>
+                    </button>` : ''}
                 </td>
             </tr>`;
         }).join('');
@@ -4313,6 +4460,40 @@ var InjectionWarehouseModule = (function() {
         } catch (e) {
             console.error('[InjectionWarehouseModule] 반납 입고 처리 실패:', e);
             UIUtils.toast('입고 처리 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
+    /** 관리자 — 아직 입고 처리 전(반납 대기)인 반납 건을 취소한다.
+     *  잘못된 사유로 등록됐거나, 관련 없는 LOT까지 한꺼번에 묶여 반납된 경우 되돌리는 용도. */
+    async function cancelSiteReturn(id) {
+        const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+        if (!isAdmin) {
+            UIUtils.toast('관리자만 반납 건을 취소할 수 있습니다.', 'warning');
+            return;
+        }
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.cancelSiteReturn) {
+            UIUtils.toast('반납 취소 기능을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        const list = PaintingInputModule.listPendingReturns();
+        const r = list.find(function (x) { return String(x.id) === String(id); });
+        if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
+        const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+            ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
+            : (r.lotNo || '-');
+        if (!confirm(
+            '다음 반납 건을 취소(삭제)하시겠습니까?\n\n' +
+            r.carModel + ' / ' + r.partName + (r.color ? ' / ' + r.color : '') + '\n' +
+            'LOT: ' + lotsTxt + '\n합계: ' + UIUtils.formatNumber(r.quantity) + ' EA\n사유: ' + (r.returnReason || '-') +
+            '\n\n삭제 후 복구할 수 없습니다. 도장현장에서 실제로 반납할 자재라면 다시 반납 처리해야 합니다.'
+        )) return;
+        try {
+            await PaintingInputModule.cancelSiteReturn(id);
+            UIUtils.toast('반납 건을 취소했습니다.', 'success');
+            renderSiteReturns();
+        } catch (e) {
+            console.error('[InjectionWarehouseModule] 반납 취소 실패:', e);
+            UIUtils.toast('반납 취소 실패: ' + (e && e.message ? e.message : e), 'error');
         }
     }
 
@@ -4789,6 +4970,7 @@ var InjectionWarehouseModule = (function() {
 
             inventory.forEach(inv => {
                 if (inv.type !== '입고' || inv.partName !== insp.partName) return;
+                if (_isSiteReturnInbound(inv)) return;
                 const invLots = (inv.lots && inv.lots.length > 0)
                     ? inv.lots
                     : (inv.lotNo ? [{ lotNo: inv.lotNo, qty: inv.quantity }] : []);
@@ -4828,6 +5010,7 @@ var InjectionWarehouseModule = (function() {
 
         return inventory.filter(function(d) {
             if (!d || d.type === '출고') return false;
+            if (_isSiteReturnInbound(d)) return false;
             const fromInsp = /수입검사/.test(String(d.source || '')) || !!(d.inspDate || d.inspId);
             if (!fromInsp) return false;
             if (d.inspId && liveInspIds.has(String(d.inspId))) return false;
@@ -4870,12 +5053,18 @@ var InjectionWarehouseModule = (function() {
      * 중복(이중) 입고 판정 — "같은 LOT이 2회 입고"는 중복이 아니다.
      * LOT번호는 생산일자 기준이라 한 LOT이 여러 번 나눠 들어오는 분할 입고가 정상이다.
      * 그래서 다음 두 가지 객관적 신호만 잡는다.
-     *   ① 초과 입고 — 창고 입고 합계 > 수입검사 합격수량 (그 차이가 곧 이중 계상분)
+     *   ① 초과 입고 — 수입검사·수동 입고 합계 > 수입검사 합격수량 (그 차이가 곧 이중 계상분)
+     *      도장현장 반납 입고는 출고분의 재입고이므로 합계에서 제외한다.
+     *      (검사 1000 · 현장 출고 500 · 반납 200 → 창고 700. 반납 200을 초과로 보면 안 된다)
      *   ② 완전 중복 — 같은 검사건(inspId)·같은 LOT·같은 수량이 2건 이상 (자동+수동 이중 등록)
      */
     function findDuplicateLotInbounds() {
         const inventory = (Storage.getAll(STORE) || []).filter(function(d) {
-            return d && d.type === '입고' && !_isStockErrorResetRecord(d) && !_isUnmatchedActionRecord(d);
+            return d && d.type === '입고'
+                && !_isStockErrorResetRecord(d)
+                && !_isUnmatchedActionRecord(d)
+                && !_isStockBaselineRecord(d)
+                && !_isSiteReturnInbound(d);
         });
         const inspQtyMap = _inspectionLotQtyMap();
         const groups = {};
@@ -4997,6 +5186,7 @@ var InjectionWarehouseModule = (function() {
                     <strong>수입검사 합격수량보다 많이 입고</strong>됐거나, <strong>같은 검사건·같은 수량이 두 번 등록</strong>된 LOT입니다.
                     <div style="margin-top:6px;color:var(--text-muted);">
                         같은 LOT을 여러 번 나눠 받는 <strong>분할 입고는 정상</strong>이므로 목록에 뜨지 않습니다.
+                        <strong>도장현장 반납</strong>은 출고분의 재입고라 검사 합격수량과 비교하지 않습니다.
                         빨갛게 표시된 <strong>삭제 후보</strong>는 초과 수량과 정확히 일치하는 기록입니다 —
                         실물을 확인한 뒤 삭제하세요. 수입검사 기록은 변경되지 않습니다.
                     </div>
@@ -5283,7 +5473,7 @@ var InjectionWarehouseModule = (function() {
                         <span style="color:var(--accent-red);font-weight:700;margin-left:6px;">${dupTargets.length}건 · ${UIUtils.formatNumber(dupQty)} EA</span>
                         <div style="font-size:0.78rem;color:var(--text-muted);margin-top:2px;">
                             의심 LOT ${dupGroups.length}개 중 <strong>초과분과 수량이 정확히 일치하는 기록만</strong> 삭제합니다.
-                            분할 입고(같은 LOT을 나눠 받은 정상 입고)는 건드리지 않습니다.
+                            분할 입고와 도장현장 반납(출고 후 재입고)은 건드리지 않습니다.
                         </div>
                         <div style="margin-top:8px;font-size:0.8rem;">
                             남길 기록:
@@ -5536,7 +5726,7 @@ var InjectionWarehouseModule = (function() {
                 </div>
                 <div class="card-body" style="padding:10px 14px;font-size:0.82rem;color:var(--text-secondary);">
                     수입검사 합격수량보다 많이 입고된 LOT입니다. 재고가 실물보다 많을 수 있습니다.
-                    분할 입고(같은 LOT을 나눠 받은 정상 입고)는 제외했습니다.
+                    분할 입고와 도장현장 반납(출고 후 재입고)은 제외했습니다.
                 </div>
             </div>` : '';
 
@@ -5662,10 +5852,13 @@ var InjectionWarehouseModule = (function() {
     }
 
     // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 판정 키 집합 (_addInStockKeys 규칙)
+    // 도장현장 반납 입고는 출고분의 재입고라 "이 검사건이 이미 입고됐는가" 판정에 넣지 않는다.
     function _buildInStockLotSet() {
         const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inStockSet = new Set();
-        inventory.filter(i => i.type === '입고').forEach(i => {
+        inventory.filter(function(i) {
+            return i.type === '입고' && !_isSiteReturnInbound(i);
+        }).forEach(i => {
             if (i.lots && i.lots.length > 0) {
                 i.lots.forEach(function(lot) {
                     _addInStockKeys(inStockSet, i.partName, lot.lotNo, _lotNum(lot.qty), i.inspId, i.inspDate);
@@ -6535,7 +6728,7 @@ var InjectionWarehouseModule = (function() {
         const m = {};
         Object.keys(keySet).forEach(function(key) {
             const g = keySet[key];
-            const bal = InvCalc.lotBalances(_filterProductRecords(g.carModel, g.partName, g.color));
+            const bal = InvCalc.lotBalances(_recordsForStockCalc(_filterProductRecords(g.carModel, g.partName, g.color)));
             m[key] = {
                 carModel: g.carModel,
                 partName: g.partName,
@@ -7066,13 +7259,14 @@ var InjectionWarehouseModule = (function() {
     }
 
     function _getLotBalancesForProduct(carModel, partName, color) {
-        const records = _filterProductRecords(carModel, partName, color);
+        const allRecords = _filterProductRecords(carModel, partName, color);
+        const records = _recordsForStockCalc(allRecords);
         const result = StockDetailUI.lotBalancesFromRecords(records, { positiveOnly: true });
         // 출고 모달·상세 모달·FIFO 모두 동일 정렬(입고일 최신순)
         result.lots.sort(function(a, b) {
             return (b.date || '').localeCompare(a.date || '') || String(a.lotNo).localeCompare(String(b.lotNo));
         });
-        return { balance: result.balance, lots: result.lots, records: records };
+        return { balance: result.balance, lots: result.lots, records: records, allRecords: allRecords };
     }
 
     function _normInvLotNo(lotNo) {
@@ -7325,7 +7519,7 @@ var InjectionWarehouseModule = (function() {
                     _normKeyStr(r.color) === color;
             });
             const mat = _findInjectionMaterial(carModel, partName, color);
-            const bal = InvCalc.lotBalances(records);
+            const bal = InvCalc.lotBalances(_recordsForStockCalc(records));
             mergedMap[key] = {
                 carModel: carModel,
                 partName: partName,
@@ -7618,7 +7812,7 @@ var InjectionWarehouseModule = (function() {
         const target = Math.max(0, Math.round(Number(targetQty) || 0));
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const resolvedColor = _resolveMasterColor(carModel, partName, color, materials);
-        const productItems = _filterProductRecords(carModel, partName, resolvedColor);
+        const productItems = _recordsForStockCalc(_filterProductRecords(carModel, partName, resolvedColor));
         const balance = InvCalc.lotBalances(productItems);
         const current = balance.total;
         if (current >= 0) return { skipped: true, reason: 'not_negative' };
@@ -7680,6 +7874,165 @@ var InjectionWarehouseModule = (function() {
         });
 
         return { skipped: false, before: current, after: target, correctionQty: Math.abs(diff) };
+    }
+
+    function openConfirmStockBaselineModal(carModelEnc, partNameEnc, colorEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 현재고를 확정할 수 있습니다.', 'warning');
+            return;
+        }
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const all = _filterProductRecords(carModel, partName, color);
+        const calcRecs = _recordsForStockCalc(all);
+        const bal = InvCalc.lotBalances(calcRecs);
+        const lots = (bal.lots || [])
+            .filter(function (l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
+            .slice()
+            .sort(function (a, b) {
+                return String(a.date || '').localeCompare(String(b.date || ''))
+                    || String(a.lotNo).localeCompare(String(b.lotNo));
+            });
+        const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        const existing = _findLatestStockBaseline(all);
+        const lotRows = lots.length
+            ? lots.map(function (l) {
+                return `<tr>
+                    <td style="white-space:nowrap;">${_escapeHtml(String(l.date || '-').slice(0, 16))}</td>
+                    <td style="font-family:monospace;">${_escapeHtml(l.lotNo)}</td>
+                    <td style="text-align:right;font-weight:700;">${UIUtils.formatNumber(l.qty)}</td>
+                </tr>`;
+            }).join('')
+            : `<tr><td colspan="3" style="text-align:center;color:var(--text-muted);padding:12px;">잔량 LOT 없음 (재고 0 EA로 확정)</td></tr>`;
+
+        UIUtils.showModal('현재고 확정', `
+            <div style="background:rgba(15,118,110,0.06);border:1px solid rgba(15,118,110,0.25);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.6;">
+                <div><strong>${_escapeHtml(carModel)}</strong> / <strong>${_escapeHtml(partName)}</strong>${color ? ` / <strong>${_escapeHtml(color)}</strong>` : ''}</div>
+                <div style="margin-top:6px;">확정 재고: <strong style="color:#0f766e;">${UIUtils.formatNumber(total)} EA</strong>
+                    · LOT ${lots.length}개</div>
+                <div style="color:var(--text-secondary);margin-top:6px;">
+                    지금 잔량 LOT을 재고 계산 <strong>기준점</strong>으로 저장합니다.
+                    <strong>과거 입고·출고 이력은 삭제되지 않으며</strong> 입고이력/출고이력 탭에도 그대로 남습니다.
+                    이후 재고·출고 가능 LOT는 이 기준점 이후 이동만으로 계산됩니다.
+                </div>
+                ${existing ? `<div style="margin-top:8px;color:#b45309;">이미 기준점이 있습니다(${_escapeHtml(InvCalc.recordStamp(existing) || String(existing.date || ''))}). 새로 확정하면 그 이후부터 다시 계산합니다.</div>` : ''}
+            </div>
+            <div style="max-height:220px;overflow:auto;margin-bottom:12px;border:1px solid var(--border-color);border-radius:8px;">
+                <table class="data-table compact" style="width:100%;font-size:0.82rem;">
+                    <thead><tr>
+                        <th>입고일</th><th>LOT</th><th style="text-align:right;">잔량</th>
+                    </tr></thead>
+                    <tbody>${lotRows}</tbody>
+                </table>
+            </div>
+            <div class="form-group">
+                <label class="form-label">확정 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="injStockBaselineReason" class="form-textarea" rows="3"
+                    placeholder="예: 실사 재고 대조 완료 · 과거 이력은 조회용으로만 유지"></textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:#0f766e;border-color:#0f766e;"
+                onclick="InjectionWarehouseModule.confirmStockBaseline('${carModelEnc}','${partNameEnc}','${colorEnc}')">
+                확정 저장
+            </button>
+        `, 'md');
+
+        setTimeout(function () {
+            const el = document.getElementById('injStockBaselineReason');
+            if (el) el.focus();
+        }, 100);
+    }
+
+    async function confirmStockBaseline(carModelEnc, partNameEnc, colorEnc) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 현재고를 확정할 수 있습니다.', 'warning');
+            return;
+        }
+        const reasonEl = document.getElementById('injStockBaselineReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('확정 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        const carModel = decodeURIComponent(carModelEnc || '');
+        const partName = decodeURIComponent(partNameEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const resolvedColor = _resolveMasterColor(carModel, partName, color, materials);
+        const all = _filterProductRecords(carModel, partName, resolvedColor || color);
+        const calcRecs = _recordsForStockCalc(all);
+        const bal = InvCalc.lotBalances(calcRecs);
+        const lots = (bal.lots || [])
+            .filter(function (l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
+            .map(function (l) {
+                return {
+                    lotNo: String(l.lotNo || '').trim() || '무표기',
+                    qty: Number(l.qty) || 0,
+                    date: l.date || '',
+                    supplier: l.supplier || ''
+                };
+            });
+        const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        const material = _findInjectionMaterial(carModel, partName, color);
+        const actor = _getResetActorFields();
+        const fullTotal = InvCalc.lotBalances(all).total;
+
+        const record = {
+            date: InvCalc.stampFor(new Date()),
+            type: '기준재고',
+            carModel: carModel,
+            partName: partName,
+            color: resolvedColor || color || '',
+            supplier: material ? (material.supplier || '') : '',
+            lots: lots,
+            lotNo: lots.length === 1 ? lots[0].lotNo : (lots.length ? 'MULTI' : ''),
+            quantity: total,
+            unit: 'EA',
+            source: '현재고 확정',
+            baselineAction: 'stock_baseline',
+            isStockBaseline: true,
+            baselineReason: reason,
+            note: `[현재고 확정] ${reason} · ${UIUtils.formatNumber(total)} EA · LOT ${lots.length}개`,
+            injMaterialId: material ? material.id : undefined,
+            stockBeforeFullHistory: fullTotal,
+            stockAfterTarget: total,
+            ...actor
+        };
+
+        try {
+            await _addInventoryRecord(record);
+            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+                id: Storage.generateId(),
+                type: 'injection_inventory_baseline',
+                typeLabel: '사출 창고 현재고 확정',
+                deletedAt: actor.resetAt || new Date().toISOString(),
+                deletedBy: actor.resetBy || '',
+                reason: reason,
+                originalData: {
+                    carModel: carModel,
+                    partName: partName,
+                    color: color || '',
+                    baselineQty: total,
+                    lotCount: lots.length,
+                    lots: lots,
+                    fullHistoryTotal: fullTotal
+                },
+                summary: `${carModel} / ${partName} ${color || ''} / 확정 ${UIUtils.formatNumber(total)} EA`
+            });
+            UIUtils.closeModal();
+            UIUtils.toast(`현재고 확정 완료 · ${UIUtils.formatNumber(total)} EA`, 'success');
+            loadData();
+            setTimeout(function () {
+                showPartDetail(carModel, partName, color);
+            }, 80);
+        } catch (e) {
+            console.error('[InjectionWarehouse] stock baseline failed:', e);
+            UIUtils.toast('현재고 확정에 실패했습니다: ' + (e && e.message ? e.message : e), 'error');
+        }
     }
 
     function openResetStockErrorModal(carModelEnc, partNameEnc, colorEnc, currentStock) {
@@ -8345,7 +8698,7 @@ var InjectionWarehouseModule = (function() {
 
         // 수동 입고가 "수입검사 입고 대기" 항목을 우회하는지 확인 — 이중 입고의 주 원인.
         // 대기 항목과 겹치면 저장을 멈추고 연결 여부를 사용자가 고르게 한다.
-        if (data.type === '입고' && !data.inspId) {
+        if (data.type === '입고' && !data.inspId && !_isSiteReturnInbound(data)) {
             await _ensurePendingCutoverLoaded();
             await _ensureDismissedPendingLoaded();
             const matches = _findPendingInspectionsForLots(data.carModel, data.partName, lots);
@@ -8367,6 +8720,7 @@ var InjectionWarehouseModule = (function() {
         // 사출 창고 '사출입고' 버튼 = 수입검사 우회 임의입고 → 외부 공급 건만 수입검사 담당에 통보
         if (data.type === '입고' && !data.inspDate && !data.inspId
             && !/수입검사/.test(String(data.source || ''))
+            && !_isSiteReturnInbound(data)
             && _requiresIncomingInspection(data.carModel, data.partName, data.color, data.supplier)) {
             _notifyInspectorsOfDirectInbound(data);
         }
@@ -9038,7 +9392,7 @@ var InjectionWarehouseModule = (function() {
             const mat = materials.find(function(m) {
                 return _normKeyStr(m.carModel) === g.carModel && _normKeyStr(m.injPartName) === g.partName;
             });
-            const balance = InvCalc.lotBalances(g.records);
+            const balance = InvCalc.lotBalances(_recordsForStockCalc(g.records));
             const lotSet = new Set();
             balance.lots.forEach(function(l) {
                 if (l.lotNo !== InvCalc.UNMATCHED && l.qty > 0) lotSet.add(l.lotNo);
@@ -9397,6 +9751,8 @@ var InjectionWarehouseModule = (function() {
         filterTransactions,
         onTxCarChange,
         jumpToTxHistory,
+        openConfirmStockBaselineModal,
+        confirmStockBaseline,
         openResetStockErrorModal,
         confirmResetStockError,
         openUnmatchedActionModal,
@@ -9479,6 +9835,7 @@ var InjectionWarehouseModule = (function() {
         showReserveDetailPopup,
         openSiteInboundShortageResolve,
         confirmSiteInboundShortageResolve,
+        cancelReworkShortage,
         openReworkDispatchFromShortage,
         toggleSiteInboundShortageNotify,
         ackReworkUsageFromWork,
@@ -9491,6 +9848,7 @@ var InjectionWarehouseModule = (function() {
         renderSiteReturns,
         openConfirmSiteReturnModal,
         confirmSiteReturn,
+        cancelSiteReturn,
         openOutgoingListupItemModal,
         _onOutItemTypeChange,
         saveOutgoingListupItem,

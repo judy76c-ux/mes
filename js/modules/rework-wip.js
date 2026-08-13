@@ -361,6 +361,107 @@ var ReworkWipModule = (function () {
         </div>`;
     }
 
+    function _productRows() {
+        try { return Storage.getAll(DB.STORES.PRODUCTS) || []; } catch (e) { return []; }
+    }
+
+    function _uniqueSorted(values) {
+        return [...new Set((values || []).map(function (v) { return String(v || '').trim(); }).filter(Boolean))]
+            .sort(function (a, b) { return a.localeCompare(b, 'ko'); });
+    }
+
+    /** 제품 마스터 + 기존 재공이력에서 차종 목록 */
+    function _carModels() {
+        const products = _productRows();
+        const fromMaster = products.map(function (p) { return p.carModel; });
+        const fromWip = _getAll().map(function (r) { return r.carModel; });
+        if (typeof UIUtils !== 'undefined' && typeof UIUtils.sortCarModels === 'function') {
+            return UIUtils.sortCarModels(fromMaster.concat(fromWip), products);
+        }
+        return _uniqueSorted(fromMaster.concat(fromWip));
+    }
+
+    function _partNames(carModel) {
+        const car = String(carModel || '').trim();
+        if (!car) return [];
+        const fromMaster = _productRows().filter(function (p) { return p.carModel === car; })
+            .map(function (p) { return p.partName; });
+        const fromWip = _getAll().filter(function (r) { return r.carModel === car; })
+            .map(function (r) { return r.partName; });
+        return _uniqueSorted(fromMaster.concat(fromWip));
+    }
+
+    function _colors(carModel, partName) {
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+        if (!car || !part) return [];
+        const fromMaster = _productRows()
+            .filter(function (p) { return p.carModel === car && p.partName === part; })
+            .map(function (p) { return p.color; });
+        const fromWip = _getAll()
+            .filter(function (r) { return r.carModel === car && r.partName === part; })
+            .map(function (r) { return r.color; });
+        return _uniqueSorted(fromMaster.concat(fromWip));
+    }
+
+    function _selectOpts(list, selected, emptyLabel) {
+        const sel = String(selected || '').trim();
+        const items = (list || []).slice();
+        let extra = '';
+        if (sel && items.indexOf(sel) < 0) {
+            extra = `<option value="${_esc(sel)}" selected>${_esc(sel)} (기존)</option>`;
+        }
+        return `<option value="">${emptyLabel}</option>` + extra +
+            items.map(function (v) {
+                return `<option value="${_esc(v)}" ${v === sel ? 'selected' : ''}>${_esc(v)}</option>`;
+            }).join('');
+    }
+
+    function _partSelectHtml(carModel, selected) {
+        const car = String(carModel || '').trim();
+        if (!car) return '<option value="">-- 차종 먼저 선택 --</option>';
+        return _selectOpts(_partNames(car), selected, '-- 부품명 선택 --');
+    }
+
+    function _colorSelectHtml(carModel, partName, selected) {
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+        if (!car || !part) return '<option value="">-- 부품명 먼저 선택 --</option>';
+        return _selectOpts(_colors(car, part), selected, '-- 선택 --');
+    }
+
+    function onCarModelChange() {
+        const car = ((document.getElementById('rwCarModel') || {}).value || '').trim();
+        const partEl = document.getElementById('rwPartName');
+        const colorEl = document.getElementById('rwColor');
+        const parts = _partNames(car);
+        if (partEl) {
+            partEl.innerHTML = _partSelectHtml(car, parts.length === 1 ? parts[0] : '');
+        }
+        const part = partEl ? String(partEl.value || '').trim() : '';
+        if (colorEl) {
+            if (car && part) {
+                const colors = _colors(car, part);
+                colorEl.innerHTML = _colorSelectHtml(car, part, colors.length === 1 ? colors[0] : '');
+            } else {
+                colorEl.innerHTML = '<option value="">-- 부품명 먼저 선택 --</option>';
+            }
+        }
+    }
+
+    function onPartNameChange() {
+        const car = ((document.getElementById('rwCarModel') || {}).value || '').trim();
+        const part = ((document.getElementById('rwPartName') || {}).value || '').trim();
+        const colorEl = document.getElementById('rwColor');
+        if (!colorEl) return;
+        if (car && part) {
+            const colors = _colors(car, part);
+            colorEl.innerHTML = _colorSelectHtml(car, part, colors.length === 1 ? colors[0] : '');
+        } else {
+            colorEl.innerHTML = '<option value="">-- 부품명 먼저 선택 --</option>';
+        }
+    }
+
     function _formHtml(r) {
         r = r || {};
         var lots = _lotFieldsOf(r);
@@ -379,15 +480,21 @@ var ReworkWipModule = (function () {
           </div>
           <div>
             <label class="form-label">차종 *</label>
-            <input id="rwCarModel" type="text" class="form-input" value="${_esc(r.carModel || '')}">
+            <select id="rwCarModel" class="form-input" onchange="ReworkWipModule.onCarModelChange()">
+              ${_selectOpts(_carModels(), r.carModel || '', '-- 차종 선택 --')}
+            </select>
           </div>
           <div>
             <label class="form-label">부품명 *</label>
-            <input id="rwPartName" type="text" class="form-input" value="${_esc(r.partName || '')}">
+            <select id="rwPartName" class="form-input" onchange="ReworkWipModule.onPartNameChange()">
+              ${_partSelectHtml(r.carModel || '', r.partName || '')}
+            </select>
           </div>
           <div>
             <label class="form-label">색상</label>
-            <input id="rwColor" type="text" class="form-input" value="${_esc(r.color || '')}">
+            <select id="rwColor" class="form-input">
+              ${_colorSelectHtml(r.carModel || '', r.partName || '', r.color || '')}
+            </select>
           </div>
           <div>
             <label class="form-label">수량 (EA) *</label>
@@ -918,6 +1025,8 @@ var ReworkWipModule = (function () {
         openAddModal,
         openEditModal,
         openEditFromDetail,
+        onCarModelChange,
+        onPartNameChange,
         saveRecord,
         deleteRecord,
         openDispatchModal,

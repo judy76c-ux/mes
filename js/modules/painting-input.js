@@ -821,12 +821,20 @@ var PaintingInputModule = (function () {
         return null;
     }
 
-    /** 입고 처리 진입 — 사용일·실수량 확인 모달 후 저장 */
-    function confirmSiteInbound(outId, line) {
-        return openConfirmSiteInboundModal(outId, line);
+    function _canAdminCorrectInbound() {
+        if (typeof AuthModule === 'undefined') return true;
+        if (typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) return true;
+        return false;
     }
 
-    function openConfirmSiteInboundModal(outId, line) {
+    /** 입고 처리 진입 — 사용일·실수량 확인 모달 후 저장
+     *  opts.useDate: 사용 예정일 기본값 (지난 실적 보정 시 계획일) */
+    function confirmSiteInbound(outId, line, opts) {
+        return openConfirmSiteInboundModal(outId, line, opts);
+    }
+
+    function openConfirmSiteInboundModal(outId, line, opts) {
+        opts = opts || {};
         if (!_canConfirmInbound(line)) {
             UIUtils.toast('도장작업 입력 권한이 있는 사용자만 입고 처리할 수 있습니다.', 'warning');
             return null;
@@ -844,6 +852,10 @@ var PaintingInputModule = (function () {
         const want = _normLine(line || out.paintLine || out.line);
         const shipQty = Number(out.quantity) || Number(out.qty) || 0;
         const today = UIUtils.today ? UIUtils.today() : '';
+        const shipDay = String(out.date || '').slice(0, 10);
+        const defaultUseDate = String(opts.useDate || '').slice(0, 10)
+            || (shipDay && today && shipDay < today ? shipDay : today)
+            || today;
         const stamp = _outDisplayStamp(out);
         const outDt = _splitDateTime(stamp);
         const outLots = (Array.isArray(out.lots) && out.lots.length)
@@ -902,7 +914,7 @@ var PaintingInputModule = (function () {
                 <div class="form-group">
                     <label class="form-label">사용 예정일 <span style="color:var(--accent-red)">*</span>
                         <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(언제 사용할 자재인지 · 기본 당일)</span></label>
-                    <input type="date" class="form-input" id="piInboundUseDate" value="${_esc(today)}"
+                    <input type="date" class="form-input" id="piInboundUseDate" value="${_esc(defaultUseDate)}"
                         onkeydown="if(event.key==='Enter'){event.preventDefault();PaintingInputModule.submitConfirmSiteInbound();}">
                 </div>
                 ${qtyFieldHtml}
@@ -1540,6 +1552,53 @@ var PaintingInputModule = (function () {
                 note: (work.line || '') + ' 작업 투입'
             });
         }
+    }
+
+    /** 도장 생산일이 지난 사출 LOT 현장 잔량을 0 처리한다.
+     *  keepByLot: 이번 도장작업일 입고분 중 이월로 남길 수량. 그 외 잔량은 출고(0 처리)로 떨어낸다. */
+    async function writeOffExpiredSiteLots(opts) {
+        opts = opts || {};
+        const line = _normLine(opts.line);
+        const carModel = String(opts.carModel || '').trim();
+        const partName = String(opts.partName || '').trim();
+        const color = String(opts.color || '').trim();
+        const keepByLot = opts.keepByLot || {};
+        if (!line || !carModel || !partName) return null;
+
+        const currentLots = getLotsByCarPart(line, carModel, partName) || [];
+        const writeLots = [];
+        currentLots.forEach(function (l) {
+            const lotNo = String((l && l.lotNo) || '').trim();
+            if (!lotNo) return;
+            const keep = Math.max(0, Number(keepByLot[lotNo]) || 0);
+            const bal = Math.max(0, Number(l.balance) || 0);
+            const off = Math.floor(bal - keep + 1e-9);
+            if (off > 0) writeLots.push({ lotNo: lotNo, qty: off });
+        });
+        if (!writeLots.length) return null;
+
+        const totalQty = writeLots.reduce(function (s, l) { return s + l.qty; }, 0);
+        const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
+        const actor = _currentActorLabel();
+        return Storage.add(STORE, {
+            date: now,
+            type: '출고',
+            line: line,
+            paintLine: line,
+            carModel: carModel,
+            partName: partName,
+            color: color,
+            lots: writeLots,
+            lotNo: writeLots[0].lotNo,
+            quantity: totalQty,
+            unit: 'EA',
+            source: '도장일 경과 0 처리',
+            isExpiredWriteOff: true,
+            refWorkId: opts.workId || '',
+            note: '도장 생산일이 지난 사출 LOT 잔량 0 처리'
+                + (opts.workDate ? ' (' + String(opts.workDate).slice(0, 10) + ' 이전)' : ''),
+            receivedBy: actor
+        });
     }
 
     function _lineAccent(line) {
@@ -2246,6 +2305,21 @@ var PaintingInputModule = (function () {
         return rec;
     }
 
+    /** 관리자 — 아직 「입고 처리」되지 않은(반납 대기) 반납 건을 통째로 취소한다.
+     *  창고 재고에는 아직 아무것도 반영되지 않은 상태(pending)라 이 기록만 지우면 그만이다.
+     *  잘못된 사유·수량으로 반납이 등록됐거나, 관련 없는 LOT까지 한꺼번에 묶여 나간 경우
+     *  되돌리는 용도. */
+    async function cancelSiteReturn(id) {
+        if (!id) return false;
+        const rec = Storage.getById(STORE, id);
+        if (!rec || !rec.isSiteReturn) return false;
+        if (rec.returnStatus !== 'pending') {
+            throw new Error('이미 입고 처리된 반납은 취소할 수 없습니다. 되돌리기(revertSiteReturn)를 먼저 사용하세요.');
+        }
+        await Storage.remove(STORE, id);
+        return true;
+    }
+
     /** confirmSiteReturn을 되돌린다 — 컬러 없이 잘못 확정된 반납 건을 다시 "반납 대기"로
      *  되돌려, 사출창고 쪽의 (컬러 누락) 입고 레코드를 지운 뒤 이 반납을 재처리할 수 있게 한다. */
     async function revertSiteReturn(id) {
@@ -2259,6 +2333,93 @@ var PaintingInputModule = (function () {
             returnConfirmedBy: ''
         });
         return rec;
+    }
+
+    /** 관리자 — 창고 출고 없이 현장 입고를 수기 등록 (지난 실적 소재입고 보정) */
+    async function registerManualSiteInbound(payload) {
+        payload = payload || {};
+        if (!_canAdminCorrectInbound()) {
+            UIUtils.toast('관리자만 과거 소재입고를 수기 등록할 수 있습니다.', 'warning');
+            return null;
+        }
+        const line = _normLine(payload.line);
+        const carModel = String(payload.carModel || '').trim();
+        const partName = String(payload.partName || '').trim();
+        const color = String(payload.color || '').trim();
+        const useDate = String(payload.useDate || '').slice(0, 10);
+        const qty = Math.max(0, Math.floor(Number(payload.quantity) || 0));
+        const lotNo = String(payload.lotNo || '').trim() || '무표기';
+        if (!line || !carModel || !partName || !useDate || qty < 1) {
+            UIUtils.toast('라인, 차종, 사출명, 사용일, 수량은 필수입니다.', 'warning');
+            return null;
+        }
+        const nowTime = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')).slice(11, 16);
+        const stamp = useDate + (nowTime ? ' ' + nowTime : '');
+        const actor = _currentActorLabel();
+        const rec = await Storage.add(STORE, {
+            date: stamp,
+            useDate: useDate,
+            shipDate: stamp,
+            type: '입고',
+            line: line,
+            paintLine: line,
+            carModel: carModel,
+            partName: partName,
+            color: color,
+            lots: [{ lotNo: lotNo, qty: qty }],
+            lotNo: lotNo,
+            quantity: qty,
+            shipQty: qty,
+            unit: 'EA',
+            source: '관리자 수기입고(과거실적)',
+            siteReceived: true,
+            isManualInbound: true,
+            receivedBy: actor,
+            receivedAt: UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '),
+            note: String(payload.note || '').trim() || '지난 실적 소재입고 관리자 보정',
+            planId: payload.planId || '',
+            trace: payload.trace || undefined
+        });
+        _refreshInboundViews();
+        return rec;
+    }
+
+    /** 관리자 — 기존 현장 입고의 사용일·수량·LOT 수정 */
+    async function updateSiteInbound(id, patch) {
+        patch = patch || {};
+        if (!_canAdminCorrectInbound()) {
+            UIUtils.toast('관리자만 입고 이력을 수정할 수 있습니다.', 'warning');
+            return null;
+        }
+        const rec = Storage.getById(STORE, id);
+        if (!rec) {
+            UIUtils.toast('입고 이력을 찾을 수 없습니다.', 'error');
+            return null;
+        }
+        const next = { updatedAt: new Date().toISOString(), updatedBy: _currentActorLabel() };
+        if (patch.useDate) {
+            const useDate = String(patch.useDate).slice(0, 10);
+            const time = String(rec.date || '').slice(11, 16)
+                || (UIUtils.now ? UIUtils.now().slice(11, 16) : '');
+            next.useDate = useDate;
+            next.date = useDate + (time ? ' ' + time : '');
+        }
+        if (patch.quantity != null && patch.quantity !== '') {
+            next.quantity = Math.max(0, Math.floor(Number(patch.quantity) || 0));
+        }
+        const qty = next.quantity != null ? next.quantity : (Number(rec.quantity) || 0);
+        if (patch.lotNo != null) {
+            const lotNo = String(patch.lotNo).trim() || '무표기';
+            next.lotNo = lotNo;
+            next.lots = [{ lotNo: lotNo, qty: qty }];
+        } else if (next.quantity != null && Array.isArray(rec.lots) && rec.lots.length === 1) {
+            next.lots = [{ lotNo: rec.lots[0].lotNo, qty: qty }];
+        }
+        if (patch.note != null) next.note = String(patch.note || '').trim();
+        if (patch.color != null) next.color = String(patch.color || '').trim();
+        await Storage.update(STORE, id, next);
+        _refreshInboundViews();
+        return Storage.getById(STORE, id);
     }
 
     return {
@@ -2276,6 +2437,9 @@ var PaintingInputModule = (function () {
         confirmSiteInbound: confirmSiteInbound,
         openConfirmSiteInboundModal: openConfirmSiteInboundModal,
         submitConfirmSiteInbound: submitConfirmSiteInbound,
+        registerManualSiteInbound: registerManualSiteInbound,
+        updateSiteInbound: updateSiteInbound,
+        canAdminCorrectInbound: _canAdminCorrectInbound,
         _updateInboundLotTotal: _updateInboundLotTotal,
         openInboundMatchView: openInboundMatchView,
         refreshInboundMatchPanel: refreshInboundMatchPanel,
@@ -2290,9 +2454,12 @@ var PaintingInputModule = (function () {
         isReworkSiteInbound: isReworkSiteInbound,
         getReceivedLotNosByCarPart: getReceivedLotNosByCarPart,
         getExactLotLedger: getExactLotLedger,
+        deductForWork: deductForWork,
+        writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,
         listPendingReturns: listPendingReturns,
         confirmSiteReturn: confirmSiteReturn,
+        cancelSiteReturn: cancelSiteReturn,
         revertSiteReturn: revertSiteReturn,
         receiveFromWarehouseOut: receiveFromWarehouseOut,
         autoReceiveFromWarehouseOut: autoReceiveFromWarehouseOut,

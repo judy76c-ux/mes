@@ -1461,7 +1461,7 @@ const ProductionPlanModule = (function() {
                 || ( oc === 'black' && (_targetColor === 'bk' || _targetColor.indexOf('black') >= 0) );
         }
 
-        const outs = (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).filter(function(r) {
+        const injOuts = (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).filter(function(r) {
             if (!r || r.type !== '출고') return false;
             if ((r.partName || '').trim() !== _injPN) return false;
             if (carModel && r.carModel && r.carModel !== carModel) return false;
@@ -1470,7 +1470,22 @@ const ProductionPlanModule = (function() {
             const oType = String(r.outgoingType || '').trim();
             const src = String(r.source || '').trim();
             return oType === '생산출고' || /도장\s*작업/.test(src) || src === '도장 입고';
-        }).sort(function(a, b) {
+        }).map(function(r) { return { date: r.date, createdAt: r.createdAt, id: r.id, planId: r.planId, quantity: Number(r.quantity) || 0 }; });
+
+        // IL 등 리워크 투입품은 사출창고가 아니라 리워크 재공품 → 도장현장 출고로 공급된다
+        // (REWORK_WIP, source: 'dispatch_to_line'). 이 소진을 반영하지 않으면 재공품에서 이미
+        // 실제로 출고·사용한 만큼도 "아직 사출창고에서 안 받은 예약 수량"으로 계속 잡혀,
+        // 현장 입고 부족 목록에서 리워크로 이미 해결된 부족까지 남아 있는 것처럼 보인다.
+        const reworkOuts = (DB.STORES.REWORK_WIP ? (Storage.getAll(DB.STORES.REWORK_WIP) || []) : []).filter(function(r) {
+            if (!r || r.type !== '출고') return false;
+            if (String(r.source || '').trim() !== 'dispatch_to_line') return false;
+            if ((r.partName || '').trim() !== _injPN) return false;
+            if (carModel && r.carModel && r.carModel !== carModel) return false;
+            if (!_outColorOk(r.color)) return false;
+            return true;
+        }).map(function(r) { return { date: r.date, createdAt: r.createdAt, id: r.id, planId: '', quantity: Number(r.qty) || 0 }; });
+
+        const outs = injOuts.concat(reworkOuts).sort(function(a, b) {
             return String(a.date || '').localeCompare(String(b.date || '')) ||
                 String(a.createdAt || a.id || '').localeCompare(String(b.createdAt || b.id || ''));
         });

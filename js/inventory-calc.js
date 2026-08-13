@@ -17,11 +17,22 @@
  *      문자열 정렬 시 같은 날 'YYYY-MM-DD' 가 앞서므로, 항상 normDate()로 정규화해 비교한다.
  *   5) 보유 LOT에서 차감하지 못한 출고(구 미차감)는 자동 리셋한다 — 부채로 쌓지 않고
  *      표시 재고는 실물 LOT 합만 유지한다. (관리자 수동 반영/리셋 불필요)
+ *   6) 현재고 확정(isStockBaseline / type:'기준재고')은 입고 가산이 아니라
+ *      그 시점 LOT 잔량으로 원장을 덮어쓰는 기준점이다.
  */
 var InvCalc = (function () {
 
     function _num(v) {
         return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0;
+    }
+
+    function isStockBaseline(rec) {
+        return !!(rec && (
+            rec.isStockBaseline
+            || rec.baselineAction === 'stock_baseline'
+            || rec.type === '기준재고'
+            || /현재고 확정/.test(String(rec.source || ''))
+        ));
     }
 
     /** 'YYYY-MM-DD' / 'YYYY-MM-DD HH:MM' → { day, stamp } (stamp는 항상 분까지) */
@@ -92,9 +103,10 @@ var InvCalc = (function () {
         return entries(rec).reduce((s, e) => s + e.qty, 0);
     }
 
-    /** 기록 1건의 부호 있는 수량 (출고는 음수). 미차감 처리 기록은 순합계에 넣지 않는다. */
+    /** 기록 1건의 부호 있는 수량 (출고는 음수). 미차감 처리·현재고 확정은 순합계에 넣지 않는다. */
     function signedQtyOf(rec) {
         if (rec && (rec.unmatchedAction === 'clear' || rec.unmatchedAction === 'absorb')) return 0;
+        if (isStockBaseline(rec)) return 0;
         return (rec && rec.type === '출고' ? -1 : 1) * qtyOf(rec);
     }
 
@@ -138,6 +150,33 @@ var InvCalc = (function () {
         });
     }
 
+    function _applyBaseline(map, rec) {
+        Object.keys(map).forEach(function (k) { delete map[k]; });
+        const nd = normDate(recordStamp(rec) || rec.date);
+        // lots[] 가 비어 있으면 재고 0으로 확정
+        const list = Array.isArray(rec && rec.lots) ? rec.lots : [];
+        if (list.length) {
+            list.forEach(function (l) {
+                if (!l) return;
+                const lotNo = String(l.lotNo || '').trim() || '무표기';
+                const qty = _num(l.qty);
+                if (qty <= 0) return;
+                map[lotNo] = {
+                    lotNo: lotNo,
+                    qty: qty,
+                    date: nd.stamp || String(l.date || ''),
+                    supplier: rec.supplier || l.supplier || ''
+                };
+            });
+            return;
+        }
+        const q = _num(rec && rec.quantity);
+        if (q > 0) {
+            const lotNo = String((rec && rec.lotNo) || '').trim() || '무표기';
+            map[lotNo] = { lotNo: lotNo, qty: q, date: nd.stamp, supplier: (rec && rec.supplier) || '' };
+        }
+    }
+
     function _applyIncoming(map, rec, entriesList) {
         const nd = normDate(recordStamp(rec) || rec.date);
         entriesList.forEach(e => {
@@ -162,6 +201,8 @@ var InvCalc = (function () {
             const sa = recordStamp(a);
             const sb = recordStamp(b);
             return sa.localeCompare(sb)
+                // 같은 시각이면 현재고 확정을 마지막에 적용(이전 이동을 덮어씀)
+                || ((isStockBaseline(a) ? 1 : 0) - (isStockBaseline(b) ? 1 : 0))
                 || ((a.type === '출고' ? 1 : 0) - (b.type === '출고' ? 1 : 0));
         });
     }
@@ -214,7 +255,10 @@ var InvCalc = (function () {
             const stockBefore = _totalFromMap(map, unmatchedRef.value, writeOffRef.value);
             const deductions = rec.type === '출고' ? [] : null;
 
-            if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
+            if (isStockBaseline(rec)) {
+                _applyBaseline(map, rec);
+                unmatchedRef.value = 0;
+            } else if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
                 // 미차감 clear/absorb
             } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, deductions);
@@ -252,7 +296,10 @@ var InvCalc = (function () {
         _sortRecords(records).forEach(rec => {
             if (isQtyCorrupted(rec)) corrupted.push(rec);
 
-            if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
+            if (isStockBaseline(rec)) {
+                _applyBaseline(map, rec);
+                unmatchedRef.value = 0;
+            } else if (_applyUnmatchedAction(map, rec, unmatchedRef, writeOffRef)) {
                 // 과거 미차감 clear/absorb 기록 호환(신규 출고는 자동 리셋이라 부채가 안 쌓임)
             } else if (rec.type === '출고') {
                 _applyOutgoing(map, entries(rec), unmatchedRef, null);
@@ -276,5 +323,5 @@ var InvCalc = (function () {
         return lotBalances(records).total;
     }
 
-    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, lotBalances, replaySteps, totalStock, UNMATCHED };
+    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, isStockBaseline, lotBalances, replaySteps, totalStock, UNMATCHED };
 })();
