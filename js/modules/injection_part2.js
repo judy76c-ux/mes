@@ -4701,6 +4701,13 @@ var InjectionWarehouseModule = (function() {
                             <span class="material-symbols-outlined" style="font-size:1rem;">done_all</span>
                             전체 일괄 입고 (${pendingRows.length}건)
                         </button>` : ''}
+                        ${pendingRows.length > 0 && _isAdminUser() ? `
+                        <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openBulkDeletePendingModal()"
+                            style="color:#dc2626;border-color:#fca5a5;"
+                            title="실물이 없는 대기 항목을 검토 후 일괄 삭제합니다 (관리자 전용, 재고 영향 없음, 삭제 전 자동 백업).">
+                            <span class="material-symbols-outlined" style="font-size:1rem;">delete_forever</span>
+                            일괄 삭제
+                        </button>` : ''}
                         ${dismissedCountBadge}
                         <button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.renderInspStandby()">
                             <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
@@ -4789,6 +4796,139 @@ var InjectionWarehouseModule = (function() {
                     </tbody>
                 </table>
             </div>`;
+    }
+
+    /** 관리자 전용 — 지금 "입고 대기" 목록에 떠 있는 항목을 검토 후 일괄 삭제한다.
+     *  정의상 아직 창고(INJECTION_INVENTORY)에 입고되지 않은 항목만 대상이라 재고에는 영향이
+     *  없다. 검사건의 LOT 일부만 대기 중이면(나머지는 이미 입고됨) 그 LOT만 골라 빼고 검사
+     *  기록은 남긴다 — 이미 입고된 LOT의 이력·추적성은 절대 건드리지 않는다. 검사건 전체가
+     *  대기 상태면 기록 자체를 지운다. 삭제 전 원본 전체를 INSPECTION_DELETE_LOGS에 백업하고,
+     *  관리자 재인증 + 사유 입력을 강제한다(단건 삭제와 동일한 안전장치, injection_part1.js의
+     *  _finalizeDeleteInspection과 같은 패턴). */
+    function openBulkDeletePendingModal() {
+        if (!_isAdminUser()) { UIUtils.toast('관리자만 사용할 수 있습니다.', 'warning'); return; }
+        const pendingRows = _buildPendingInboundRows();
+        if (!pendingRows.length) { UIUtils.toast('삭제할 입고 대기 항목이 없습니다.', 'info'); return; }
+
+        const byInsp = {};
+        pendingRows.forEach(function (r) { (byInsp[r.inspId] = byInsp[r.inspId] || []).push(r); });
+        const inspIds = Object.keys(byInsp);
+        const totalQty = pendingRows.reduce(function (s, r) { return s + (Number(r.qty) || 0); }, 0);
+
+        const rowsHtml = inspIds.map(function (inspId) {
+            const rows = byInsp[inspId];
+            const first = rows[0];
+            const lotText = rows.map(function (r) { return r.lotNo + '(' + UIUtils.formatNumber(r.qty) + ')'; }).join(', ');
+            const groupTotal = rows.reduce(function (s, r) { return s + (Number(r.qty) || 0); }, 0);
+            return '<tr>' +
+                '<td style="white-space:nowrap;padding:5px 8px;font-size:0.8rem;">' + _escapeHtml(String(first.date || '').slice(0, 10)) + '</td>' +
+                '<td style="white-space:nowrap;padding:5px 8px;">' + _escapeHtml(first.carModel || '-') + '</td>' +
+                '<td style="padding:5px 8px;">' + _escapeHtml(first.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;padding:5px 8px;">' + _escapeHtml(first.color || '-') + '</td>' +
+                '<td style="padding:5px 8px;font-family:monospace;font-size:0.78rem;">' + _escapeHtml(lotText) + '</td>' +
+                '<td style="text-align:right;padding:5px 8px;font-weight:700;">' + UIUtils.formatNumber(groupTotal) + '</td>' +
+            '</tr>';
+        }).join('');
+
+        UIUtils.showModal('입고 대기 항목 일괄 삭제 (관리자 전용)',
+            '<div style="padding:4px 0;">' +
+                '<div style="padding:12px 14px;border-radius:8px;border:1px solid rgba(220,38,38,.35);background:rgba(220,38,38,.07);font-size:0.85rem;line-height:1.6;margin-bottom:12px;">' +
+                    '아직 창고에 입고되지 않은 수입검사 대기 항목 <strong>검사 ' + inspIds.length + '건 · LOT ' + pendingRows.length + '개 · 합계 ' +
+                    UIUtils.formatNumber(totalQty) + ' EA</strong>를 삭제합니다.<br>' +
+                    '창고 재고에는 영향이 없습니다(원래 입고 전이라 재고에 반영된 적이 없음). ' +
+                    '삭제 전 원본은 자동으로 백업되며(수입검사 삭제 이력), <strong>되돌릴 수 없습니다.</strong><br>' +
+                    '<strong style="color:#dc2626;">실물이 실제로 존재하는 자재라면 삭제하지 말고 「입고」로 처리하세요.</strong>' +
+                '</div>' +
+                '<div style="max-height:320px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;margin-bottom:12px;">' +
+                    '<table class="data-table compact" style="width:100%;border-collapse:collapse;">' +
+                        '<thead><tr style="background:var(--bg-secondary);">' +
+                            '<th style="padding:5px 8px;">검사일</th><th style="padding:5px 8px;">차종</th>' +
+                            '<th style="padding:5px 8px;">사출명</th><th style="padding:5px 8px;">컬러</th>' +
+                            '<th style="padding:5px 8px;">LOT(수량)</th><th style="text-align:right;padding:5px 8px;">합계</th>' +
+                        '</tr></thead><tbody>' + rowsHtml + '</tbody>' +
+                    '</table>' +
+                '</div>' +
+                '<div class="form-group">' +
+                    '<label class="form-label">삭제 사유 <span style="color:var(--accent-red)">*</span></label>' +
+                    '<textarea id="injBulkDeletePendingReason" class="form-textarea" rows="2" placeholder="예: 초기 테스트/오기입 검사건 — 실물 없음 확인"></textarea>' +
+                '</div>' +
+            '</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+            '<button class="btn" style="background:#dc2626;color:#fff;" onclick="InjectionWarehouseModule.confirmBulkDeletePending()">' +
+                '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">delete_forever</span> 삭제(' + inspIds.length + '건)</button>',
+            '720px'
+        );
+    }
+
+    async function confirmBulkDeletePending() {
+        const reasonEl = document.getElementById('injBulkDeletePendingReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('삭제 사유를 입력하세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+        UIUtils.closeModal();
+
+        AuthModule.requireAdminAuth(async function () {
+            // 모달을 띄운 뒤 시간이 지났을 수 있으니 삭제 직전 다시 최신 목록으로 계산한다
+            // (그 사이 누군가 일부를 입고 처리했을 수 있음 — 이미 입고된 건 절대 건드리면 안 됨).
+            const pendingRows = _buildPendingInboundRows();
+            const byInsp = {};
+            pendingRows.forEach(function (r) { (byInsp[r.inspId] = byInsp[r.inspId] || []).push(r); });
+            const inspIds = Object.keys(byInsp);
+            if (!inspIds.length) { UIUtils.toast('삭제할 항목이 없습니다(이미 처리됨).', 'info'); return; }
+
+            const user = AuthModule.getCurrentUser();
+            const who = user ? (user.displayName || user.username) : '알 수 없음';
+            let deletedInsp = 0, updatedInsp = 0, deletedLots = 0;
+
+            for (const inspId of inspIds) {
+                const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+                if (!insp) continue;
+                const pendingLotNos = new Set(byInsp[inspId].map(function (r) { return String(r.lotNo || '').trim(); }));
+                const sourceLots = (insp.lots && insp.lots.length > 0)
+                    ? insp.lots
+                    : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+                const remainingLots = sourceLots.filter(function (l) { return !pendingLotNos.has(String(l.lotNo || '').trim()); });
+
+                const logEntry = {
+                    id: Storage.generateId(),
+                    type: 'injection',
+                    typeLabel: '사출 수입검사 (입고 대기 일괄 삭제)',
+                    deletedAt: new Date().toISOString(),
+                    deletedBy: who,
+                    reason: reason,
+                    originalId: inspId,
+                    originalData: Object.assign({}, insp),
+                    summary: (insp.date || '') + ' / ' + (insp.carModel || '') + ' ' + (insp.partName || '') +
+                        ' / LOT ' + Array.from(pendingLotNos).join(',') + ' (' +
+                        UIUtils.formatNumber(byInsp[inspId].reduce(function (s, r) { return s + (Number(r.qty) || 0); }, 0)) + 'EA)',
+                    linkedInventoryDeleted: false
+                };
+                await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
+                deletedLots += pendingLotNos.size;
+
+                if (remainingLots.length === 0) {
+                    await Storage.remove(DB.STORES.INJECTION_INSPECTIONS, inspId);
+                    deletedInsp++;
+                } else {
+                    const remainQty = remainingLots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+                    await Storage.update(DB.STORES.INJECTION_INSPECTIONS, inspId, {
+                        lots: remainingLots,
+                        passQty: remainQty
+                    });
+                    updatedInsp++;
+                }
+            }
+
+            UIUtils.toast(
+                '입고 대기 ' + deletedLots + '개 LOT 삭제 완료 (검사건 전체삭제 ' + deletedInsp + '건 · 일부수정 ' + updatedInsp + '건)',
+                'success'
+            );
+            renderInspStandby();
+            loadData();
+        });
     }
 
     // 대기 목록에서 특정 LOT을 삭제(숨김) — 검사 기록/창고 재고는 전혀 건드리지 않음
@@ -9996,6 +10136,8 @@ var InjectionWarehouseModule = (function() {
         addAllPendingInspections,
         _confirmAddAllPendingInspections,
         dismissPendingLot,
+        openBulkDeletePendingModal,
+        confirmBulkDeletePending,
         openDismissedPendingModal,
         restoreDismissedPendingLot,
         getLinkedInventoryForInspection,
