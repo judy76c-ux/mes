@@ -1088,6 +1088,19 @@ const PaintingWorkModule = (function() {
             && AuthModule.isAdminUser();
     }
 
+    /** 이미 현장에 확인된(사용일만 잘못 잡힌) 입고를 지난 계획일로 재연결하는 권한.
+     *  관리자보다 낮은 문턱 — 실물이 이미 도착·확인된 재고의 사용일 메타데이터만 바꾸는
+     *  것이라(새 재고를 만드는 "관리자 수기 입고"와 달리) 도장 실적을 입력할 수 있는
+     *  사람이면 누구나 처리할 수 있어야 한다. 그렇지 않으면 "실적 미입력 계획" 목록에서
+     *  자재가 이미 도착해 있어도 관리자가 없으면 아무도 실적을 입력할 방법이 없다. */
+    function _canCorrectPastInbound() {
+        if (_isPaintAdmin()) return true;
+        return typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function' &&
+            (AuthModule.canWritePage('painting-work-a') ||
+             AuthModule.canWritePage('painting-work-b') ||
+             AuthModule.canWritePage('painting-work'));
+    }
+
     function _workActorLabel(user) {
         if (!user) return '';
         return String(user.displayName || user.name || user.username || user.id || '').trim();
@@ -2055,6 +2068,7 @@ const PaintingWorkModule = (function() {
         var day = _planDayKey(plan);
         var line = _resolvePaintLine(plan.line);
         var isAdmin = _isPaintAdmin();
+        var canRetarget = _canCorrectPastInbound();
         var pending = _pendingShipmentsForPlan(plan);
         var existing = _existingInboundForPlan(plan);
         var injPart = '';
@@ -2104,10 +2118,20 @@ const PaintingWorkModule = (function() {
                     var lot = (Array.isArray(r.lots) && r.lots.length)
                         ? r.lots.map(function (l) { return l.lotNo || ''; }).filter(Boolean).join(', ')
                         : (r.lotNo || '-');
+                    var rawLotNo = (Array.isArray(r.lots) && r.lots.length === 1)
+                        ? String(r.lots[0].lotNo || '').trim()
+                        : String(r.lotNo || '').trim();
+                    var lotIsGeneric = !rawLotNo || rawLotNo === '무표기';
                     var sameDay = useDay === day;
                     var action = sameDay
-                        ? '<span style="font-size:0.75rem;color:#16a34a;font-weight:700;">이 계획일 입고</span>'
-                        : (isAdmin
+                        ? ('<span style="font-size:0.75rem;color:#16a34a;font-weight:700;">이 계획일 입고</span>' +
+                            (lotIsGeneric && canRetarget
+                                ? (' <button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;font-size:0.72rem;margin-left:4px;"' +
+                                    ' title="LOT 번호가 없는 입고라 다른 무표기 건과 뒤섞여 ②투입에서 선택이 안 될 수 있습니다. 눌러서 이 건만의 고유 LOT을 부여하세요."' +
+                                    ' onclick="PaintingWorkModule.reassignInboundLot(\'' + _pwJs(r.id) + '\',\'' + _pwJs(plan.id) + '\')">' +
+                                    'LOT 재발급</button>')
+                                : ''))
+                        : (canRetarget
                             ? ('<button type="button" class="btn btn-sm btn-outline" style="padding:3px 8px;font-size:0.75rem;"' +
                                 ' onclick="PaintingWorkModule.applyInboundUseDate(\'' + _pwJs(r.id) + '\',\'' + _pwJs(day) + '\',\'' + _pwJs(plan.id) + '\')">' +
                                 '사용일을 ' + _pwEsc(day) + '로</button>')
@@ -2192,8 +2216,8 @@ const PaintingWorkModule = (function() {
     }
 
     async function applyInboundUseDate(inboundId, planDate, planId) {
-        if (!_isPaintAdmin()) {
-            UIUtils.toast('관리자만 입고 사용일을 수정할 수 있습니다.', 'warning');
+        if (!_canCorrectPastInbound()) {
+            UIUtils.toast('도장 작업 입력 권한이 있어야 입고 사용일을 수정할 수 있습니다.', 'warning');
             return;
         }
         if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.updateSiteInbound) {
@@ -2210,12 +2234,37 @@ const PaintingWorkModule = (function() {
                     UIUtils.toast('사용일을 ' + planDate + '로 수정했습니다. 실적을 입력하세요.', 'success');
                 } catch (e) {
                     UIUtils.toast('수정 실패: ' + (e && e.message ? e.message : e), 'error');
+                } finally {
+                    if (planId) openMissingInboundForPlan(planId);
                 }
             },
             function () {
                 if (planId) openMissingInboundForPlan(planId);
             }
         );
+    }
+
+    /** LOT 번호가 없는("무표기") 입고 건에 고유 임시 LOT을 부여한다. 같은 차종·사출명·컬러의
+     *  다른 무표기 건과 하나의 잔량 버킷으로 묶여, ②투입 LOT 드롭다운에서 선택할 항목이
+     *  안 보이는(실제로는 방금 도착한 자재인데 잔량 0으로 계산되는) 경우를 되돌리는 용도. */
+    async function reassignInboundLot(inboundId, planId) {
+        if (!_canCorrectPastInbound()) {
+            UIUtils.toast('도장 작업 입력 권한이 있어야 처리할 수 있습니다.', 'warning');
+            return;
+        }
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.updateSiteInbound) {
+            UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
+            return;
+        }
+        try {
+            var rec = await PaintingInputModule.updateSiteInbound(inboundId, { reassignLot: true });
+            if (!rec) return;
+            UIUtils.toast('이 입고에 고유 LOT을 부여했습니다. 이제 ②투입에서 선택할 수 있습니다.', 'success');
+        } catch (e) {
+            UIUtils.toast('처리 실패: ' + (e && e.message ? e.message : e), 'error');
+        } finally {
+            if (planId) openMissingInboundForPlan(planId);
+        }
     }
 
     async function saveManualPastInbound() {
@@ -7473,20 +7522,23 @@ const PaintingWorkModule = (function() {
             return '<div style="margin-top:8px;padding:8px 10px;background:#fff;border:1px dashed var(--border);border-radius:8px;font-size:0.78rem;color:var(--text-muted);">' +
                 '이 도장작업일(' + _pwEsc(day) + ')·' + _pwEsc(carModel) + '·' + _pwEsc(d.partName || '-') + '·' + _pwEsc(d.line || '-') + '에 현장 입고 이력이 없습니다.</div>';
         }
-        // LOT별로 한 행씩(입고 시간|차종|사출명|컬러|사출 LOT|수량) — 한 입고 기록에 LOT이
-        // 여러 개 섞여 있어도 "LOT(수량)" 한 칸에 뭉쳐 보이지 않게 LOT 단위로 풀어서 보여준다.
+        // LOT별로 한 행씩(입고시간|입고 위치|차종|사출명|컬러|사출 LOT|수입검사일|수량)
         var lines = [];
         rows.forEach(function (r) {
             var stamp = _resolveInboundStamp(r);
             var time = stamp.length > 11 ? stamp.slice(11, 16) : '-';
+            var isRework = _isReworkInbound(r);
             var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : [{ lotNo: r.lotNo || '-', qty: r.quantity }];
             lots.forEach(function (l) {
+                var lotNo = String((l && l.lotNo) || '-');
                 lines.push('<tr>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(time) + '</td>' +
+                    '<td style="padding:4px 8px;white-space:nowrap;">' + _inboundLocationCellHtml(isRework) + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.carModel || '-') + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.partName || '-') + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.color || '-') + '</td>' +
-                    '<td style="padding:4px 8px;white-space:nowrap;font-family:monospace;">' + _pwEsc(l.lotNo || '-') + '</td>' +
+                    '<td style="padding:4px 8px;white-space:nowrap;font-family:monospace;">' + _pwEsc(lotNo) + '</td>' +
+                    '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(_inspDateTextForInboundLot(r.partName, lotNo, r)) + '</td>' +
                     '<td style="padding:4px 8px;text-align:right;font-weight:700;">' + UIUtils.formatNumber(l.qty) + '</td>' +
                     '</tr>');
             });
@@ -7494,19 +7546,21 @@ const PaintingWorkModule = (function() {
         var totalReceived = rows.reduce(function (s, r) { return s + (Number(r.quantity) || 0); }, 0);
         return '<div style="margin-top:8px;padding:8px 10px;background:#fff;border:1px solid var(--border);border-radius:8px;overflow-x:auto;">' +
             '<div style="font-size:0.78rem;font-weight:700;color:var(--text-primary);margin-bottom:6px;">이 도장작업일(' + _pwEsc(day) + ')에 ' + _pwEsc(carModel) + '·' + _pwEsc(injPartName || d.partName || '-') + '·' + _pwEsc(d.line || '-') + '로 입고된 사출자재 (' + rows.length + '건, 같은 차종·품명만)</div>' +
-            '<table style="width:100%;font-size:0.76rem;border-collapse:collapse;">' +
+            '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.76rem;">' +
             '<thead><tr style="color:var(--text-muted);">' +
-            '<th style="text-align:left;padding:4px 8px;">입고 시간</th>' +
-            '<th style="text-align:left;padding:4px 8px;">차종</th>' +
-            '<th style="text-align:left;padding:4px 8px;">사출명</th>' +
-            '<th style="text-align:left;padding:4px 8px;">컬러</th>' +
-            '<th style="text-align:left;padding:4px 8px;">사출 LOT</th>' +
-            '<th style="text-align:right;padding:4px 8px;">수량</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">입고시간</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">입고 위치</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">차종</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">사출명</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">컬러</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">사출 LOT</th>' +
+            '<th style="text-align:left;padding:4px 8px;white-space:nowrap;">수입검사일</th>' +
+            '<th style="text-align:right;padding:4px 8px;white-space:nowrap;">수량</th>' +
             '</tr></thead>' +
             '<tbody>' + lines.join('') + '</tbody>' +
             '<tfoot><tr style="border-top:1px solid var(--border);">' +
-            '<td colspan="5" style="padding:5px 8px;font-weight:700;color:var(--text-primary);">입고 합계</td>' +
-            '<td style="padding:5px 8px;text-align:right;font-weight:800;color:var(--accent-blue);">' + UIUtils.formatNumber(totalReceived) + ' EA</td>' +
+            '<td colspan="7" style="padding:5px 8px;font-weight:700;color:var(--text-primary);white-space:nowrap;">입고 합계</td>' +
+            '<td style="padding:5px 8px;text-align:right;font-weight:800;color:var(--accent-blue);white-space:nowrap;">' + UIUtils.formatNumber(totalReceived) + ' EA</td>' +
             '</tr></tfoot>' +
             '</table></div>';
     }
@@ -7541,6 +7595,50 @@ const PaintingWorkModule = (function() {
             'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">리워크</span>';
     }
 
+    /** 입고 위치 칸 — 사출 창고 / 리워크를 배지로 구분 */
+    function _inboundLocationCellHtml(isRework) {
+        return isRework
+            ? '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
+              'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">리워크</span>'
+            : '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
+              'background:rgba(37,99,235,.10);color:#2563eb;white-space:nowrap;">사출 창고</span>';
+    }
+
+    /** 현장 입고 기록·LOT의 수입검사일 (YYYY-MM-DD). 없으면 '-' */
+    function _inspDateTextForInboundLot(partName, lotNo, rec) {
+        var raw = '';
+        if (typeof Trace !== 'undefined' && rec) {
+            try { raw = String(Trace.injInspDate(rec) || '').trim(); } catch (e) { /* ignore */ }
+        }
+        if (!raw && rec) {
+            var wantLot = String(lotNo || '').trim();
+            var lots = (Array.isArray(rec.lots) && rec.lots.length) ? rec.lots : [];
+            lots.forEach(function (l) {
+                if (raw) return;
+                if (wantLot && String((l && l.lotNo) || '').trim() !== wantLot) return;
+                if (l && l.inspDate) raw = String(l.inspDate).trim();
+            });
+            if (!raw && rec.inspDate) raw = String(rec.inspDate).trim();
+        }
+        if (!raw) raw = _findIncomingInspectionDateForLot(partName, lotNo) || '';
+        if (!raw) return '-';
+        return String(raw).replace('T', ' ').slice(0, 10);
+    }
+
+    function _siteInboundTableHeadHtml() {
+        return '<thead><tr style="color:var(--text-muted);text-align:left;">' +
+            '<th style="padding:4px 8px;white-space:nowrap;">입고시간</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;" title="사출 창고 또는 리워크">입고 위치</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">사출 LOT</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;">수입검사일</th>' +
+            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">수량</th>' +
+            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">상태</th>' +
+            '</tr></thead>';
+    }
+
     // 이 도장작업일·차종·라인·사출명으로 실제 입고된 기록에서 LOT별 입고 시각·차종·사출명·컬러를
     // 뽑는다(같은 LOT이 여러 건 나뉘어 들어왔으면 가장 이른 시각을 대표값으로 쓴다).
     // _buildUnmatchedInboundWarningHtml의 요약 목록과 _buildDayInboundListHtml의 상세 표가
@@ -7561,7 +7659,14 @@ const PaintingWorkModule = (function() {
                 var lotNo = String((l && l.lotNo) || '').trim();
                 if (!lotNo) return;
                 if (!out[lotNo] || time < out[lotNo].time) {
-                    out[lotNo] = { time: time, carModel: r.carModel || '', partName: r.partName || '', color: r.color || '', isRework: _isReworkInbound(r) };
+                    out[lotNo] = {
+                        time: time,
+                        carModel: r.carModel || '',
+                        partName: r.partName || '',
+                        color: r.color || '',
+                        isRework: _isReworkInbound(r),
+                        inspDate: _inspDateTextForInboundLot(r.partName, lotNo, r)
+                    };
                 }
             });
         });
@@ -7617,6 +7722,7 @@ const PaintingWorkModule = (function() {
                 missQty: missQty,
                 statusKind: statusKind,
                 isRework: !!detail.isRework,
+                inspDate: detail.inspDate || '-',
                 sortKey: '0_' + lotNo
             });
         });
@@ -7635,6 +7741,7 @@ const PaintingWorkModule = (function() {
                 missQty: Number(u.qty) || 0,
                 statusKind: 'unmatched',
                 isRework: !!detail.isRework,
+                inspDate: detail.inspDate || '-',
                 sortKey: '1_' + lotNo
             });
         });
@@ -7681,11 +7788,12 @@ const PaintingWorkModule = (function() {
             }
             return '<tr style="background:' + rowBg + ';border-bottom:1px solid ' + rowBorder + ';">' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.time) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _inboundLocationCellHtml(!!r.isRework) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.carModel) + '</td>' +
-                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.partName) +
-                    (r.isRework ? _reworkInboundBadgeHtml() : '') + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.partName) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.color) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(r.lotNo) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(r.inspDate || '-') + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' +
                 UIUtils.formatNumber(r.qty) + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;white-space:nowrap;">' + statusCell + '</td>' +
@@ -7694,15 +7802,7 @@ const PaintingWorkModule = (function() {
 
         return '<div style="overflow-x:auto;">' +
             '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.78rem;">' +
-            '<thead><tr style="color:var(--text-muted);text-align:left;">' +
-            '<th style="padding:4px 8px;white-space:nowrap;">입고 시간</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">사출 LOT</th>' +
-            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">수량</th>' +
-            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">상태</th>' +
-            '</tr></thead>' +
+            _siteInboundTableHeadHtml() +
             '<tbody>' + bodyHtml + '</tbody>' +
             '</table></div>' +
             '<div style="display:flex;justify-content:flex-end;gap:14px;padding-top:8px;margin-top:4px;border-top:1px solid var(--border);' +
@@ -7714,7 +7814,8 @@ const PaintingWorkModule = (function() {
             '</div>';
     }
 
-    // 창고→현장 입고 LOT을 표로 보여준다(입고 시간|차종|사출명|컬러|사출 LOT|수량|상태).
+    // 창고→현장 입고 LOT을 표로 보여준다
+    // (입고시간|입고 위치|차종|사출명|컬러|사출 LOT|수입검사일|수량|상태).
     // opts.readOnly=true 이면 보기/알림용(클릭 추가 없음). 기본은 입력·수정 화면용 — 미반영 행
     // 클릭 시 그 차이만큼 ②투입 LOT에 자동 추가.
     function _buildUnmatchedInboundWarningHtml(d, opts) {
@@ -7788,11 +7889,12 @@ const PaintingWorkModule = (function() {
 
             var cells =
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.time || '-') + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _inboundLocationCellHtml(!!detail.isRework) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.carModel || maps.carModel || '-') + '</td>' +
-                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.partName || maps.injPartName || '-') +
-                    (detail.isRework ? _reworkInboundBadgeHtml() : '') + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.partName || maps.injPartName || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.color || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(lotNo) + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.inspDate || '-') + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;font-weight:700;white-space:nowrap;">' + UIUtils.formatNumber(received) + '</td>' +
                 '<td style="padding:5px 8px;text-align:right;white-space:nowrap;">' + statusCell + '</td>';
 
@@ -7827,15 +7929,7 @@ const PaintingWorkModule = (function() {
 
         var tableHtml = '<div style="overflow-x:auto;">' +
             '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.78rem;">' +
-            '<thead><tr style="color:var(--text-muted);text-align:left;">' +
-            '<th style="padding:4px 8px;white-space:nowrap;">입고 시간</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;">사출 LOT</th>' +
-            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">수량</th>' +
-            '<th style="padding:4px 8px;text-align:right;white-space:nowrap;">상태</th>' +
-            '</tr></thead>' +
+            _siteInboundTableHeadHtml() +
             '<tbody>' + rowsHtml + '</tbody>' +
             '</table></div>';
 
@@ -8989,6 +9083,7 @@ const PaintingWorkModule = (function() {
         openMissingInboundForPlan,
         confirmPendingInboundForPlan,
         applyInboundUseDate,
+        reassignInboundLot,
         saveManualPastInbound,
         onPastInboundCarChange,
         onPastInboundPartChange,

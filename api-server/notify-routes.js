@@ -1,18 +1,22 @@
 /**
- * 텔레그램 Bot 알림 라우트 (무료, 건수 무제한)
- * POST /api/notify         — 텔레그램 메시지 발송
- * GET  /api/notify/config  — 설정 확인
- * POST /api/notify/test    — 연결 테스트
+ * 알림 라우트
+ * POST /api/notify              — 텔레그램 메시지 발송 (레거시)
+ * POST /api/notify/slack        — Slack 채널 Incoming Webhook 발송
+ * GET  /api/notify/config       — 설정 확인
+ * POST /api/notify/test         — 텔레그램 연결 테스트
+ * POST /api/notify/slack/test   — Slack 웹훅 테스트 발송
  */
 const https = require('https');
+const { URL } = require('url');
 
-const CONFIG_KEY = 'telegram_notify_config';
+const TELEGRAM_CONFIG_KEY = 'telegram_notify_config';
+const SLACK_CONFIG_KEY = 'slack_notify_config';
 
-async function _getCfg(pool) {
+async function _getConfigRow(pool, key) {
   try {
     const [rows] = await pool.query(
       'SELECT `value` FROM mes_config WHERE `key` = ?',
-      [CONFIG_KEY]
+      [key]
     );
     if (!rows.length) return null;
     const v = rows[0].value;
@@ -20,23 +24,24 @@ async function _getCfg(pool) {
   } catch { return null; }
 }
 
-function _telegramPost(token, method, body) {
+function _httpsJsonPost(hostname, path, body) {
   return new Promise((resolve, reject) => {
     const bodyStr = JSON.stringify(body);
     const req = https.request({
-      hostname: 'api.telegram.org',
-      path: `/bot${token}/${method}`,
+      hostname,
+      path,
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(bodyStr)
+        'Content-Type': 'application/json; charset=utf-8',
+        'Content-Length': Buffer.byteLength(bodyStr, 'utf8')
       }
     }, (res) => {
       let data = '';
       res.on('data', c => { data += c; });
       res.on('end', () => {
-        try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
-        catch { resolve({ status: res.statusCode, body: data }); }
+        let parsed = data;
+        try { parsed = data ? JSON.parse(data) : data; } catch { /* Slack webhook returns plain "ok" */ }
+        resolve({ status: res.statusCode, body: parsed, raw: data });
       });
     });
     req.on('error', reject);
@@ -45,7 +50,29 @@ function _telegramPost(token, method, body) {
   });
 }
 
-function _buildMessage(templateKey, count, extraInfo) {
+function _telegramPost(token, method, body) {
+  return _httpsJsonPost('api.telegram.org', `/bot${token}/${method}`, body);
+}
+
+function _parseSlackWebhook(url) {
+  try {
+    const u = new URL(String(url || '').trim());
+    if (u.protocol !== 'https:') return null;
+    if (u.hostname !== 'hooks.slack.com') return null;
+    if (!u.pathname.startsWith('/services/')) return null;
+    return u;
+  } catch {
+    return null;
+  }
+}
+
+function _slackPost(webhookUrl, payload) {
+  const u = _parseSlackWebhook(webhookUrl);
+  if (!u) return Promise.reject(new Error('Slack Webhook URL이 올바르지 않습니다.'));
+  return _httpsJsonPost(u.hostname, u.pathname + u.search, payload);
+}
+
+function _buildTelegramMessage(templateKey, count, extraInfo) {
   const labels = {
     paint_pending:     '🟡 도료 입고 대기',
     inj_pending:       '🟣 사출 입고 대기',
@@ -62,24 +89,46 @@ function _buildMessage(templateKey, count, extraInfo) {
   return lines.join('\n');
 }
 
+function _buildSlackNoteText(payload) {
+  const title = String(payload.title || 'MES 알림').trim() || 'MES 알림';
+  const body = String(payload.body || '').trim();
+  const sender = String(payload.senderName || '').trim();
+  const rec = String(payload.recipientsLabel || '').trim();
+  const extra = String(payload.extraInfo || '').trim();
+  const lines = [
+    `*[MES 쪽지] ${title}*`,
+    sender ? `보낸이: ${sender}` : '',
+    rec ? `수신: ${rec}` : '',
+    body,
+    extra,
+    `_${new Date().toLocaleString('ko-KR')}_`
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 module.exports = function(app, getPool) {
 
   /* ── POST /api/notify ─── 텔레그램 발송 ────────────────── */
   app.post('/api/notify', async (req, res) => {
-    const { templateKey, recipients, count, extraInfo } = req.body || {};
+    const body = req.body || {};
+    const templateParams = body.templateParams || {};
+    const templateKey = body.templateKey || templateParams.templateKey || body.templateCode || '';
+    const count = body.count != null ? body.count : (templateParams.count != null ? templateParams.count : 0);
+    const extraInfo = body.extraInfo || templateParams.extraInfo || '';
+    const recipients = body.recipients;
 
     if (!Array.isArray(recipients) || !recipients.length) {
       return res.status(400).json({ error: 'recipients 필드가 필요합니다.' });
     }
 
-    const cfg = await _getCfg(getPool());
+    const cfg = await _getConfigRow(getPool(), TELEGRAM_CONFIG_KEY);
     if (!cfg || !cfg.botToken) {
       return res.status(503).json({
         error: '텔레그램 Bot 설정이 없습니다. 설정 > 시스템 탭에서 Bot Token을 입력하세요.'
       });
     }
 
-    const text = _buildMessage(templateKey || '', count || 0, extraInfo || '');
+    const text = _buildTelegramMessage(templateKey, count, extraInfo);
     const results = [];
     for (const r of recipients) {
       if (!r.chatId) continue;
@@ -95,22 +144,53 @@ module.exports = function(app, getPool) {
       }
     }
 
-    const allOk = results.every(r => r.ok);
-    res.json({ success: allOk, results });
+    const sent = results.filter(r => r.ok).length;
+    const allOk = results.length > 0 && results.every(r => r.ok);
+    res.json({ success: allOk, sent, results });
+  });
+
+  /* ── POST /api/notify/slack ─── Slack 채널 발송 ────────── */
+  app.post('/api/notify/slack', async (req, res) => {
+    const payload = req.body || {};
+    const cfg = await _getConfigRow(getPool(), SLACK_CONFIG_KEY);
+    const webhookUrl = cfg && cfg.webhookUrl;
+    if (!webhookUrl) {
+      return res.json({
+        success: false,
+        skipped: true,
+        error: 'Slack Webhook이 없습니다. 설정 > 시스템 탭에서 Webhook URL을 저장하세요.'
+      });
+    }
+    if (!String(payload.title || '').trim() && !String(payload.body || '').trim()) {
+      return res.status(400).json({ error: 'title 또는 body가 필요합니다.' });
+    }
+    try {
+      const result = await _slackPost(webhookUrl, { text: _buildSlackNoteText(payload) });
+      const ok = result.status === 200 && String(result.raw || result.body) === 'ok';
+      res.json({
+        success: ok,
+        status: result.status,
+        detail: ok ? 'ok' : (result.raw || result.body)
+      });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   /* ── GET /api/notify/config ─── 설정 확인 ──────────────── */
   app.get('/api/notify/config', async (req, res) => {
-    const cfg = await _getCfg(getPool());
+    const tg = await _getConfigRow(getPool(), TELEGRAM_CONFIG_KEY);
+    const slack = await _getConfigRow(getPool(), SLACK_CONFIG_KEY);
     res.json({
-      configured: !!(cfg && cfg.botToken),
-      botTokenSet: !!(cfg && cfg.botToken)
+      configured: !!(tg && tg.botToken),
+      botTokenSet: !!(tg && tg.botToken),
+      slackWebhookSet: !!(slack && slack.webhookUrl)
     });
   });
 
-  /* ── POST /api/notify/test ─── 연결 테스트 ─────────────── */
+  /* ── POST /api/notify/test ─── 텔레그램 연결 테스트 ────── */
   app.post('/api/notify/test', async (req, res) => {
-    const cfg = await _getCfg(getPool());
+    const cfg = await _getConfigRow(getPool(), TELEGRAM_CONFIG_KEY);
     if (!cfg || !cfg.botToken) {
       return res.status(503).json({ error: 'Bot Token을 먼저 저장하세요.' });
     }
@@ -121,6 +201,31 @@ module.exports = function(app, getPool) {
         res.json({ success: true, message: `연결 성공 — Bot: @${bot.username} (${bot.first_name})` });
       } else {
         res.json({ success: false, message: '연결 실패 — Bot Token을 확인하세요.', detail: result.body });
+      }
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  /* ── POST /api/notify/slack/test ─── Slack 테스트 발송 ─── */
+  app.post('/api/notify/slack/test', async (req, res) => {
+    const cfg = await _getConfigRow(getPool(), SLACK_CONFIG_KEY);
+    if (!cfg || !cfg.webhookUrl) {
+      return res.status(503).json({ error: 'Slack Webhook URL을 먼저 저장하세요.' });
+    }
+    try {
+      const result = await _slackPost(cfg.webhookUrl, {
+        text: '*[MES] Slack 연결 테스트*\n채널 알림이 정상입니다.\n_' + new Date().toLocaleString('ko-KR') + '_'
+      });
+      const ok = result.status === 200 && String(result.raw || result.body) === 'ok';
+      if (ok) {
+        res.json({ success: true, message: 'Slack 채널로 테스트 메시지를 보냈습니다. 채널·휴대폰 앱에서 확인하세요.' });
+      } else {
+        res.json({
+          success: false,
+          message: 'Slack 발송 실패 — Webhook URL과 채널 권한을 확인하세요.',
+          detail: result.raw || result.body
+        });
       }
     } catch (err) {
       res.status(500).json({ error: err.message });

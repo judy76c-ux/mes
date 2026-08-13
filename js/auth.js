@@ -604,6 +604,66 @@ const AuthModule = (function () {
         _messagesCache = Array.isArray(rows) ? rows : [];
         return _persistAuthState(AUTH_MESSAGES_CONFIG_KEY, _messagesCache, MESSAGES_KEY);
     }
+
+    function _formatSlackRecipientLabel(recipients) {
+        const rows = Array.isArray(recipients) ? recipients : [];
+        if (rows.some(function(rec) { return rec && rec.type === 'all'; })) return '전체 사용자';
+        const labels = rows.map(function(rec) {
+            if (!rec) return '';
+            if (rec.type === 'role') return rec.label ? ('역할:' + rec.label) : rec.id;
+            return rec.label || rec.id || '';
+        }).filter(Boolean);
+        return labels.length ? [...new Set(labels)].join(', ') : '';
+    }
+
+    let _slackMirrorQueue = [];
+    let _slackMirrorTimer = null;
+
+    function _queueSlackMirror(message) {
+        if (!message) return;
+        _slackMirrorQueue.push(message);
+        if (_slackMirrorTimer) clearTimeout(_slackMirrorTimer);
+        _slackMirrorTimer = setTimeout(function() {
+            _slackMirrorTimer = null;
+            const batch = _slackMirrorQueue.splice(0);
+            _flushSlackMirrors(batch);
+        }, 500);
+    }
+
+    function _flushSlackMirrors(batch) {
+        if (!batch || !batch.length) return;
+        if (typeof ApiClient === 'undefined' || typeof ApiClient.sendSlackNotify !== 'function') return;
+        const groups = {};
+        batch.forEach(function(msg) {
+            const key = String(msg.title || '') + '\n' + String(msg.body || '');
+            if (!groups[key]) {
+                groups[key] = {
+                    title: msg.title,
+                    body: msg.body,
+                    senderName: msg.senderName,
+                    recipients: []
+                };
+            }
+            (msg.recipients || []).forEach(function(rec) { groups[key].recipients.push(rec); });
+        });
+        Object.keys(groups).forEach(function(key) {
+            const g = groups[key];
+            ApiClient.sendSlackNotify({
+                title: g.title,
+                body: g.body,
+                senderName: g.senderName,
+                recipientsLabel: _formatSlackRecipientLabel(g.recipients)
+            }).then(function(result) {
+                if (result && result.skipped) {
+                    console.info('[AuthModule] Slack 채널 미설정 — 쪽지만 저장했습니다.');
+                } else if (result && result.success === false) {
+                    console.warn('[AuthModule] Slack 채널 알림 실패:', result.detail || result.error);
+                }
+            }).catch(function(e) {
+                console.warn('[AuthModule] Slack 채널 알림 실패:', e);
+            });
+        });
+    }
     async function saveRoles(newRoles) {
         _rolesCache = Array.isArray(newRoles) && newRoles.length ? newRoles : null;
         try { await Storage.setConfigValue(AUTH_ROLES_CONFIG_KEY, _rolesCache || ROLES); } catch(e) {}
@@ -819,6 +879,7 @@ const AuthModule = (function () {
         });
         _saveMessages(rows);
         _updateTopbar();
+        _queueSlackMirror(rows[rows.length - 1]);
         return true;
     }
     function _popupStateKey(user) {
@@ -1323,6 +1384,7 @@ const AuthModule = (function () {
         });
         _saveMessages(rows);
         _updateTopbar();
+        _queueSlackMirror(rows[rows.length - 1]);
         return true;
     }
 

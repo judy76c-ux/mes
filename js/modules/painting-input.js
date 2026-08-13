@@ -827,6 +827,18 @@ var PaintingInputModule = (function () {
         return false;
     }
 
+    /** 이미 실물이 도착·확인된 입고의 "사용일"만 바꾸는 권한 — 창고 출고 없이 재고를
+     *  새로 만드는 registerManualSiteInbound(관리자 전용)보다 낮은 문턱이다. 도장 실적을
+     *  입력할 수 있는 사람이면 이 정도 보정은 할 수 있어야, 관리자가 없을 때도 지난
+     *  계획의 밀린 실적을 입력할 수 있다. */
+    function _canCorrectInboundUseDate() {
+        if (_canAdminCorrectInbound()) return true;
+        return typeof AuthModule !== 'undefined' && typeof AuthModule.canWritePage === 'function' &&
+            (AuthModule.canWritePage('painting-work-a') ||
+             AuthModule.canWritePage('painting-work-b') ||
+             AuthModule.canWritePage('painting-work'));
+    }
+
     /** 입고 처리 진입 — 사용일·실수량 확인 모달 후 저장
      *  opts.useDate: 사용 예정일 기본값 (지난 실적 보정 시 계획일) */
     function confirmSiteInbound(outId, line, opts) {
@@ -1474,11 +1486,21 @@ var PaintingInputModule = (function () {
                     return Number(m[1]) + '시' + m[2] + '분에 자동입고 처리예정';
                 })()
                 : '';
+            const reworkReturnLots = (r.received && r.isReworkDispatch) ? _returnableLotsForReworkShipment(r, want) : [];
+            const reworkReturnQty = reworkReturnLots.reduce(function (s, l) { return s + l.qty; }, 0);
+            const reworkReturnBtn = (r.received && r.isReworkDispatch && reworkReturnQty > 0 && canWrite)
+                ? `<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#7c3aed;border-color:#c4b5fd;"
+                        title="리워크 재공품으로 반납 — 현장 잔량을 재공 재고로 되돌립니다"
+                        onclick="PaintingInputModule.openReworkInboundReturnModal('${_esc(r.id)}','${_esc(want)}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">undo</span> 반납
+                   </button>`
+                : '';
             const actionHtml = r.received
                 ? `<div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
                     <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
                         title="도장일·생산계획 매칭 확인"
                         onclick="PaintingInputModule.openInboundMatchView('${_esc((recv && recv.id) || r.id)}','${_esc(want)}')">보기</button>
+                    ${reworkReturnBtn}
                     <span style="font-size:0.75rem;color:var(--text-muted);">${_esc((recv && recv.receivedBy) || '-')}${isAutoReceived ? ' (자동)' : ''}</span>
                    </div>`
                 : (canWrite
@@ -2238,7 +2260,219 @@ var PaintingInputModule = (function () {
     // 도장현장 → 사출창고 자재 반납 ("재입고"가 아니라 "반납" — 도장현장에서 처리하는 즉시
     // 이 스토어(현장 재고)에서는 바로 빠지지만, 사출창고 재고로 정식 편입되는 건 사출창고
     // 물류담당자가 실물을 확인하고 「입고 처리」할 때뿐이다. 그 전까지는 "반납 대기" 상태.)
+    // 리워크 입고 반납은 사출창고가 아니라 리워크 재공품으로 즉시 되돌린다.
     // ──────────────────────────────────────────────
+
+    /** 리워크 입고 건에서 아직 현장(투입·반납)으로 안 빠진 LOT 잔량 */
+    function _returnableLotsForReworkShipment(r, line) {
+        const want = _normLine(line || (r && (r.paintLine || r.line)));
+        const recv = (r && r.receiveRec) || null;
+        const srcLots = (recv && Array.isArray(recv.lots) && recv.lots.length)
+            ? recv.lots
+            : ((r && Array.isArray(r.lots) && r.lots.length)
+                ? r.lots
+                : [{ lotNo: (r && r.lotNo) || '', qty: (r && (r.quantity || r.qty)) || 0 }]);
+        const carModel = String((r && r.carModel) || '').trim();
+        const partName = String((r && r.partName) || '').trim();
+        return srcLots.map(function (l) {
+            const lotNo = String((l && l.lotNo) || '').trim();
+            const inboundQty = Math.max(0, Number(l && l.qty) || 0);
+            if (!lotNo || inboundQty <= 0) return null;
+            const ledger = getExactLotLedger(want, carModel, partName, lotNo);
+            const qty = Math.min(inboundQty, Math.max(0, Number(ledger.balance) || 0));
+            return { lotNo: lotNo, inboundQty: inboundQty, balance: Number(ledger.balance) || 0, qty: qty };
+        }).filter(function (l) { return l && l.qty > 0; });
+    }
+
+    function _findReworkShipmentForReturn(outId, line) {
+        const want = _normLine(line);
+        const todayHit = (listTodayWarehouseShipments(want) || []).find(function (r) {
+            return String(r.id) === String(outId) && r.isReworkDispatch;
+        });
+        if (todayHit) return todayHit;
+        if (!DB.STORES || !DB.STORES.REWORK_WIP) return null;
+        const rec = Storage.getById(DB.STORES.REWORK_WIP, outId);
+        if (!rec || String(rec.type || '') !== '출고' || String(rec.source || '') !== 'dispatch_to_line') return null;
+        const shaped = _shapeReworkShipment(rec);
+        const recv = _findReceiveByReworkOutId(outId);
+        return Object.assign({}, shaped, { received: !!recv, receiveRec: recv || null });
+    }
+
+    /** 이 반납이 사출창고가 아니라 리워크 재공으로 돌아가야 하는지 */
+    function _shouldReturnToReworkWip(opts) {
+        opts = opts || {};
+        if (opts.isReworkReturn) return true;
+        try {
+            if (typeof InjectionWarehouseModule !== 'undefined'
+                && typeof InjectionWarehouseModule.isReworkSourcedPart === 'function'
+                && InjectionWarehouseModule.isReworkSourcedPart(opts.partName)) return true;
+        } catch (e) { /* ignore */ }
+        const want = _normLine(opts.line);
+        const lotSet = {};
+        (opts.lots || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) lotSet[n] = true;
+        });
+        return (_recordsForLine(want) || []).some(function (r) {
+            if (String(r.type || '') !== '입고') return false;
+            if (String(r.carModel || '').trim() !== String(opts.carModel || '').trim()) return false;
+            if (String(r.partName || '').trim() !== String(opts.partName || '').trim()) return false;
+            if (!isReworkSiteInbound(r)) return false;
+            const lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+            return lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; });
+        });
+    }
+
+    let _pendingReworkInboundReturn = null;
+
+    function openReworkInboundReturnModal(outId, line) {
+        const want = _normLine(line);
+        if (!_canConfirmInbound(want)) {
+            UIUtils.toast('반납 권한이 없습니다.', 'warning');
+            return;
+        }
+        const ship = _findReworkShipmentForReturn(outId, want);
+        if (!ship || !ship.received) {
+            UIUtils.toast('리워크 입고 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const lots = _returnableLotsForReworkShipment(ship, want);
+        const total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (!lots.length || total <= 0) {
+            UIUtils.toast('반납할 현장 잔량이 없습니다. 이미 투입됐거나 반납된 수량입니다.', 'info');
+            return;
+        }
+        _pendingReworkInboundReturn = { outId: ship.id, line: want, ship: ship, lots: lots };
+        const rows = lots.map(function (l, i) {
+            return `<tr>
+                <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-weight:700;">${_esc(l.lotNo)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;text-align:right;">${_fmt(l.inboundQty)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;text-align:right;font-weight:800;color:#7c3aed;">${_fmt(l.qty)}</td>
+                <td style="white-space:nowrap;padding:8px 10px;text-align:right;">
+                    <input type="number" class="form-input" id="rwInboundRetQty_${i}"
+                        data-lot-no="${_esc(l.lotNo)}" min="1" max="${l.qty}" value="${l.qty}"
+                        style="width:auto;min-width:5em;text-align:right;font-weight:700;">
+                </td>
+            </tr>`;
+        }).join('');
+        UIUtils.showModal('리워크 입고 반납',
+            `<div style="padding:4px 0;">
+                <div style="padding:10px 12px;background:rgba(124,58,237,.06);border:1px solid rgba(124,58,237,.22);border-radius:8px;font-size:0.85rem;line-height:1.6;">
+                    <div><strong>${_esc(ship.carModel || '-')} · ${_esc(ship.partName || '-')}</strong>
+                        ${ship.color ? ' · ' + _esc(ship.color) : ''}
+                        <span style="margin-left:6px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크</span>
+                    </div>
+                    <div style="color:var(--text-muted);margin-top:2px;">현장 잔량 <strong style="color:#7c3aed;">${_fmt(total)} EA</strong>를 리워크 재공품으로 되돌립니다. 사출 창고 재고로는 들어가지 않습니다.</div>
+                </div>
+                <div class="data-table-wrapper" style="margin-top:12px;">
+                    <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
+                        <thead><tr>
+                            <th style="white-space:nowrap;padding:8px 10px;">사출LOT</th>
+                            <th style="white-space:nowrap;padding:8px 10px;text-align:right;">입고</th>
+                            <th style="white-space:nowrap;padding:8px 10px;text-align:right;">잔량</th>
+                            <th style="white-space:nowrap;padding:8px 10px;text-align:right;">반납 수량</th>
+                        </tr></thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+                <div class="form-group" style="margin-top:12px;">
+                    <label class="form-label">사유 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="text" class="form-input" id="rwInboundRetReason" placeholder="예: 계획 축소 · 오입고 · 미사용 반납">
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;"
+                onclick="PaintingInputModule.submitReworkInboundReturn()">반납 처리</button>`,
+            '640px');
+    }
+
+    async function submitReworkInboundReturn() {
+        const ctx = _pendingReworkInboundReturn;
+        if (!ctx || !ctx.ship) {
+            UIUtils.toast('반납 요청이 만료되었습니다. 다시 선택하세요.', 'error');
+            return;
+        }
+        if (!_canConfirmInbound(ctx.line)) {
+            UIUtils.toast('반납 권한이 없습니다.', 'warning');
+            return;
+        }
+        const reason = String((document.getElementById('rwInboundRetReason') || {}).value || '').trim();
+        if (!reason) {
+            UIUtils.toast('반납 사유를 입력하세요.', 'warning');
+            const el = document.getElementById('rwInboundRetReason');
+            if (el) el.focus();
+            return;
+        }
+        const lots = [];
+        for (let i = 0; i < ctx.lots.length; i++) {
+            const max = Number(ctx.lots[i].qty) || 0;
+            const el = document.getElementById('rwInboundRetQty_' + i);
+            const qty = Math.floor(Number(el && el.value) || 0);
+            if (qty <= 0) continue;
+            if (qty > max) {
+                UIUtils.toast('LOT ' + ctx.lots[i].lotNo + ' 잔량(' + _fmt(max) + ' EA)을 초과합니다.', 'warning');
+                if (el) el.focus();
+                return;
+            }
+            lots.push({ lotNo: ctx.lots[i].lotNo, qty: qty });
+        }
+        if (!lots.length) {
+            UIUtils.toast('반납 수량을 입력하세요.', 'warning');
+            return;
+        }
+        const ship = ctx.ship;
+        const recv = ship.receiveRec || {};
+        if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
+            UIUtils.toast('리워크 재공품 모듈을 사용할 수 없습니다.', 'error');
+            return;
+        }
+        let returnRec = null;
+        let wipRestored = false;
+        try {
+            returnRec = await createSiteReturn({
+                line: ctx.line,
+                carModel: ship.carModel || '',
+                partName: ship.partName || '',
+                color: ship.color || recv.color || '',
+                lots: lots,
+                reason: reason,
+                returnedBy: _currentActorLabel(),
+                isReworkReturn: true,
+                refInboundId: recv.id || '',
+                refReworkOutId: ship.id || recv.refReworkOutId || '',
+                physicalVerified: true,
+                verifiedAt: UIUtils.now ? UIUtils.now() : ''
+            });
+            if (returnRec && returnRec.id) {
+                await confirmSiteReturn(returnRec.id, { confirmedBy: _currentActorLabel() });
+            }
+            await ReworkWipModule.receiveSiteReturn({
+                carModel: ship.carModel || '',
+                partName: ship.partName || '',
+                color: ship.color || recv.color || '',
+                lots: lots,
+                quantity: lots.reduce(function (s, l) { return s + l.qty; }, 0),
+                note: '리워크 입고 반납 · ' + reason,
+                receivedBy: _currentActorLabel()
+            });
+            wipRestored = true;
+            _pendingReworkInboundReturn = null;
+            UIUtils.closeModal();
+            const total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+            UIUtils.toast(_fmt(total) + ' EA를 리워크 재공품으로 반납했습니다.', 'success');
+            _refreshInboundViews();
+        } catch (e) {
+            if (!wipRestored && returnRec && returnRec.id) {
+                try {
+                    const rec = Storage.getById(STORE, returnRec.id);
+                    if (rec && rec.returnStatus === 'confirmed') await revertSiteReturn(returnRec.id);
+                    await cancelSiteReturn(returnRec.id);
+                } catch (e2) { /* ignore */ }
+            }
+            console.error('[PaintingInput] 리워크 입고 반납 실패:', e);
+            UIUtils.toast('반납 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
 
     /** 계획 미달 등으로 남은 도장현장 자재를 사출창고로 반납 처리 (반납 대기 상태로 기록) */
     async function createSiteReturn(opts) {
@@ -2254,6 +2488,9 @@ var PaintingInputModule = (function () {
         if (!lots.length) throw new Error('반납할 LOT·수량이 없습니다.');
         const totalQty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
         const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
+        const isReworkReturn = _shouldReturnToReworkWip(Object.assign({}, opts, {
+            line: line, carModel: carModel, partName: partName, lots: lots
+        }));
 
         return Storage.add(STORE, {
             date: now,
@@ -2269,9 +2506,12 @@ var PaintingInputModule = (function () {
             unit: 'EA',
             source: '현장 반납',
             isSiteReturn: true,
+            isReworkReturn: !!isReworkReturn,
             returnReason: opts.reason || '',
             returnStatus: 'pending',
             refWorkId: opts.workId || undefined,
+            refInboundId: opts.refInboundId || undefined,
+            refReworkOutId: opts.refReworkOutId || undefined,
             returnedBy: opts.returnedBy || '',
             // 실물 확인 여부 — 창고에서 「입고 처리」할 때 판단 근거가 된다
             physicalVerified: !!opts.physicalVerified,
@@ -2387,8 +2627,8 @@ var PaintingInputModule = (function () {
     /** 관리자 — 기존 현장 입고의 사용일·수량·LOT 수정 */
     async function updateSiteInbound(id, patch) {
         patch = patch || {};
-        if (!_canAdminCorrectInbound()) {
-            UIUtils.toast('관리자만 입고 이력을 수정할 수 있습니다.', 'warning');
+        if (!_canCorrectInboundUseDate()) {
+            UIUtils.toast('도장 작업 입력 권한이 있어야 입고 이력을 수정할 수 있습니다.', 'warning');
             return null;
         }
         const rec = Storage.getById(STORE, id);
@@ -2408,10 +2648,23 @@ var PaintingInputModule = (function () {
             next.quantity = Math.max(0, Math.floor(Number(patch.quantity) || 0));
         }
         const qty = next.quantity != null ? next.quantity : (Number(rec.quantity) || 0);
+        const curLotNo = String((rec.lots && rec.lots[0] && rec.lots[0].lotNo) || rec.lotNo || '').trim();
         if (patch.lotNo != null) {
             const lotNo = String(patch.lotNo).trim() || '무표기';
             next.lotNo = lotNo;
             next.lots = [{ lotNo: lotNo, qty: qty }];
+        } else if ((patch.reassignLot || patch.useDate) && (!curLotNo || curLotNo === '무표기')) {
+            // "무표기"(실제 LOT 번호 없음) 건은 같은 차종·사출명·컬러의 다른 "무표기" 건들과
+            // 하나의 LOT 버킷으로 묶여 FIFO 잔량 계산이 서로 뒤섞인다. 사용일을 옮기면 이
+            // 건이 (원래는 무관한) 다른 무표기 소진 기록보다 날짜상 앞서게 되어 그 소진에
+            // 흡수당해 방금 옮긴 건까지 "잔량 0"으로 보이는 사고가 났다 — 실물은 그대로
+            // 남아 있는데 화면에서 선택할 LOT이 없어져 실적 입력이 막힌다.
+            // 진짜 LOT 번호가 없는 건이라면 이 건만의 고유 임시 LOT을 부여해 다른 무표기
+            // 건과 절대 섞이지 않게 한다(rework-wip.js의 'RST' 접두어와 같은 패턴).
+            const dayForLot = String(next.useDate || rec.useDate || rec.date || '').slice(0, 10).replace(/-/g, '').slice(2) || '000000';
+            const uniqLot = 'DT' + dayForLot + Date.now().toString().slice(-5);
+            next.lotNo = uniqLot;
+            next.lots = [{ lotNo: uniqLot, qty: qty }];
         } else if (next.quantity != null && Array.isArray(rec.lots) && rec.lots.length === 1) {
             next.lots = [{ lotNo: rec.lots[0].lotNo, qty: qty }];
         }
@@ -2457,6 +2710,8 @@ var PaintingInputModule = (function () {
         deductForWork: deductForWork,
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,
+        openReworkInboundReturnModal: openReworkInboundReturnModal,
+        submitReworkInboundReturn: submitReworkInboundReturn,
         listPendingReturns: listPendingReturns,
         confirmSiteReturn: confirmSiteReturn,
         cancelSiteReturn: cancelSiteReturn,

@@ -269,19 +269,37 @@ const ApiClient = (function() {
     return (getApiBase() || '') + relUrl;
   }
 
-  // 알림톡 발송: recipients = [{ phone, name, params }]
+  // 텔레그램 발송: recipients = [{ chatId, name }]
   async function sendNotify(templateCode, recipients, templateParams) {
-    return request('POST', '/api/notify', { templateCode, recipients, templateParams: templateParams || {} });
+    const params = templateParams || {};
+    return request('POST', '/api/notify', {
+      templateCode,
+      templateKey: params.templateKey || templateCode,
+      count: params.count,
+      extraInfo: params.extraInfo,
+      recipients,
+      templateParams: params
+    });
   }
 
-  // 알림톡 설정 확인
+  // Slack 채널 Incoming Webhook 발송 (쪽지 미러)
+  async function sendSlackNotify(payload) {
+    return request('POST', '/api/notify/slack', payload || {}, 10000);
+  }
+
+  // 알림 설정 확인
   async function checkNotifyConfig() {
     return request('GET', '/api/notify/config', undefined, 5000);
   }
 
-  // 알림톡 연결 테스트
+  // 텔레그램 연결 테스트
   async function testNotifyConnection() {
     return request('POST', '/api/notify/test', {}, 10000);
+  }
+
+  // Slack 웹훅 테스트 (채널에 실제 메시지 1건 발송)
+  async function testSlackConnection() {
+    return request('POST', '/api/notify/slack/test', {}, 10000);
   }
 
   async function deletePhoto(relUrl) {
@@ -307,7 +325,7 @@ const ApiClient = (function() {
     listNasBackups, nasBackupDownloadUrl, copyNasToLocal, restoreNasBackup,
     getSystemInfo,
     uploadPhoto, deletePhoto, photoUrl, mkdirPhotos, getPhotosStats,
-    sendNotify, checkNotifyConfig, testNotifyConnection,
+    sendNotify, sendSlackNotify, checkNotifyConfig, testNotifyConnection, testSlackConnection,
     getBase
   };
 })();

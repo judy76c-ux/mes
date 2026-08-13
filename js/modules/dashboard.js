@@ -1262,9 +1262,9 @@ const DashboardModule = (function() {
     }
 
     /* ══════════════════════════════════════════════════════════
-       텔레그램 알림 발송 모달
+       쪽지 + Slack 채널 알림 발송 모달
     ══════════════════════════════════════════════════════════ */
-    function openNotifyModal(templateKey, count) {
+    async function openNotifyModal(templateKey, count) {
         const LABELS = {
             paint_pending:     '도료 입고 대기',
             inj_pending:       '사출 입고 대기',
@@ -1273,41 +1273,50 @@ const DashboardModule = (function() {
         };
         const label = LABELS[templateKey] || templateKey;
 
-        // Chat ID가 있는 사용자만 표시
         const allUsers = (typeof AuthModule !== 'undefined' && AuthModule.getUsers)
-            ? AuthModule.getUsers().filter(function(u) { return u.active !== false && u.chatId; }) : [];
-        const noChatUsers = (typeof AuthModule !== 'undefined' && AuthModule.getUsers)
-            ? AuthModule.getUsers().filter(function(u) { return u.active !== false && !u.chatId; }).length : 0;
+            ? AuthModule.getUsers().filter(function(u) { return u.active !== false; }) : [];
 
+        let slackReady = false;
+        try {
+            const cfg = (typeof ApiClient !== 'undefined' && ApiClient.checkNotifyConfig)
+                ? await ApiClient.checkNotifyConfig() : null;
+            slackReady = !!(cfg && cfg.slackWebhookSet);
+        } catch (e) {}
+
+        const DEFAULT_NOTIFY_ROLES = ['admin', 'prod_manager', 'quality_manager', 'logistics_worker'];
         const userRows = allUsers.map(function(u) {
+            const keys = [].concat(u.roles || [], u.role ? [u.role] : []);
+            const precheck = keys.some(function(k) { return DEFAULT_NOTIFY_ROLES.indexOf(String(k)) >= 0; });
             return `<label style="display:flex;align-items:center;gap:8px;padding:7px 0;cursor:pointer;border-bottom:1px solid var(--border-color);">
-                <input type="checkbox" class="notify-recipient" value="${u.id}" checked style="width:15px;height:15px;cursor:pointer;">
-                <span class="material-symbols-outlined" style="font-size:18px;color:#229ED9;">send</span>
+                <input type="checkbox" class="notify-recipient" value="${u.id}"${precheck ? ' checked' : ''} style="width:15px;height:15px;cursor:pointer;">
+                <span class="material-symbols-outlined" style="font-size:18px;color:#4A154B;">mail</span>
                 <span style="font-weight:600;min-width:80px;">${u.displayName || u.username}</span>
-                <span style="font-size:.78rem;color:var(--text-muted);">Chat ID: ${u.chatId}</span>
                 <span style="font-size:.72rem;color:var(--text-muted);margin-left:auto;">${(u.roles||[u.role||'']).join(', ')}</span>
             </label>`;
         }).join('');
 
-        UIUtils.showModal(`텔레그램 알림 발송 — ${label}`,
+        UIUtils.showModal(`알림 발송 — ${label}`,
             `<div style="min-width:360px;max-width:500px;">
-                <div style="background:#229ED915;border:1px solid #229ED940;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;display:flex;align-items:center;gap:8px;">
-                    <span class="material-symbols-outlined" style="font-size:18px;color:#229ED9;">send</span>
-                    <div><strong>${label}</strong> ${count}건 발생 알림을<br>텔레그램으로 전송합니다.</div>
+                <div style="background:#4A154B12;border:1px solid #4A154B40;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;display:flex;align-items:center;gap:8px;">
+                    <span class="material-symbols-outlined" style="font-size:18px;color:#4A154B;">campaign</span>
+                    <div><strong>${label}</strong> ${count}건 알림을<br>MES 쪽지와 Slack 채널에 함께 보냅니다.</div>
                 </div>
-                <div style="font-size:.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:6px;">수신자 선택</div>
+                <div style="font-size:.78rem;color:${slackReady ? 'var(--accent-green)' : 'var(--accent-red)'};margin-bottom:10px;">
+                    ${slackReady
+                        ? 'Slack Webhook 연결됨 — 채널에도 1건 전달됩니다.'
+                        : 'Slack Webhook 미설정 — 쪽지만 발송됩니다. 설정 → 시스템에서 URL을 저장하세요.'}
+                </div>
+                <div style="font-size:.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:6px;">쪽지 수신자</div>
                 ${allUsers.length
                     ? `<div style="max-height:220px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;padding:0 10px;">${userRows}</div>`
                     : `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:.85rem;border:1px solid var(--border-color);border-radius:6px;">
-                        텔레그램 Chat ID가 등록된 사용자가 없습니다.<br>
-                        <span style="font-size:.78rem;">설정 → 사용자 관리에서 Chat ID를 등록하세요.</span>
+                        활성 사용자가 없습니다.
                     </div>`}
-                ${noChatUsers > 0 ? `<div style="font-size:.75rem;color:var(--text-muted);margin-top:4px;">※ Chat ID 미등록 사용자 ${noChatUsers}명은 목록에 표시되지 않습니다.</div>` : ''}
                 <div id="notifyStatusMsg" style="margin-top:10px;min-height:20px;font-size:.82rem;"></div>
             </div>`,
             allUsers.length
                 ? `<button class="btn btn-primary" onclick="DashboardModule._doSendNotify('${templateKey}',${count})">
-                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">send</span> 발송
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">send</span> 쪽지+채널 발송
                     </button>
                     <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>`
                 : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
@@ -1318,24 +1327,48 @@ const DashboardModule = (function() {
         const statusEl = document.getElementById('notifyStatusMsg');
         if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">발송 중…</span>';
 
+        const LABELS = {
+            paint_pending:     '도료 입고 대기',
+            inj_pending:       '사출 입고 대기',
+            work_missing:      '실적 미입력',
+            paint_mix_missing: '도료 사용 미등록'
+        };
+        const label = LABELS[templateKey] || templateKey;
+        const title = '[MES 알림] ' + label;
+        const body = count + '건이 처리 대기 중입니다.';
+
         const checked = Array.from(document.querySelectorAll('.notify-recipient:checked'));
         if (!checked.length) {
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">수신자를 선택하세요.</span>';
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">쪽지 수신자를 선택하세요.</span>';
             return;
         }
-        const allUsers = AuthModule.getUsers ? AuthModule.getUsers() : [];
-        const recipients = checked.map(function(cb) {
-            const u = allUsers.find(function(u) { return u.id === cb.value; });
-            return u ? { chatId: u.chatId, name: u.displayName || u.username } : null;
-        }).filter(Boolean);
-
-        try {
-            await ApiClient.sendNotify(null, recipients, { templateKey, count: String(count) });
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-green);">✓ 텔레그램 알림이 발송되었습니다.</span>';
-            setTimeout(function() { UIUtils.closeModal(); }, 1500);
-        } catch(e) {
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">발송 실패: ' + e.message + '</span>';
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">쪽지 기능을 사용할 수 없습니다.</span>';
+            return;
         }
+
+        let noteOk = 0;
+        checked.forEach(function(cb) {
+            const ok = AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetId: cb.value,
+                title: title,
+                body: body,
+                category: 'dashboard-notify',
+                priority: 'high'
+            });
+            if (ok) noteOk += 1;
+        });
+
+        if (!noteOk) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">쪽지 발송에 실패했습니다. 로그인 상태를 확인하세요.</span>';
+            return;
+        }
+        if (statusEl) {
+            statusEl.innerHTML = '<span style="color:var(--accent-green);">✓ 쪽지 ' + noteOk +
+                '건 저장. Slack 채널에도 함께 전달됩니다.</span>';
+        }
+        setTimeout(function() { UIUtils.closeModal(); }, 1600);
     }
 
     return {

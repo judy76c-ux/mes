@@ -10515,17 +10515,52 @@ const SettingsModule = (function() {
                 </div>
             </div>
 
+            <!-- ── Slack 채널 알림 설정 ──────────────────────────────── -->
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4>
+                        <span class="material-symbols-outlined" style="color:#4A154B;">campaign</span>
+                        Slack 채널 알림 (무료)
+                    </h4>
+                </div>
+                <div class="card-body">
+                    <p style="margin:0 0 14px;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
+                        MES <strong>쪽지</strong>가 저장되면 같은 내용을 Slack 채널에도 보냅니다.<br>
+                        <span style="font-size:.8rem;color:var(--text-muted);">
+                            준비: ① <a href="https://api.slack.com/apps" target="_blank" rel="noopener">api.slack.com/apps</a> → Create App → Incoming Webhooks On
+                            → ② 채널 선택(#mes-알림) → Webhook URL 복사 → 아래에 저장
+                        </span>
+                    </p>
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:12px;">
+                        <div>
+                            <label class="form-label">Incoming Webhook URL</label>
+                            <input class="form-input" id="slackWebhookUrl" type="password"
+                                placeholder="https://hooks.slack.com/services/..." autocomplete="off">
+                        </div>
+                        <div style="display:flex;gap:8px;">
+                            <button class="btn btn-outline" onclick="SettingsModule.saveSlackConfig()">
+                                <span class="material-symbols-outlined" style="font-size:16px;">save</span> 저장
+                            </button>
+                            <button class="btn btn-secondary" onclick="SettingsModule.testSlackNotify()">
+                                <span class="material-symbols-outlined" style="font-size:16px;">wifi_tethering</span> 테스트
+                            </button>
+                        </div>
+                    </div>
+                    <div id="slackNotifyStatus" style="font-size:0.82rem;"></div>
+                </div>
+            </div>
+
             <!-- ── 텔레그램 Bot 알림 설정 ──────────────────────────────── -->
             <div class="card" style="margin-top:20px;">
                 <div class="card-header">
                     <h4>
                         <span class="material-symbols-outlined" style="color:#229ED9;">send</span>
-                        텔레그램 Bot 알림 (무료)
+                        텔레그램 Bot 알림 (선택)
                     </h4>
                 </div>
                 <div class="card-body">
                     <p style="margin:0 0 14px;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
-                        텔레그램 Bot을 통해 담당자에게 무료로 메시지를 발송합니다.<br>
+                        개인 텔레그램 수신은 선택 사항입니다. 현장 알림은 위 Slack 채널을 사용하세요.<br>
                         <span style="font-size:.8rem;color:var(--text-muted);">
                             준비: ① 텔레그램 <strong>@BotFather</strong> → /newbot → Bot Token 발급
                             &nbsp;② 담당자는 Bot 검색 후 <strong>/start</strong> → Chat ID를 사용자 관리에 입력
@@ -10578,6 +10613,7 @@ const SettingsModule = (function() {
             refreshSystemInfo();
             loadImageStoragePolicy();
             _loadTelegramConfig();
+            _loadSlackConfig();
         }, 50);
     }
 
@@ -10654,6 +10690,7 @@ const SettingsModule = (function() {
     }
 
     const TELEGRAM_CONFIG_KEY = 'telegram_notify_config';
+    const SLACK_CONFIG_KEY = 'slack_notify_config';
 
     async function _loadTelegramConfig() {
         try {
@@ -10663,6 +10700,20 @@ const SettingsModule = (function() {
             if (el) el.value = '••••••••';
             const statusEl = document.getElementById('alimtalkStatus');
             if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> Bot Token이 저장되어 있습니다.</span>';
+        } catch(e) {}
+    }
+
+    async function _loadSlackConfig() {
+        try {
+            let cfg = await Storage.getConfigValue(SLACK_CONFIG_KEY).catch(() => null);
+            if ((!cfg || !cfg.webhookUrl) && typeof ApiClient !== 'undefined' && ApiClient.getConfig) {
+                cfg = await ApiClient.getConfig(SLACK_CONFIG_KEY).catch(() => null);
+            }
+            if (!cfg || !cfg.webhookUrl) return;
+            const el = document.getElementById('slackWebhookUrl');
+            if (el) el.value = '••••••••';
+            const statusEl = document.getElementById('slackNotifyStatus');
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-green);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">check_circle</span> Slack Webhook이 저장되어 있습니다. 쪽지 발송 시 채널에도 전달됩니다.</span>';
         } catch(e) {}
     }
 
@@ -10697,6 +10748,54 @@ const SettingsModule = (function() {
             }
         } catch(e) {
             if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-red);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">error</span> ' + e.message + '</span>';
+        }
+    }
+
+    function _isSlackWebhookUrl(url) {
+        try {
+            const u = new URL(String(url || '').trim());
+            return u.protocol === 'https:' && u.hostname === 'hooks.slack.com' && u.pathname.indexOf('/services/') === 0;
+        } catch (e) {
+            return false;
+        }
+    }
+
+    async function saveSlackConfig() {
+        const el = document.getElementById('slackWebhookUrl');
+        const url = el ? el.value.trim() : '';
+        if (!url || url === '••••••••') {
+            UIUtils.toast('Slack Webhook URL을 입력하세요.', 'warning'); return;
+        }
+        if (!_isSlackWebhookUrl(url)) {
+            UIUtils.toast('Webhook URL은 https://hooks.slack.com/services/ 로 시작해야 합니다.', 'warning');
+            return;
+        }
+        try {
+            const existing = await Storage.getConfigValue(SLACK_CONFIG_KEY).catch(() => ({})) || {};
+            existing.webhookUrl = url;
+            await Storage.setConfigValue(SLACK_CONFIG_KEY, existing);
+            await ApiClient.setConfig(SLACK_CONFIG_KEY, existing);
+            if (el) el.value = '••••••••';
+            const statusEl = document.getElementById('slackNotifyStatus');
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-green);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">check_circle</span> 저장되었습니다. 쪽지 발송 시 Slack 채널에도 전달됩니다.</span>';
+            UIUtils.toast('Slack Webhook이 저장되었습니다.', 'success');
+        } catch(e) {
+            UIUtils.toast('저장 실패: ' + e.message, 'error');
+        }
+    }
+
+    async function testSlackNotify() {
+        const statusEl = document.getElementById('slackNotifyStatus');
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">테스트 중…</span>';
+        try {
+            const result = await ApiClient.testSlackConnection();
+            if (statusEl) {
+                statusEl.innerHTML = result.success
+                    ? '<span style="color:var(--accent-green);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">check_circle</span> ' + (result.message || '연결 성공') + '</span>'
+                    : '<span style="color:var(--accent-red);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">error</span> ' + (result.message || '연결 실패') + '</span>';
+            }
+        } catch(e) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">error</span> ' + e.message + '</span>';
         }
     }
 
@@ -13380,7 +13479,7 @@ const SettingsModule = (function() {
 
     return {
         render,
-        saveTelegramConfig, testAlimtalk,
+        saveTelegramConfig, testAlimtalk, saveSlackConfig, testSlackNotify,
         openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
         onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         switchTab,
