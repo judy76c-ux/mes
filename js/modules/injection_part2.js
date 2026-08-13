@@ -4788,7 +4788,11 @@ var InjectionWarehouseModule = (function() {
                                                 onclick="InjectionWarehouseModule.addAllFromInspection('${r.inspId}')">
                                             <span class="material-symbols-outlined" style="font-size:0.9rem;">done_all</span> 전체입고(${groupCount})
                                         </button>` : ''}
-                                        ${_canManageStockData() ? `
+                                        <!-- 숨김(dismiss) 버튼 사용 중단 — 사용자 지시. 실물이 있는 대기 항목을 숨기면
+                                             "실제로는 미처리인데 화면에서만 안 보이는" 상태가 되어 컷오버 버그와 같은
+                                             부류의 혼란(재고-실물 불일치가 안 보이게 묻힘)을 만들 수 있다. 기존에
+                                             숨긴 항목은 "숨김 항목" 버튼에서 계속 조회·복원 가능하다. -->
+                                        ${false ? `
                                         <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;"
                                                 title="이미 창고에 있는(반납·수동입고 포함) 중복 대기를 목록에서 삭제합니다. 수입검사 기록과 창고 재고는 건드리지 않습니다."
                                                 onclick="InjectionWarehouseModule.dismissPendingLot('${r.inspId}', '${encodeURIComponent(r.lotNo || '')}')">
@@ -4936,36 +4940,13 @@ var InjectionWarehouseModule = (function() {
         });
     }
 
-    // 대기 목록에서 특정 LOT을 삭제(숨김) — 검사 기록/창고 재고는 전혀 건드리지 않음
-    async function dismissPendingLot(inspId, encodedLotNo) {
-        if (!_canManageStockData()) { UIUtils.toast('창고 입고 권한이 있어야 삭제할 수 있습니다.', 'warning'); return; }
-        const lotNo = decodeURIComponent(encodedLotNo || '');
-        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
-        const label = insp ? `${insp.carModel || ''} ${insp.partName || ''} (${insp.color || '-'})` : '';
-
-        UIUtils.confirm(
-            `${label} · LOT ${lotNo}\n` +
-            `이 항목을 "사출 창고 입고 대기품" 목록에서 삭제합니다.\n` +
-            `이미 창고에 있는 LOT(현장 반납·수동입고 포함)을 다시 입고하면 중복 재고가 됩니다.\n` +
-            `숨긴 항목은 '전체입고'·'전체 일괄 입고' 대상에서도 제외됩니다.\n` +
-            `수입검사 기록과 창고 재고는 변경되지 않으며, 필요하면 '숨김 항목'에서 복원할 수 있습니다.\n계속하시겠습니까?`,
-            async () => {
-                await _ensureDismissedPendingLoaded();
-                const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
-                _dismissedPending.push({
-                    inspId,
-                    lotNo,
-                    carModel: insp ? insp.carModel : '',
-                    partName: insp ? insp.partName : '',
-                    color: insp ? insp.color : '',
-                    dismissedAt: new Date().toISOString(),
-                    dismissedBy: (user && (user.displayName || user.username)) || ''
-                });
-                await Storage.setConfigValue(DISMISSED_PENDING_KEY, _dismissedPending);
-                UIUtils.toast('대기 목록에서 숨겼습니다. 일괄 입고 대상에서도 제외됩니다.', 'success');
-                renderInspStandby();
-            }
-        );
+    // 대기 목록에서 특정 LOT을 숨김 처리하던 기능 — 사용 중단(사용자 지시).
+    // 실물이 있는 대기 항목을 숨기면 "실제로는 미처리인데 화면에서만 안 보이는" 상태가 되어
+    // 컷오버 버그와 같은 부류의 혼란(재고-실물 불일치가 안 보이게 묻힘)을 만들 수 있다.
+    // 화면 버튼은 제거했고, 혹시 남은 참조가 호출해도 실행되지 않게 함수 자체도 막아둔다.
+    // 기존에 이미 숨긴 항목은 openDismissedPendingModal에서 계속 조회·복원할 수 있다.
+    async function dismissPendingLot() {
+        UIUtils.toast('입고 대기 숨김 기능은 더 이상 사용하지 않습니다. 실물을 확인해 "입고" 처리하세요.', 'warning');
     }
 
     /**
