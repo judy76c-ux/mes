@@ -292,9 +292,9 @@ const ApiClient = (function() {
     return request('GET', '/api/notify/config', undefined, 5000);
   }
 
-  // 텔레그램 연결 테스트
-  async function testNotifyConnection() {
-    return request('POST', '/api/notify/test', {}, 10000);
+  // 텔레그램 연결 테스트 (등록 Chat ID로 실제 메시지 발송)
+  async function testNotifyConnection(payload) {
+    return request('POST', '/api/notify/test', payload || {}, 20000);
   }
 
   // Slack 웹훅 테스트 (채널에 실제 메시지 1건 발송)

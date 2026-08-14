@@ -10575,7 +10575,8 @@ const SettingsModule = (function() {
                         개인 텔레그램 수신은 선택 사항입니다. 현장 알림은 위 Slack 채널을 사용하세요.<br>
                         <span style="font-size:.8rem;color:var(--text-muted);">
                             준비: ① 텔레그램 <strong>@BotFather</strong> → /newbot → Bot Token 발급
-                            &nbsp;② 담당자는 Bot 검색 후 <strong>/start</strong> → Chat ID를 사용자 관리에 입력
+                            &nbsp;② 담당자는 Bot 검색 후 <strong>/start</strong> → Chat ID를 사용자 관리에 입력<br>
+                            「테스트」는 사용자 관리에 등록된 Chat ID로 실제 메시지를 보냅니다. 봇 연결만 되면 수신이 확인된 것은 아닙니다.
                         </span>
                     </p>
                     <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:12px;">
@@ -10748,18 +10749,77 @@ const SettingsModule = (function() {
         }
     }
 
+    function _tgEsc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+            return ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c];
+        });
+    }
+
+    function _telegramTestTargets() {
+        const targets = [];
+        const seen = {};
+        function add(chatId, name) {
+            const id = String(chatId || '').trim();
+            if (!id || seen[id]) return;
+            seen[id] = true;
+            targets.push({ chatId: id, name: String(name || '').trim() || id });
+        }
+        try {
+            if (typeof AuthModule === 'undefined') return targets;
+            const cur = AuthModule.getCurrentUser && AuthModule.getCurrentUser();
+            if (cur) add(cur.chatId, cur.displayName || cur.username);
+            const users = (AuthModule.getUsers && AuthModule.getUsers()) || [];
+            users.forEach(function (u) {
+                if (u && u.active !== false) add(u.chatId, u.displayName || u.username);
+            });
+        } catch (e) { /* ignore */ }
+        return targets;
+    }
+
+    function _formatTelegramTestHtml(result) {
+        if (!result) return '';
+        const color = result.success ? 'var(--accent-green)' : 'var(--accent-red)';
+        const icon = result.success ? 'check_circle' : 'error';
+        const parts = [];
+        parts.push('<span style="color:' + color + ';"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">'
+            + icon + '</span> ' + _tgEsc(result.message || '') + '</span>');
+        const rows = result.results || [];
+        if (rows.length) {
+            parts.push('<ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);line-height:1.65;">');
+            rows.forEach(function (r) {
+                const label = (r.name ? r.name + ' ' : '') + '(' + r.chatId + ')';
+                if (r.ok) {
+                    parts.push('<li>' + _tgEsc(label) + ' — 발송됨</li>');
+                } else {
+                    const desc = r.description || r.error || '';
+                    parts.push('<li>' + _tgEsc(label) + ' — 실패'
+                        + (desc ? ' (' + _tgEsc(desc) + ')' : '')
+                        + (r.hint ? '<br>' + _tgEsc(r.hint) : '')
+                        + '</li>');
+                }
+            });
+            parts.push('</ul>');
+        }
+        const discovered = result.discoveredChats || [];
+        if (discovered.length) {
+            const ids = discovered.map(function (c) {
+                return (c.name ? c.name + ' ' : '') + c.chatId + (c.username ? ' @' + c.username : '');
+            }).join(', ');
+            parts.push('<div style="margin-top:8px;color:var(--text-secondary);">봇이 받은 최근 Chat ID: '
+                + _tgEsc(ids) + ' — 사용자 관리에 이 숫자를 저장하세요.</div>');
+        }
+        return parts.join('');
+    }
+
     async function testAlimtalk() {
         const statusEl = document.getElementById('alimtalkStatus');
-        if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--text-muted);\">테스트 중…</span>';
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">테스트 중… 등록된 Chat ID로 실제 메시지를 보냅니다.</span>';
         try {
-            const result = await ApiClient.testNotifyConnection();
-            if (statusEl) {
-                statusEl.innerHTML = result.success
-                    ? '<span style=\"color:var(--accent-green);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">check_circle</span> ' + (result.message || '연결 성공') + '</span>'
-                    : '<span style=\"color:var(--accent-red);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">error</span> ' + (result.message || '연결 실패') + '</span>';
-            }
-        } catch(e) {
-            if (statusEl) statusEl.innerHTML = '<span style=\"color:var(--accent-red);\"><span class=\"material-symbols-outlined\" style=\"font-size:14px;vertical-align:-2px;\">error</span> ' + e.message + '</span>';
+            const recipients = _telegramTestTargets();
+            const result = await ApiClient.testNotifyConnection({ recipients });
+            if (statusEl) statusEl.innerHTML = _formatTelegramTestHtml(result);
+        } catch (e) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">error</span> ' + _tgEsc(e.message) + '</span>';
         }
     }
 
