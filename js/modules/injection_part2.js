@@ -1696,8 +1696,21 @@ var InjectionWarehouseModule = (function() {
 
     async function _addInventoryRecord(record) {
         _ensureUniqueLotOnInbound(record);
+        _stampInspPassQty(record);
         _enrichStockSnapshot(record);
         return Storage.add(STORE, record);
+    }
+
+    /** 수입검사 연동 입고에 합격수량을 스냅샷으로 남긴다. 검사 기록이 나중에 지워져도 대조할 수 있다. */
+    function _stampInspPassQty(record) {
+        if (!record || record.type === '출고') return;
+        if (_lotNum(record.inspPassQty) > 0) return;
+        const inspId = String(record.inspId || '').trim();
+        if (!inspId) return;
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+        if (!insp) return;
+        const qty = _inspLotsQtyFor(insp, _inboundLotNos(record));
+        if (qty > 0) record.inspPassQty = qty;
     }
 
     /**
@@ -1714,6 +1727,117 @@ var InjectionWarehouseModule = (function() {
             raw = insp ? String(insp.date || '').trim() : '';
         }
         return raw ? raw.replace('T', ' ').slice(0, 16) : '';
+    }
+
+    function _inboundLotNos(d) {
+        if (Array.isArray(d && d.lots) && d.lots.length) {
+            return d.lots.map(function(l) { return String(l.lotNo || '').trim(); }).filter(Boolean);
+        }
+        const lotNo = String((d && d.lotNo) || '').trim();
+        return lotNo ? [lotNo] : [];
+    }
+
+    function _inspLotsQtyFor(insp, lotNos) {
+        if (!insp) return 0;
+        const want = {};
+        (lotNos || []).forEach(function(n) { if (n) want[String(n)] = true; });
+        const lots = (insp.lots && insp.lots.length)
+            ? insp.lots
+            : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+        let sum = 0;
+        let matched = false;
+        lots.forEach(function(l) {
+            const n = String(l.lotNo || '').trim();
+            if (!n || !want[n]) return;
+            matched = true;
+            sum += _lotNum(l.qty);
+        });
+        if (matched) return sum;
+        if (lotNos && lotNos.length && _lotNum(insp.passQty) > 0 && lots.length === 0) {
+            return _lotNum(insp.passQty);
+        }
+        return 0;
+    }
+
+    /**
+     * 입고 수량 ↔ 수입검사 합격수량 대조.
+     * 입고경로가 수입검사일 때만 비교한다. 분할 입고는 이 건 수량이 합격수량보다 작아도 정상이다.
+     */
+    function _inspQtyMatchForInbound(d) {
+        const inboundQty = (typeof InvCalc !== 'undefined' && InvCalc.qtyOf)
+            ? (InvCalc.qtyOf(d) || _lotNum(d && d.quantity))
+            : _lotNum(d && d.quantity);
+        const na = {
+            status: 'na', label: '-', color: 'var(--text-muted)',
+            inboundQty: inboundQty, inspQty: 0, inspId: '', title: '수입검사 경로가 아님'
+        };
+        if (!d || d.type === '출고') return na;
+        if (_isStockBaselineRecord(d) || _isStockErrorResetRecord(d) || _isSiteReturnInbound(d)) return na;
+        const route = _invRoute(d);
+        const fromInsp = route.label === '수입검사' || route.label === '수입검사 없음';
+        if (!fromInsp) return na;
+
+        const inspId = _findLinkedInspectionId(d);
+        const insp = inspId ? Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId) : null;
+        let inspQty = insp ? _inspLotsQtyFor(insp, _inboundLotNos(d)) : 0;
+        if (!inspQty) inspQty = _lotNum(d.inspPassQty);
+
+        if (!insp) {
+            return {
+                status: 'missing', label: '미연동', color: '#dc2626',
+                inboundQty: inboundQty, inspQty: inspQty, inspId: '',
+                title: inspQty
+                    ? ('검사 기록 없음 · 입고 당시 합격수량 ' + UIUtils.formatNumber(inspQty) + ' EA')
+                    : '연결된 수입검사 기록을 찾을 수 없습니다'
+            };
+        }
+        if (inspQty <= 0) {
+            return {
+                status: 'missing', label: '수량없음', color: '#b45309',
+                inboundQty: inboundQty, inspQty: 0, inspId: inspId,
+                title: '연동된 수입검사에서 해당 LOT 합격수량을 찾을 수 없습니다'
+            };
+        }
+        if (inboundQty === inspQty) {
+            return {
+                status: 'match', label: '일치', color: '#16a34a',
+                inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+                title: '입고수량 = 검사 합격수량'
+            };
+        }
+        if (inboundQty > inspQty) {
+            return {
+                status: 'excess', label: '초과', color: '#dc2626',
+                inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+                title: '입고 ' + UIUtils.formatNumber(inboundQty) + ' EA > 검사 합격 '
+                    + UIUtils.formatNumber(inspQty) + ' EA'
+            };
+        }
+        return {
+            status: 'partial', label: '분할', color: '#2563eb',
+            inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+            title: '이 건 입고 ' + UIUtils.formatNumber(inboundQty) + ' EA < 검사 합격 '
+                + UIUtils.formatNumber(inspQty) + ' EA (분할 입고)'
+        };
+    }
+
+    function _inspQtyCellHtml(match) {
+        if (!match || match.status === 'na') {
+            return '<span style="color:var(--text-muted);">-</span>';
+        }
+        if (!match.inspQty) {
+            return '<span style="color:var(--accent-red);font-weight:700;">-</span>';
+        }
+        return UIUtils.formatNumber(match.inspQty);
+    }
+
+    function _inspMatchBadgeHtml(match) {
+        if (!match || match.status === 'na') {
+            return '<span style="color:var(--text-muted);">-</span>';
+        }
+        return '<span style="font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:999px;white-space:nowrap;'
+            + 'border:1px solid ' + match.color + '44;background:' + match.color + '12;color:' + match.color + ';"'
+            + ' title="' + _escapeHtml(match.title || match.label) + '">' + match.label + '</span>';
     }
 
     function _renderInvHistoryRow(step, isLast) {
@@ -1752,13 +1876,18 @@ var InjectionWarehouseModule = (function() {
                 background:${isOut ? 'rgba(220,38,38,.10)' : 'rgba(22,163,74,.10)'};
                 color:${isOut ? '#dc2626' : '#16a34a'};">${isOut ? '출고' : '입고'}</span>
                ${isReset ? `<span style="margin-left:4px;font-size:0.65rem;font-weight:700;background:#dc2626;color:#fff;padding:1px 6px;border-radius:10px;">재고오류 초기화</span>` : ''}`);
+        const qtyMatch = (!isOut && !isUnmatchedAct && !isBaseline) ? _inspQtyMatchForInbound(d) : null;
         const qtyHtml = isUnmatchedAct
             ? `<span style="color:#b45309;">${UIUtils.formatNumber(qty)}</span>
                <div style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">미차감 처리</div>`
             : (isBaseline
                 ? `<span style="color:#0f766e;">${UIUtils.formatNumber(qty)}</span>
                    <div style="font-size:0.65rem;color:var(--text-muted);font-weight:600;">잔량 확정(가산 아님)</div>`
-                : `${isOut ? '−' : '+'}${UIUtils.formatNumber(qty)}`);
+                : `${isOut ? '−' : '+'}${UIUtils.formatNumber(qty)}`
+                    + (qtyMatch && qtyMatch.status !== 'na'
+                        ? `<div style="font-size:0.65rem;font-weight:700;color:${qtyMatch.color};margin-top:2px;"
+                               title="${_escapeHtml(qtyMatch.title || '')}">검사 ${qtyMatch.inspQty ? UIUtils.formatNumber(qtyMatch.inspQty) : '-'} · ${qtyMatch.label}</div>`
+                        : ''));
         const rowBg = isLast
             ? ' style="background:rgba(37,99,235,.05);"'
             : (isUnmatchedAct ? ' style="background:rgba(180,83,9,.06);"'
@@ -1840,20 +1969,21 @@ var InjectionWarehouseModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table">
+                            <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
                                         <th style="white-space:nowrap;">${isIn ? '창고 입고일' : '출고일시'}</th>
                                         <th>수입검사일</th>
-                                        <th>차종</th>
-                                        <th>품명</th>
-                                        <th>컬러</th>
-                                        <th>사출처</th>
-                                        <th>사출 LOT</th>
-                                        <th style="text-align:right;">수량</th>
-                                        <th style="text-align:right;">금액</th>
-                                        <th>유형</th>
-                                        ${isIn ? '<th>입고경로</th><th>입고자</th>' : '<th>출고자</th>'}
+                                        <th style="white-space:nowrap;">차종</th>
+                                        <th style="white-space:nowrap;">품명</th>
+                                        <th style="white-space:nowrap;">컬러</th>
+                                        <th style="white-space:nowrap;">사출처</th>
+                                        <th style="white-space:nowrap;">사출 LOT</th>
+                                        <th style="white-space:nowrap;text-align:right;">수량</th>
+                                        ${isIn ? '<th style="white-space:nowrap;text-align:right;">검사수량</th><th style="white-space:nowrap;">대조</th>' : ''}
+                                        <th style="white-space:nowrap;text-align:right;">금액</th>
+                                        <th style="white-space:nowrap;">유형</th>
+                                        ${isIn ? '<th style="white-space:nowrap;">입고경로</th><th style="white-space:nowrap;">입고자</th>' : '<th style="white-space:nowrap;">출고자</th>'}
                                         <th>작업</th>
                                     </tr>
                                 </thead>
@@ -2559,7 +2689,7 @@ var InjectionWarehouseModule = (function() {
         const tbody = document.getElementById(tbodyId || 'injInvTableBodyIn');
         if (!tbody) return;
         const isIncoming = typeLabel === '입고';
-        const emptyColspan = isIncoming ? 13 : 12;
+        const emptyColspan = isIncoming ? 15 : 12;
         const emptyMsg = typeLabel === '출고' ? '출고 이력이 없습니다.' : '입고 이력이 없습니다.';
         if (!data || data.length === 0) {
             tbody.innerHTML = `<tr><td colspan="${emptyColspan}" style="text-align:center;padding:40px;color:var(--text-muted);">${emptyMsg}</td></tr>`;
@@ -2578,6 +2708,7 @@ var InjectionWarehouseModule = (function() {
             const isReset = _isStockErrorResetRecord(d);
             const inspDateHtml = _formatInspDateCell(d, isIncoming, inspCtx.inspDateMap, inspCtx.inboundInspMap);
             const path = isIncoming ? _incomingPathLabel(d) : null;
+            const qtyMatch = isIncoming ? _inspQtyMatchForInbound(d) : null;
             const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
             const outgoingActor = _outgoingActorLabel(d);
             const actionCell = isIncoming
@@ -2598,13 +2729,15 @@ var InjectionWarehouseModule = (function() {
                 <tr>
                     <td style="white-space:nowrap;line-height:1.3;">${_fmtTxDateCell(_txRecordStamp(d))}</td>
                     <td style="white-space:nowrap;">${inspDateHtml}</td>
-                    <td>${d.carModel || '-'}</td>
-                    <td><strong>${d.partName || '-'}</strong></td>
-                    <td>${d.color || '-'}</td>
-                    <td>${d.supplier || '-'}</td>
-                    <td>${d.lotNo || '-'}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(d.quantity)}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(value)}</td>
+                    <td style="white-space:nowrap;">${d.carModel || '-'}</td>
+                    <td style="white-space:nowrap;"><strong>${d.partName || '-'}</strong></td>
+                    <td style="white-space:nowrap;">${d.color || '-'}</td>
+                    <td style="white-space:nowrap;">${d.supplier || '-'}</td>
+                    <td style="white-space:nowrap;">${d.lotNo || '-'}</td>
+                    <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
+                    ${isIncoming ? `<td style="text-align:right;white-space:nowrap;">${_inspQtyCellHtml(qtyMatch)}</td>
+                    <td style="white-space:nowrap;">${_inspMatchBadgeHtml(qtyMatch)}</td>` : ''}
+                    <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(value)}</td>
                     <td>
                         ${typeCell}
                         ${isReset ? `<span style="margin-left:4px;font-size:0.72rem;background:#dc2626;color:#fff;padding:1px 6px;border-radius:10px;">재고오류 초기화</span>` : ''}
@@ -2614,8 +2747,7 @@ var InjectionWarehouseModule = (function() {
                         ${!isIncoming && d.refWorkId ? `<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">작업연동</div>` : ''}
                     </td>
                     ${isIncoming ? `<td style="white-space:nowrap;">
-                        <span style="font-size:0.75rem;font-weight:700;padding:2px 8px;border-radius:999px;
-                            border:1px solid ${path.color}44;background:${path.color}12;color:${path.color};">${path.label}</span>
+                        ${_renderRouteBadge(d, path)}
                         ${path.detail ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:3px;max-width:140px;
                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${_escapeHtml(path.detail)}">${_escapeHtml(path.detail)}</div>` : ''}
                     </td>
@@ -2716,7 +2848,7 @@ var InjectionWarehouseModule = (function() {
                 title: '도장 작업 실적으로 이동'
             };
         }
-        if (route.label === '수동입고' || route.label === '현장 반납') {
+        if (route.label === '수동입고' || route.label === '직접 입고' || route.label === '현장 반납') {
             const em = encodeURIComponent(d.carModel || '');
             const ep = encodeURIComponent(d.partName || '');
             return {
@@ -2837,13 +2969,10 @@ var InjectionWarehouseModule = (function() {
 
     function _incomingPathLabel(d) {
         const route = _invRoute(d);
-        if (route.label === '수입검사') {
-            return { label: '수입검사', color: route.color, detail: route.detail };
+        if (route.label === '수동입고') {
+            return { label: '직접 입고', color: route.color, detail: route.detail };
         }
-        if (route.label === '재고 오류 초기화') {
-            return { label: route.label, color: route.color, detail: route.detail };
-        }
-        return { label: '직접 입고', color: route.color, detail: route.detail };
+        return { label: route.label, color: route.color, detail: route.detail };
     }
 
     /** LOT별 수량 표시 — d.lotNo만 보면 lots[]가 여러 건이어도 항상 첫 LOT 하나만 보인다
@@ -2873,6 +3002,7 @@ var InjectionWarehouseModule = (function() {
         const price = Number(mat ? mat.unitPrice : 0) || 0;
         const value = (Number(d.quantity) || 0) * price;
         const path = _incomingPathLabel(d);
+        const qtyMatch = _inspQtyMatchForInbound(d);
 
         const inspCtx = _buildInspDateContext();
         const inspDateHtml = _inspDateLinkHtml(d, _formatInspDateCell(d, true, inspCtx.inspDateMap, inspCtx.inboundInspMap));
@@ -2904,8 +3034,7 @@ var InjectionWarehouseModule = (function() {
             (isReset ? 'warning' : 'inventory_2') + '</span> ' +
             (isReset ? '재고 오류 초기화 이력' : '입고 이력 상세'),
             `<div style="margin-bottom:12px;">
-                <span style="font-size:0.8rem;font-weight:700;padding:3px 10px;border-radius:999px;
-                    border:1px solid ${path.color}44;background:${path.color}12;color:${path.color};">${path.label}</span>
+                ${_renderRouteBadge(d, path)}
                 ${path.detail ? `<div style="margin-top:6px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">${_escapeHtml(path.detail)}</div>` : ''}
             </div>
             <div style="background:var(--bg-secondary);border-radius:10px;padding:12px 14px;">
@@ -2918,6 +3047,12 @@ var InjectionWarehouseModule = (function() {
                 ${row('사출처', _escapeHtml(d.supplier || '-'))}
                 ${row('LOT번호', _lotBreakdownHtml(d))}
                 ${isReset ? '' : row('수량', UIUtils.formatNumber(d.quantity || 0) + ' EA')}
+                ${isReset ? '' : row('검사 합격수량', qtyMatch.status === 'na'
+                    ? '<span style="color:var(--text-muted);">-</span>'
+                    : (qtyMatch.inspQty
+                        ? UIUtils.formatNumber(qtyMatch.inspQty) + ' EA'
+                        : '<span style="color:var(--accent-red);font-weight:700;">-</span>'))}
+                ${isReset ? '' : row('수량 대조', _inspMatchBadgeHtml(qtyMatch))}
                 ${isReset ? '' : row('금액', UIUtils.formatNumber(value) + '원')}
                 ${row('입고자', _escapeHtml(who || '미등록'))}
                 ${row('비고', _escapeHtml(d.note || d.source || '-'))}

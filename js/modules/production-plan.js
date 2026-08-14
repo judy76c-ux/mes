@@ -909,7 +909,7 @@ const ProductionPlanModule = (function() {
                     <td class="editable-cell" ${trClick}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
                     <td class="editable-cell text-center" ${trClick}>${item.carModel ? UIUtils.itemTypeBadge(item.carModel, item.partName, item.color) : ''}</td>
                     <td class="editable-cell text-right" ${trClick}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
-                    <td class="editable-cell text-center" ${trClick}>${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
+                    <td class="editable-cell text-center" ${trClick}>${item.isTemporary ? `<span class="badge" style="background:var(--accent-red,#ef4444);color:#fff;margin-right:4px;font-size:0.68rem;" title="사출·도료 재고 검증 없이 등록된 임시 계획">임시</span>` : ''}${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
                     <td class="text-center">
                         ${hasData ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
                     </td>
@@ -1174,6 +1174,26 @@ const ProductionPlanModule = (function() {
             p.carModel === carModel && p.partName === partName
         );
         return (prod && prod.paintMaterials) ? prod.paintMaterials : [];
+    }
+
+    // 계획에 필요한 도료(주제/경화제/희석제) 중 재고가 바닥난(<=0) 항목의 표시명 목록 반환
+    // ※ 개당(EA) 소요량 데이터가 없어 정확한 필요량 비교는 불가 — 재고 유무만 검사
+    function _getPaintShortagesForPlan(carModel, partName, color, line) {
+        const rows = _getPaintRowsForProduct(carModel, partName, color, line);
+        const validRows = rows.filter(r => r.mainId || r.hardId || r.thinnerId);
+        const shortages = [];
+        const seen = {};
+        validRows.forEach(r => {
+            [['주제', r.mainId], ['경화제', r.hardId], ['희석제', r.thinnerId]].forEach(function(pair) {
+                const label = pair[0], matId = pair[1];
+                if (!matId || seen[matId]) return;
+                seen[matId] = true;
+                if (_paintMatBalance(matId) <= 0) {
+                    shortages.push(label + ' ' + _paintMatName(matId));
+                }
+            });
+        });
+        return shortages;
     }
 
     // overrideCarModel / overridePartName / overrideColor : 편집 모달 초기화 시 직접 전달
@@ -2375,6 +2395,7 @@ const ProductionPlanModule = (function() {
                </div>`
             : '';
         const mealTimeWorkValue = !!(currentItem && currentItem.mealTimeWork);
+        const isTemporaryValue = !!(currentItem && currentItem.isTemporary);
 
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         // 다른 제품의 linkedProductId로 지정된 제품(=레이져 분리 대상)은 도장 계획에서 숨김
@@ -2638,6 +2659,13 @@ const ProductionPlanModule = (function() {
                 </label>
                 <p style="margin:4px 0 0 24px;font-size:0.78rem;color:var(--text-muted);">체크 시 점심/석식 시간을 포함하여 종료 시간을 계산합니다.</p>
             </div>
+            <div style="margin:0 0 12px; padding:10px 14px; background:rgba(239,68,68,0.06); border-radius:8px; border:1px solid rgba(239,68,68,0.3);">
+                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:0.88rem;font-weight:600;color:#b91c1c;">
+                    <input type="checkbox" id="sTemporary" style="width:16px;height:16px;cursor:pointer;" ${isTemporaryValue ? 'checked' : ''}>
+                    ⚠️ 임시 계획 (사출·도료 재고 부족해도 등록)
+                </label>
+                <p style="margin:4px 0 0 24px;font-size:0.78rem;color:var(--text-muted);">체크 시 사출 자재 및 도료 재고 검증 없이 계획을 등록합니다. 재고 확보 후 체크를 해제해 정식 계획으로 전환하세요.</p>
+            </div>
             <div class="form-group">
                 <label class="form-label">상태</label>
                 <select class="form-select" id="sStatus">
@@ -2776,6 +2804,7 @@ const ProductionPlanModule = (function() {
         const status        = document.getElementById('sStatus').value;
         const itemType      = (document.getElementById('sItemType') || {}).value || '';
         const mealTimeWork  = !!(document.getElementById('sMealTimeWork')?.checked);
+        const isTemporary   = !!(document.getElementById('sTemporary')?.checked);
 
         if (!color) {
             UIUtils.toast('도장 컬러를 선택하세요.', 'warning');
@@ -2833,7 +2862,8 @@ const ProductionPlanModule = (function() {
         }
 
         // ① 이후 계획 Cascade shift (Overlap 체크 전에 먼저 실행)
-        if (partName && planQty > 0) {
+        // 임시 계획(isTemporary) 체크 시 사출/도료 재고 검증을 모두 건너뛴다
+        if (partName && planQty > 0 && !isTemporary) {
             const currentPlanId = existingId || formPlanId || '';
 
             if (_usesLaserWipForLine(_prodMatch, line)) {
@@ -2842,7 +2872,7 @@ const ProductionPlanModule = (function() {
                     ? LaserWipModule.getWipStock(carModel, partName, color)
                     : 0;
                 if (wipStock < planQty) {
-                    UIUtils.toast(`레이져 후 재공품 재고보다 많은 계획은 등록할 수 없습니다. 재공품 ${UIUtils.formatNumber(wipStock)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA`, 'warning');
+                    UIUtils.toast(`레이져 후 재공품 재고보다 많은 계획은 등록할 수 없습니다. 재공품 ${UIUtils.formatNumber(wipStock)} EA / 계획 ${UIUtils.formatNumber(planQty)} EA — 재고 없이 등록하려면 "임시 계획"을 체크하세요.`, 'warning');
                     const qtyEl = document.getElementById('sQty');
                     if (qtyEl) { qtyEl.focus(); qtyEl.select(); }
                     return;
@@ -2856,7 +2886,8 @@ const ProductionPlanModule = (function() {
                         + ` 창고 ${UIUtils.formatNumber(stockCheck.warehouse || 0)}`
                         + ` + 현장 ${UIUtils.formatNumber(stockCheck.site || 0)}`
                         + ` = 가용 ${UIUtils.formatNumber(stockCheck.available)} EA`
-                        + ` / 계획 ${UIUtils.formatNumber(planQty)} EA`,
+                        + ` / 계획 ${UIUtils.formatNumber(planQty)} EA`
+                        + ` — 재고 없이 등록하려면 "임시 계획"을 체크하세요.`,
                         'warning'
                     );
                     const qtyEl = document.getElementById('sQty');
@@ -2864,6 +2895,18 @@ const ProductionPlanModule = (function() {
                     updateInjStockPanel(partName, carModel);
                     return;
                 }
+            }
+
+            // 도료 재고 검사 — 필요한 주제/경화제/희석제 중 하나라도 재고가 없으면 등록 차단
+            const paintShortages = _getPaintShortagesForPlan(carModel, partName, color, line);
+            if (paintShortages.length > 0) {
+                UIUtils.toast(
+                    `도료 재고가 없어 계획을 등록할 수 없습니다: ${paintShortages.join(', ')}`
+                    + ` — 재고 없이 등록하려면 "임시 계획"을 체크하세요.`,
+                    'warning'
+                );
+                updatePaintStockPanel(carModel, partName, color);
+                return;
             }
         }
 
@@ -2963,7 +3006,7 @@ const ProductionPlanModule = (function() {
                 } else {
                     await Storage.update(STORE, existingId, {
                         slot: newSlot, carModel, partName, color, itemType, planQty,
-                        startTime, endTime, status, mealTimeWork,
+                        startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
                 }
@@ -2977,13 +3020,13 @@ const ProductionPlanModule = (function() {
                     savedId = collision.id;
                     await Storage.update(STORE, collision.id, {
                         slot: newSlot, carModel, partName, color, itemType, planQty,
-                        startTime, endTime, status, mealTimeWork,
+                        startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
                 } else if (carModel || partName || planQty > 0) {
                     const added = await Storage.add(STORE, {
                         date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
-                        startTime, endTime, status, mealTimeWork,
+                        startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
                     savedId = (added && added.id) || null;
