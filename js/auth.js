@@ -616,18 +616,82 @@ const AuthModule = (function () {
         return labels.length ? [...new Set(labels)].join(', ') : '';
     }
 
-    let _slackMirrorQueue = [];
-    let _slackMirrorTimer = null;
+    let _notifyMirrorQueue = [];
+    let _notifyMirrorTimer = null;
+
+    function _queueNotifyMirrors(message) {
+        if (!message) return;
+        _notifyMirrorQueue.push(message);
+        if (_notifyMirrorTimer) clearTimeout(_notifyMirrorTimer);
+        _notifyMirrorTimer = setTimeout(function() {
+            _notifyMirrorTimer = null;
+            const batch = _notifyMirrorQueue.splice(0);
+            _flushSlackMirrors(batch);
+            _flushTelegramMirrors(batch);
+        }, 500);
+    }
 
     function _queueSlackMirror(message) {
-        if (!message) return;
-        _slackMirrorQueue.push(message);
-        if (_slackMirrorTimer) clearTimeout(_slackMirrorTimer);
-        _slackMirrorTimer = setTimeout(function() {
-            _slackMirrorTimer = null;
-            const batch = _slackMirrorQueue.splice(0);
-            _flushSlackMirrors(batch);
-        }, 500);
+        _queueNotifyMirrors(message);
+    }
+
+    function _telegramRecipientsForMessages(batch) {
+        const seen = {};
+        const out = [];
+        (batch || []).forEach(function(msg) {
+            const users = _getUsers().filter(function(u) { return u && u.active !== false; });
+            users.forEach(function(u) {
+                if (!_messageTargetsUser(msg, u)) return;
+                const chatId = String(u.chatId || '').trim();
+                if (!chatId || seen[chatId]) return;
+                seen[chatId] = true;
+                out.push({
+                    chatId: chatId,
+                    name: String(u.displayName || u.username || chatId)
+                });
+            });
+        });
+        return out;
+    }
+
+    function _flushTelegramMirrors(batch) {
+        if (!batch || !batch.length) return;
+        if (typeof ApiClient === 'undefined' || typeof ApiClient.sendNotify !== 'function') return;
+        const groups = {};
+        batch.forEach(function(msg) {
+            const key = String(msg.title || '') + '\n' + String(msg.body || '');
+            if (!groups[key]) {
+                groups[key] = {
+                    title: msg.title,
+                    body: msg.body,
+                    senderName: msg.senderName,
+                    messages: []
+                };
+            }
+            groups[key].messages.push(msg);
+        });
+        Object.keys(groups).forEach(function(key) {
+            const g = groups[key];
+            const recipients = _telegramRecipientsForMessages(g.messages);
+            if (!recipients.length) {
+                console.info('[AuthModule] 텔레그램 Chat ID 없음 — 쪽지만 저장했습니다.');
+                return;
+            }
+            ApiClient.sendNotify('internal_note', recipients, {
+                templateKey: 'internal_note',
+                title: g.title,
+                body: g.body,
+                senderName: g.senderName
+            }).then(function(result) {
+                if (result && result.skipped) {
+                    console.info('[AuthModule] 텔레그램 미설정 — 쪽지만 저장했습니다.');
+                } else if (result && result.success === false) {
+                    console.warn('[AuthModule] 텔레그램 쪽지 발송 실패:', result.results || result.error);
+                }
+            }).catch(function(e) {
+                console.warn('[AuthModule] 텔레그램 쪽지 발송 실패:', e);
+            });
+        });
     }
 
     function _flushSlackMirrors(batch) {
@@ -879,7 +943,7 @@ const AuthModule = (function () {
         });
         _saveMessages(rows);
         _updateTopbar();
-        _queueSlackMirror(rows[rows.length - 1]);
+        _queueNotifyMirrors(rows[rows.length - 1]);
         return true;
     }
     function _popupStateKey(user) {
@@ -1384,7 +1448,7 @@ const AuthModule = (function () {
         });
         _saveMessages(rows);
         _updateTopbar();
-        _queueSlackMirror(rows[rows.length - 1]);
+        _queueNotifyMirrors(rows[rows.length - 1]);
         return true;
     }
 

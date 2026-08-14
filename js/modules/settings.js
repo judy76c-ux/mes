@@ -10567,16 +10567,16 @@ const SettingsModule = (function() {
                 <div class="card-header">
                     <h4>
                         <span class="material-symbols-outlined" style="color:#229ED9;">send</span>
-                        텔레그램 Bot 알림 (선택)
+                        텔레그램 Bot 알림
                     </h4>
                 </div>
                 <div class="card-body">
                     <p style="margin:0 0 14px;font-size:0.875rem;color:var(--text-secondary);line-height:1.65;">
-                        개인 텔레그램 수신은 선택 사항입니다. 현장 알림은 위 Slack 채널을 사용하세요.<br>
+                        쪽지가 저장되면 Chat ID가 있는 수신자 텔레그램으로도 전달됩니다.<br>
                         <span style="font-size:.8rem;color:var(--text-muted);">
                             준비: ① 텔레그램 <strong>@BotFather</strong> → /newbot → Bot Token 발급
                             &nbsp;② 담당자는 Bot 검색 후 <strong>/start</strong> → Chat ID를 사용자 관리에 입력<br>
-                            「테스트」는 사용자 관리에 등록된 Chat ID로 실제 메시지를 보냅니다. 봇 연결만 되면 수신이 확인된 것은 아닙니다.
+                            Chat ID가 없는 사용자는 MES 쪽지만 받습니다. 「테스트」는 등록된 Chat ID로 실제 메시지를 보냅니다.
                         </span>
                     </p>
                     <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:12px;">

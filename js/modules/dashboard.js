@@ -1277,10 +1277,12 @@ const DashboardModule = (function() {
             ? AuthModule.getUsers().filter(function(u) { return u.active !== false; }) : [];
 
         let slackReady = false;
+        let telegramReady = false;
         try {
             const cfg = (typeof ApiClient !== 'undefined' && ApiClient.checkNotifyConfig)
                 ? await ApiClient.checkNotifyConfig() : null;
             slackReady = !!(cfg && cfg.slackWebhookSet);
+            telegramReady = !!(cfg && (cfg.botTokenSet || cfg.configured));
         } catch (e) {}
 
         const DEFAULT_NOTIFY_ROLES = ['admin', 'prod_manager', 'quality_manager', 'logistics_worker'];
@@ -1299,12 +1301,19 @@ const DashboardModule = (function() {
             `<div style="min-width:360px;max-width:500px;">
                 <div style="background:#4A154B12;border:1px solid #4A154B40;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:.85rem;display:flex;align-items:center;gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;color:#4A154B;">campaign</span>
-                    <div><strong>${label}</strong> ${count}건 알림을<br>MES 쪽지와 Slack 채널에 함께 보냅니다.</div>
+                    <div><strong>${label}</strong> ${count}건 알림을<br>MES 쪽지, Slack 채널, 텔레그램(Chat ID 있는 수신자)에 함께 보냅니다.</div>
                 </div>
-                <div style="font-size:.78rem;color:${slackReady ? 'var(--accent-green)' : 'var(--accent-red)'};margin-bottom:10px;">
-                    ${slackReady
-                        ? 'Slack Webhook 연결됨 — 채널에도 1건 전달됩니다.'
-                        : 'Slack Webhook 미설정 — 쪽지만 발송됩니다. 설정 → 시스템에서 URL을 저장하세요.'}
+                <div style="font-size:.78rem;color:var(--text-secondary);margin-bottom:10px;line-height:1.55;">
+                    <div style="color:${slackReady ? 'var(--accent-green)' : 'var(--accent-red)'};">
+                        ${slackReady
+                            ? 'Slack Webhook 연결됨 — 채널에도 1건 전달됩니다.'
+                            : 'Slack Webhook 미설정 — 채널 전달은 건너뜁니다.'}
+                    </div>
+                    <div style="color:${telegramReady ? 'var(--accent-green)' : 'var(--accent-red)'};">
+                        ${telegramReady
+                            ? '텔레그램 Bot 연결됨 — Chat ID가 있는 수신자 개인 대화로 전달됩니다.'
+                            : '텔레그램 Bot 미설정 — 개인 텔레그램은 건너뜁니다. 설정 → 시스템에서 Token을 저장하세요.'}
+                    </div>
                 </div>
                 <div style="font-size:.8rem;font-weight:700;color:var(--text-secondary);margin-bottom:6px;">쪽지 수신자</div>
                 ${allUsers.length
@@ -1366,7 +1375,7 @@ const DashboardModule = (function() {
         }
         if (statusEl) {
             statusEl.innerHTML = '<span style="color:var(--accent-green);">✓ 쪽지 ' + noteOk +
-                '건 저장. Slack 채널에도 함께 전달됩니다.</span>';
+                '건 저장. Chat ID가 있는 수신자 텔레그램과 Slack 채널에도 전달됩니다.</span>';
         }
         setTimeout(function() { UIUtils.closeModal(); }, 1600);
     }

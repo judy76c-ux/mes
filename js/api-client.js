@@ -277,9 +277,12 @@ const ApiClient = (function() {
       templateKey: params.templateKey || templateCode,
       count: params.count,
       extraInfo: params.extraInfo,
+      title: params.title,
+      body: params.body,
+      senderName: params.senderName,
       recipients,
       templateParams: params
-    });
+    }, 20000);
   }
 
   // Slack 채널 Incoming Webhook 발송 (쪽지 미러)

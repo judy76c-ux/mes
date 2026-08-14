@@ -89,6 +89,21 @@ function _buildTelegramMessage(templateKey, count, extraInfo) {
   return lines.join('\n');
 }
 
+function _buildTelegramNoteText(payload) {
+  const title = String((payload && payload.title) || 'MES 쪽지').trim() || 'MES 쪽지';
+  const body = String((payload && payload.body) || '').trim();
+  const sender = String((payload && payload.senderName) || '').trim();
+  const extra = String((payload && payload.extraInfo) || '').trim();
+  const lines = [
+    '[MES 쪽지] ' + title,
+    sender ? ('보낸이: ' + sender) : '',
+    body,
+    extra,
+    new Date().toLocaleString('ko-KR')
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 function _telegramHint(description) {
   const d = String(description || '').toLowerCase();
   if (d.indexOf('chat not found') >= 0) {
@@ -182,21 +197,32 @@ module.exports = function(app, getPool) {
 
     const cfg = await _getConfigRow(getPool(), TELEGRAM_CONFIG_KEY);
     if (!cfg || !cfg.botToken) {
-      return res.status(503).json({
+      return res.json({
+        success: false,
+        skipped: true,
         error: '텔레그램 Bot 설정이 없습니다. 설정 > 시스템 탭에서 Bot Token을 입력하세요.'
       });
     }
 
-    const text = _buildTelegramMessage(templateKey, count, extraInfo);
+    const title = String(body.title || templateParams.title || '').trim();
+    const noteBody = String(body.body || templateParams.body || '').trim();
+    const senderName = String(body.senderName || templateParams.senderName || '').trim();
+    const useNote = !!(title || noteBody);
+    const text = useNote
+      ? _buildTelegramNoteText({
+          title: title || 'MES 쪽지',
+          body: noteBody,
+          senderName,
+          extraInfo
+        })
+      : _buildTelegramMessage(templateKey, count, extraInfo);
     const results = [];
     for (const r of recipients) {
       if (!r.chatId) continue;
       try {
-        const result = await _telegramPost(cfg.botToken, 'sendMessage', {
-          chat_id: r.chatId,
-          text,
-          parse_mode: 'Markdown'
-        });
+        const payload = { chat_id: r.chatId, text };
+        if (!useNote) payload.parse_mode = 'Markdown';
+        const result = await _telegramPost(cfg.botToken, 'sendMessage', payload);
         const description = (result.body && result.body.description) || '';
         results.push({
           chatId: r.chatId,
