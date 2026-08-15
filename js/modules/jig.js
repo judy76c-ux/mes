@@ -790,8 +790,9 @@ var JigModule = (function () {
             return `
             <tr${isNewCar && sorted.indexOf(j) > 0 ? ' style="border-top:2px solid var(--border-color);"' : ''}>
                 ${carCell}
-                <td class="jig-col-part" style="${td}font-weight:600;">
-                    <span class="jig-part-name-text" title="${_esc(partTitle)}">${_esc(j.partName || '-')}${aliases.length ? `<span class="jig-part-alias">병합: ${aliases.map(_esc).join(', ')}</span>` : ''}</span>
+                <td class="jig-col-part" style="${td}">
+                    <span class="jig-part-name-text" title="${_esc(partTitle)}">${_esc(j.partName || '-')}</span>
+                    ${aliases.length ? `<span class="jig-part-alias">병합: ${aliases.map(_esc).join(', ')}</span>` : ''}
                 </td>
                 <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
                 <td class="jig-col-short" style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
@@ -855,7 +856,7 @@ var JigModule = (function () {
         if (!wrap) return;
         const names = table.querySelectorAll('.jig-part-name-text');
         names.forEach(function (el) { el.style.fontSize = ''; });
-        table.querySelectorAll('.jig-col-part').forEach(function (cell) {
+        table.querySelectorAll('.jig-col-part, .jig-col-progress').forEach(function (cell) {
             cell.style.width = '';
             cell.style.maxWidth = '';
         });
@@ -864,21 +865,46 @@ var JigModule = (function () {
         table.style.tableLayout = 'auto';
         table.style.width = 'max-content';
 
-        const row = (table.tBodies[0] && table.tBodies[0].rows[0]) || (table.tHead && table.tHead.rows[0]);
+        const row = (table.tHead && table.tHead.rows[0]) || (table.tBodies[0] && table.tBodies[0].rows[0]);
         if (!row) return;
+
+        let nameW = 0;
+        names.forEach(function (el) {
+            nameW = Math.max(nameW, el.scrollWidth);
+        });
+        const partSample = table.querySelector('th.jig-col-part, td.jig-col-part');
+        const pad = partSample ? (
+            (parseFloat(window.getComputedStyle(partSample).paddingLeft) || 0) +
+            (parseFloat(window.getComputedStyle(partSample).paddingRight) || 0)
+        ) : 16;
+        const avail = wrap.clientWidth;
         const colWidths = Array.from(row.cells).map(function (cell) {
             return cell.getBoundingClientRect().width;
         });
         let otherW = 0;
         Array.from(row.cells).forEach(function (cell, i) {
-            if (!cell.classList.contains('jig-col-part')) otherW += colWidths[i] || 0;
+            if (!cell.classList.contains('jig-col-part') && !cell.classList.contains('jig-col-progress')) {
+                otherW += colWidths[i] || 0;
+            }
         });
-        const avail = wrap.clientWidth;
-        const partW = Math.max(96, avail - otherW - 2);
+
+        const minProgress = Math.max(260, Math.round(avail * 0.38));
+        const maxPart = Math.min(Math.round(avail * 0.28), Math.max(160, avail - otherW - minProgress));
+        let partW = Math.ceil(nameW + pad + 2);
+        partW = Math.min(Math.max(partW, 96), Math.max(96, maxPart));
+        let progressW = Math.max(minProgress, avail - otherW - partW);
+        if (otherW + partW + progressW > avail) {
+            progressW = Math.max(minProgress, avail - otherW - partW);
+            partW = Math.max(96, avail - otherW - progressW);
+        }
+
         const group = document.createElement('colgroup');
         Array.from(row.cells).forEach(function (cell, i) {
             const col = document.createElement('col');
-            col.style.width = ((cell.classList.contains('jig-col-part') ? partW : colWidths[i]) || 0) + 'px';
+            let w = colWidths[i] || 0;
+            if (cell.classList.contains('jig-col-part')) w = partW;
+            if (cell.classList.contains('jig-col-progress')) w = progressW;
+            col.style.width = w + 'px';
             group.appendChild(col);
         });
         table.insertBefore(group, table.firstChild);

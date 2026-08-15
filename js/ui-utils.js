@@ -410,11 +410,14 @@ const UIUtils = (function () {
             const resolvedWidth = sizeMap[options.size || 'md'] || options.size || sizeMap.md;
             container.style.setProperty('max-width', resolvedWidth, 'important');
             // 클래스도 맞춤 (CSS !important 와의 충돌 방지)
-            container.classList.remove('modal-sm', 'modal-md', 'modal-lg', 'modal-xl', 'modal-xxl', 'modal-xxxl');
+            container.classList.remove('modal-sm', 'modal-md', 'modal-lg', 'modal-xl', 'modal-xxl', 'modal-xxxl', 'modal-tall');
             if (options.size && sizeMap[options.size]) {
                 container.classList.add('modal-' + options.size);
             } else if (!options.size) {
                 container.classList.add('modal-md');
+            }
+            if (options.tall) {
+                container.classList.add('modal-tall');
             }
         }
 

@@ -434,7 +434,11 @@ var InjectionIncomingModule = (function() {
             .filter(i => (i.processes || []).includes('incoming'));
         const inspectorOptions = inspectors.map(i => `<option value="${i.name}">${i.name}</option>`).join('');
 
-        UIUtils.showModal('수입검사 등록', `
+        UIUtils.showModal({
+            title: '수입검사 등록',
+            size: '1050px',
+            tall: true,
+            body: `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">검사일자</label>
@@ -604,10 +608,12 @@ var InjectionIncomingModule = (function() {
                 </select>
                 <input type="hidden" id="addInjPassQty" value="0">
             </div>
-        `, `
+            `,
+            footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveNew()">등록</button>
-        `, '1050px');
+        `
+        });
 
                 setTimeout(() => {
             addInjLotRow(); // 첫 LOT 행 초기화
@@ -1224,7 +1230,11 @@ var InjectionIncomingModule = (function() {
         const carModels = UIUtils.sortCarModels(externalMaterials.map(m => m.carModel), externalMaterials);
         const carModelOptions = carModels.map(c => `<option value="${c}" ${d.carModel === c ? 'selected' : ''}>${c}</option>`).join('');
 
-        UIUtils.showModal('수입검사 수정', `
+        UIUtils.showModal({
+            title: '수입검사 수정',
+            size: '1050px',
+            tall: true,
+            body: `
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">검사일자</label>
@@ -1353,10 +1363,12 @@ var InjectionIncomingModule = (function() {
                 </select>
                 <input type="hidden" id="editInjPassQty" value="${d.passQty || 0}">
             </div>
-        `, `
+            `,
+            footer: `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="InjectionIncomingModule.saveEdit('${id}')">저장</button>
-        `);
+        `
+        });
 
         setTimeout(() => {
             // 1. 차종/품명/컬러 cascading selector 초기화
