@@ -2912,6 +2912,55 @@ input[type="time"] {
     width: 100%;
 }
 
+.jig-life-table {
+    width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+    background: var(--bg-primary);
+}
+.jig-life-table th,
+.jig-life-table td {
+    white-space: nowrap;
+    vertical-align: middle;
+}
+.jig-life-table .jig-col-short {
+    width: 1%;
+}
+.jig-life-table .jig-col-part {
+    white-space: nowrap;
+}
+.jig-life-table .jig-part-name-text {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    line-height: 1.25;
+}
+.jig-life-table .jig-part-alias {
+    font-size: 0.7em;
+    font-weight: 400;
+    color: var(--text-muted);
+    margin-left: 6px;
+}
+.jig-life-table .jig-col-progress {
+    width: 1%;
+}
+.jig-life-table .jig-life-bar-wrap {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.jig-life-table .jig-life-bar {
+    position: relative;
+    width: 56px;
+    min-width: 44px;
+    max-width: 72px;
+    height: 7px;
+    background: var(--bg-secondary);
+    border-radius: 4px;
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
 .jig-page {
     max-width: 100%;
     overflow-x: hidden;
@@ -3094,6 +3143,13 @@ html,
 body {
     font-family: var(--font-sans);
     letter-spacing: 0;
+}
+
+/* 화면 폭이 좁아질 때(저해상도·태블릿) 뿐 아니라 브라우저 확대(예: 150%)로 CSS 뷰포트가
+   실질적으로 좁아질 때도 rem 기반 글자 크기가 함께 줄어들어, 표·카드가 화면 밖으로
+   밀려나지 않고 안에 들어오게 한다. 1920px 이상 데스크톱에서는 기본 16px 그대로 유지된다. */
+html {
+    font-size: clamp(12px, 8.3px + 0.48vw, 16px);
 }
 
 body {
