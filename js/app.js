@@ -113,6 +113,7 @@ const App = (function() {
             // 4. 라우터 초기화
             Router.init();
             console.log('✅ 라우터 초기화 완료');
+            if (typeof MesZoomFit !== 'undefined' && MesZoomFit.install) MesZoomFit.install();
 
             // 5. 첫 방문 체크
             checkFirstVisit();

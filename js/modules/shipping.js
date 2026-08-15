@@ -2829,6 +2829,8 @@ const ShippingInspectionModule = (function() {
 // ===================================================================
 const ProductWarehouseModule = (function() {
     const STORE = DB.STORES.PRODUCT_INVENTORY;
+    let _pwStockFitBound = false;
+    let _pwStockFitRaf = 0;
 
     function render(container) {
         const actionCards = `
@@ -3159,9 +3161,9 @@ const ProductWarehouseModule = (function() {
                     : 'var(--accent-green)';
                 const keyEnc = encodeURIComponent(`${i.car}||${i.part}||${i.color}`);
                 const typeTag = i.itemType === 'A/S'
-                    ? '<span style="font-size:0.58rem;background:#e2e8f0;color:#64748b;border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:middle;">A/S</span>'
+                    ? '<span style="font-size:0.72em;background:#e2e8f0;color:#64748b;border-radius:3px;padding:0 0.25em;margin-left:0.25em;vertical-align:middle;">A/S</span>'
                     : i.itemType === '개발품'
-                    ? '<span style="font-size:0.58rem;background:#ede9fe;color:#7c3aed;border-radius:3px;padding:0 3px;margin-left:3px;vertical-align:middle;">개발</span>'
+                    ? '<span style="font-size:0.72em;background:#ede9fe;color:#7c3aed;border-radius:3px;padding:0 0.25em;margin-left:0.25em;vertical-align:middle;">개발</span>'
                     : '';
                 // 임시 확인용 표시 — 도장작업→사출 수입검사일·사용 도료 LOT 역추적 체인이 정상 동작하는 품목
                 const traceMark = i.traceable
@@ -3172,33 +3174,33 @@ const ProductWarehouseModule = (function() {
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
-                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:400;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:150px;max-width:220px;">
-                        <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>${traceMark}${typeTag}
+                    <td class="pw-col-part">
+                        <span class="pw-part-name-text" title="${_escapeHtml(i.part)}">${_escapeHtml(i.part)}${traceMark}${typeTag}</span>
                     </td>
-                    <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${i.color || ''}</td>
-                    <td style="padding:5px 8px;text-align:right;border-bottom:1px solid var(--border-color);white-space:nowrap;">
-                        <span style="font-size:0.9rem;font-weight:800;color:${stockColor};">${UIUtils.formatNumber(stock)}</span>
-                        <span style="font-size:0.68rem;color:var(--text-muted);margin-left:1px;">EA</span>
+                    <td class="pw-col-short pw-col-color">${_escapeHtml(i.color || '')}</td>
+                    <td class="pw-col-short pw-col-stock">
+                        <span class="pw-stock-qty" style="color:${stockColor};">${UIUtils.formatNumber(stock)}</span>
+                        <span class="pw-stock-ea">EA</span>
                     </td>
-                    <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;">${i.lastDate || ''}</td>
+                    <td class="pw-col-short pw-col-date">${i.lastDate || ''}</td>
                 </tr>`;
             }).join('');
 
-            return `<div style="break-inside:avoid;margin-bottom:10px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
-                <div style="background:${headerColor};color:#fff;padding:7px 10px;display:flex;align-items:center;justify-content:space-between;">
-                    <span style="font-weight:400;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
-                        <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
-                        ${car}
-                        <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${group.length}종</span>
+            return `<div class="pw-stock-card">
+                <div class="pw-stock-head" style="background:${headerColor};">
+                    <span class="pw-stock-head-left">
+                        <span class="material-symbols-outlined">directions_car</span>
+                        ${_escapeHtml(car)}
+                        <span class="pw-stock-head-meta">${group.length}종</span>
                     </span>
-                    <div style="font-size:0.75rem;font-weight:400;">재고 ${UIUtils.formatNumber(groupTotal)} EA</div>
+                    <div class="pw-stock-head-stock">재고 ${UIUtils.formatNumber(groupTotal)} EA</div>
                 </div>
-                <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
-                    <thead><tr style="background:var(--bg-secondary);">
-                        <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">품명</th>
-                        <th style="padding:4px 8px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">컬러</th>
-                        <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">재고</th>
-                        <th style="padding:4px 8px;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);">최근일자</th>
+                <table class="pw-stock-table">
+                    <thead><tr>
+                        <th class="pw-col-part" style="text-align:left;">품명</th>
+                        <th class="pw-col-short" style="text-align:left;">컬러</th>
+                        <th class="pw-col-short" style="text-align:right;">재고</th>
+                        <th class="pw-col-short">최근일자</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -3206,10 +3208,10 @@ const ProductWarehouseModule = (function() {
         }
 
         function sectionDivider(text, count, color) {
-            return `<div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;">
-                <span class="material-symbols-outlined" style="font-size:15px;color:${color};">directions_car</span>
-                <span style="font-size:0.76rem;font-weight:400;color:${color};text-transform:uppercase;letter-spacing:0.5px;">${text}</span>
-                <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">${count}개 차종</span>
+            return `<div class="pw-section-head">
+                <span class="material-symbols-outlined" style="font-size:1.15em;color:${color};">directions_car</span>
+                <span style="font-size:0.95em;font-weight:400;color:${color};letter-spacing:0.5px;">${text}</span>
+                <span style="font-size:0.88em;color:var(--text-muted);font-weight:400;">${count}개 차종</span>
                 <div style="flex:1;height:1px;background:#e2e8f0;"></div>
             </div>`;
         }
@@ -3259,6 +3261,87 @@ const ProductWarehouseModule = (function() {
         appendSection('dev', devCars);
 
         blocksEl.innerHTML = html;
+        _bindPwStockFit();
+        _scheduleFitPwStockPartNames();
+    }
+
+    function _fitFontToWidth(el, avail, basePx) {
+        const base = basePx || parseFloat(window.getComputedStyle(el).fontSize) || 13;
+        el.style.fontSize = base + 'px';
+        if (el.scrollWidth <= avail + 0.5) return;
+        let lo = 8;
+        let hi = base;
+        let best = 8;
+        for (let i = 0; i < 12; i++) {
+            const mid = (lo + hi) / 2;
+            el.style.fontSize = mid + 'px';
+            if (el.scrollWidth <= avail + 0.5) {
+                best = mid;
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        el.style.fontSize = best + 'px';
+    }
+
+    function _fitOnePwStockCard(card) {
+        const table = card.querySelector('.pw-stock-table');
+        if (!table) return;
+        const oldGroup = table.querySelector('colgroup');
+        if (oldGroup) oldGroup.remove();
+        card.style.fontSize = '';
+        table.style.tableLayout = 'auto';
+        table.style.width = 'max-content';
+
+        const avail = card.clientWidth;
+        const base = parseFloat(window.getComputedStyle(card).fontSize) || 13;
+        if (table.scrollWidth > avail + 0.5) {
+            let lo = 8;
+            let hi = base;
+            let best = 8;
+            for (let i = 0; i < 12; i++) {
+                const mid = (lo + hi) / 2;
+                card.style.fontSize = mid + 'px';
+                if (table.scrollWidth <= avail + 0.5) {
+                    best = mid;
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            card.style.fontSize = best + 'px';
+        }
+        table.style.width = '100%';
+        const head = card.querySelector('.pw-stock-head');
+        if (head) _fitFontToWidth(head, avail);
+    }
+
+    function _fitPwStockPartNames() {
+        const root = document.getElementById('pwBlocks');
+        if (!root) return;
+        root.querySelectorAll('.pw-stock-card').forEach(_fitOnePwStockCard);
+        root.querySelectorAll('.pw-section-head').forEach(function (el) {
+            const parent = el.parentElement || root;
+            _fitFontToWidth(el, parent.clientWidth);
+        });
+    }
+
+    function _scheduleFitPwStockPartNames() {
+        if (_pwStockFitRaf) cancelAnimationFrame(_pwStockFitRaf);
+        _pwStockFitRaf = requestAnimationFrame(function () {
+            _pwStockFitRaf = 0;
+            _fitPwStockPartNames();
+        });
+    }
+
+    function _bindPwStockFit() {
+        if (_pwStockFitBound) return;
+        _pwStockFitBound = true;
+        window.addEventListener('resize', _scheduleFitPwStockPartNames);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', _scheduleFitPwStockPartNames);
+        }
     }
 
     function _productInvRoute(d) {

@@ -418,7 +418,9 @@ var InjectionIncomingModule = (function() {
         }
     }
 
-    function openAddModal() {
+    /** prefill: { carModel, partName, color, lots:[{lotNo,qty}], note } — 창고에 이미 직접
+     *  입고된(수입검사 미실시) 건을 나중에 검사 등록할 때, 사출 창고 쪽에서 값을 채워 넘긴다. */
+    function openAddModal(prefill) {
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
         // 외부공급처 제품이 있는 차종만 필터링 (사내만 있는 차종 제외)
         const externalMaterialsForCars = materials.filter(m => m.supplier !== '사내');
@@ -610,6 +612,46 @@ var InjectionIncomingModule = (function() {
                 setTimeout(() => {
             addInjLotRow(); // 첫 LOT 행 초기화
             _syncInjCertPhotoSection();
+            if (prefill) {
+                const carSel = document.getElementById('addInjCarModel');
+                if (carSel && prefill.carModel) {
+                    carSel.value = prefill.carModel;
+                    onCarModelSelect();
+                }
+                setTimeout(() => {
+                    const partSel = document.getElementById('addInjPart');
+                    if (partSel && prefill.partName) {
+                        partSel.value = prefill.partName;
+                        onPartNameSelect();
+                    }
+                    setTimeout(() => {
+                        const colorSel = document.getElementById('addInjColor');
+                        if (colorSel && prefill.color) {
+                            colorSel.value = prefill.color;
+                            onColorSelect();
+                        }
+                        const lotContainer = document.getElementById('injLotRows');
+                        if (lotContainer && prefill.lots && prefill.lots.length) {
+                            lotContainer.innerHTML = '';
+                            prefill.lots.forEach(() => addInjLotRow());
+                            const rows = lotContainer.querySelectorAll('.inj-lot-row');
+                            rows.forEach((row, i) => {
+                                const l = prefill.lots[i];
+                                if (!l) return;
+                                const noEl = row.querySelector('.inj-lot-no');
+                                const qtyEl = row.querySelector('.inj-lot-qty');
+                                if (noEl) noEl.value = l.lotNo || '';
+                                if (qtyEl) qtyEl.value = l.qty || '';
+                            });
+                            calcInjLotTotal();
+                        }
+                        if (prefill.note) {
+                            const noteEl = document.getElementById('addInjNote');
+                            if (noteEl) noteEl.value = prefill.note;
+                        }
+                    }, 80);
+                }, 80);
+            }
             try {
                 const allDefs = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
                 const defects = allDefs.filter(d => d && (d.type === 'injection' || !d.type));

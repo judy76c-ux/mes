@@ -1233,6 +1233,78 @@ var InjectionWarehouseModule = (function() {
         InjectionIncomingModule.view(id);
     }
 
+    /** 수입검사 없이 먼저 입고된 창고 기록에, 나중에 등록된 수입검사를 수동으로 골라 연결한다.
+     * 사출명·LOT번호가 같으면 화면은 이미 자동으로 연결해 보여주지만(_findLinkedInspectionId),
+     * LOT 표기가 다르거나 검사건이 여러 건이라 자동 매칭이 애매할 때 사람이 직접 골라 붙이는 경로.
+     * (주말 등 수입검사보다 입고가 먼저 필요했던 경우를 위한 사후 연결 기능)
+     */
+    function openLinkInspectionModal(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
+        const partName = String(d.partName || '').trim();
+        const inspections = (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [])
+            .filter(function (insp) { return String(insp.partName || '').trim() === partName; })
+            .sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+
+        const lotText = (d.lots && d.lots.length)
+            ? d.lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(Number(l.qty) || 0) + ' EA)'; }).join(', ')
+            : ((d.lotNo || '-') + ' (' + UIUtils.formatNumber(Number(d.quantity) || 0) + ' EA)');
+
+        const rowsHtml = inspections.length
+            ? inspections.slice(0, 30).map(function (insp) {
+                const lots = (insp.lots && insp.lots.length) ? insp.lots : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+                const inspLotText = lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(Number(l.qty) || 0) + ' EA)'; }).join(', ');
+                return '<tr style="cursor:pointer;" onmouseover="this.style.background=\'var(--bg-secondary)\'" onmouseout="this.style.background=\'\'"' +
+                    ' onclick="InjectionWarehouseModule._confirmLinkInspection(\'' + id + '\',\'' + insp.id + '\')">' +
+                    '<td style="padding:6px 8px;white-space:nowrap;">' + _escapeHtml(String(insp.date || '-').slice(0, 16)) + '</td>' +
+                    '<td style="padding:6px 8px;white-space:nowrap;">' + _escapeHtml(insp.carModel || '-') + '</td>' +
+                    '<td style="padding:6px 8px;white-space:nowrap;">' + _escapeHtml(insp.color || '-') + '</td>' +
+                    '<td style="padding:6px 8px;font-family:monospace;font-size:0.82rem;">' + _escapeHtml(inspLotText || '-') + '</td>' +
+                    '<td style="padding:6px 8px;text-align:center;"><button type="button" class="btn btn-sm btn-primary">연결</button></td>' +
+                '</tr>';
+            }).join('')
+            : '<tr><td colspan="5" style="padding:16px;text-align:center;color:var(--text-muted);">품명 "' + _escapeHtml(partName) + '"의 수입검사 기록이 아직 없습니다.<br>수입검사를 먼저 등록한 뒤 다시 연결하세요.</td></tr>';
+
+        UIUtils.showModal(
+            '<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">link</span> 수입검사 연결',
+            '<div style="margin-bottom:10px;padding:9px 12px;border-radius:8px;background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.25);font-size:0.82rem;line-height:1.5;">' +
+                '이 입고(<strong>' + _escapeHtml(d.carModel || '-') + ' / ' + _escapeHtml(partName || '-') + (d.color ? ' / ' + _escapeHtml(d.color) : '') + '</strong>, LOT ' +
+                _escapeHtml(lotText) + ')와 연결할 수입검사를 아래에서 선택하세요.' +
+            '</div>' +
+            '<div style="max-height:360px;overflow-y:auto;border:1px solid var(--border-color);border-radius:8px;">' +
+                '<table class="data-table" style="width:100%;margin:0;">' +
+                    '<thead><tr>' +
+                        '<th style="padding:6px 8px;">검사일</th><th style="padding:6px 8px;">차종</th><th style="padding:6px 8px;">컬러</th>' +
+                        '<th style="padding:6px 8px;">LOT</th><th style="padding:6px 8px;"></th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rowsHtml + '</tbody>' +
+                '</table>' +
+            '</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>',
+            '620px'
+        );
+    }
+
+    /** 연결 대상 검사건 클릭 → 확인 후 연결 확정 (inspId·inspDate·inspLinkedManually 기록) */
+    function _confirmLinkInspection(recordId, inspId) {
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+        const d = Storage.getById(STORE, recordId);
+        if (!insp || !d) { UIUtils.toast('연결에 필요한 정보를 찾을 수 없습니다.', 'error'); return; }
+        UIUtils.confirm(
+            '이 입고 기록을 ' + _escapeHtml(String(insp.date || '-').slice(0, 16)) + ' 수입검사에 연결하시겠습니까?',
+            async function () {
+                await Storage.update(STORE, recordId, {
+                    inspId: insp.id,
+                    inspDate: insp.date || '',
+                    inspLinkedManually: true
+                });
+                UIUtils.closeModal();
+                UIUtils.toast('수입검사에 연결했습니다.', 'success');
+                loadData();
+            }
+        );
+    }
+
     function _inspDateLinkHtml(d, inspDateHtml) {
         const inspId = _findLinkedInspectionId(d);
         if (!inspId) {
@@ -3129,10 +3201,38 @@ var InjectionWarehouseModule = (function() {
                 ${row('비고', _escapeHtml(d.note || d.source || '-'))}
             </div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             ${(!isReset && d.type === '입고' && !_findLinkedInspectionId(d))
+                ? `<button class="btn btn-primary" style="background:#dc2626;border-color:#dc2626;" onclick="InjectionWarehouseModule.goRegisterInspectionFor('${id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">fact_check</span> 수입검사 등록</button>`
+                : ''}
              ${isReset ? '' : `<button class="btn btn-primary" onclick="UIUtils.closeModal();InjectionWarehouseModule.openEditModal('${id}')">수정</button>`}
              ${adminDel}`,
             'min(720px, calc(100vw - 32px))'
         );
+    }
+
+    /** "직접 입고(미검사)" 건의 「보기」 상세에서 곧바로 사출 수입검사 등록으로 이동 —
+     *  차종·품명·컬러·LOT·수량을 그대로 채워 넘겨, 검사자가 값을 다시 옮겨 적지 않게 한다.
+     *  등록 후에는 사출명+LOT번호 일치로 이 창고 기록과 자동 연결된다. */
+    function goRegisterInspectionFor(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
+        const prefill = {
+            carModel: d.carModel || '',
+            partName: d.partName || '',
+            color: d.color || '',
+            lots: (d.lots && d.lots.length)
+                ? d.lots.map(function (l) { return { lotNo: l.lotNo || '', qty: Number(l.qty) || 0 }; })
+                : [{ lotNo: d.lotNo || '', qty: Number(d.quantity) || 0 }],
+            note: '수입검사 이전 직접 입고건 사후 등록 (창고 입고일 ' + (d.date || '-') + ')'
+        };
+        UIUtils.closeModal();
+        Router.navigate('injection-incoming');
+        setTimeout(function () {
+            if (typeof InjectionIncomingModule !== 'undefined' && InjectionIncomingModule.openAddModal) {
+                InjectionIncomingModule.openAddModal(prefill);
+            }
+        }, 150);
     }
 
     // 창고 LOT 형식 유효성 — RST + 숫자, 또는 유효한 YYMMDD(6자리 날짜)만 정상.
@@ -6892,10 +6992,12 @@ var InjectionWarehouseModule = (function() {
                     <span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;margin-top:1px;">warning</span>
                     <div style="min-width:0;">
                         <div style="font-size:0.84rem;font-weight:700;color:#dc2626;margin-bottom:4px;">
-                            수입 검사 공정에 수입검사 등록 지연인지 혹은 누락인지 통보부터 하세요. 프로세스 규칙에 어긋납니다.
+                            정상 절차는 수입검사 통과 후 입고입니다. 수입검사 없이 입고하면 품질관리자·물류담당자에게 자동으로 통보됩니다.
                         </div>
-                        <div style="font-size:0.76rem;color:#991b1b;font-weight:600;">
-                            Please report first whether incoming inspection registration is delayed or omitted in the incoming inspection process. This violates process rules.
+                        <div style="font-size:0.78rem;color:#991b1b;font-weight:600;">
+                            주말 등 수입검사가 아직 안 됐는데 당일 생산 때문에 입고가 먼저 필요하다면, 지금 이 화면에서 입고를 진행해도 됩니다.
+                            수입검사를 나중에 등록하면 <strong>같은 사출명·LOT번호 기준으로 자동 연결</strong>되며,
+                            LOT 표기가 달라 자동 연결이 안 되면 입고 이력 수정 화면의 <strong>「수입검사 연결」</strong> 버튼으로 직접 연결할 수 있습니다.
                         </div>
                     </div>
                 </div>
@@ -10030,7 +10132,13 @@ var InjectionWarehouseModule = (function() {
                     <span><strong>LOT:</strong> ${_lotBreakdownHtml(d)}</span>
                     ${d.type === '출고' && paintLine ? `<span><strong>출고구분:</strong> ${paintLine}</span>` : ''}
                     ${d.type === '출고' ? `<span><strong>출고자:</strong> ${outgoingActor || '미등록'}</span>` : ''}
-                    <span><strong>수입검사일:</strong> ${inspDateHtml}</span>
+                    <span><strong>수입검사일:</strong> ${inspDateHtml}
+                        ${(d.type === '입고' && !_findLinkedInspectionId(d)) ? `
+                        <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.72rem;margin-left:4px;"
+                            onclick="InjectionWarehouseModule.openLinkInspectionModal('${id}')">
+                            <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">link</span> 수입검사 연결
+                        </button>` : ''}
+                    </span>
                 </div>
             </div>
             ${qtyLocked ? `<div style="margin-bottom:12px;padding:8px 12px;border-radius:8px;border:1px solid rgba(37,99,235,.3);background:rgba(37,99,235,.06);font-size:0.82rem;color:var(--text-secondary);">수입검사 입고 기록입니다. <strong>수량은 변경할 수 없습니다.</strong></div>` : ''}
@@ -10957,6 +11065,9 @@ var InjectionWarehouseModule = (function() {
         openIncomingTxView,
         openOutgoingTxView,
         openLinkedInspection,
+        openLinkInspectionModal,
+        _confirmLinkInspection,
+        goRegisterInspectionFor,
         openEditModal,
         saveEdit,
         _updateEditInvLotTotal,

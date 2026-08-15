@@ -481,6 +481,7 @@ const Router = (function() {
         if (sidebar) sidebar.classList.remove('mobile-open');
 
         renderModule(pageName);
+        if (typeof MesZoomFit !== 'undefined' && MesZoomFit.schedule) MesZoomFit.schedule();
 
         // 페이지 변경 시 topbar 권한 배지 갱신
         if (typeof AuthModule !== 'undefined' && AuthModule.updateTopbar) {
