@@ -9003,9 +9003,38 @@ const SettingsModule = (function() {
      * 현재고 확정이 LOT이 여러 개일 때 대표 lotNo를 'MULTI'로 남기던 건도 같은 유령이다.
      * lots[]가 있으면 최상위 lotNo는 검사하지 않는다.
      */
+    /** carModel||partName||color 그룹키 (사출 창고 재고 계산 단위와 동일) */
+    function _injGroupKey(it) {
+        return `${it.carModel || ''}||${(it.partName || '').trim()}||${(it.color || '').trim()}`;
+    }
+
+    /**
+     * 그룹(차종+품명+컬러)별로 InvCalc를 돌려, "LOT번호 값(빈 값 포함) → 현재 남은 수량"을 구한다.
+     * 오래된 낱건 원장(item.lotNo 만 있고 lots[] 없음)은 그 자체로는 잔량을 모른다 —
+     * 이후 출고로 이미 다 빠졌으면(잔량 0) 지금 그 LOT을 고쳐도 창고 화면엔 아무 영향이 없는
+     * 유령 오류이므로, 그룹 전체의 실물 잔량을 계산해 대조해야 한다.
+     */
+    function _injLiveLotQtyMap() {
+        const invenItems = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        const byGroup = {};
+        invenItems.forEach(it => {
+            const k = _injGroupKey(it);
+            (byGroup[k] = byGroup[k] || []).push(it);
+        });
+        const map = {};
+        Object.keys(byGroup).forEach(k => {
+            const bal = InvCalc.lotBalances(byGroup[k]);
+            (bal.lots || []).forEach(l => {
+                map[k + '||' + l.lotNo] = Number(l.qty) || 0;
+            });
+        });
+        return map;
+    }
+
     function scanInjLotErrorsData() {
         const invenItems = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         const inspItems  = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const liveLotQtyMap = _injLiveLotQtyMap();
 
         const errors = [];
 
@@ -9013,17 +9042,22 @@ const SettingsModule = (function() {
             if (_isInjLotFormatExempt(item)) return;
             const liveLots = _hasLiveLotEntries(item);
             if (!liveLots && (!item.lotNo || !_isValidLot(item.lotNo))) {
-                const fixed = _fixLot(item.lotNo, item.date);
-                errors.push({
-                    src: '재고',
-                    id: item.id,
-                    partName: item.partName || '-',
-                    color: item.color || '-',
-                    date: item.date || '-',
-                    original: item.lotNo || '(없음)',
-                    reason: _lotErrorReason(item.lotNo),
-                    suggested: fixed || '수정 불가'
-                });
+                // 이 LOT값(빈 값 포함)의 그룹 내 현재 잔량이 0이면 이미 소진된 유령 오류 — 스킵
+                const lotKey = String(item.lotNo || '').trim() || '무표기';
+                const remaining = liveLotQtyMap[_injGroupKey(item) + '||' + lotKey] || 0;
+                if (remaining > 0) {
+                    const fixed = _fixLot(item.lotNo, item.date);
+                    errors.push({
+                        src: '재고',
+                        id: item.id,
+                        partName: item.partName || '-',
+                        color: item.color || '-',
+                        date: item.date || '-',
+                        original: item.lotNo || '(없음)',
+                        reason: _lotErrorReason(item.lotNo),
+                        suggested: fixed || '수정 불가'
+                    });
+                }
             }
             // lots 배열 안 LOT도 검사 (소진된 잔재 qty≤0 은 창고에 안 보이므로 제외)
             if (item.lots && Array.isArray(item.lots)) {

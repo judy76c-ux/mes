@@ -3390,10 +3390,13 @@ td {
 
 .data-table-wrapper {
     border-radius: 18px;
+    max-width: 100%;
 }
 
+/* 저해상도·태블릿·브라우저 확대 시 표가 화면 밖으로 밀려나지 않도록 뷰포트 폭에 따라
+   글자·여백을 자동으로 줄인다(확대는 CSS 뷰포트 폭을 실질적으로 좁히므로 vw 기준이 함께 대응한다). */
 .data-table {
-    font-size: 0.88rem;
+    font-size: clamp(0.68rem, 0.6rem + 0.35vw, 0.88rem);
 }
 
 .data-table thead {
@@ -3401,8 +3404,8 @@ td {
 }
 
 .data-table th {
-    padding: 11px 12px;
-    font-size: 0.76rem;
+    padding: clamp(6px, 5px + 0.35vw, 11px) clamp(6px, 5px + 0.45vw, 12px);
+    font-size: clamp(0.62rem, 0.56rem + 0.2vw, 0.76rem);
     font-weight: 800;
     text-transform: none;
     letter-spacing: 0;
@@ -3411,7 +3414,7 @@ td {
 }
 
 .data-table td {
-    padding: 10px 12px;
+    padding: clamp(5px, 4px + 0.35vw, 10px) clamp(6px, 5px + 0.45vw, 12px);
     border-bottom: 1px solid rgba(226, 232, 240, 0.9);
 }
 

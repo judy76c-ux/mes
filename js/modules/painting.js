@@ -1538,18 +1538,18 @@ const PaintingWorkModule = (function() {
                                         <th style="white-space:nowrap;padding:8px 10px;">품명</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">계획수량</th>
-                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">사출현장입고수(LOT수)</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">현장입고사출</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">자재 반납</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">자재과잉/유실</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">도장투입수</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">도장완료수</th>
-                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">후공정 입고 확인수</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">후공정입고수</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">오차 수량</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">도장유실수</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업시간</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">작업C.T</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">효율</th>
-                                        <th style="text-align:center;white-space:nowrap;padding:8px 10px;">CVT</th>
+                                        <th style="text-align:center;white-space:nowrap;padding:8px 10px;display:none;">CVT</th>
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">Spindle 수</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업</th>
                                     </tr>
@@ -2704,9 +2704,10 @@ const PaintingWorkModule = (function() {
             ? d.lots.map(l => l.lotNo + (l.qty ? '(' + UIUtils.formatNumber(l.qty) + ')' : '')).join(', ')
             : (d.lotNo || '');
 
-        const timeStr = d.startTime ?
-            d.startTime + (d.endTime ? '~' + d.endTime : '') :
-            '-';
+        const timeStr = d.startTime
+            ? '<div style="font-size:0.7rem;line-height:1.3;">' + d.startTime + '</div>' +
+              (d.endTime ? '<div style="font-size:0.7rem;line-height:1.3;color:var(--text-muted);">' + d.endTime + '</div>' : '')
+            : '-';
         const _plan = d.planId ? Storage.getById(PLAN_STORE, d.planId) : null;
         let _baseCT = 0;
         if (_plan && _plan.startTime && _plan.endTime && Number(_plan.planQty) > 0) {
@@ -2754,13 +2755,11 @@ const PaintingWorkModule = (function() {
         const statusBadge = isInspectionCompleted
             ? '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 검사완료</span>'
             : (isLaserInboundConfirmed
-                ? '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 레이져대기입고완료</span>'
+                ? '<span style="display:inline-block; background:var(--accent-green); color:white; padding:2px 8px; border-radius:4px; font-size:0.75rem; font-weight:600; margin-right:4px;">✓ 입고완료</span>'
                 : '');
         // 레이저 입고 확인 시 산출-실입고 오차가 발견된 실적은 이 목록에 배지로 끼워 넣지 않고
         // "후공정 수량 재확인 필요" 섹션에서 별도로 모아 보여준다(renderLaserQtyIssueSection).
-        const overPlanBadge = d.overPlanQty
-            ? '<span style="display:inline-block;background:#f59e0b;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="계획수량 초과 등록됨">⚠ 초과</span>'
-            : '';
+        // 계획수량 초과/부족 여부는 배지 대신 도장투입수 앞에 작은 ▲/▼ 표시로 옮겨 보여준다(아래 inputMarkHtml).
         const timeChangeBadge = d.timeReason
             ? '<span style="display:inline-block;background:#ef4444;color:#fff;padding:2px 7px;border-radius:4px;font-size:0.7rem;font-weight:700;margin-right:3px;" title="시간변동: ' + (d.timeReason || '') + (d.timeReasonDetail ? ' / ' + d.timeReasonDetail : '') + '">⏱ 시간변동</span>'
             : '';
@@ -2791,6 +2790,13 @@ const PaintingWorkModule = (function() {
         const _qtys = _workQtys(d);
         const _inQ = Number(_qtys.inputQty) || 0;
         const _prodQ = Number(_qtys.productionQty) || 0;
+        // 계획수량 대비 초과/부족 — 도장투입수 앞에 작게 ▲(초과)/▼(부족)로 표시
+        const _planQtyNum = (_plan && Number(_plan.planQty) > 0) ? Number(_plan.planQty) : 0;
+        const inputMarkHtml = d.overPlanQty
+            ? '<span style="color:#d97706;font-weight:700;font-size:0.72rem;" title="계획수량 초과 등록됨">▲</span> '
+            : (_planQtyNum > 0 && _inQ < _planQtyNum
+                ? '<span style="color:#dc2626;font-weight:700;font-size:0.72rem;" title="계획수량 대비 부족">▼</span> '
+                : '');
         const _issuedOpts = {
             carModel: d.carModel,
             partName: d.partName,
@@ -2919,17 +2925,17 @@ const PaintingWorkModule = (function() {
             '<td style="' + td + 'text-align:right;font-weight:700;color:var(--accent-blue);white-space:nowrap;" title="' + _pwEsc(lotTooltip) + '">' + issuedWithLotHtml + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + returnedHtml + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + xlHtml + '</td>' +
-            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(_inQ) + '</td>' +
+            '<td style="' + td + 'text-align:right;white-space:nowrap;">' + inputMarkHtml + UIUtils.formatNumber(_inQ) + '</td>' +
             '<td style="' + td + 'text-align:right;font-weight:600;white-space:nowrap;">' + UIUtils.formatNumber(_prodQ) + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + laserConfirmedHtml + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + laserDiffHtml + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + missHtml + '</td>' +
-            '<td style="' + td + 'font-size:0.82rem;white-space:nowrap;">' + timeStr + '</td>' +
+            '<td style="' + td + 'white-space:nowrap;">' + timeStr + '</td>' +
             '<td style="' + td + 'text-align:right;line-height:1.4;white-space:nowrap;">' + ctStr + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + effStr + '</td>' +
-            '<td style="' + td + 'text-align:center;white-space:nowrap;">' + cvtStr + '</td>' +
+            '<td style="' + td + 'text-align:center;white-space:nowrap;display:none;">' + cvtStr + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + spindleStr + '</td>' +
-            '<td style="' + td + 'white-space:nowrap;">' + actionButtons + ' ' + overPlanBadge + timeChangeBadge + statusBadge + '</td></tr>';
+            '<td style="' + td + 'white-space:nowrap;">' + actionButtons + ' ' + timeChangeBadge + statusBadge + '</td></tr>';
     }
 
     async function renderWorkList() {
