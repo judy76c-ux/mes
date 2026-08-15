@@ -611,10 +611,12 @@ var JigModule = (function () {
                     '이전교체일 <strong>' + _esc(resetDate) + '</strong> · ' +
                     '이력 <strong>' + _fmt(logs.length) + '</strong>건 · ' +
                     '누적 <strong style="color:var(--accent-blue);">' + _fmt(total) + '</strong>회' +
+                    ' <span style="font-size:0.75rem;color:var(--text-muted);">(구축 전 ' + _fmt(preMes) + ' + 구축 후 ' + _fmt(afterMes) + ')</span>' +
                 '</div>' +
                 '<div style="margin-top:6px;font-size:0.75rem;color:var(--text-muted);">' +
-                    '누적횟수는 이전 교체일 이후 도장 작업일보(및 수동 등록)의 지그 사용 횟수 합계입니다.</div>' +
+                    '누적횟수 = EMS 구축 전 입력분 + 이전 교체일 이후 도장 작업일보(및 수동 등록) 합계입니다.</div>' +
             '</div>' +
+            adminForm +
             '<div style="overflow-x:auto;">' +
                 '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
                     '<thead><tr style="background:var(--bg-secondary);">' +
@@ -639,6 +641,59 @@ var JigModule = (function () {
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
             'xl'
         );
+    }
+
+    async function savePreMesUsedCount(jigId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('EMS 구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        const jig = Storage.getById(STORE, jigId);
+        if (!jig) {
+            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const raw = document.getElementById('jigPreMesUsedCount');
+        const qty = parseInt(raw && raw.value, 10);
+        if (!Number.isFinite(qty) || qty < 0) {
+            UIUtils.toast('누적횟수를 0 이상으로 입력하세요.', 'warning');
+            return;
+        }
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jigId);
+        const existing = _preMesBaselineLog(jigId);
+        const actor = _currentUser();
+        const worker = actor
+            ? String(actor.displayName || actor.username || actor.id || '')
+            : '';
+        const date = replacementDate || _today();
+        const payload = {
+            jigId: jigId,
+            date: date,
+            workType: 'EMS 구축 전 누적',
+            useCount: qty,
+            source: 'pre_mes_baseline',
+            note: 'EMS 구축 전 실적 매칭',
+            worker: worker
+        };
+        try {
+            if (qty === 0) {
+                if (existing) await Storage.remove(LOG_STORE, existing.id);
+                UIUtils.toast('EMS 구축 전 누적횟수를 제거했습니다.', 'success');
+            } else if (existing) {
+                await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, payload));
+                UIUtils.toast('EMS 구축 전 누적횟수를 수정했습니다.', 'success');
+            } else {
+                await Storage.add(LOG_STORE, payload);
+                UIUtils.toast('EMS 구축 전 누적횟수를 등록했습니다.', 'success');
+            }
+        } catch (e) {
+            UIUtils.toast('저장에 실패했습니다.', 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        loadAll();
+        openUsageHistory(jigId);
     }
 
     function loadAll() {
@@ -741,7 +796,8 @@ var JigModule = (function () {
                 <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
                 <td class="jig-col-short" style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
                 <td class="jig-col-short" style="${tdn}text-align:center;">
-                    <button type="button" class="btn btn-sm btn-outline" title="생산일보 이력 보기"
+                    <button type="button" class="btn btn-sm btn-outline"
+                        title="${_isAdminUser() ? '이력 보기 · EMS 구축 전 횟수 입력' : '생산일보 이력 보기'}${(j.preMesUsedCount || 0) ? ' (구축 전 ' + _fmt(j.preMesUsedCount) + '회 포함)' : ''}"
                         onclick="JigModule.openUsageHistory('${_js(j.id)}')"
                         style="padding:1px 8px;font-size:0.82rem;font-weight:700;color:var(--accent-blue);border-color:rgba(37,99,235,.35);">
                         ${_fmt(j.usedCount || 0)}
@@ -3079,6 +3135,7 @@ var JigModule = (function () {
         confirmResetCount,
         addUsageFromWork,
         syncFromPaintingWork,
-        openUsageHistory
+        openUsageHistory,
+        savePreMesUsedCount
     };
 })();
