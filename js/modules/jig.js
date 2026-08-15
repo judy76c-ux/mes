@@ -32,6 +32,8 @@ var JigModule = (function () {
     let _jigPasteListenerReady = false;
     let _lifeStandardPasteArmed = false;
     let _lifeStandardImage = null;
+    let _jigLifeFitBound = false;
+    let _jigLifeFitRaf = 0;
 
     const _today = () => (UIUtils.today ? UIUtils.today() : new Date().toISOString().split('T')[0]);
     const _monthAgo = () => {
@@ -482,11 +484,161 @@ var JigModule = (function () {
             if (!countMap[log.jigId]) countMap[log.jigId] = 0;
             countMap[log.jigId] += Number(log.useCount) || 0;
         });
+        const preMesMap = {};
+        logs.forEach(function (log) {
+            if (log.source !== 'pre_mes_baseline') return;
+            if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
+            preMesMap[log.jigId] = Number(log.useCount) || 0;
+        });
         return jigs.map(j => ({
             ...j,
             usedCount: countMap[j.id] || 0,
+            preMesUsedCount: preMesMap[j.id] || 0,
             lastResetDate: lastResetMap[j.id] || null
         }));
+    }
+
+    function _preMesBaselineLog(jigId) {
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jigId);
+        return logs.find(function (log) {
+            return log.jigId === jigId
+                && log.source === 'pre_mes_baseline'
+                && _isOnOrAfterReplacement(log.date, replacementDate);
+        }) || null;
+    }
+
+    function _usageLogsForJig(jigId) {
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jigId);
+        return logs.filter(function (log) {
+            if (log.jigId !== jigId) return false;
+            if (!_isOnOrAfterReplacement(log.date, replacementDate)) return false;
+            if (_isResetWorkType(log.workType)) return false;
+            return (Number(log.useCount) || 0) > 0;
+        }).sort(function (a, b) {
+            return String(b.date || '').localeCompare(String(a.date || ''))
+                || String(a.id || '').localeCompare(String(b.id || ''));
+        });
+    }
+
+    function _paintingWorkById(id) {
+        if (!id) return null;
+        try {
+            return Storage.getById(DB.STORES.PAINTING_WORK, id) || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _workLotText(work) {
+        if (!work) return '';
+        if (Array.isArray(work.lots) && work.lots.length) {
+            return work.lots.map(function (l) {
+                return String(l.lotNo || '') + (l.qty ? '(' + _fmt(l.qty) + ')' : '');
+            }).filter(Boolean).join(' / ');
+        }
+        return String(work.lotNo || '');
+    }
+
+    function openUsageHistory(jigId) {
+        const jig = Storage.getById(STORE, jigId);
+        if (!jig) {
+            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const logs = _usageLogsForJig(jigId);
+        const total = logs.reduce(function (s, l) { return s + (Number(l.useCount) || 0); }, 0);
+        const baseline = _preMesBaselineLog(jigId);
+        const preMes = Number(baseline && baseline.useCount) || 0;
+        const afterMes = Math.max(0, total - preMes);
+        const resetDate = _latestReplacementDate(Storage.getAll(LOG_STORE) || [], jigId) || jig.lastResetDate || jig.registDate || '-';
+        const adminForm = _isAdminUser()
+            ? '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);">' +
+                '<div style="font-size:0.82rem;font-weight:700;color:#ea580c;margin-bottom:4px;">EMS 구축 전 누적횟수 (관리자)</div>' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;">MES 구축 전에 사용한 횟수를 입력합니다. 구축 이후 도장 작업일보 횟수에 더해 현재 실적과 맞춥니다. 0이면 구축 전 분을 제거합니다.</div>' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                    '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + preMes + '" ' +
+                        'style="width:auto;min-width:7em;text-align:right;">' +
+                    '<span style="font-size:0.8rem;color:var(--text-secondary);">회</span>' +
+                    '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.savePreMesUsedCount(\'' + _js(jigId) + '\')">저장</button>' +
+                '</div></div>'
+            : '';
+        const aliases = (jig.partAliases || []).filter(function (p) { return p !== jig.partName; });
+        const th = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;';
+        const td = 'padding:7px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;white-space:nowrap;';
+
+        const rows = logs.length ? logs.map(function (log, idx) {
+            const work = _paintingWorkById(log.paintingWorkId);
+            const inputQty = work ? (Number(work.inputQty) || 0) : 0;
+            const productionQty = work ? (Number(work.productionQty) || Number(work.inputQty) || 0) : 0;
+            const cvt = work ? _getProductCvt(work.carModel, work.partName) : 0;
+            const spindle = (work && cvt && inputQty) ? Math.ceil(inputQty / cvt) : 0;
+            const lotText = _workLotText(work);
+            const sourceLabel = log.source === 'pre_mes_baseline'
+                ? 'EMS 구축 전'
+                : (log.source === 'auto_painting' ? '도장 작업일보' : (log.workType || '수동 등록'));
+            const viewBtn = (work && work.id && typeof PaintingWorkModule !== 'undefined' && PaintingWorkModule.openWorkViewPage)
+                ? '<button type="button" class="btn btn-sm btn-outline" style="padding:1px 7px;font-size:0.72rem;" ' +
+                    'onclick="UIUtils.closeModal();PaintingWorkModule.openWorkViewPage(\'' + _js(work.id) + '\')">보기</button>'
+                : '<span style="color:var(--text-muted);">-</span>';
+            return '<tr>' +
+                '<td style="' + td + 'text-align:center;color:var(--text-muted);">' + (idx + 1) + '</td>' +
+                '<td style="' + td + '">' + _esc(log.date || (work && work.date) || '-') + '</td>' +
+                '<td style="' + td + '">' + _esc((work && work.line) || jig.line || '-') + '</td>' +
+                '<td style="' + td + '">' + _esc((work && work.carModel) || jig.carModel || '-') + '</td>' +
+                '<td style="' + td + '">' + _esc((work && work.partName) || jig.partName || '-') + '</td>' +
+                '<td style="' + td + 'color:var(--text-muted);">' + _esc((work && work.color) || '-') + '</td>' +
+                '<td style="' + td + 'font-family:monospace;color:var(--text-muted);">' + _esc(lotText || '-') + '</td>' +
+                '<td style="' + td + 'text-align:right;">' + (work ? _fmt(inputQty) : '-') + '</td>' +
+                '<td style="' + td + 'text-align:right;">' + (work ? _fmt(productionQty) : '-') + '</td>' +
+                '<td style="' + td + 'text-align:right;">' + (spindle ? _fmt(spindle) : '-') + '</td>' +
+                '<td style="' + td + 'text-align:right;font-weight:700;color:var(--accent-blue);">' + _fmt(log.useCount || 0) + '</td>' +
+                '<td style="' + td + '">' + _esc(sourceLabel) + '</td>' +
+                '<td style="' + td + 'white-space:normal;max-width:220px;" class="wrap" title="' + _esc(log.note || '') + '">' + _esc(log.note || '-') + '</td>' +
+                '<td style="' + td + 'text-align:center;">' + viewBtn + '</td>' +
+                '</tr>';
+        }).join('') : '<tr><td colspan="14" style="padding:28px 12px;text-align:center;color:var(--text-muted);">이전 교체일 이후 사용 이력이 없습니다.</td></tr>';
+
+        UIUtils.showModal(
+            '지그 사용 이력 — 생산일보',
+            '<div style="margin-bottom:12px;padding:10px 12px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.2);font-size:0.84rem;">' +
+                '<div><strong>' + _esc(jig.carModel || '-') + '</strong> / ' + _esc(jig.partName || '-') +
+                (jig.line ? ' <span style="font-size:0.68rem;background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;margin-left:4px;">' + _esc(jig.line) + '</span>' : '') +
+                '</div>' +
+                (aliases.length ? '<div style="margin-top:4px;font-size:0.75rem;color:var(--text-muted);">병합 품명: ' + aliases.map(_esc).join(', ') + '</div>' : '') +
+                '<div style="margin-top:6px;color:var(--text-secondary);">' +
+                    '이전교체일 <strong>' + _esc(resetDate) + '</strong> · ' +
+                    '이력 <strong>' + _fmt(logs.length) + '</strong>건 · ' +
+                    '누적 <strong style="color:var(--accent-blue);">' + _fmt(total) + '</strong>회' +
+                '</div>' +
+                '<div style="margin-top:6px;font-size:0.75rem;color:var(--text-muted);">' +
+                    '누적횟수는 이전 교체일 이후 도장 작업일보(및 수동 등록)의 지그 사용 횟수 합계입니다.</div>' +
+            '</div>' +
+            '<div style="overflow-x:auto;">' +
+                '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
+                    '<thead><tr style="background:var(--bg-secondary);">' +
+                        '<th style="' + th + '">No</th>' +
+                        '<th style="' + th + '">작업일</th>' +
+                        '<th style="' + th + '">라인</th>' +
+                        '<th style="' + th + '">차종</th>' +
+                        '<th style="' + th + '">품명</th>' +
+                        '<th style="' + th + '">컬러</th>' +
+                        '<th style="' + th + '">LOT</th>' +
+                        '<th style="' + th + '">투입</th>' +
+                        '<th style="' + th + '">산출</th>' +
+                        '<th style="' + th + '">SPINDLE</th>' +
+                        '<th style="' + th + '">지그횟수</th>' +
+                        '<th style="' + th + '">출처</th>' +
+                        '<th style="' + th + '">비고</th>' +
+                        '<th style="' + th + '">일보</th>' +
+                    '</tr></thead>' +
+                    '<tbody>' + rows + '</tbody>' +
+                '</table>' +
+            '</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'xl'
+        );
     }
 
     function loadAll() {
@@ -557,18 +709,7 @@ var JigModule = (function () {
             if (o.jigId) orderingByJigId[o.jigId] = o;
         });
 
-        const thStyle = 'padding:6px 10px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;overflow:hidden;';
-        const colgroup = `<colgroup>
-            <col style="width:5%">
-            <col style="width:19%">
-            <col style="width:3%">
-            <col style="width:3%">
-            <col style="width:3%">
-            <col style="width:43%">
-            <col style="width:10%">
-            <col style="width:6%">
-            <col style="width:8%">
-        </colgroup>`;
+        const thStyle = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;';
 
         const sorted = jigs.slice().sort((a, b) =>
             (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
@@ -583,40 +724,44 @@ var JigModule = (function () {
             const status = pct >= 100 ? ['수명초과', 'var(--accent-red)'] : pct >= 80 ? ['임박', 'var(--accent-orange)'] : ['정상', 'var(--accent-green)'];
             const aliases = (j.partAliases || []).filter(p => p !== j.partName);
             const car = j.carModel || '차종 미지정';
-            const td  = 'padding:7px 10px;border-bottom:1px solid var(--border-color);font-size:0.82rem;overflow:hidden;';
-            const tdn = td + 'white-space:nowrap;text-overflow:ellipsis;';
+            const td  = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.82rem;';
+            const tdn = td + 'white-space:nowrap;';
             const isNewCar = car !== prevCar;
             prevCar = car;
+            const partTitle = (j.partName || '-') + (aliases.length ? ' / 병합: ' + aliases.join(', ') : '');
             const carCell = isNewCar
-                ? `<td style="${tdn}text-align:center;font-weight:700;color:var(--accent-blue);border-top:${isNewCar && sorted.indexOf(j) > 0 ? '2px solid var(--border-color)' : 'none'};">${_esc(car)}</td>`
-                : `<td style="${td}text-align:center;color:var(--text-muted);font-size:0.75rem;"></td>`;
+                ? `<td class="jig-col-short" style="${tdn}text-align:center;font-weight:700;color:var(--accent-blue);border-top:${isNewCar && sorted.indexOf(j) > 0 ? '2px solid var(--border-color)' : 'none'};">${_esc(car)}</td>`
+                : `<td class="jig-col-short" style="${td}text-align:center;color:var(--text-muted);font-size:0.75rem;"></td>`;
             return `
             <tr${isNewCar && sorted.indexOf(j) > 0 ? ' style="border-top:2px solid var(--border-color);"' : ''}>
                 ${carCell}
-                <td style="${td}text-align:center;font-weight:600;word-break:break-word;">
-                    ${_esc(j.partName || '-')}
-                    ${aliases.length ? `<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">병합: ${aliases.map(_esc).join(', ')}</div>` : ''}
+                <td class="jig-col-part" style="${td}font-weight:600;">
+                    <span class="jig-part-name-text" title="${_esc(partTitle)}">${_esc(j.partName || '-')}${aliases.length ? `<span class="jig-part-alias">병합: ${aliases.map(_esc).join(', ')}</span>` : ''}</span>
                 </td>
-                <td style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
-                <td style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
-                <td style="${tdn}text-align:center;color:var(--accent-blue);font-weight:700;">${_fmt(j.usedCount || 0)}</td>
-                <td style="${td}">
-                    <div style="display:flex;align-items:center;gap:6px;">
-                        <div title="90% 도달 시 조치 준비" style="position:relative;flex:1;background:var(--bg-secondary);border-radius:4px;height:7px;overflow:hidden;min-width:0;">
+                <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
+                <td class="jig-col-short" style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
+                <td class="jig-col-short" style="${tdn}text-align:center;">
+                    <button type="button" class="btn btn-sm btn-outline" title="생산일보 이력 보기"
+                        onclick="JigModule.openUsageHistory('${_js(j.id)}')"
+                        style="padding:1px 8px;font-size:0.82rem;font-weight:700;color:var(--accent-blue);border-color:rgba(37,99,235,.35);">
+                        ${_fmt(j.usedCount || 0)}
+                    </button>
+                </td>
+                <td class="jig-col-progress" style="${td}">
+                    <div class="jig-life-bar-wrap" title="90% 도달 시 조치 준비">
+                        <div class="jig-life-bar">
                             <div style="width:${pct}%;background:${barColor};height:100%;border-radius:4px;"></div>
                             <div style="position:absolute;left:90%;top:0;bottom:0;width:2px;background:var(--accent-red);box-shadow:0 0 0 1px rgba(255,255,255,.8);"></div>
                         </div>
-                        <span style="font-size:0.75rem;font-weight:700;color:${barColor};flex-shrink:0;">${pct.toFixed(0)}%</span>
+                        <span style="font-size:0.72rem;font-weight:700;color:${barColor};">${pct.toFixed(0)}%</span>
                     </div>
                 </td>
-                <td style="${td}text-align:center;font-size:0.78rem;">
-                    <div style="color:var(--text-muted);">${j.lastResetDate || j.registDate || '-'}</div>
-                    ${orderingByJigId[j.id] ? `<div style="margin-top:4px;padding:3px 6px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.70rem;font-weight:600;">
-                        발주: ${_esc(orderingByJigId[j.id].orderDate || '-')}
-                    </div>` : ''}
+                <td class="jig-col-short" style="${tdn}text-align:center;font-size:0.78rem;color:var(--text-muted);">
+                    ${j.lastResetDate || j.registDate || '-'}
+                    ${orderingByJigId[j.id] ? `<span style="margin-left:4px;padding:1px 5px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.68rem;font-weight:600;">발주 ${_esc(orderingByJigId[j.id].orderDate || '-')}</span>` : ''}
                 </td>
-                <td style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
-                <td style="${td}text-align:center;">
+                <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
+                <td class="jig-col-short" style="${tdn}text-align:center;">
                     <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="조치 초기화">
                         조치
                     </button>
@@ -627,23 +772,98 @@ var JigModule = (function () {
         el.innerHTML = `
         <div class="jig-block">
             <div class="jig-table-scroll">
-            <table class="jig-life-table" style="width:100%;min-width:760px;border-collapse:collapse;background:var(--bg-primary);table-layout:fixed;">
-                ${colgroup}
+            <table class="jig-life-table">
                 <thead><tr style="background:var(--bg-secondary);">
-                    <th style="${thStyle}">차종</th>
-                    <th style="${thStyle}">제품명</th>
-                    <th style="${thStyle}">라인</th>
-                    <th style="${thStyle}">수명횟수</th>
-                    <th style="${thStyle}">누적횟수</th>
-                    <th style="${thStyle}">수명진행률</th>
-                    <th style="${thStyle}">이전교체일</th>
-                    <th style="${thStyle}">상태</th>
-                    <th style="${thStyle}">수명조치</th>
+                    <th class="jig-col-short" style="${thStyle}">차종</th>
+                    <th class="jig-col-part" style="${thStyle}">제품명</th>
+                    <th class="jig-col-short" style="${thStyle}">라인</th>
+                    <th class="jig-col-short" style="${thStyle}">수명횟수</th>
+                    <th class="jig-col-short" style="${thStyle}">누적횟수</th>
+                    <th class="jig-col-progress" style="${thStyle}">수명진행률</th>
+                    <th class="jig-col-short" style="${thStyle}">이전교체일</th>
+                    <th class="jig-col-short" style="${thStyle}">상태</th>
+                    <th class="jig-col-short" style="${thStyle}">수명조치</th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table>
             </div>
         </div>`;
+        _bindJigLifeFit();
+        _scheduleFitJigLifePartNames();
+    }
+
+    function _fitJigLifePartNames() {
+        const table = document.querySelector('#jigBlocks .jig-life-table');
+        if (!table) return;
+        const wrap = table.closest('.jig-table-scroll');
+        if (!wrap) return;
+        const names = table.querySelectorAll('.jig-part-name-text');
+        names.forEach(function (el) { el.style.fontSize = ''; });
+        table.querySelectorAll('.jig-col-part').forEach(function (cell) {
+            cell.style.width = '';
+            cell.style.maxWidth = '';
+        });
+        const oldGroup = table.querySelector('colgroup');
+        if (oldGroup) oldGroup.remove();
+        table.style.tableLayout = 'auto';
+        table.style.width = 'max-content';
+
+        const row = (table.tBodies[0] && table.tBodies[0].rows[0]) || (table.tHead && table.tHead.rows[0]);
+        if (!row) return;
+        const colWidths = Array.from(row.cells).map(function (cell) {
+            return cell.getBoundingClientRect().width;
+        });
+        let otherW = 0;
+        Array.from(row.cells).forEach(function (cell, i) {
+            if (!cell.classList.contains('jig-col-part')) otherW += colWidths[i] || 0;
+        });
+        const avail = wrap.clientWidth;
+        const partW = Math.max(96, avail - otherW - 2);
+        const group = document.createElement('colgroup');
+        Array.from(row.cells).forEach(function (cell, i) {
+            const col = document.createElement('col');
+            col.style.width = ((cell.classList.contains('jig-col-part') ? partW : colWidths[i]) || 0) + 'px';
+            group.appendChild(col);
+        });
+        table.insertBefore(group, table.firstChild);
+        table.style.tableLayout = 'fixed';
+        table.style.width = avail + 'px';
+
+        names.forEach(function (el) {
+            const base = parseFloat(window.getComputedStyle(el).fontSize) || 13;
+            if (el.scrollWidth <= el.clientWidth + 0.5) return;
+            let lo = 8;
+            let hi = base;
+            let best = 8;
+            for (let i = 0; i < 12; i++) {
+                const mid = (lo + hi) / 2;
+                el.style.fontSize = mid + 'px';
+                if (el.scrollWidth <= el.clientWidth + 0.5) {
+                    best = mid;
+                    lo = mid;
+                } else {
+                    hi = mid;
+                }
+            }
+            el.style.fontSize = best + 'px';
+        });
+    }
+
+    function _scheduleFitJigLifePartNames() {
+        if (_jigLifeFitRaf) cancelAnimationFrame(_jigLifeFitRaf);
+        _jigLifeFitRaf = requestAnimationFrame(function () {
+            _jigLifeFitRaf = 0;
+            _fitJigLifePartNames();
+        });
+    }
+
+    function _bindJigLifeFit() {
+        if (_jigLifeFitBound) return;
+        _jigLifeFitBound = true;
+        window.addEventListener('resize', _scheduleFitJigLifePartNames);
+        if (window.visualViewport) {
+            window.visualViewport.addEventListener('resize', _scheduleFitJigLifePartNames);
+        }
     }
 
     function _populateLogFilter(jigs) {
@@ -2858,6 +3078,7 @@ var JigModule = (function () {
         uploadResetPhoto,
         confirmResetCount,
         addUsageFromWork,
-        syncFromPaintingWork
+        syncFromPaintingWork,
+        openUsageHistory
     };
 })();

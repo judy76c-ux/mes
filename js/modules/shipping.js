@@ -3172,7 +3172,7 @@ const ProductWarehouseModule = (function() {
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
-                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:600;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:150px;max-width:220px;">
+                    <td style="padding:5px 8px;font-size:0.8rem;font-weight:400;border-bottom:1px solid var(--border-color);line-height:1.28;white-space:normal;word-break:break-word;min-width:150px;max-width:220px;">
                         <span style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;" title="${_escapeHtml(i.part)}">${i.part}</span>${traceMark}${typeTag}
                     </td>
                     <td style="padding:5px 8px;font-size:0.75rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${i.color || ''}</td>
@@ -3186,12 +3186,12 @@ const ProductWarehouseModule = (function() {
 
             return `<div style="break-inside:avoid;margin-bottom:10px;border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
                 <div style="background:${headerColor};color:#fff;padding:7px 10px;display:flex;align-items:center;justify-content:space-between;">
-                    <span style="font-weight:700;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
+                    <span style="font-weight:400;font-size:0.85rem;display:flex;align-items:center;gap:5px;">
                         <span class="material-symbols-outlined" style="font-size:0.95rem;">directions_car</span>
                         ${car}
                         <span style="font-size:0.7rem;font-weight:400;opacity:0.85;">${group.length}종</span>
                     </span>
-                    <div style="font-size:0.75rem;">재고 <strong>${UIUtils.formatNumber(groupTotal)}</strong> EA</div>
+                    <div style="font-size:0.75rem;font-weight:400;">재고 ${UIUtils.formatNumber(groupTotal)} EA</div>
                 </div>
                 <table style="width:100%;border-collapse:collapse;background:var(--bg-primary);">
                     <thead><tr style="background:var(--bg-secondary);">
@@ -3208,8 +3208,8 @@ const ProductWarehouseModule = (function() {
         function sectionDivider(text, count, color) {
             return `<div style="display:flex;align-items:center;gap:8px;margin:0 0 10px;">
                 <span class="material-symbols-outlined" style="font-size:15px;color:${color};">directions_car</span>
-                <span style="font-size:0.76rem;font-weight:800;color:${color};text-transform:uppercase;letter-spacing:0.5px;">${text}</span>
-                <span style="font-size:0.7rem;color:var(--text-muted);font-weight:600;">${count}개 차종</span>
+                <span style="font-size:0.76rem;font-weight:400;color:${color};text-transform:uppercase;letter-spacing:0.5px;">${text}</span>
+                <span style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">${count}개 차종</span>
                 <div style="flex:1;height:1px;background:#e2e8f0;"></div>
             </div>`;
         }
