@@ -30902,7 +30902,7 @@ var ProdSpcModule = (function() {
                                     <th style="text-align:right;min-width:64px;">종물</th>
                                     <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                     <th style="text-align:right;min-width:72px;">R(범위)</th>
-                                    <th style="text-align:center;min-width:64px;">판정</th>
+                                    <th style="text-align:center;min-width:64px;cursor:help;" title="관리이탈: 최근 측정값들의 평균이나 편차가 그동안 정상적으로 유지되던 범위를 벗어났다는 뜻입니다 (설비·재료 이상 등 원인 확인 필요). 규격이탈: 평균값이 아예 정해진 규격(허용 범위) 밖으로 나갔다는 뜻입니다.">판정</th>
                                     ${_filmDeleteHeader()}
                                 </tr>
                             </thead>
@@ -31036,7 +31036,7 @@ var ProdSpcModule = (function() {
                                         <th style="text-align:right;min-width:64px;">종물</th>
                                         <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                         <th style="text-align:right;min-width:72px;">R(범위)</th>
-                                        <th style="text-align:center;min-width:64px;">판정</th>
+                                        <th style="text-align:center;min-width:64px;cursor:help;" title="관리이탈: 최근 측정값들의 평균이나 편차가 그동안 정상적으로 유지되던 범위를 벗어났다는 뜻입니다 (설비·재료 이상 등 원인 확인 필요). 규격이탈: 평균값이 아예 정해진 규격(허용 범위) 밖으로 나갔다는 뜻입니다.">판정</th>
                                         ${_filmDeleteHeader()}
                                     </tr>
                                 </thead>
@@ -31470,6 +31470,26 @@ var ProdSpcModule = (function() {
         }
     }
 
+    // 판정("관리이탈"/"규격이탈") 근거 텍스트 — 통계 기호(X̄/UCL/LCL 등) 대신 작업자도 바로
+    // 이해할 수 있는 말로 풀어서 보여준다. 괄호 안 숫자는 검증용 실측값과 기준값.
+    // 정상 판정이면 빈 문자열.
+    function _judgmentReason(p, L, spec, outX, outR, specOut) {
+        const parts = [];
+        if (outX) {
+            parts.push(p.xbar > L.UCL_x
+                ? `평균값이 평소 정상범위 상한보다 높음 (평균 ${p.xbar.toFixed(3)} > 상한 ${_fmtLimit(L.UCL_x)})`
+                : `평균값이 평소 정상범위 하한보다 낮음 (평균 ${p.xbar.toFixed(3)} < 하한 ${_fmtLimit(L.LCL_x)})`);
+        }
+        if (outR) {
+            parts.push(`초물·중물·종물 간 값 차이(편차)가 평소보다 큼 (편차 ${p.rv.toFixed(3)} > 기준 ${L.UCL_r.toFixed(3)})`);
+        }
+        if (!parts.length && specOut) {
+            if (spec.usl != null && p.xbar > spec.usl) parts.push(`평균값이 규격 상한을 초과함 (평균 ${p.xbar.toFixed(3)} > 규격상한 ${_fmtLimit(spec.usl)})`);
+            if (spec.lsl != null && p.xbar < spec.lsl) parts.push(`평균값이 규격 하한에 못 미침 (평균 ${p.xbar.toFixed(3)} < 규격하한 ${_fmtLimit(spec.lsl)})`);
+        }
+        return parts.join(' · ');
+    }
+
     function _renderTable(points, meta, tbodyId = 'spcTableBody') {
         const tbody = document.getElementById(tbodyId);
         if (!tbody) return;
@@ -31497,6 +31517,10 @@ var ProdSpcModule = (function() {
                 ? '<span class="badge badge-danger">관리이탈</span>'
                 : (specOut ? '<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;">규격이탈</span>'
                            : '<span class="badge badge-success">정상</span>');
+            const reasonText = (out || specOut) ? _judgmentReason(p, L, spec, outX, outR, specOut) : '';
+            const reasonHtml = reasonText
+                ? `<div style="font-size:0.68rem;color:${out ? '#dc2626' : '#b45309'};margin-top:3px;white-space:nowrap;">${_esc(reasonText)}</div>`
+                : '';
             return `<tr style="${rowSt}">
                 <td style="text-align:center;">${i + 1}</td>
                 <td>${_esc(p.date||'')}</td>
@@ -31507,7 +31531,7 @@ var ProdSpcModule = (function() {
                 ${vCells}
                 <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outX?'color:#ef4444;font-weight:600;':(specOut?'color:#d97706;font-weight:600;':'')}">${p.xbar.toFixed(3)}</td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outR?'color:#ef4444;font-weight:600;':''}">${p.rv.toFixed(3)}</td>
-                <td style="text-align:center;">${badge}</td>
+                <td style="text-align:center;">${badge}${reasonHtml}</td>
                 ${_filmDeleteCell(p.id)}
             </tr>`;
         }).join('');
