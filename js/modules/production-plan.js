@@ -1168,9 +1168,21 @@ const ProductionPlanModule = (function() {
 
     function _getPaintRowsForProduct(carModel, partName, color, line) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const prod = products.find(p =>
+        // 같은 차종+품명이 도장-A/도장-B 양쪽에 등록돼 있을 수 있어, 먼저 현재 라인의
+        // 제조공정(process1~4)에 해당하는 제품만으로 좁힌 뒤 매칭한다. 그렇지 않으면
+        // updateDropdowns의 lineProducts 필터(2187행)와 달리 반대 라인의 도료 레시피가
+        // 그대로 섞여 보이거나(도료 현재고 패널), 재고 검사(_getPaintShortagesForPlan)가
+        // 엉뚱한 라인 기준으로 막힐 수 있다.
+        let lineProducts = products;
+        if (line) {
+            const inLine = products.filter(p =>
+                p.process1 === line || p.process2 === line || p.process3 === line || p.process4 === line
+            );
+            if (inLine.length > 0) lineProducts = inLine;
+        }
+        const prod = lineProducts.find(p =>
             p.carModel === carModel && p.partName === partName && p.color === color
-        ) || products.find(p =>
+        ) || lineProducts.find(p =>
             p.carModel === carModel && p.partName === partName
         );
         return (prod && prod.paintMaterials) ? prod.paintMaterials : [];
@@ -2169,14 +2181,7 @@ const ProductionPlanModule = (function() {
         const lineEl = document.getElementById('sLine');
         const qtyStr = qtyEl ? qtyEl.value : null;
         const startTimeStr = startEl ? startEl.value : null;
-        if (!qtyStr || !startTimeStr) return;
-
         const qty = Number(qtyStr) || 0;
-        if (qty <= 0) {
-            const endEl = document.getElementById('sEndTime');
-            if (endEl) endEl.value = '';
-            return;
-        }
         const model = document.getElementById('sModel').value;
         const part = document.getElementById('sPart').value;
         const color = document.getElementById('sColor').value;
@@ -2252,11 +2257,20 @@ const ProductionPlanModule = (function() {
             }
         }
 
-        // 공정 정보 표시 업데이트
+        // 공정 정보 표시 업데이트 — 수량/시작시간을 아직 입력하지 않았어도(신규 계획은 수량 0으로
+        // 시작) 차종·품명·라인만 정해지면 바로 보여야 한다. 종료시간 계산에만 필요한 수량/
+        // 시작시간 가드는 이 아래(예상 종료시각 계산)에서만 적용한다.
         const processInfoEl = document.getElementById('processInfo');
         if (processInfoEl) {
             processInfoEl.textContent = processInfo;
             processInfoEl.style.color = processInfo === '-' ? 'var(--text-muted)' : 'var(--text-primary)';
+        }
+
+        if (!qtyStr || !startTimeStr) return;
+        if (qty <= 0) {
+            const endEl = document.getElementById('sEndTime');
+            if (endEl) endEl.value = '';
+            return;
         }
 
         if (ctPerPiece > 0 && qty > 0) {

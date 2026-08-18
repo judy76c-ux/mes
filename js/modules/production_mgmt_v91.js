@@ -19410,6 +19410,125 @@ var ProdQualityModule = (function() {
         return `${lowerSpec || ''} ~ ${upperSpec || ''}`.trim();
     }
 
+    function _fmtSpecNum(v) {
+        if (v == null || isNaN(Number(v))) return '';
+        const n = Number(v);
+        if (Number.isInteger(n)) return String(n);
+        return String(Math.round(n * 1000) / 1000);
+    }
+
+    function _parseSpecTextLimits(text, itemKey = '') {
+        const s = String(text || '').trim();
+        if (!s) return { usl: null, lsl: null, label: '' };
+        const gloss = s.match(/([+\-]?\d+(?:\.\d+)?)\s*±\s*([+\-]?\d+(?:\.\d+)?)/);
+        if (gloss) {
+            const t = parseFloat(gloss[1]), tol = parseFloat(gloss[2]);
+            return { usl: t + tol, lsl: t - tol, label: `${_fmtSpecNum(t)} ± ${_fmtSpecNum(tol)}` };
+        }
+        const film = s.match(/하\s*\(?\s*([+\-]?\d+(?:\.\d+)?)\s*\)?[\s\S]*?상\s*\(?\s*([+\-]?\d+(?:\.\d+)?)/);
+        if (film) {
+            const lo = parseFloat(film[1]), hi = parseFloat(film[2]);
+            return { usl: hi, lsl: lo, label: `${_fmtSpecNum(lo)} ~ ${_fmtSpecNum(hi)}` };
+        }
+        const dev = s.match(/\+\s*([+\-]?\d+(?:\.\d+)?)\s*\/\s*[−\-]\s*([+\-]?\d+(?:\.\d+)?)/);
+        if (dev) {
+            const hi = Math.abs(parseFloat(dev[1]));
+            const lo = Math.abs(parseFloat(dev[2]));
+            return { usl: hi, lsl: -lo, label: `+${_fmtSpecNum(hi)} / −${_fmtSpecNum(lo)}` };
+        }
+        const nums = s.match(/[+\-]?\d+(?:\.\d+)?/g) || [];
+        if (nums.length >= 2) {
+            const a = parseFloat(nums[0]), b = parseFloat(nums[1]);
+            if (String(itemKey).startsWith('color') || (a > 0 && b < 0)) {
+                if (a > 0 && b < 0) return { usl: a, lsl: b, label: `+${_fmtSpecNum(a)} / −${_fmtSpecNum(Math.abs(b))}` };
+                if (a > 0 && b > 0 && String(itemKey).startsWith('color')) {
+                    return { usl: a, lsl: -b, label: `+${_fmtSpecNum(a)} / −${_fmtSpecNum(b)}` };
+                }
+            }
+            const hi = Math.max(a, b), lo = Math.min(a, b);
+            return { usl: hi, lsl: lo, label: `${_fmtSpecNum(lo)} ~ ${_fmtSpecNum(hi)}` };
+        }
+        if (nums.length === 1 && String(itemKey).startsWith('color')) {
+            const v = Math.abs(parseFloat(nums[0]));
+            if (!isNaN(v) && v > 0) return { usl: v, lsl: -v, label: `±${_fmtSpecNum(v)}` };
+        }
+        return { usl: null, lsl: null, label: '' };
+    }
+
+    function _numericSpecLimits(item = {}) {
+        if (!item) return { usl: null, lsl: null, label: '' };
+        if (_isGlossSpecItem(item) || _specModeOf(item) === 'target' || item.key === 'gloss') {
+            const { targetSpec, toleranceSpec } = _glossValues(item);
+            const t = parseFloat(targetSpec);
+            const tol = parseFloat(toleranceSpec);
+            if (!isNaN(t) && !isNaN(tol)) {
+                return { usl: t + tol, lsl: t - tol, label: `${_fmtSpecNum(t)} ± ${_fmtSpecNum(tol)}` };
+            }
+            const fromGlossText = _parseSpecTextLimits(item.spec || '', 'gloss');
+            if (fromGlossText.usl != null || fromGlossText.lsl != null) return fromGlossText;
+        }
+        const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+        const hi = parseFloat(upperSpec);
+        const lo = parseFloat(lowerSpec);
+        const isDev = _specModeOf(item) === 'deviation' || _isColorSpecItem(item);
+        if (!isNaN(hi) || !isNaN(lo)) {
+            if (isDev) {
+                if (!isNaN(hi) && !isNaN(lo)) {
+                    if (hi >= 0 && lo > 0) {
+                        return { usl: hi, lsl: -lo, label: `+${_fmtSpecNum(hi)} / −${_fmtSpecNum(lo)}` };
+                    }
+                    const usl = Math.max(hi, lo);
+                    const lsl = Math.min(hi, lo);
+                    return { usl, lsl, label: `+${_fmtSpecNum(Math.abs(usl))} / −${_fmtSpecNum(Math.abs(lsl))}` };
+                }
+                const mag = Math.abs(!isNaN(hi) ? hi : lo);
+                return { usl: mag, lsl: -mag, label: `±${_fmtSpecNum(mag)}` };
+            }
+            const usl = isNaN(hi) ? null : hi;
+            const lsl = isNaN(lo) ? null : lo;
+            const parts = [];
+            if (lsl != null) parts.push(_fmtSpecNum(lsl));
+            if (usl != null) parts.push(_fmtSpecNum(usl));
+            return { usl, lsl, label: parts.join(' ~ ') };
+        }
+        return _parseSpecTextLimits(item.spec || '', item.key || '');
+    }
+
+    function parseSpcSpecLimits(item = {}) {
+        return _numericSpecLimits(item);
+    }
+
+    function _spcItemFromList(items, itemKey) {
+        if (!itemKey) return null;
+        const list = items || [];
+        const exact = list.find(i => String(i.key || '') === itemKey);
+        if (exact) return exact;
+        return list.find(i => {
+            const text = `${i.key || ''} ${i.label || ''}`;
+            if (itemKey === 'color_l') return /△L|color_l|Luminosity/i.test(text);
+            if (itemKey === 'color_a') return /△a|color_a/i.test(text);
+            if (itemKey === 'color_b') return /△b|color_b/i.test(text);
+            if (itemKey === 'film_under') return /하도|film_under/.test(text);
+            if (itemKey === 'film_top') return /상도|film_top/.test(text);
+            if (itemKey === 'gloss') return /광택|gloss/i.test(text);
+            return false;
+        }) || null;
+    }
+
+    function getSpcSpecLimits(opts = {}) {
+        const itemKey = opts.itemKey || '';
+        const items = _productSpecItems(opts.carModel || '', opts.partName || '', opts.color || '', {
+            fallbackToMaster: false,
+            paintProcess: opts.paintProcess || ''
+        });
+        const item = _spcItemFromList(items, itemKey);
+        const fromTmpl = _numericSpecLimits(item || {});
+        if (fromTmpl.usl != null || fromTmpl.lsl != null) return fromTmpl;
+        if (opts.item) return _numericSpecLimits({ ...opts.item, key: opts.item.key || itemKey });
+        if (opts.spec) return _parseSpecTextLimits(opts.spec, itemKey);
+        return { usl: null, lsl: null, label: '' };
+    }
+
     function _rangeSpecEditor(prefix, item = {}, placeholderUpper = '상한', placeholderLower = '하한', opts = {}) {
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
         const mode = _specModeOf(item);
@@ -19462,6 +19581,9 @@ var ProdQualityModule = (function() {
     }
 
     function _isAdminUser() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
         const user = _currentUser();
         return String(user?.role || '') === 'admin';
     }
@@ -21511,6 +21633,7 @@ var ProdQualityModule = (function() {
                                 <thead>
                                     <tr>
                                         <th>월</th><th>일</th><th>차종</th><th>품명</th><th>컬러</th><th>LOT</th><th>항목</th><th>기준</th><th>초물</th><th>중물</th><th>종물</th><th>단위</th><th>기록</th>
+                                        ${kind === 'film' && _isAdminUser() ? '<th style="white-space:nowrap;text-align:center;">작업</th>' : ''}
                                     </tr>
                                 </thead>
                                 <tbody id="pqMeasureHistoryBody"></tbody>
@@ -21693,13 +21816,18 @@ var ProdQualityModule = (function() {
         const car = document.getElementById('pqMeasureCar')?.value || '';
         const rows = getMeasureHistoryRows({ kind, month, car });
 
+        const canDeleteFilm = kind === 'film' && _isAdminUser();
+        const colCount = canDeleteFilm ? 14 : 13;
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="${colCount}" style="text-align:center;padding:30px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
         }
         tbody.innerHTML = rows.map(({ record, item }) => {
             const date = record.recordDate || record.date || '';
             const values = item.values || {};
+            const delCell = canDeleteFilm
+                ? `<td style="white-space:nowrap;text-align:center;"><button type="button" class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeMeasureFilmData('${_js(record.id)}')">삭제</button></td>`
+                : '';
             return `
                 <tr>
                     <td>${_esc(date.slice(0, 7) || '-')}</td>
@@ -21715,8 +21843,57 @@ var ProdQualityModule = (function() {
                     <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['종물'], item.group) || '-')}</td>
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     <td style="font-size:0.76rem;color:var(--text-muted);">${_esc(_formatPrintDateTime(record.updatedAt || record.createdAt))}</td>
+                    ${delCell}
                 </tr>`;
         }).join('');
+    }
+
+    function _isFilmMeasureItem(item = {}) {
+        if (!item) return false;
+        if (item.group === 'film') return true;
+        return _itemHasFilmManagement(item);
+    }
+
+    function _itemHasNumericVals(item = {}) {
+        const vals = item.values || item.vals || {};
+        return Object.values(vals).some(v => v !== '' && v !== null && v !== undefined && !isNaN(Number(v)));
+    }
+
+    function removeMeasureFilmData(recordId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const rec = Storage.getById(STORE, recordId);
+        if (!rec || rec._docKind !== MEASURE_RECORD_KIND) {
+            UIUtils.toast('도막 측정 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const summary = [rec.recordDate || rec.date || '-', rec.carModel || '-', rec.partName || '-'].join(' · ');
+        UIUtils.confirm(`${summary} 도막 측정 DATA(하도·상도)를 삭제하시겠습니까? 색차/광택 값은 유지됩니다.`, async () => {
+            const items = Array.isArray(rec.items) ? rec.items.map(item => {
+                if (_isFilmMeasureItem(item)) return { ...item, values: {}, vals: {} };
+                return item;
+            }) : [];
+            const hasOther = items.some(item => !_isFilmMeasureItem(item) && _itemHasNumericVals(item));
+            if (!hasOther) {
+                await Storage.remove(STORE, recordId);
+                const linked = (Storage.getAll(STORE) || []).filter(d => d && d.dataRecordId === recordId);
+                for (const issue of linked) {
+                    await Storage.update(STORE, issue.id, { ...issue, dataRecordId: '', dataRecordedAt: '' });
+                }
+            } else {
+                await Storage.update(STORE, recordId, { ...rec, items, updatedAt: UIUtils.now() });
+            }
+            UIUtils.toast('도막 측정 DATA가 삭제되었습니다.', 'success');
+            if (document.getElementById('pqMeasureHistoryKind')?.value === 'film') {
+                renderMeasureHistoryTable('film');
+            }
+            if (typeof ProdSpcModule !== 'undefined' && typeof ProdSpcModule.search === 'function'
+                && document.getElementById('spcFilmPanels')) {
+                ProdSpcModule.search();
+            }
+        });
     }
 
     function _templates() {
@@ -24296,6 +24473,7 @@ window.addEventListener('afterprint', () => {
         ,removePqDataPhoto
         ,_formatFilmValue
         ,saveMeasureRecord
+        ,removeMeasureFilmData
         ,getMeasureHistoryRows
         ,getColorManagedCatalog
         ,getFilmManagedCatalog
@@ -24347,6 +24525,8 @@ window.addEventListener('afterprint', () => {
         ,_pqPresetDragEnd
         ,deleteCheckedPresetItems
         ,savePresetEdit
+        ,getSpcSpecLimits
+        ,parseSpcSpecLimits
     };
 })();
 
@@ -30416,9 +30596,12 @@ var ProdSpcModule = (function() {
                     date: _recordDate(record),
                     carModel: record.carModel || '',
                     partName: record.partName || '',
+                    color: record.color || '',
                     lot: record.lotNo || '',
                     line: record.line || '',
                     itemLabel: item.label || '',
+                    specText: item.spec || '',
+                    specItem: item,
                     types,
                     valsByType,
                     xbar,
@@ -30696,12 +30879,15 @@ var ProdSpcModule = (function() {
             <div id="spcStats" class="stat-cards" style="margin-bottom:16px;"></div>
 
             <div class="card" style="margin-bottom:16px;">
-                <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4></div>
-                <div class="card-body" id="spcXbarWrap" style="min-height:220px;"><canvas id="spcXbarCanvas"></canvas></div>
+                <div class="card-header" style="flex-wrap:wrap;gap:8px;">
+                    <h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4>
+                    <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: SU/SL 규격 · 빨강: UCL/LCL 관리한계</span>
+                </div>
+                <div class="card-body spc-chart-wrap" id="spcXbarWrap"><canvas id="spcXbarCanvas"></canvas></div>
             </div>
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> R 관리도 (범위)</h4></div>
-                <div class="card-body" id="spcRWrap" style="min-height:220px;"><canvas id="spcRCanvas"></canvas></div>
+                <div class="card-body spc-chart-wrap spc-chart-wrap--r" id="spcRWrap"><canvas id="spcRCanvas"></canvas></div>
             </div>
             <div class="card">
                 <div class="card-header"><h4><span class="material-symbols-outlined">table_chart</span> 측정 데이터 목록</h4></div>
@@ -30717,6 +30903,7 @@ var ProdSpcModule = (function() {
                                     <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                     <th style="text-align:right;min-width:72px;">R(범위)</th>
                                     <th style="text-align:center;min-width:64px;">판정</th>
+                                    ${_filmDeleteHeader()}
                                 </tr>
                             </thead>
                             <tbody id="spcTableBody"></tbody>
@@ -30744,7 +30931,7 @@ var ProdSpcModule = (function() {
         const stats = document.getElementById('spcStats');
         if (stats) stats.innerHTML = msg;
         const tbody = document.getElementById('spcTableBody');
-        if (tbody) tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">차종을 선택하세요.</td></tr>`;
+        if (tbody) tbody.innerHTML = `<tr><td colspan="${_spcTableColCount()}" class="empty-cell">차종을 선택하세요.</td></tr>`;
     }
 
     function openCarCategory(pageId, carModel) {
@@ -30780,6 +30967,31 @@ var ProdSpcModule = (function() {
         if (catKey) _renderManagedCarSections(catKey, document.getElementById('spcCar')?.value || '');
     }
 
+    function _isAdmin() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
+        return false;
+    }
+
+    function _canDeleteFilmMeasure() {
+        return _isAdmin() && _activeManagedCategoryKey() === 'film';
+    }
+
+    function _filmDeleteHeader() {
+        if (!_canDeleteFilmMeasure()) return '';
+        return '<th style="white-space:nowrap;text-align:center;">작업</th>';
+    }
+
+    function _filmDeleteCell(recordId) {
+        if (!_canDeleteFilmMeasure() || !recordId) return '';
+        return `<td style="white-space:nowrap;text-align:center;"><button type="button" class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeMeasureFilmData('${_js(recordId)}')">삭제</button></td>`;
+    }
+
+    function _spcTableColCount() {
+        return 12 + (_canDeleteFilmMeasure() ? 1 : 0);
+    }
+
     function _filmLayerSuffix(itemKey) {
         return itemKey === 'film_top' ? 'top' : 'under';
     }
@@ -30801,12 +31013,15 @@ var ProdSpcModule = (function() {
                 </h5>
                 <div id="spcStats_${suffix}" class="stat-cards" style="margin-bottom:16px;"></div>
                 <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4></div>
-                    <div class="card-body" id="spcXbarWrap_${suffix}" style="min-height:220px;"></div>
+                    <div class="card-header" style="flex-wrap:wrap;gap:8px;">
+                        <h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4>
+                        <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: SU/SL 규격 · 빨강: UCL/LCL 관리한계</span>
+                    </div>
+                    <div class="card-body spc-chart-wrap" id="spcXbarWrap_${suffix}"></div>
                 </div>
                 <div class="card" style="margin-bottom:16px;">
                     <div class="card-header"><h4><span class="material-symbols-outlined">show_chart</span> R 관리도 (범위)</h4></div>
-                    <div class="card-body" id="spcRWrap_${suffix}" style="min-height:220px;"></div>
+                    <div class="card-body spc-chart-wrap spc-chart-wrap--r" id="spcRWrap_${suffix}"></div>
                 </div>
                 <div class="card">
                     <div class="card-header"><h4><span class="material-symbols-outlined">table_chart</span> 측정 데이터 목록</h4></div>
@@ -30822,6 +31037,7 @@ var ProdSpcModule = (function() {
                                         <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                         <th style="text-align:right;min-width:72px;">R(범위)</th>
                                         <th style="text-align:center;min-width:64px;">판정</th>
+                                        ${_filmDeleteHeader()}
                                     </tr>
                                 </thead>
                                 <tbody id="spcTableBody_${suffix}"></tbody>
@@ -30921,6 +31137,143 @@ var ProdSpcModule = (function() {
         };
     }
 
+    function _specKey(spec) {
+        if (!spec) return '';
+        const r = v => (v == null || isNaN(Number(v))) ? '' : String(Number(v));
+        return `${r(spec.usl)}|${r(spec.lsl)}`;
+    }
+
+    function _specFromPoint(point, itemKey) {
+        if (!point) return { usl: null, lsl: null, label: '' };
+        if (typeof ProdQualityModule !== 'undefined' && ProdQualityModule.parseSpcSpecLimits) {
+            const fromItem = ProdQualityModule.parseSpcSpecLimits({
+                ...(point.specItem || {}),
+                key: (point.specItem && point.specItem.key) || itemKey,
+                spec: point.specText || (point.specItem && point.specItem.spec) || ''
+            });
+            if (fromItem && (fromItem.usl != null || fromItem.lsl != null)) return fromItem;
+        }
+        if (typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getSpcSpecLimits) {
+            return ProdQualityModule.getSpcSpecLimits({
+                carModel: point.carModel,
+                partName: point.partName,
+                color: point.color || '',
+                paintProcess: point.line || '',
+                itemKey,
+                spec: point.specText || ''
+            });
+        }
+        return { usl: null, lsl: null, label: '' };
+    }
+
+    function _resolveSpecLimits(points, meta) {
+        const itemKey = meta?.key || '';
+        const empty = { usl: null, lsl: null, label: '' };
+        if (!points || !points.length) return empty;
+
+        const fromPoints = points.map(p => _specFromPoint(p, itemKey))
+            .filter(s => s && (s.usl != null || s.lsl != null));
+        if (fromPoints.length && fromPoints.every(s => _specKey(s) === _specKey(fromPoints[0]))) {
+            return fromPoints[0];
+        }
+
+        const seen = new Set();
+        const lookups = [];
+        points.forEach(p => {
+            const k = `${p.carModel}|${p.partName}|${p.line || ''}|${p.color || ''}`;
+            if (seen.has(k)) return;
+            seen.add(k);
+            if (typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getSpcSpecLimits) {
+                lookups.push(ProdQualityModule.getSpcSpecLimits({
+                    carModel: p.carModel,
+                    partName: p.partName,
+                    color: p.color || '',
+                    paintProcess: p.line || '',
+                    itemKey
+                }));
+            }
+        });
+        const valid = lookups.filter(s => s && (s.usl != null || s.lsl != null));
+        if (valid.length && valid.every(s => _specKey(s) === _specKey(valid[0]))) return valid[0];
+
+        const car = document.getElementById('spcCar')?.value || '';
+        const partRaw = document.getElementById('spcPart')?.value || '';
+        const catKey = _activeManagedCategoryKey();
+        const parsed = catKey ? _parsePartToken(partRaw) : { partName: partRaw, line: '' };
+        if (car && parsed.partName && typeof ProdQualityModule !== 'undefined' && ProdQualityModule.getSpcSpecLimits) {
+            const fromFilter = ProdQualityModule.getSpcSpecLimits({
+                carModel: car,
+                partName: parsed.partName,
+                paintProcess: parsed.line || '',
+                itemKey
+            });
+            if (fromFilter && (fromFilter.usl != null || fromFilter.lsl != null)) return fromFilter;
+        }
+        return empty;
+    }
+
+    function _hasSpecLimits(spec) {
+        return !!(spec && (spec.usl != null || spec.lsl != null));
+    }
+
+    function _isSpecOut(xbar, spec) {
+        if (!_hasSpecLimits(spec)) return false;
+        if (spec.usl != null && xbar > spec.usl) return true;
+        if (spec.lsl != null && xbar < spec.lsl) return true;
+        return false;
+    }
+
+    function _yBounds(values) {
+        const nums = (values || []).filter(v => v != null && !isNaN(Number(v))).map(Number);
+        if (!nums.length) return {};
+        const min = Math.min(...nums);
+        const max = Math.max(...nums);
+        const span = max - min;
+        const pad = span > 0 ? span * 0.1 : (Math.abs(max) || 1) * 0.15;
+        return { min: min - pad, max: max + pad };
+    }
+
+    function _fmtLimit(v) {
+        if (v == null || isNaN(Number(v))) return '-';
+        return Number(v).toFixed(3);
+    }
+
+    function _spcLimitLabelPlugin(entries) {
+        return {
+            id: 'spcLimitLabels',
+            afterDatasetsDraw(chart) {
+                const yScale = chart.scales.y;
+                const area = chart.chartArea;
+                const ctx = chart.ctx;
+                if (!yScale || !area) return;
+                const placed = [];
+                const items = (entries || [])
+                    .filter(e => e && e.value != null && !isNaN(Number(e.value)))
+                    .map(e => ({ ...e, y: yScale.getPixelForValue(Number(e.value)) }))
+                    .filter(e => e.y >= area.top - 4 && e.y <= area.bottom + 4)
+                    .sort((a, b) => a.y - b.y);
+                items.forEach(e => {
+                    let y = e.y;
+                    placed.forEach(py => {
+                        if (Math.abs(y - py) < 13) y = py + 13;
+                    });
+                    placed.push(y);
+                    ctx.save();
+                    ctx.font = e.bold ? '700 11px Inter, sans-serif' : '600 10px Inter, sans-serif';
+                    const tw = ctx.measureText(e.text).width;
+                    const x = area.right - tw - 8;
+                    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+                    ctx.fillRect(x - 3, y - 7, tw + 6, 14);
+                    ctx.fillStyle = e.color;
+                    ctx.textBaseline = 'middle';
+                    ctx.textAlign = 'left';
+                    ctx.fillText(e.text, x, y);
+                    ctx.restore();
+                });
+            }
+        };
+    }
+
     function _renderStats(points, meta, statsId = 'spcStats') {
         const el = document.getElementById(statsId);
         if (!el) return;
@@ -30931,13 +31284,18 @@ var ProdSpcModule = (function() {
             return;
         }
         const L = _calcLimits(points);
+        const spec = _resolveSpecLimits(points, meta);
         const outX = points.filter(p=>p.xbar>L.UCL_x||p.xbar<L.LCL_x).length;
         const outR = points.filter(p=>p.rv>L.UCL_r).length;
         const oot  = outX + outR;
+        const specOut = points.filter(p => _isSpecOut(p.xbar, spec)).length;
 
         // 표준편차(σ) 추정 = R̄ / d2  (d2는 subgroup 크기별)
         const d2 = { 2:1.128, 3:1.693, 4:2.059, 5:2.326 };
         const sigma = d2[Math.min(5,Math.max(2,L.n))] ? L.rBar / d2[Math.min(5,Math.max(2,L.n))] : null;
+        const specLabel = _hasSpecLimits(spec)
+            ? `SU ${_fmtLimit(spec.usl)} / SL ${_fmtLimit(spec.lsl)}`
+            : '미등록';
 
         el.innerHTML = `
             <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">data_usage</span></div>
@@ -30951,8 +31309,15 @@ var ProdSpcModule = (function() {
             <div class="stat-card ${oot>0?'stat-card-danger':'stat-card-success'}">
                 <div class="stat-icon"><span class="material-symbols-outlined">${oot>0?'warning':'check_circle'}</span></div>
                 <div class="stat-info"><div class="stat-value">${oot}</div><div class="stat-label">관리 이탈 포인트</div></div></div>
-            <div class="stat-card">
+            <div class="stat-card ${specOut>0?'stat-card-danger':''}">
                 <div class="stat-icon"><span class="material-symbols-outlined">rule</span></div>
+                <div class="stat-info">
+                    <div class="stat-value" style="font-size:0.82rem;">${specLabel}</div>
+                    <div class="stat-label">${_hasSpecLimits(spec) ? `SU/SL 규격${spec.label ? ' · ' + spec.label : ''} / 규격이탈 ${specOut}` : 'SU/SL 규격 (품목 기준 미등록)'}</div>
+                </div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-icon"><span class="material-symbols-outlined">tune</span></div>
                 <div class="stat-info">
                     <div class="stat-value" style="font-size:0.9rem;">UCL: ${L.UCL_x.toFixed(2)}</div>
                     <div class="stat-label">X̄ 관리 한계 / LCL: ${L.LCL_x.toFixed(2)}</div>
@@ -30984,56 +31349,94 @@ var ProdSpcModule = (function() {
             return;
         }
 
-        // 캔버스 재생성 (destroy 후 dom 재삽입)
-        if (xbarWrap) xbarWrap.innerHTML = `<canvas id="${xbarCanvasId}" style="max-height:280px;"></canvas>`;
-        if (rWrap)    rWrap.innerHTML    = `<canvas id="${rCanvasId}"    style="max-height:240px;"></canvas>`;
+        // 캔버스 재생성 (destroy 후 dom 재삽입) — 카드 가로를 가득 채움
+        if (xbarWrap) xbarWrap.innerHTML = `<canvas id="${xbarCanvasId}"></canvas>`;
+        if (rWrap)    rWrap.innerHTML    = `<canvas id="${rCanvasId}"></canvas>`;
 
         const xbarCanvas = document.getElementById(xbarCanvasId);
         const rCanvas    = document.getElementById(rCanvasId);
         if (!xbarCanvas || !rCanvas) return;
 
         const L      = _calcLimits(points);
+        const spec   = _resolveSpecLimits(points, meta);
         const labels = points.map((p,i)=>`${i+1}. ${(p.date||'').slice(5)}${p.lot?' ('+p.lot+')':''}`);
         const xbars  = points.map(p=> +p.xbar.toFixed(3));
         const rs     = points.map(p=> +p.rv.toFixed(3));
 
-        const lineOpts = (color, dash=[]) => ({
-            borderColor: color, borderDash: dash, borderWidth: 1.5,
+        const lineOpts = (color, dash=[], width=1.5) => ({
+            borderColor: color, borderDash: dash, borderWidth: width,
             pointRadius: 0, fill: false
         });
-        const chartOpts = {
-            responsive: true, maintainAspectRatio: true,
-            plugins: {
-                legend: { position: 'top', labels: { font: { size: 10 }, boxWidth: 14 } },
-                tooltip: { mode: 'index', intersect: false }
-            },
-            scales: {
-                x: { ticks: { font: { size: 9 }, maxRotation: 45 } },
-                y: { ticks: { font: { size: 10 } } }
-            }
+        const chartOpts = (yExtra = []) => {
+            const yScale = _yBounds(yExtra);
+            return {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { position: 'top', labels: { font: { size: 11 }, boxWidth: 16, padding: 10 } },
+                    tooltip: { mode: 'index', intersect: false }
+                },
+                scales: {
+                    x: { ticks: { font: { size: 10 }, maxRotation: 45 } },
+                    y: {
+                        ticks: { font: { size: 11 } },
+                        ...(yScale.min != null ? { min: yScale.min, max: yScale.max } : {})
+                    }
+                }
+            };
         };
+
+        const xbarDatasets = [
+            {
+                label: `X̄ (${meta.label}) [${meta.unit}]`,
+                data: xbars,
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59,130,246,0.07)',
+                pointRadius: 4,
+                pointBackgroundColor: xbars.map((_,i) => {
+                    const x = points[i].xbar;
+                    if (x > L.UCL_x || x < L.LCL_x) return '#ef4444';
+                    if (_isSpecOut(x, spec)) return '#f59e0b';
+                    return '#3b82f6';
+                }),
+                tension: 0.15
+            },
+            { label: `UCL (${_fmtLimit(L.UCL_x)})`, data: Array(labels.length).fill(+L.UCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
+            { label: `CL  (${_fmtLimit(L.CL_x)})`,  data: Array(labels.length).fill(+L.CL_x.toFixed(3)),  ...lineOpts('#10b981',[4,4]) },
+            { label: `LCL (${_fmtLimit(L.LCL_x)})`, data: Array(labels.length).fill(+L.LCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) }
+        ];
+        if (spec.usl != null) {
+            xbarDatasets.push({
+                label: `SU 규격상한 (${_fmtLimit(spec.usl)})`,
+                data: Array(labels.length).fill(+Number(spec.usl).toFixed(3)),
+                ...lineOpts('#f59e0b', [10, 4], 2)
+            });
+        }
+        if (spec.lsl != null) {
+            xbarDatasets.push({
+                label: `SL 규격하한 (${_fmtLimit(spec.lsl)})`,
+                data: Array(labels.length).fill(+Number(spec.lsl).toFixed(3)),
+                ...lineOpts('#d97706', [10, 4], 2)
+            });
+        }
+
+        const xbarY = [
+            ...xbars, L.UCL_x, L.CL_x, L.LCL_x,
+            spec.usl, spec.lsl
+        ];
+        const xbarLimitLabels = [
+            spec.usl != null ? { value: spec.usl, text: `SU ${_fmtLimit(spec.usl)}`, color: '#f59e0b', bold: true } : null,
+            spec.lsl != null ? { value: spec.lsl, text: `SL ${_fmtLimit(spec.lsl)}`, color: '#d97706', bold: true } : null,
+            { value: L.UCL_x, text: `UCL ${_fmtLimit(L.UCL_x)}`, color: '#ef4444' },
+            { value: L.CL_x,  text: `CL ${_fmtLimit(L.CL_x)}`,  color: '#10b981' },
+            { value: L.LCL_x, text: `LCL ${_fmtLimit(L.LCL_x)}`, color: '#ef4444' }
+        ];
 
         const xbarChart = new Chart(xbarCanvas, {
             type: 'line',
-            data: {
-                labels,
-                datasets: [
-                    {
-                        label: `X̄ (${meta.label}) [${meta.unit}]`,
-                        data: xbars,
-                        borderColor: '#3b82f6',
-                        backgroundColor: 'rgba(59,130,246,0.07)',
-                        pointRadius: 4,
-                        pointBackgroundColor: xbars.map((v,i) =>
-                            (points[i].xbar > L.UCL_x || points[i].xbar < L.LCL_x) ? '#ef4444' : '#3b82f6'),
-                        tension: 0.15
-                    },
-                    { label: `UCL (${L.UCL_x.toFixed(3)})`, data: Array(labels.length).fill(+L.UCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
-                    { label: `CL  (${L.CL_x.toFixed(3)})`,  data: Array(labels.length).fill(+L.CL_x.toFixed(3)),  ...lineOpts('#10b981',[4,4]) },
-                    { label: `LCL (${L.LCL_x.toFixed(3)})`, data: Array(labels.length).fill(+L.LCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) }
-                ]
-            },
-            options: { ...chartOpts }
+            data: { labels, datasets: xbarDatasets },
+            options: chartOpts(xbarY),
+            plugins: [_spcLimitLabelPlugin(xbarLimitLabels)]
         });
 
         const rDatasets = [
@@ -31056,7 +31459,7 @@ var ProdSpcModule = (function() {
         const rChart = new Chart(rCanvas, {
             type: 'line',
             data: { labels, datasets: rDatasets },
-            options: { ...chartOpts }
+            options: chartOpts([...rs, L.UCL_r, L.CL_r, L.LCL_r > 0 ? L.LCL_r : null])
         });
 
         if (suffix) {
@@ -31071,12 +31474,13 @@ var ProdSpcModule = (function() {
         const tbody = document.getElementById(tbodyId);
         if (!tbody) return;
         if (!points.length) {
-            tbody.innerHTML = `<tr><td colspan="12" class="empty-cell">
+            tbody.innerHTML = `<tr><td colspan="${_spcTableColCount()}" class="empty-cell">
                 초중종물 관리 → 색차/광택 이력·도막 이력에 입력한 DATA가 여기에 자동으로 표시됩니다.
             </td></tr>`;
             return;
         }
         const L = _calcLimits(points);
+        const spec = _resolveSpecLimits(points, meta);
         const numCell = (v, extra = '') => {
             const text = (v !== null && v !== undefined) ? Number(v).toFixed(2) : '-';
             return `<td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${extra}">${text}</td>`;
@@ -31084,10 +31488,15 @@ var ProdSpcModule = (function() {
         tbody.innerHTML = points.map((p, i) => {
             const outX  = p.xbar > L.UCL_x || p.xbar < L.LCL_x;
             const outR  = p.rv   > L.UCL_r;
+            const specOut = _isSpecOut(p.xbar, spec);
             const out   = outX || outR;
-            const rowSt = out ? 'background:rgba(239,68,68,0.05);' : '';
+            const rowSt = out ? 'background:rgba(239,68,68,0.05);' : (specOut ? 'background:rgba(245,158,11,0.08);' : '');
             const byType = p.valsByType || {};
             const vCells = MEASURE_TYPES.map(t => numCell(byType[t])).join('');
+            const badge = out
+                ? '<span class="badge badge-danger">관리이탈</span>'
+                : (specOut ? '<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;">규격이탈</span>'
+                           : '<span class="badge badge-success">정상</span>');
             return `<tr style="${rowSt}">
                 <td style="text-align:center;">${i + 1}</td>
                 <td>${_esc(p.date||'')}</td>
@@ -31096,9 +31505,10 @@ var ProdSpcModule = (function() {
                 <td style="font-family:monospace;font-size:0.8rem;">${_esc(p.lot||'-')}</td>
                 <td>${_esc(p.line||'-')}</td>
                 ${vCells}
-                <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outX?'color:#ef4444;font-weight:600;':''}">${p.xbar.toFixed(3)}</td>
+                <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outX?'color:#ef4444;font-weight:600;':(specOut?'color:#d97706;font-weight:600;':'')}">${p.xbar.toFixed(3)}</td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outR?'color:#ef4444;font-weight:600;':''}">${p.rv.toFixed(3)}</td>
-                <td style="text-align:center;"><span class="badge ${out?'badge-danger':'badge-success'}">${out?'이탈':'정상'}</span></td>
+                <td style="text-align:center;">${badge}</td>
+                ${_filmDeleteCell(p.id)}
             </tr>`;
         }).join('');
     }
