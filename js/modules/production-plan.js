@@ -1185,7 +1185,13 @@ const ProductionPlanModule = (function() {
         ) || lineProducts.find(p =>
             p.carModel === carModel && p.partName === partName
         );
-        return (prod && prod.paintMaterials) ? prod.paintMaterials : [];
+        const rows = (prod && prod.paintMaterials) ? prod.paintMaterials : [];
+        if (!line) return rows;
+        // 도료 행 하나하나에 도장-A/도장-B 전용 여부(processTag)가 붙어 있을 수 있다
+        // (설정 > 제품 도료 편집기의 "공정" 열 — settings.js _resolvePaintProcessTag).
+        // 반대 라인 전용 행은 이 라인 계획에 필요 없으므로 재고 표시·부족 검증에서 제외한다.
+        // processTag가 비어 있는 과거 데이터 행은 라인 구분 없이 그대로 포함한다.
+        return rows.filter(r => !r.processTag || r.processTag === line);
     }
 
     // 계획에 필요한 도료(주제/경화제/희석제) 중 재고가 바닥난(<=0) 항목의 표시명 목록 반환
