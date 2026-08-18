@@ -6632,6 +6632,42 @@ var InjectionWarehouseModule = (function() {
         return set.has(`${partName}||${lotNo}||qtyonly:${_lotNum(qty)}`);
     }
 
+    /** 검사(품명+LOT+차종)에 대해, 아직 이 검사와 연결되지 않은(inspId 없음) 기존 입고 기록을 찾는다.
+     *  실물이 먼저 "직접 입고(수기 등록)"로 창고에 들어오고 수입검사가 나중에 등록된 경우,
+     *  _lotInStock()의 qtyonly 매칭은 항상 insp.id가 있어 통과하지 못해(의도된 제한 — CHEVY 260815
+     *  사고 참고) 대기 목록에 계속 남는다. 「입고」를 누르기 직전 여기서 한 번 더 확인해
+     *  같은 실물이 두 번 재고로 잡히는 사고를 막는다. */
+    function _findUnlinkedDirectInbound(carModel, partName, lotNo) {
+        const part = String(partName || '').trim();
+        const lot = String(lotNo || '').trim();
+        if (!part || !lot) return null;
+        const car = String(carModel || '').trim();
+        const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
+        for (const i of inventory) {
+            if (i.type !== '입고' || i.inspId) continue;
+            if (String(i.partName || '').trim() !== part) continue;
+            if (car && i.carModel && String(i.carModel).trim() !== car) continue;
+            const lots = (i.lots && i.lots.length) ? i.lots : (i.lotNo ? [{ lotNo: i.lotNo, qty: i.quantity }] : []);
+            const hit = lots.find(function(l) { return String(l.lotNo || '').trim() === lot; });
+            if (hit) return { record: i, lotNo: hit.lotNo, qty: _lotNum(hit.qty) };
+        }
+        return null;
+    }
+
+    /** 전체입고/일괄입고처럼 확인 없이 한 번에 여러 LOT을 처리하는 경로용 —
+     *  검사와 연결되지 않은 기존 입고와 충돌하는 LOT은 걸러내 별도로 반환한다.
+     *  걸러진 LOT은 개별 「입고」 버튼(연결/별도입고 확인창)에서 사람이 직접 처리해야 한다. */
+    function _splitConflictingPendingLots(insp, pendingLots) {
+        const clean = [];
+        const conflicts = [];
+        (pendingLots || []).forEach(function(l) {
+            const hit = _findUnlinkedDirectInbound(insp.carModel, insp.partName, l.lotNo);
+            if (hit) conflicts.push({ lot: l, conflict: hit });
+            else clean.push(l);
+        });
+        return { clean: clean, conflicts: conflicts };
+    }
+
     // 현재 창고(INJECTION_INVENTORY)에 이미 입고된 LOT 판정 키 집합 (_addInStockKeys 규칙)
     // 도장현장 반납 입고도 넣는다. 검사 입고 없이 현장 출고됐다가 반납된 LOT을 대기 목록에
     // 남겨 두면 「입고」를 또 눌러 같은 실물이 두 번 재고로 잡힌다.
@@ -6878,13 +6914,22 @@ var InjectionWarehouseModule = (function() {
         await _ensurePendingCutoverLoaded();
         await _ensureDismissedPendingLoaded();
         const inStockSet = _buildInStockLotSet();
-        const pendingLots = _pendingLotsForInspection(insp, inStockSet);
-        if (pendingLots.length === 0) {
+        const allPendingLots = _pendingLotsForInspection(insp, inStockSet);
+        if (allPendingLots.length === 0) {
             // 숨김 처리 때문에 대상이 없는 경우와 "이미 입고 완료"를 구분해서 알린다
             const hidden = _dismissedLotsForInspection(insp, inStockSet);
             UIUtils.toast(hidden.length
                 ? `숨김 처리된 LOT ${hidden.length}건뿐입니다. 입고하려면 '숨김 항목'에서 먼저 복원하세요.`
                 : '이미 모두 입고 처리되었습니다.', 'info');
+            renderInspStandby();
+            return;
+        }
+
+        const { clean: pendingLots, conflicts } = _splitConflictingPendingLots(insp, allPendingLots);
+        if (pendingLots.length === 0) {
+            UIUtils.toast(
+                `이 검사건의 LOT ${conflicts.length}건은 이미 창고에 연결 안 된 입고 기록이 있어 전체입고에서 제외했습니다. ` +
+                `개별 「입고」 버튼에서 연결 여부를 확인하세요.`, 'warning');
             renderInspStandby();
             return;
         }
@@ -6902,6 +6947,12 @@ var InjectionWarehouseModule = (function() {
                     <div style="color:var(--text-muted);">미입고 LOT ${pendingLots.length}건 · 합계
                         <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalQty)} EA</strong></div>
                 </div>
+                ${conflicts.length ? `
+                <div style="margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,.3);
+                            background:rgba(220,38,38,.06);font-size:0.82rem;line-height:1.55;">
+                    <strong style="color:var(--accent-red);">LOT ${conflicts.length}건 제외됨</strong> —
+                    연결 안 된 기존 입고 기록과 LOT이 같아 중복 위험이 있습니다. 개별 「입고」 버튼에서 처리하세요.
+                </div>` : ''}
                 ${waitDays != null && waitDays >= 3 ? `
                 <div style="margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid rgba(180,83,9,.35);
                             background:rgba(180,83,9,.07);font-size:0.82rem;line-height:1.55;">
@@ -6945,10 +6996,19 @@ var InjectionWarehouseModule = (function() {
         const time = timeEl ? String(timeEl.value || '').trim() : '';
         const dateOverride = (day + ' ' + time).trim();
 
-        const pendingLots = _pendingLotsForInspection(insp, _buildInStockLotSet());
-        if (pendingLots.length === 0) {
+        const allPendingLots = _pendingLotsForInspection(insp, _buildInStockLotSet());
+        if (allPendingLots.length === 0) {
             UIUtils.toast('이미 모두 입고 처리되었습니다.', 'info');
             UIUtils.closeModal();
+            renderInspStandby();
+            return;
+        }
+        const { clean: pendingLots, conflicts } = _splitConflictingPendingLots(insp, allPendingLots);
+        if (pendingLots.length === 0) {
+            UIUtils.closeModal();
+            UIUtils.toast(
+                `LOT ${conflicts.length}건 모두 연결 안 된 기존 입고 기록과 겹쳐 처리하지 않았습니다. ` +
+                `개별 「입고」 버튼에서 연결 여부를 확인하세요.`, 'warning');
             renderInspStandby();
             return;
         }
@@ -6957,7 +7017,8 @@ var InjectionWarehouseModule = (function() {
         const allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         await _commitInspectionInbound(insp, pendingLots, allMats, dateOverride);
         UIUtils.closeModal();
-        UIUtils.toast(`${pendingLots.length}건 · ${UIUtils.formatNumber(totalQty)} EA 입고 처리 완료되었습니다.`, 'success');
+        UIUtils.toast(`${pendingLots.length}건 · ${UIUtils.formatNumber(totalQty)} EA 입고 처리 완료되었습니다.` +
+            (conflicts.length ? ` (LOT ${conflicts.length}건은 중복 위험으로 제외)` : ''), 'success');
         renderInspStandby();
         if (typeof loadData === 'function') { try { loadData(); } catch (e) {} }
     }
@@ -6971,12 +7032,29 @@ var InjectionWarehouseModule = (function() {
         const inStockSet = _buildInStockLotSet();
         const dismissedSet = _buildDismissedPendingSet();
 
-        const groups = inspections
+        const rawGroups = inspections
             .map(insp => ({ insp, pendingLots: _pendingLotsForInspection(insp, inStockSet, dismissedSet) }))
             .filter(g => g.pendingLots.length > 0);
 
-        if (groups.length === 0) {
+        if (rawGroups.length === 0) {
             UIUtils.toast('입고 대기 중인 항목이 없습니다.', 'info');
+            renderInspStandby();
+            return;
+        }
+
+        let conflictLotCount = 0;
+        const groups = rawGroups
+            .map(g => {
+                const { clean, conflicts } = _splitConflictingPendingLots(g.insp, g.pendingLots);
+                conflictLotCount += conflicts.length;
+                return { insp: g.insp, pendingLots: clean };
+            })
+            .filter(g => g.pendingLots.length > 0);
+
+        if (groups.length === 0) {
+            UIUtils.toast(
+                `대기 중인 LOT ${conflictLotCount}건 모두 연결 안 된 기존 입고 기록과 겹쳐 일괄 입고에서 제외했습니다. ` +
+                `개별 「입고」 버튼에서 연결 여부를 확인하세요.`, 'warning');
             renderInspStandby();
             return;
         }
@@ -6993,6 +7071,12 @@ var InjectionWarehouseModule = (function() {
                     <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(totalQty)} EA</strong>
                     <div style="color:var(--text-muted);">성적서 접수 여부와 무관하게 합격수량 전체를 반영합니다.</div>
                 </div>
+                ${conflictLotCount ? `
+                <div style="margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,.3);
+                            background:rgba(220,38,38,.06);font-size:0.82rem;line-height:1.55;">
+                    <strong style="color:var(--accent-red);">LOT ${conflictLotCount}건 제외됨</strong> —
+                    연결 안 된 기존 입고 기록과 LOT이 같아 중복 위험이 있습니다. 개별 「입고」 버튼에서 처리하세요.
+                </div>` : ''}
                 ${staleCount ? `
                 <div style="margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid rgba(180,83,9,.35);
                             background:rgba(180,83,9,.07);font-size:0.82rem;line-height:1.55;">
@@ -7040,12 +7124,28 @@ var InjectionWarehouseModule = (function() {
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
         const inStockSet = _buildInStockLotSet();
         const dismissedSet = _buildDismissedPendingSet();
-        const groups = inspections
+        const rawGroups = inspections
             .map(insp => ({ insp, pendingLots: _pendingLotsForInspection(insp, inStockSet, dismissedSet) }))
             .filter(g => g.pendingLots.length > 0);
-        if (groups.length === 0) {
+        if (rawGroups.length === 0) {
             UIUtils.toast('입고 대기 중인 항목이 없습니다.', 'info');
             UIUtils.closeModal();
+            renderInspStandby();
+            return;
+        }
+        let conflictLotCount = 0;
+        const groups = rawGroups
+            .map(g => {
+                const { clean, conflicts } = _splitConflictingPendingLots(g.insp, g.pendingLots);
+                conflictLotCount += conflicts.length;
+                return { insp: g.insp, pendingLots: clean };
+            })
+            .filter(g => g.pendingLots.length > 0);
+        if (groups.length === 0) {
+            UIUtils.closeModal();
+            UIUtils.toast(
+                `대기 중인 LOT ${conflictLotCount}건 모두 연결 안 된 기존 입고 기록과 겹쳐 처리하지 않았습니다. ` +
+                `개별 「입고」 버튼에서 연결 여부를 확인하세요.`, 'warning');
             renderInspStandby();
             return;
         }
@@ -7060,7 +7160,8 @@ var InjectionWarehouseModule = (function() {
         UIUtils.closeModal();
         UIUtils.toast(failed
             ? `${groups.length - failed}건 처리 완료 · ${failed}건 실패 (콘솔 확인)`
-            : `${groups.length}건 · ${UIUtils.formatNumber(totalQty)} EA 일괄 입고 처리 완료되었습니다.`,
+            : `${groups.length}건 · ${UIUtils.formatNumber(totalQty)} EA 일괄 입고 처리 완료되었습니다.` +
+              (conflictLotCount ? ` (LOT ${conflictLotCount}건은 중복 위험으로 제외)` : ''),
             failed ? 'warning' : 'success');
         renderInspStandby();
         if (typeof loadData === 'function') { try { loadData(); } catch (e) {} }
@@ -7113,6 +7214,86 @@ var InjectionWarehouseModule = (function() {
         var fillLotNo = targetLot ? targetLot.lotNo : (lotNo || insp.lotNo || '');
         var fillQty   = targetLot ? _lotNum(targetLot.qty) : _lotNum(insp.passQty);
 
+        const conflict = _findUnlinkedDirectInbound(insp.carModel, insp.partName, fillLotNo);
+        if (conflict) {
+            _showInspInboundConflictModal(insp, fillLotNo, fillQty, conflict);
+            return;
+        }
+        _openAddFromInspectionForm(insp, fillLotNo, fillQty);
+    }
+
+    // 검사 LOT-창고 직접입고 충돌 확인 대기 컨텍스트
+    let _pendingInspInboundLinkCtx = null;
+
+    /** 이 수입검사 LOT과 같은 품명·LOT의, 검사와 연결되지 않은 입고 기록이 이미 창고에
+     *  있을 때 뜨는 확인창. 실물이 같다면 "연결"만 하고, 다른 실물(재입고 등)이면
+     *  "별도로 입고"를 선택하게 한다 — _showManualInboundConflictModal의 반대 방향판. */
+    function _showInspInboundConflictModal(insp, lotNo, qty, conflict) {
+        _pendingInspInboundLinkCtx = { insp: insp, lotNo: lotNo, qty: qty, conflict: conflict };
+        const rec = conflict.record;
+        const who = _formatActorLabel(rec.receivedBy || '') || '미기록';
+        UIUtils.showModal('이 LOT은 이미 창고에 입고된 것으로 보입니다',
+            `<div style="padding:4px 0;">
+                <div style="padding:12px 14px;border-radius:8px;border:1px solid rgba(220,38,38,.3);
+                            background:rgba(220,38,38,.06);font-size:0.85rem;line-height:1.6;">
+                    이 수입검사 LOT과 같은 품명·LOT번호의 <strong>수입검사와 연결되지 않은 입고 기록</strong>이
+                    이미 창고에 있습니다. 그대로 입고 처리하면 <strong style="color:var(--accent-red);">같은 실물이 두 번 재고로 잡힐 수 있습니다.</strong>
+                </div>
+                <div style="margin-top:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:6px;">
+                    <div style="font-size:0.82rem;">기존 입고 — ${_escapeHtml(String(rec.date || '-').slice(0, 16))}
+                        <span style="color:var(--text-muted);">(${_escapeHtml(rec.source || rec.note || '직접 입고')} · ${_escapeHtml(who)})</span></div>
+                    <div style="margin-top:4px;font-family:monospace;font-size:0.85rem;font-weight:700;">
+                        ${_escapeHtml(conflict.lotNo)} · ${UIUtils.formatNumber(conflict.qty)} EA</div>
+                </div>
+                <div style="margin-top:12px;font-size:0.82rem;color:var(--text-secondary);">
+                    실물이 같다면 <strong>기존 입고에 이 검사만 연결</strong>하세요(재고 추가 없음).
+                    서로 다른 실물(재입고 등)이라면 <strong>별도로 입고</strong>를 선택하세요.
+                </div>
+            </div>`,
+            `<button class="btn btn-secondary" onclick="InjectionWarehouseModule._cancelInspInboundConflict()">취소</button>
+             <button class="btn btn-primary" onclick="InjectionWarehouseModule._commitInspInboundLink()">기존 입고에 연결</button>
+             <button class="btn btn-outline" style="color:#dc2626;border-color:#fca5a5;"
+                onclick="InjectionWarehouseModule._commitInspInboundSeparate()">그래도 별도로 입고</button>`,
+            '580px'
+        );
+    }
+
+    function _cancelInspInboundConflict() {
+        _pendingInspInboundLinkCtx = null;
+        UIUtils.closeModal();
+    }
+
+    /** 확인창의 "기존 입고에 연결" — 새 입고 기록을 만들지 않고, 기존 직접입고 기록에
+     *  inspId/inspDate만 붙인다. 이후 _lotInStock()의 inspid 키가 매칭돼 대기 목록에서도 빠진다. */
+    async function _commitInspInboundLink() {
+        const ctx = _pendingInspInboundLinkCtx;
+        if (!ctx) return;
+        _pendingInspInboundLinkCtx = null;
+        UIUtils.closeModal();
+        try {
+            await Storage.update(DB.STORES.INJECTION_INVENTORY, ctx.conflict.record.id, {
+                inspId: ctx.insp.id,
+                inspDate: ctx.insp.date || ''
+            });
+            UIUtils.toast('기존 입고 기록에 수입검사를 연결했습니다. 재고는 추가되지 않았습니다.', 'success');
+            renderInspStandby();
+            if (typeof loadData === 'function') { try { loadData(); } catch (e) {} }
+        } catch (e) {
+            console.error('[InjectionWarehouseModule] 검사-입고 연결 실패:', e);
+            UIUtils.toast('연결 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
+    /** 확인창의 "그래도 별도로 입고" — 기존 입고 모달 흐름을 그대로 진행 */
+    function _commitInspInboundSeparate() {
+        const ctx = _pendingInspInboundLinkCtx;
+        if (!ctx) return;
+        _pendingInspInboundLinkCtx = null;
+        UIUtils.closeModal();
+        _openAddFromInspectionForm(ctx.insp, ctx.lotNo, ctx.qty);
+    }
+
+    function _openAddFromInspectionForm(insp, fillLotNo, fillQty) {
         _pendingInspDate = insp.date || '';
         openAddModal('입고');
         _lockedInspInbound = { inspId: insp.id, lotNo: fillLotNo, qty: fillQty };
@@ -11254,6 +11435,9 @@ var InjectionWarehouseModule = (function() {
         getPendingInboundRows,
         _commitManualInbound,
         _cancelManualInboundConflict,
+        _commitInspInboundLink,
+        _commitInspInboundSeparate,
+        _cancelInspInboundConflict,
         removeDismissedPendingLot,
         _confirmRemoveDismissedPendingLot,
         cleanupDismissedPending,
