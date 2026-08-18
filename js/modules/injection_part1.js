@@ -341,11 +341,13 @@ var InjectionIncomingModule = (function() {
             const badLotSet = fifoViolationLots[d.id] || new Set();
             const injLotDisplay = lotList.map(l => {
                 const lotNo = l.lotNo || '-';
+                const lotQty = Number(l.qty) || 0;
+                const qtyText = lotQty > 0 ? ' (' + UIUtils.formatNumber(lotQty) + ')' : '';
                 const bad = badLotSet.has(lotNo);
                 const style = bad
-                    ? 'display:inline-block;background:#fff7ed;border:1px solid #fb923c;border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:800;color:#ea580c;'
-                    : 'display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:600;';
-                return `<span style="${style}" ${bad ? 'title="FIFO 위반 LOT"' : ''}>${lotNo}</span>`;
+                    ? 'display:inline-block;background:#fff7ed;border:1px solid #fb923c;border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:800;color:#ea580c;white-space:nowrap;'
+                    : 'display:inline-block;background:var(--bg-secondary);border:1px solid var(--border);border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:600;white-space:nowrap;';
+                return `<span style="${style}" ${bad ? 'title="FIFO 위반 LOT"' : ''}>${lotNo}${qtyText}</span>`;
             }).join('') + (isFifoViolation
                 ? `<span style="display:inline-flex;align-items:center;gap:2px;background:#fff7ed;border:1px solid #fed7aa;border-radius:4px;padding:1px 6px;font-size:0.75rem;margin:1px;color:#ea580c;font-weight:700;" title="선입선출 위반: 이전에 등록된 최신 LOT보다 오래된 재고입니다"><span class="material-symbols-outlined" style="font-size:0.85rem;">warning</span>FIFO</span>`
                 : '');

@@ -1186,7 +1186,7 @@ const ProductionPlanModule = (function() {
         validRows.forEach(r => {
             [['주제', r.mainId], ['경화제', r.hardId], ['희석제', r.thinnerId]].forEach(function(pair) {
                 const label = pair[0], matId = pair[1];
-                if (!matId || seen[matId]) return;
+                if (!matId || matId === '사용불필요' || seen[matId]) return;
                 seen[matId] = true;
                 if (_paintMatBalance(matId) <= 0) {
                     shortages.push(label + ' ' + _paintMatName(matId));
@@ -1230,6 +1230,9 @@ const ProductionPlanModule = (function() {
 
         function matCell(label, matId) {
             if (!matId) return `<td style="padding:2px 8px;font-size:0.76rem;color:var(--text-muted);">-</td>`;
+            if (matId === '사용불필요') return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);font-style:italic;">
+                        <span style="margin-right:3px;">${label}</span>사용불필요
+                    </td>`;
             const qty = _paintMatBalance(matId);
             const name = _paintMatName(matId);
             const qtyColor = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
@@ -2521,6 +2524,9 @@ const ProductionPlanModule = (function() {
                     const _psk = [..._pso.filter(s => _pgp[s]), ...Object.keys(_pgp).filter(s => !_pso.includes(s))];
                     const _mc = (label, matId) => {
                         if (!matId) return `<td style="padding:2px 8px;font-size:0.76rem;color:var(--text-muted);">-</td>`;
+                        if (matId === '사용불필요') return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);font-style:italic;">
+                            <span style="margin-right:3px;">${label}</span>사용불필요
+                        </td>`;
                         const qty = _paintMatBalance(matId), name = _paintMatName(matId);
                         const qc  = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
                         return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"

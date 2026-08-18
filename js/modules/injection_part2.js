@@ -766,6 +766,210 @@ var InjectionWarehouseModule = (function() {
         return _pendingCutover;
     }
 
+    // 예전 입고 경로는 inspDate만 넣고 inspId를 안 남겼다. 검사 원장·창고 수량을 지우지 않고
+    // 대기에서만 영구히 빠지도록, 검사일시+품명이 1:1인 입고에 검사 ID를 한 번만 채운다.
+    const INSP_ID_BACKFILL_KEY = 'injection_inbound_insp_id_backfill_v1';
+    let _inspIdBackfillDone = false;
+    let _inspIdBackfillRunning = false;
+
+    function _inspLotsOf(insp) {
+        if (insp && insp.lots && insp.lots.length) return insp.lots;
+        if (insp && insp.lotNo) return [{ lotNo: insp.lotNo, qty: insp.passQty }];
+        return [];
+    }
+
+    function _invLotsOf(inv) {
+        if (inv && inv.lots && inv.lots.length) return inv.lots;
+        if (inv && inv.lotNo) return [{ lotNo: inv.lotNo, qty: inv.quantity }];
+        return [];
+    }
+
+    async function _backfillMissingInspectionInboundIds() {
+        if (_inspIdBackfillDone || _inspIdBackfillRunning) return 0;
+        _inspIdBackfillRunning = true;
+        try {
+            let already = null;
+            try { already = await Storage.getConfigValue(INSP_ID_BACKFILL_KEY); }
+            catch (e) { return 0; }
+            if (already && already.done) {
+                _inspIdBackfillDone = true;
+                return 0;
+            }
+
+            const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+            const inventory = Storage.getAll(STORE) || [];
+            const byDatePart = {};
+            inspections.forEach(function (insp) {
+                if (!insp || !insp.id || !insp.date) return;
+                const k = String(insp.partName || '') + '||' + String(insp.date);
+                (byDatePart[k] = byDatePart[k] || []).push(insp);
+            });
+
+            const updates = [];
+            inventory.forEach(function (inv) {
+                if (!inv || inv.type !== '입고' || inv.inspId || !inv.inspDate) return;
+                if (typeof _isSiteReturnInbound === 'function' && _isSiteReturnInbound(inv)) return;
+                const k = String(inv.partName || '') + '||' + String(inv.inspDate);
+                const cands = byDatePart[k] || [];
+                if (cands.length !== 1) return;
+                const insp = cands[0];
+                const inspLots = {};
+                _inspLotsOf(insp).forEach(function (l) {
+                    const n = String(l.lotNo || '').trim();
+                    if (n) inspLots[n] = true;
+                });
+                const overlap = _invLotsOf(inv).some(function (l) {
+                    return inspLots[String(l.lotNo || '').trim()];
+                });
+                if (!overlap) return;
+                updates.push({ id: inv.id, inspId: insp.id, inspDate: inv.inspDate || insp.date });
+            });
+
+            for (let i = 0; i < updates.length; i++) {
+                const u = updates[i];
+                try {
+                    await Storage.update(STORE, u.id, {
+                        inspId: u.inspId,
+                        inspDate: u.inspDate,
+                        inspIdBackfilled: true
+                    });
+                } catch (e) {
+                    console.warn('[InjectionWarehouse] 검사 ID 백필 실패:', u.id, e);
+                }
+            }
+
+            try {
+                await Storage.setConfigValue(INSP_ID_BACKFILL_KEY, {
+                    done: true,
+                    at: new Date().toISOString(),
+                    count: updates.length
+                });
+            } catch (e) {
+                console.warn('[InjectionWarehouse] 검사 ID 백필 플래그 저장 실패', e);
+            }
+            _inspIdBackfillDone = true;
+            return updates.length;
+        } finally {
+            _inspIdBackfillRunning = false;
+        }
+    }
+
+    // 검사 ID·검사일시 없이 LOT·수량만 맞는 옛 입고(28건) — 원장에 이미 들어가 있으면
+    // 검사 LOT에 inboundSettled 만 표시한다. 창고 수량은 추가·삭제하지 않는다.
+    const QTYONLY_SETTLE_KEY = 'injection_pending_qtyonly_settle_v1';
+    let _qtyonlySettleDone = false;
+    let _qtyonlySettleRunning = false;
+
+    function _isAdjustmentInbound(d) {
+        const src = String((d && d.source) || '');
+        return /재고 수정 보정|일괄 현재고 보정|현재고 확정|재고실사/.test(src);
+    }
+
+    function _qtyonlyClaimKey(car, part, color, lotNo, qty) {
+        return [String(car || '').trim(), String(part || '').trim(), String(color || '').trim(),
+            String(lotNo || '').trim(), String(qty)].join('||');
+    }
+
+    async function _settleQtyonlyPendingLots() {
+        if (_qtyonlySettleDone || _qtyonlySettleRunning) return 0;
+        _qtyonlySettleRunning = true;
+        try {
+            let already = null;
+            try { already = await Storage.getConfigValue(QTYONLY_SETTLE_KEY); }
+            catch (e) { return 0; }
+            if (already && already.done) {
+                _qtyonlySettleDone = true;
+                return 0;
+            }
+
+            const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+            const inventory = Storage.getAll(STORE) || [];
+            const inboundIndex = {};
+            inventory.forEach(function (inv) {
+                if (!inv || inv.type !== '입고') return;
+                _invLotsOf(inv).forEach(function (l) {
+                    const qty = _lotNum(l.qty);
+                    const lotNo = String(l.lotNo || '').trim();
+                    if (!lotNo || qty <= 0) return;
+                    const k = _qtyonlyClaimKey(inv.carModel, inv.partName, inv.color, lotNo, qty);
+                    (inboundIndex[k] = inboundIndex[k] || []).push(inv);
+                });
+            });
+
+            const nowIso = new Date().toISOString();
+            const inspUpdates = [];
+            const claimedInv = {};
+            inspections.forEach(function (insp) {
+                const lots = _inspLotsOf(insp);
+                if (!lots.length) return;
+                let changed = false;
+                const nextLots = lots.map(function (l) {
+                    const lot = Object.assign({}, l);
+                    if (lot.inboundSettled) return lot;
+                    const qty = _lotNum(lot.qty);
+                    const lotNo = String(lot.lotNo || '').trim();
+                    if (!lotNo || qty <= 0) return lot;
+                    const hits = inboundIndex[_qtyonlyClaimKey(insp.carModel, insp.partName, insp.color, lotNo, qty)] || [];
+                    if (!hits.length) return lot;
+                    lot.inboundSettled = true;
+                    lot.inboundSettledAt = nowIso;
+                    lot.inboundSettledReason = 'qtyonly-ledger';
+                    changed = true;
+                    const linkable = hits.filter(function (h) {
+                        if (h.inspId) return false;
+                        if (typeof _isSiteReturnInbound === 'function' && _isSiteReturnInbound(h)) return false;
+                        if (_isAdjustmentInbound(h)) return false;
+                        return true;
+                    });
+                    if (linkable.length === 1) {
+                        const invId = linkable[0].id;
+                        if (!claimedInv[invId]) claimedInv[invId] = insp.id;
+                        else if (claimedInv[invId] !== insp.id) claimedInv[invId] = '__conflict__';
+                    }
+                    return lot;
+                });
+                if (changed) inspUpdates.push({ id: insp.id, lots: nextLots });
+            });
+
+            for (let i = 0; i < inspUpdates.length; i++) {
+                const u = inspUpdates[i];
+                try { await Storage.update(DB.STORES.INJECTION_INSPECTIONS, u.id, { lots: u.lots }); }
+                catch (e) { console.warn('[InjectionWarehouse] qtyonly 대기 정리 실패:', u.id, e); }
+            }
+
+            const invIds = Object.keys(claimedInv);
+            for (let i = 0; i < invIds.length; i++) {
+                const invId = invIds[i];
+                const inspId = claimedInv[invId];
+                if (!inspId || inspId === '__conflict__') continue;
+                const insp = inspections.find(function (x) { return String(x.id) === String(inspId); });
+                try {
+                    await Storage.update(STORE, invId, {
+                        inspId: inspId,
+                        inspDate: (insp && insp.date) || undefined,
+                        inspIdBackfilled: true
+                    });
+                } catch (e) {
+                    console.warn('[InjectionWarehouse] qtyonly 입고 연결 실패:', invId, e);
+                }
+            }
+
+            try {
+                await Storage.setConfigValue(QTYONLY_SETTLE_KEY, {
+                    done: true,
+                    at: nowIso,
+                    inspectionCount: inspUpdates.length
+                });
+            } catch (e) {
+                console.warn('[InjectionWarehouse] qtyonly 대기 정리 플래그 저장 실패', e);
+            }
+            _qtyonlySettleDone = true;
+            return inspUpdates.length;
+        } finally {
+            _qtyonlySettleRunning = false;
+        }
+    }
+
     /** 기준일로부터 오늘까지 경과 일수 (날짜 불명이면 null) */
     function _daysSince(dateLike) {
         const day = String(dateLike || '').slice(0, 10);
@@ -778,15 +982,17 @@ var InjectionWarehouseModule = (function() {
 
     // 검사일(day)이 컷오버 이전이면 true → 입고 대기·일괄입고에서 제외
     //
-    // ⚠ 필터링을 일부러 비활성화해뒀다(항상 false). 서버 config의 이 값이 반복해서
-    // "오늘 날짜"로 재오염되는 사고가 있었다 — 코드 쪽 자동 저장 로직은 이미 제거했지만
-    // (_ensurePendingCutoverLoaded 참고), 이 기능이 배포되기 전의 예전 코드를 여전히 메모리에
-    // 띄워둔 브라우저 탭(새로고침을 안 한 탭)이 하나라도 열려 있으면 그 탭이 계속 값을
-    // 덮어써서, 관리자가 값을 지워도 몇 분 안에 다시 몇 주치 입고 대기 backlog가 화면에서
-    // 사라지는 일이 반복됐다. 모든 클라이언트가 새 코드로 넘어왔다고 확신하기 전까지는
-    // 이 값을 신뢰하지 않고 전부 보여주는 쪽이 안전하다(숨겨서 놓치는 것보다 낫다).
+    // 과거에는 이 함수를 항상 false로 막아 두었다. 예전 브라우저 탭이 컷오버 값을
+    // "오늘"로 덮어써서 대기 목록이 통째로 사라지는 사고가 있었기 때문이다.
+    // 자동 저장은 이미 제거됐고, 값을 오늘로 바꾸지 않는다.
+    // 필터를 꺼 두면 창고에 이미 넣은 과거 검사건이 대기에 다시 올라온다
+    // (2026-08-18 기준 172건). 설정된 일자 이전만 제외한다.
     function _isBeforePendingCutover(inspDate) {
-        return false;
+        const cut = _cutoverDay(_pendingCutover);
+        if (!cut) return false;
+        const day = _cutoverDay(inspDate);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return false;
+        return day < cut;
     }
 
     // key/표시용 문자열 정규화 (콤마/공백/트림)
@@ -4934,6 +5140,8 @@ var InjectionWarehouseModule = (function() {
     async function getPendingInboundRows() {
         await _ensurePendingCutoverLoaded();
         await _ensureDismissedPendingLoaded();
+        await _backfillMissingInspectionInboundIds();
+        await _settleQtyonlyPendingLots();
         return _buildPendingInboundRows();
     }
 
@@ -4947,6 +5155,16 @@ var InjectionWarehouseModule = (function() {
         }
         if (!_pendingCutoverLoaded) {
             _ensurePendingCutoverLoaded().then(renderInspStandby).catch(() => {});
+        }
+        if (!_inspIdBackfillDone && !_inspIdBackfillRunning) {
+            _backfillMissingInspectionInboundIds().then(function (n) {
+                if (n > 0) renderInspStandby();
+            }).catch(function () {});
+        }
+        if (!_qtyonlySettleDone && !_qtyonlySettleRunning) {
+            _settleQtyonlyPendingLots().then(function (n) {
+                if (n > 0) renderInspStandby();
+            }).catch(function () {});
         }
 
         // 창고 카드와 대시보드가 같은 규칙을 쓰도록 단일 출처(_buildPendingInboundRows)에서 가져온다
@@ -6395,11 +6613,11 @@ var InjectionWarehouseModule = (function() {
     // 콤마 포함 문자열 수량도 안전하게 숫자화 (InvCalc._num과 동일 규칙)
     function _lotNum(v) { return Number(String(v == null ? '' : v).replace(/,/g, '')) || 0; }
 
-    // "이미 입고됨" 판정 키 등록.
-    // LOT 번호는 생산일자 기준이라 서로 다른 검사건이 같은 번호를 재사용한다. LOT번호+수량만으로
-    // 매칭하면 다른 검사건의 동일 LOT·동일 수량을 "이미 입고"로 오인해(오탐) 실제 입고가 누락된다.
-    // 따라서 검사 인스턴스를 특정하는 inspId > inspDate 를 우선 키로 쓰고, 둘 다 없는 옛 수동입고에
-    // 한해서만 수량 폴백(qtyonly)을 남긴다.
+    // "이미 입고됨" 판정.
+    // 1) 이 검사 ID로 연결된 입고 → 완료
+    // 2) 이 검사일시(inspDate)가 찍힌 입고 → 예전 입고 경로(inspId 없이 날짜만 저장)
+    // 3) 수량만 같은 입고(qtyonly)는 검사 ID가 없을 때만. 사내 생산입고와 LOT·수량이
+    //    우연히 같으면 미입고 LOT이 대기에서 빠지는 사고(CHEVY 260815)가 난다.
     function _addInStockKeys(set, partName, lotNo, qty, inspId, inspDate) {
         if (!lotNo || qty <= 0) return;
         if (inspId)   set.add(`${partName}||${lotNo}||inspid:${inspId}`);
@@ -6407,10 +6625,10 @@ var InjectionWarehouseModule = (function() {
         if (!inspId && !inspDate) set.add(`${partName}||${lotNo}||qtyonly:${qty}`);
     }
 
-    // 검사건의 LOT 하나가 이미 창고에 반영됐는지 — 등록과 동일 우선순위로 확인
     function _lotInStock(set, partName, lotNo, qty, inspId, inspDate) {
-        if (inspId   && set.has(`${partName}||${lotNo}||inspid:${inspId}`)) return true;
+        if (inspId && set.has(`${partName}||${lotNo}||inspid:${inspId}`)) return true;
         if (inspDate && set.has(`${partName}||${lotNo}||insp:${inspDate}`)) return true;
+        if (inspId) return false;
         return set.has(`${partName}||${lotNo}||qtyonly:${_lotNum(qty)}`);
     }
 
@@ -6585,6 +6803,7 @@ var InjectionWarehouseModule = (function() {
         return sourceLots.filter(l => {
             const qty = _lotNum(l.qty);
             if (qty <= 0) return false;
+            if (l.inboundSettled) return false;
             if (dismissed.has(_dismissedPendingKey(insp.id, l.lotNo))) return false;
             return !_lotInStock(inStockSet, insp.partName, l.lotNo, qty, insp.id, insp.date);
         });
