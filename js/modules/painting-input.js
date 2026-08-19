@@ -23,6 +23,40 @@ var PaintingInputModule = (function () {
         return '도장-A';
     }
 
+    /** 제작품명(T1XX KNOB LOWER)과 사출명(KNOB LOWER)을 같은 품목으로 본다. */
+    function _partNamesMatch(stored, want, carModel) {
+        var x = String(stored || '').trim();
+        var y = String(want || '').trim();
+        if (!y) return true;
+        if (!x) return false;
+        if (x === y) return true;
+        if (typeof ReworkWipModule !== 'undefined') {
+            if (typeof ReworkWipModule.partsMatch === 'function') {
+                try { return !!ReworkWipModule.partsMatch(x, y, carModel); } catch (e) { /* fall through */ }
+            }
+            if (typeof ReworkWipModule.toInjPartName === 'function') {
+                try {
+                    var ix = ReworkWipModule.toInjPartName(carModel, x);
+                    var iy = ReworkWipModule.toInjPartName(carModel, y);
+                    if (ix && iy && ix === iy) return true;
+                } catch (e2) { /* fall through */ }
+            }
+        }
+        var na = x.toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
+        var nb = y.toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
+        if (na.length >= 3 && nb.length >= 3 && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0)) return true;
+        return false;
+    }
+    function _toInjPartName(carModel, partName) {
+        if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.toInjPartName === 'function') {
+            try {
+                var n = ReworkWipModule.toInjPartName(carModel, partName);
+                if (n) return n;
+            } catch (e) { /* ignore */ }
+        }
+        return String(partName || '').trim();
+    }
+
     function _fmt(n) {
         if (typeof UIUtils !== 'undefined' && UIUtils.formatNumber) return UIUtils.formatNumber(n || 0);
         return Number(n || 0).toLocaleString('ko-KR');
@@ -240,7 +274,7 @@ var PaintingInputModule = (function () {
         const all = _recordsForLine(want);
         const byProduct = {};
         all.forEach(function (r) {
-            if (injPartName && String(r.partName || '') !== String(injPartName)) return;
+            if (injPartName && !_partNamesMatch(r.partName, injPartName, carModel || r.carModel)) return;
             // carModel 없이 injPartName만 걸러내면, 같은 사출명을 쓰는 다른 차종의 LOT까지
             // 이 차종 작업의 "현장 두입 LOT 선택"에 섞여 들어온다 — 실제로 이 사고가 있었다
             // (① 창고→도장현장 입고 표는 LOT 1개인데 ②LOT 드롭다운엔 무관한 LOT이 더 보임).
@@ -274,12 +308,10 @@ var PaintingInputModule = (function () {
         var lots = Object.values(lotMap).filter(function (l) { return l.balance > 0; })
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
         if (planColor) {
-            var filtered = lots.filter(function (l) {
-                if (!l.color) return true;
-                return String(l.color).toLowerCase().indexOf(String(planColor).toLowerCase()) >= 0
-                    || String(planColor).toLowerCase().indexOf(String(l.color).toLowerCase()) >= 0;
+            return lots.filter(function (l) {
+                if (!l.color) return false;
+                return _colorLooseMatch(l.color, planColor);
             });
-            if (filtered.length) return filtered;
         }
         return lots;
     }
@@ -288,7 +320,7 @@ var PaintingInputModule = (function () {
         const want = _normLine(line);
         const records = _recordsForLine(want).filter(function (r) {
             if (carModel && String(r.carModel || '') !== String(carModel)) return false;
-            if (partName && String(r.partName || '') !== String(partName)) return false;
+            if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
             return true;
         });
         const groups = {};
@@ -325,13 +357,18 @@ var PaintingInputModule = (function () {
         var x = String(a || '').trim();
         var y = String(b || '').trim();
         if (!x || !y) return true;
+        var xl = x.toLowerCase().replace(/\s+/g, '');
+        var yl = y.toLowerCase().replace(/\s+/g, '');
+        if (xl === yl) return true;
+        // BK+CLEAR ↔ CLEAR 처럼 한쪽이 다른 쪽을 포함하면 같은 색으로 본다.
+        if (xl.length >= 3 && yl.length >= 3 && (xl.indexOf(yl) >= 0 || yl.indexOf(xl) >= 0)) return true;
         if (typeof UIUtils !== 'undefined' && typeof UIUtils.normalizeColorAlias === 'function') {
             return UIUtils.normalizeColorAlias(x) === UIUtils.normalizeColorAlias(y);
         }
-        return x.toLowerCase() === y.toLowerCase();
+        return false;
     }
 
-    /** 리워크 재공품 → 도장현장으로 출고된 LOT 번호 집합.
+    /** 재사용 자재 → 도장현장으로 출고된 LOT 번호 집합.
      *  현장 입고 기록의 isReworkInbound 플래그는 이 기능이 생긴 뒤 확인된 건에만 붙어 있어,
      *  그전에 입고 처리된 건이나 자동 입고 경로로 들어온 건은 리워크인데도 플래그가 없다.
      *  실제 출고 원장(REWORK_WIP)의 LOT과 대조해 그런 건까지 리워크로 인식한다. */
@@ -342,7 +379,7 @@ var PaintingInputModule = (function () {
             if (!r || String(r.type || '') !== '출고') return;
             if (String(r.source || '') !== 'dispatch_to_line') return;
             if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
-            if (partName && String(r.partName || '').trim() !== String(partName).trim()) return;
+            if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return;
             if (color && !_colorLooseMatch(r.color, color)) return;
             var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : [];
             var names = lots.map(function (l) { return String((l && l.lotNo) || '').trim(); });
@@ -357,21 +394,21 @@ var PaintingInputModule = (function () {
 
     function _isReworkInboundRecord(r, lotSet) {
         if (r.isReworkInbound || r.refReworkOutId) return true;
-        if (/리워크/.test(String(r.source || ''))) return true;
+        if (/리워크|재사용 자재/.test(String(r.source || ''))) return true;
         var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
         return lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; });
     }
 
-    /** 이 입고 기록이 리워크 재공품에서 온 것인지 — 화면 배지 표시용(painting.js). */
+    /** 이 입고 기록이 재사용 자재에서 온 것인지 — 화면 배지 표시용(painting.js). */
     function isReworkSiteInbound(record) {
         if (!record) return false;
         if (record.isReworkInbound || record.refReworkOutId) return true;
-        if (/리워크/.test(String(record.source || ''))) return true;
+        if (/리워크|재사용 자재/.test(String(record.source || ''))) return true;
         var lotSet = _reworkDispatchedLotSet(record.carModel, record.partName, record.color);
         return _isReworkInboundRecord(record, lotSet);
     }
 
-    /** 리워크 재공품 → 도장현장 경로로 실제 입고 확인(현장 입고 처리)된 뒤 아직 생산에
+    /** 재사용 자재 → 도장현장 경로로 실제 입고 확인(현장 입고 처리)된 뒤 아직 생산에
      *  소진되지 않은 잔량(도장-A + 도장-B 합산). IL 등 리워크 투입품은 재공품 재고에서는
      *  출고돼 사라졌지만 도장현장에는 이미 도착·확인돼 있는 구간이 있는데, 사출 창고 「현장
      *  입고 부족」 판정이 재공품 재고(ReworkWipModule.getStockQty)만 보면 이 구간을 놓쳐
@@ -383,8 +420,8 @@ var PaintingInputModule = (function () {
         var total = 0;
         lines.forEach(function (line) {
             var records = _recordsForLine(line).filter(function (r) {
-                if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return false;
-                if (partName && String(r.partName || '').trim() !== String(partName).trim()) return false;
+                    if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return false;
+                    if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
                 if (color && !_colorLooseMatch(r.color, color)) return false;
                 // 입고는 리워크 경로 건만, 출고(생산 투입·반납)는 전부 차감 대상으로 본다.
                 if (String(r.type || '') === '입고' && !_isReworkInboundRecord(r, lotSet)) return false;
@@ -394,6 +431,48 @@ var PaintingInputModule = (function () {
             total += Math.max(0, Number(bal.total) || 0);
         });
         return total;
+    }
+
+    /** 리워크 재공 → 도장현장 입고 후 아직 실적에 안 쓴 LOT 잔량.
+     *  레이져→도장-B 품목도 리워크는 레이져를 거치지 않고 바로 도장 투입할 수 있어야 한다. */
+    function getSiteReworkLots(line, carModel, injPartName, color) {
+        if (!injPartName && !carModel) return [];
+        var lines = line ? [_normLine(line)] : ['도장-A', '도장-B'];
+        var lotSet = _reworkDispatchedLotSet(carModel, injPartName, color);
+        function collect(useColor) {
+            var records = [];
+            lines.forEach(function (want) {
+                (_recordsForLine(want) || []).forEach(function (r) {
+                    if (!r) return;
+                    if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
+                    if (injPartName && !_partNamesMatch(r.partName, injPartName, carModel || r.carModel)) return;
+                    if (useColor && color) {
+                        if (!r.color || !_colorLooseMatch(r.color, color)) return;
+                    }
+                    if (String(r.type || '') === '입고' && !_isReworkInboundRecord(r, lotSet)) return;
+                    records.push(r);
+                });
+            });
+            return records;
+        }
+        var records = collect(true);
+        var hasReworkIn = records.some(function (r) { return String(r.type || '') === '입고'; });
+        if (!hasReworkIn) return [];
+        var bal = (typeof InvCalc !== 'undefined' && InvCalc.lotBalances)
+            ? InvCalc.lotBalances(records)
+            : { lots: [] };
+        return (bal.lots || []).filter(function (l) {
+            return (Number(l.qty) || 0) > 0;
+        }).map(function (l) {
+            return {
+                lotNo: l.lotNo,
+                partName: injPartName || '',
+                carModel: carModel || '',
+                color: color || '',
+                balance: Math.max(0, Number(l.qty) || 0),
+                lotSource: 'site_rework'
+            };
+        }).sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
     }
 
     /** getLotsByCarPart와 달리 InvCalc 스필오버 잔량(balance>0)으로 거르지 않고, 이 차종·
@@ -406,7 +485,7 @@ var PaintingInputModule = (function () {
         const records = _recordsForLine(want).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
             if (carModel && String(r.carModel || '') !== String(carModel)) return false;
-            if (partName && String(r.partName || '') !== String(partName)) return false;
+            if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
             return true;
         });
         const lotMap = {};
@@ -437,7 +516,7 @@ var PaintingInputModule = (function () {
         let consumed = 0;
         _recordsForLine(want).forEach(function (r) {
             if (carModel && String(r.carModel || '') !== String(carModel)) return;
-            if (partName && String(r.partName || '') !== String(partName)) return;
+            if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return;
             const es = (Array.isArray(r.lots) && r.lots.length)
                 ? r.lots
                 : (r.lotNo ? [{ lotNo: r.lotNo, qty: r.quantity }] : []);
@@ -508,14 +587,14 @@ var PaintingInputModule = (function () {
             line: line,
             paintLine: line,
             carModel: outRec.carModel || '',
-            partName: outRec.partName || '',
+            partName: _toInjPartName(outRec.carModel, outRec.partName) || outRec.partName || '',
             color: outRec.color || '',
             lots: lots,
             lotNo: lots[0] ? lots[0].lotNo : (outRec.lotNo || ''),
             quantity: qty,
             shipQty: shipQty,
             unit: 'EA',
-            source: isRework ? '리워크 재공품 출고' : '사출 창고 생산출고',
+            source: isRework ? '재사용 자재 출고' : '사출 창고 생산출고',
             refOutId: isRework ? '' : (outRec.id || ''),
             refReworkOutId: isRework ? (outRec.id || '') : undefined,
             siteReceived: true,
@@ -622,7 +701,7 @@ var PaintingInputModule = (function () {
             line: line,
             isReworkDispatch: true,
             outgoingType: '리워크출고',
-            source: '리워크 재공품 출고'
+            source: '재사용 자재 출고'
         });
     }
 
@@ -875,7 +954,7 @@ var PaintingInputModule = (function () {
             : [{ lotNo: String(out.lotNo || '').trim() || '무표기', qty: shipQty }];
         const hasMultiLot = outLots.length > 1;
         const srcHint = resolved.isRework
-            ? '<div style="margin-top:6px;font-size:0.78rem;color:#7c3aed;font-weight:700;">리워크 재공품 출고 — 현장 입고 확인 후 투입 가능</div>'
+            ? '<div style="margin-top:6px;font-size:0.78rem;color:#7c3aed;font-weight:700;">재사용 자재 출고 — 현장 입고 확인 후 투입 가능</div>'
             : '';
 
         // LOT이 여러 건이면 실수량도 LOT별로 따로 확인해야 한다 — 총량 한 칸만 고치면
@@ -1182,7 +1261,8 @@ var PaintingInputModule = (function () {
     }
 
     /** 금일 생산계획 중 출고 건과 매칭되는 계획 목록 (수정으로 대체된 구 계획은 제외) */
-    function findPlansForShipment(record, line, date) {
+    function findPlansForShipment(record, line, date, opts) {
+        opts = opts || {};
         if (!record) return [];
         const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
         const want = _normLine(line || record.paintLine || record.line);
@@ -1228,6 +1308,9 @@ var PaintingInputModule = (function () {
         });
         if (matched.length) return matched;
 
+        // 자재 분출 매칭은 다른 품목 계획(예: PARK 분출인데 KNOB LOWER 계획)으로 폴백하면 안 된다.
+        if (opts.strictProduct) return [];
+
         // ③ 같은 차종·라인에 유효 계획이 1건뿐이면 그 계획으로 폴백
         //    (사출자재 마스터 미등록이어도 헤더 계획합계와 행 계획수량이 어긋나지 않게)
         const sameCar = plans.filter(function (p) {
@@ -1235,6 +1318,56 @@ var PaintingInputModule = (function () {
         });
         if (sameCar.length === 1) return sameCar;
         return [];
+    }
+
+    function _shiftIsoDate(ymd, days) {
+        var s = String(ymd || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return '';
+        var d = new Date(s + 'T12:00:00');
+        d.setDate(d.getDate() + (Number(days) || 0));
+        var y = d.getFullYear();
+        var m = String(d.getMonth() + 1);
+        var day = String(d.getDate());
+        if (m.length < 2) m = '0' + m;
+        if (day.length < 2) day = '0' + day;
+        return y + '-' + m + '-' + day;
+    }
+
+    function _findMatchingPlansAround(record, line, centerDate, radiusDays) {
+        radiusDays = radiusDays == null ? 14 : radiusDays;
+        var hits = [];
+        var seen = {};
+        for (var d = -radiusDays; d <= radiusDays; d++) {
+            if (d === 0) continue;
+            var day = _shiftIsoDate(centerDate, d);
+            if (!day) continue;
+            (findPlansForShipment(record, line, day, { strictProduct: true }) || []).forEach(function (p) {
+                if (!p || !p.id || seen[p.id]) return;
+                seen[p.id] = true;
+                hits.push(p);
+            });
+        }
+        hits.sort(function (a, b) {
+            return String(a.date || '').localeCompare(String(b.date || ''))
+                || String(a.startTime || '').localeCompare(String(b.startTime || ''));
+        });
+        return hits;
+    }
+
+    function _suggestPaintDateForInbound(recv, line) {
+        if (!recv) return String(UIUtils.today ? UIUtils.today() : '').slice(0, 10);
+        var matched = String(recv.matchedPaintDate || '').slice(0, 10);
+        if (matched) return matched;
+        var inboundDay = _resolveActualInboundStamp(recv).slice(0, 10)
+            || String(recv.useDate || recv.date || '').slice(0, 10);
+        if (inboundDay && findPlansForShipment(recv, line, inboundDay, { strictProduct: true }).length) {
+            return inboundDay;
+        }
+        var nearby = _findMatchingPlansAround(recv, line, inboundDay, 14);
+        var past = nearby.filter(function (p) { return String(p.date || '').slice(0, 10) < inboundDay; });
+        if (past.length) return String(past[past.length - 1].date).slice(0, 10);
+        if (nearby.length) return String(nearby[0].date).slice(0, 10);
+        return inboundDay || String(UIUtils.today ? UIUtils.today() : '').slice(0, 10);
     }
 
     /** 계획수량 근거 — 어떤 계획을 몇 건 더했는지 툴팁으로 보여준다 (허수 오차 추적용) */
@@ -1470,7 +1603,7 @@ var PaintingInputModule = (function () {
             const inspDateHtml = _inspDateCellHtml(r, lotNo, inspMap);
             const isAutoReceived = !!(recv && recv.isAutoReceived);
             const reworkTag = r.isReworkDispatch
-                ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,0.12);color:#7c3aed;">리워크</span>'
+                ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,0.12);color:#7c3aed;">재사용 자재</span>'
                 : '';
             const statusHtml = r.received
                 ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(22,163,74,0.12);color:#16a34a;">입고완료</span>'
@@ -1490,7 +1623,7 @@ var PaintingInputModule = (function () {
             const reworkReturnQty = reworkReturnLots.reduce(function (s, l) { return s + l.qty; }, 0);
             const reworkReturnBtn = (r.received && r.isReworkDispatch && reworkReturnQty > 0 && canWrite)
                 ? `<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#7c3aed;border-color:#c4b5fd;"
-                        title="리워크 재공품으로 반납 — 현장 잔량을 재공 재고로 되돌립니다"
+                        title="재사용 자재으로 반납 — 현장 잔량을 재공 재고로 되돌립니다"
                         onclick="PaintingInputModule.openReworkInboundReturnModal('${_esc(r.id)}','${_esc(want)}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">undo</span> 반납
                    </button>`
@@ -1830,6 +1963,14 @@ var PaintingInputModule = (function () {
         return String(r.useDate || r.date || '');
     }
 
+    /** 분출 수량을 어느 도장일에 붙일지. 명시적 매칭(과거 실적 등록)이 있으면 그날을 쓴다.
+     *  창고 출고일(shipDate)만 보면 실적을 하루 늦게 입력한 리워크 분출이 과거 실적에 안 붙는다. */
+    function _inboundIssuedDay(r) {
+        var matched = String((r && r.matchedPaintDate) || '').slice(0, 10);
+        if (matched) return matched;
+        return _resolveActualInboundStamp(r).slice(0, 10);
+    }
+
     /** 도장일 기준 현장 입고(분출) 수량 — 작업 실적 매칭용
      *  opts: { carModel, partName, color, date, lots[], injPartName }
      */
@@ -1852,7 +1993,7 @@ var PaintingInputModule = (function () {
 
             const sameDayCarLine = (_recordsForLine(want) || []).filter(function (r) {
                 if (String(r.type || '') !== '입고') return false;
-                if (_resolveActualInboundStamp(r).slice(0, 10) !== day) return false;
+                if (_inboundIssuedDay(r) !== day) return false;
                 if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
                 return true;
             });
@@ -1981,7 +2122,7 @@ var PaintingInputModule = (function () {
 
         const dayRecords = (_recordsForLine(want) || []).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
-            if (_resolveActualInboundStamp(r).slice(0, 10) !== day) return false;
+            if (_inboundIssuedDay(r) !== day) return false;
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
             return true;
         });
@@ -1992,11 +2133,16 @@ var PaintingInputModule = (function () {
         // (선입선출 자동배분·비례배분·수기수정 등으로 흔함) 이 매칭은 영향받지 않고, 같은 날
         // 같은 차종·품명 실적이 여러 건이어도 정확히 이 실적 몫만 구분되는 가장 신뢰도 높은
         // 매칭 방법이다.
-        if (opts.planId && typeof DB !== 'undefined' && DB.STORES && DB.STORES.INJECTION_INVENTORY) {
+        if (opts.planId) {
             let planTotal = 0;
             let planMatched = false;
             dayRecords.forEach(function (r) {
-                if (!r.refOutId) return;
+                if (r.matchedPlanId && String(r.matchedPlanId) === String(opts.planId)) {
+                    planMatched = true;
+                    planTotal += Number(r.quantity) || 0;
+                    return;
+                }
+                if (!r.refOutId || typeof DB === 'undefined' || !DB.STORES || !DB.STORES.INJECTION_INVENTORY) return;
                 const outRec = Storage.getById(DB.STORES.INJECTION_INVENTORY, r.refOutId);
                 if (outRec && outRec.planId && String(outRec.planId) === String(opts.planId)) {
                     planMatched = true;
@@ -2062,9 +2208,10 @@ var PaintingInputModule = (function () {
             return;
         }
         const want = _normLine(line || recv.line || recv.paintLine);
-        const defaultDate = String(recv.useDate || recv.date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        const defaultDate = _suggestPaintDateForInbound(recv, want);
         const lotNo = _primaryLot(recv);
         const qty = Number(recv.quantity) || 0;
+        const already = String(recv.matchedPaintDate || '').slice(0, 10);
 
         UIUtils.showModal(
             `<span class="material-symbols-outlined" style="vertical-align:middle;color:var(--accent-blue);">fact_check</span> 자재 분출 · 매칭 확인`,
@@ -2092,11 +2239,13 @@ var PaintingInputModule = (function () {
                     </select>
                 </div>
             </div>
+            ${already ? '<div style="margin-top:-4px;margin-bottom:8px;font-size:0.78rem;color:#16a34a;font-weight:700;">이미 도장일 ' + _esc(already) + ' 실적에 등록되어 있습니다.</div>' : ''}
             <div id="piMatchPanel" style="margin-top:8px;"></div>
             <input type="hidden" id="piMatchRecvId" value="${_esc(recv.id || '')}">
             <input type="hidden" id="piMatchLine" value="${_esc(want)}">
             `,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+             <button class="btn btn-primary" onclick="PaintingInputModule.saveInboundMatch()">이 도장일로 등록</button>`,
             'lg'
         );
         setTimeout(function () { refreshInboundMatchPanel(); }, 60);
@@ -2115,30 +2264,49 @@ var PaintingInputModule = (function () {
         const recv = _findInboundRecord(recvId);
         const issuedQty = Number(recv && recv.quantity) || 0;
 
-        const plans = (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || [])
-            .filter(function (p) {
-                if (!p || String(p.date || '').slice(0, 10) !== paintDate) return false;
-                return _normLine(p.line) === want;
-            })
+        const jumpOpt = planSel.options && planSel.selectedIndex >= 0 ? planSel.options[planSel.selectedIndex] : null;
+        const jumpDate = jumpOpt ? String(jumpOpt.getAttribute('data-plan-date') || '').slice(0, 10) : '';
+        if (jumpDate && jumpDate !== paintDate) dateEl.value = jumpDate;
+        const useDate = String(dateEl.value || paintDate).slice(0, 10);
+
+        const plans = findPlansForShipment(recv, want, useDate, { strictProduct: true })
+            .slice()
             .sort(function (a, b) {
                 return String(a.startTime || '').localeCompare(String(b.startTime || ''))
                     || String(a.partName || '').localeCompare(String(b.partName || ''));
             });
+        const nearbyPlans = plans.length ? [] : _findMatchingPlansAround(recv, want, useDate, 14);
 
-        const curPlanId = planSel.value || '';
-        planSel.innerHTML = '<option value="">— 계획 선택 (' + plans.length + '건) —</option>' +
-            plans.map(function (p) {
-                const label = (p.startTime || '') + '~' + (p.endTime || '')
-                    + ' · ' + (p.carModel || '') + ' / ' + (p.partName || '')
-                    + (p.color ? ' / ' + p.color : '')
-                    + ' · 계획 ' + _fmt(p.planQty) + ' EA';
-                const sel = p.id === curPlanId ? ' selected' : '';
-                return '<option value="' + _esc(p.id) + '"' + sel + '>' + _esc(label) + '</option>';
-            }).join('');
+        let curPlanId = planSel.value || (recv && recv.matchedPlanId) || '';
+        if (!curPlanId && plans.length === 1) curPlanId = plans[0].id;
+        if (!curPlanId && nearbyPlans.length === 1) curPlanId = nearbyPlans[0].id;
 
-        const plan = curPlanId ? plans.find(function (p) { return p.id === curPlanId; }) : null;
+        function planOptionHtml(p, withDate) {
+            const day = String(p.date || '').slice(0, 10);
+            const label = (withDate && day ? day.slice(5) + ' · ' : '')
+                + (p.startTime || '') + '~' + (p.endTime || '')
+                + ' · ' + (p.carModel || '') + ' / ' + (p.partName || '')
+                + (p.color ? ' / ' + p.color : '')
+                + ' · 계획 ' + _fmt(p.planQty) + ' EA';
+            const sel = p.id === curPlanId ? ' selected' : '';
+            return '<option value="' + _esc(p.id) + '" data-plan-date="' + _esc(day) + '"' + sel + '>' + _esc(label) + '</option>';
+        }
+
+        planSel.innerHTML = '<option value="">— 이 품목 계획 선택 (' + plans.length + '건) —</option>' +
+            plans.map(function (p) { return planOptionHtml(p, false); }).join('') +
+            (nearbyPlans.length
+                ? '<optgroup label="인근 일자 같은 품목 계획">' +
+                    nearbyPlans.map(function (p) { return planOptionHtml(p, true); }).join('') +
+                  '</optgroup>'
+                : '');
+
+        const plan = curPlanId
+            ? (plans.find(function (p) { return p.id === curPlanId; })
+                || nearbyPlans.find(function (p) { return p.id === curPlanId; })
+                || null)
+            : null;
         const works = (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(function (w) {
-            if (!w || String(w.date || '').slice(0, 10) !== paintDate) return false;
+            if (!w || String(w.date || '').slice(0, 10) !== useDate) return false;
             if (_normLine(w.line) !== want) return false;
             if (plan) {
                 if (w.planId && w.planId === plan.id) return true;
@@ -2151,7 +2319,7 @@ var PaintingInputModule = (function () {
                 carModel: w.carModel,
                 partName: w.partName,
                 color: w.color,
-                date: paintDate,
+                date: useDate,
                 lots: w.lots,
                 lotNo: w.lotNo,
                 injPartName: w.injPartName
@@ -2163,10 +2331,11 @@ var PaintingInputModule = (function () {
             carModel: recv ? recv.carModel : '',
             partName: recv ? recv.partName : '',
             color: recv ? recv.color : '',
-            date: paintDate,
+            date: useDate,
             lots: recv ? recv.lots : [],
             lotNo: recv ? recv.lotNo : '',
-            injPartName: recv ? recv.partName : ''
+            injPartName: recv ? recv.partName : '',
+            planId: plan ? plan.id : (recv ? recv.matchedPlanId : '')
         });
 
         let workInputSum = 0;
@@ -2195,7 +2364,8 @@ var PaintingInputModule = (function () {
                 const prQ = Number(w.productionQty) || 0;
                 const issued = getIssuedQtyForWork(want, {
                     carModel: w.carModel, partName: w.partName, color: w.color,
-                    date: paintDate, lots: w.lots, lotNo: w.lotNo, injPartName: w.injPartName
+                    date: useDate, lots: w.lots, lotNo: w.lotNo, injPartName: w.injPartName,
+                    planId: w.planId || (plan ? plan.id : '')
                 });
                 const xl = issued - inQ;
                 const miss = inQ - prQ;
@@ -2210,9 +2380,18 @@ var PaintingInputModule = (function () {
                     '<td style="text-align:right;">' + (miss > 0 ? '<span style="color:#dc2626;font-weight:700;">' + _fmt(miss) + '</span>' : (miss < 0 ? '<span style="color:#d97706;">' + _fmt(miss) + '</span>' : '0')) + '</td>' +
                     '</tr>';
             }).join('')
-            : '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-muted);">해당일 매칭 실적이 없습니다. 도장일·생산계획을 확인하세요.</td></tr>';
+            : '<tr><td colspan="8" style="text-align:center;padding:16px;color:var(--text-muted);">해당일 매칭 실적이 없습니다. 도장일·생산계획을 확인한 뒤 「이 도장일로 등록」을 누르세요.</td></tr>';
+
+        const nearbyHint = (!plans.length && nearbyPlans.length)
+            ? '<div style="margin-bottom:8px;padding:8px 10px;border-radius:6px;background:rgba(217,119,6,0.08);border:1px solid rgba(217,119,6,0.35);font-size:0.8rem;color:#92400e;">이 날짜에는 이 품목 계획이 없습니다. 인근 일자의 같은 품목 계획을 고르면 도장일이 바뀝니다.</div>'
+            : '';
+        const matchHint = (recv && recv.matchedPaintDate)
+            ? '<div style="margin-bottom:8px;font-size:0.78rem;color:#16a34a;">현재 매칭 도장일 <strong>' + _esc(String(recv.matchedPaintDate).slice(0, 10)) + '</strong>' +
+              (recv.matchedPlanId ? ' · 계획 연결됨' : '') + '</div>'
+            : '';
 
         panel.innerHTML = `
+            ${matchHint}${nearbyHint}
             <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-bottom:12px;">
                 <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;text-align:center;">
                     <div style="font-size:0.72rem;color:var(--text-muted);">이 건 분출</div>
@@ -2256,11 +2435,35 @@ var PaintingInputModule = (function () {
             </div>`;
     }
 
+    async function saveInboundMatch() {
+        const recvId = ((document.getElementById('piMatchRecvId') || {}).value || '').trim();
+        const line = ((document.getElementById('piMatchLine') || {}).value || '').trim();
+        const paintDate = String((document.getElementById('piMatchPaintDate') || {}).value || '').slice(0, 10);
+        const planId = ((document.getElementById('piMatchPlanId') || {}).value || '').trim();
+        if (!recvId) {
+            UIUtils.toast('입고 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        if (!paintDate) {
+            UIUtils.toast('도장일을 선택하세요.', 'warning');
+            return;
+        }
+        const rec = await updateSiteInbound(recvId, {
+            useDate: paintDate,
+            matchedPaintDate: paintDate,
+            matchedPlanId: planId,
+            keepInboundDate: true
+        });
+        if (!rec) return;
+        UIUtils.toast('도장일 ' + paintDate + ' 실적에 매칭 등록했습니다.', 'success');
+        refreshInboundMatchPanel();
+    }
+
     // ──────────────────────────────────────────────
     // 도장현장 → 사출창고 자재 반납 ("재입고"가 아니라 "반납" — 도장현장에서 처리하는 즉시
     // 이 스토어(현장 재고)에서는 바로 빠지지만, 사출창고 재고로 정식 편입되는 건 사출창고
     // 물류담당자가 실물을 확인하고 「입고 처리」할 때뿐이다. 그 전까지는 "반납 대기" 상태.)
-    // 리워크 입고 반납은 사출창고가 아니라 리워크 재공품으로 즉시 되돌린다.
+    // 리워크 입고 반납은 사출창고가 아니라 재사용 자재으로 즉시 되돌린다.
     // ──────────────────────────────────────────────
 
     /** 리워크 입고 건에서 아직 현장(투입·반납)으로 안 빠진 LOT 잔량 */
@@ -2360,9 +2563,9 @@ var PaintingInputModule = (function () {
                 <div style="padding:10px 12px;background:rgba(124,58,237,.06);border:1px solid rgba(124,58,237,.22);border-radius:8px;font-size:0.85rem;line-height:1.6;">
                     <div><strong>${_esc(ship.carModel || '-')} · ${_esc(ship.partName || '-')}</strong>
                         ${ship.color ? ' · ' + _esc(ship.color) : ''}
-                        <span style="margin-left:6px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">리워크</span>
+                        <span style="margin-left:6px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">재사용 자재</span>
                     </div>
-                    <div style="color:var(--text-muted);margin-top:2px;">현장 잔량 <strong style="color:#7c3aed;">${_fmt(total)} EA</strong>를 리워크 재공품으로 되돌립니다. 사출 창고 재고로는 들어가지 않습니다.</div>
+                    <div style="color:var(--text-muted);margin-top:2px;">현장 잔량 <strong style="color:#7c3aed;">${_fmt(total)} EA</strong>를 재사용 자재으로 되돌립니다. 사출 창고 재고로는 들어가지 않습니다.</div>
                 </div>
                 <div class="data-table-wrapper" style="margin-top:12px;">
                     <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
@@ -2423,7 +2626,7 @@ var PaintingInputModule = (function () {
         const ship = ctx.ship;
         const recv = ship.receiveRec || {};
         if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
-            UIUtils.toast('리워크 재공품 모듈을 사용할 수 없습니다.', 'error');
+            UIUtils.toast('재사용 자재 모듈을 사용할 수 없습니다.', 'error');
             return;
         }
         let returnRec = null;
@@ -2459,7 +2662,7 @@ var PaintingInputModule = (function () {
             _pendingReworkInboundReturn = null;
             UIUtils.closeModal();
             const total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
-            UIUtils.toast(_fmt(total) + ' EA를 리워크 재공품으로 반납했습니다.', 'success');
+            UIUtils.toast(_fmt(total) + ' EA를 재사용 자재으로 반납했습니다.', 'success');
             _refreshInboundViews();
         } catch (e) {
             if (!wipRestored && returnRec && returnRec.id) {
@@ -2627,22 +2830,30 @@ var PaintingInputModule = (function () {
     /** 관리자 — 기존 현장 입고의 사용일·수량·LOT 수정 */
     async function updateSiteInbound(id, patch) {
         patch = patch || {};
-        if (!_canCorrectInboundUseDate()) {
-            UIUtils.toast('도장 작업 입력 권한이 있어야 입고 이력을 수정할 수 있습니다.', 'warning');
-            return null;
-        }
         const rec = Storage.getById(STORE, id);
         if (!rec) {
             UIUtils.toast('입고 이력을 찾을 수 없습니다.', 'error');
             return null;
         }
+        if (!_canCorrectInboundUseDate() && !_canConfirmInbound(rec.line || rec.paintLine)) {
+            UIUtils.toast('도장 작업 입력 권한이 있어야 입고 이력을 수정할 수 있습니다.', 'warning');
+            return null;
+        }
         const next = { updatedAt: new Date().toISOString(), updatedBy: _currentActorLabel() };
+        if (patch.matchedPaintDate !== undefined) {
+            next.matchedPaintDate = String(patch.matchedPaintDate || '').slice(0, 10);
+        }
+        if (patch.matchedPlanId !== undefined) {
+            next.matchedPlanId = String(patch.matchedPlanId || '').trim();
+        }
         if (patch.useDate) {
             const useDate = String(patch.useDate).slice(0, 10);
             const time = String(rec.date || '').slice(11, 16)
                 || (UIUtils.now ? UIUtils.now().slice(11, 16) : '');
             next.useDate = useDate;
-            next.date = useDate + (time ? ' ' + time : '');
+            if (!patch.keepInboundDate) {
+                next.date = useDate + (time ? ' ' + time : '');
+            }
         }
         if (patch.quantity != null && patch.quantity !== '') {
             next.quantity = Math.max(0, Math.floor(Number(patch.quantity) || 0));
@@ -2696,6 +2907,7 @@ var PaintingInputModule = (function () {
         _updateInboundLotTotal: _updateInboundLotTotal,
         openInboundMatchView: openInboundMatchView,
         refreshInboundMatchPanel: refreshInboundMatchPanel,
+        saveInboundMatch: saveInboundMatch,
         getIssuedQtyForWork: getIssuedQtyForWork,
         getReturnedQtyForWork: getReturnedQtyForWork,
         debugIssuedQtyInfo: _debugIssuedQtyInfo,
@@ -2704,9 +2916,12 @@ var PaintingInputModule = (function () {
         getLotsByInjPart: getLotsByInjPart,
         getLotsByCarPart: getLotsByCarPart,
         getReworkSiteBalance: getReworkSiteBalance,
+        getSiteReworkLots: getSiteReworkLots,
         isReworkSiteInbound: isReworkSiteInbound,
         getReceivedLotNosByCarPart: getReceivedLotNosByCarPart,
         getExactLotLedger: getExactLotLedger,
+        partNamesMatch: _partNamesMatch,
+        colorLooseMatch: _colorLooseMatch,
         deductForWork: deductForWork,
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,

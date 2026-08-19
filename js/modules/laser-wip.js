@@ -155,8 +155,11 @@ var LaserWipModule = (function() {
         const users = _getProdManagerUsers();
         if (!users.length) return '';
         const checks = users.map(function(u) {
+            const checked = (typeof AuthModule !== 'undefined' && AuthModule.shouldPrecheckProdNotify)
+                ? AuthModule.shouldPrecheckProdNotify(u.id, { defaultChecked: true })
+                : true;
             return `<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);font-size:0.8rem;cursor:pointer;">
-                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeHtml(u.id)}" checked style="width:14px;height:14px;accent-color:#dc2626;">
+                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeHtml(u.id)}"${checked ? ' checked' : ''} style="width:14px;height:14px;accent-color:#dc2626;">
                 ${_escapeHtml(u.name)}
             </label>`;
         }).join('');
@@ -167,6 +170,7 @@ var LaserWipModule = (function() {
                         onchange="document.getElementById('${prefix}NotifyUserWrap').style.display=this.checked?'grid':'none';">
                     생산관리자에게 해당 사항을 전달합니다.
                 </label>
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">선택한 담당자는 저장되어 다음에도 미리 선택됩니다.</div>
                 <div id="${prefix}NotifyUserWrap" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">
                     ${checks}
                 </div>
@@ -191,6 +195,9 @@ var LaserWipModule = (function() {
                     priority: opts.priority || 'high'
                 });
             });
+            if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+                AuthModule.saveProdNotifyRecipients(userIds);
+            }
         } catch (e) {
             console.warn('[LaserWipModule] 생산관리자 통보 실패:', e);
         }
@@ -3969,14 +3976,28 @@ var LaserWipModule = (function() {
     // 레이져 후 재공에서 도장-B로 이동한 수량은 도장 "완료수량"이 아니라
     // 실제 투입수량이다. 완료수량은 공정 손실/불량을 제외한 결과값이므로 재공 출고량으로
     // 사용하면 투입 LOT 합계와 달라진다(예: 7,800 투입 / 7,752 완료 → 48 EA 불일치).
+    // 현장입고 리워크 LOT은 레이져 재공을 거치지 않으므로 재공 차감에서 제외한다.
+    function _isSiteReworkPaintLot(lot) {
+        if (!lot) return false;
+        if (lot.lotSource === 'site_rework') return true;
+        return String(lot.optionKey || '').indexOf('rework:') === 0;
+    }
+
     function _paintingWipConsumptionQty(work) {
         if (!work) return 0;
-        const inputQty = Math.max(0, Number(work.inputQty) || 0);
-        if (inputQty > 0) return inputQty;
-        const lotQty = (Array.isArray(work.lots) ? work.lots : []).reduce(function(sum, lot) {
+        const lots = Array.isArray(work.lots) ? work.lots : [];
+        const reworkQty = lots.reduce(function(sum, lot) {
+            if (!_isSiteReworkPaintLot(lot)) return sum;
             return sum + Math.max(0, Number(lot && lot.qty) || 0);
         }, 0);
-        if (lotQty > 0) return lotQty;
+        const wipLotQty = lots.reduce(function(sum, lot) {
+            if (_isSiteReworkPaintLot(lot)) return sum;
+            return sum + Math.max(0, Number(lot && lot.qty) || 0);
+        }, 0);
+        if (lots.length && (wipLotQty > 0 || reworkQty > 0)) return wipLotQty;
+        const inputQty = Math.max(0, Number(work.inputQty) || 0);
+        if (inputQty > 0) return Math.max(0, inputQty - reworkQty);
+        if (wipLotQty > 0) return wipLotQty;
         return Math.max(0, Number(work.productionQty) || 0);
     }
 
@@ -4166,9 +4187,11 @@ var LaserWipModule = (function() {
 
         paintWorks.forEach(function(w) {
             const qty = _paintingWipConsumptionQty(w);
+            if (qty <= 0) return;
             let lotAllocations = [];
             if (Array.isArray(w.lots) && w.lots.length) {
                 w.lots.forEach(function(l) {
+                    if (_isSiteReworkPaintLot(l)) return;
                     const lqty = Number(l && l.qty) || 0;
                     if (lqty <= 0) return;
                     const inj = String((l && l.lotNo) || '').trim() || '';
@@ -4956,9 +4979,11 @@ function _num(value) {
     function _lotsFromPaintWork(w) {
         if (Array.isArray(w.lots) && w.lots.length > 0) {
             const paintLots = [...new Set(w.lots.map(function(l) {
+                if (_isSiteReworkPaintLot(l)) return '';
                 return _paintLotYymmdd((l && (l.paintDate || l.paintLot)) || w.date || '');
             }).filter(function(v) { return v && v !== '-'; }))];
             const injLots = [...new Set(w.lots.map(function(l) {
+                if (_isSiteReworkPaintLot(l)) return '';
                 return String((l && l.lotNo) || '').trim();
             }).filter(Boolean))];
             return {

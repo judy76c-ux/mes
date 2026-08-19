@@ -17,7 +17,7 @@ var PaintingNavUI = (function() {
         { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
         { id: 'painting-inspection',   tab: 'completion',          icon: 'task_alt',        label: '검사완료 실적',          sub: '외관 검사 완료 이력 조회' },
-        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '리워크 재공품',         sub: '리워크 재고 관리' },
+        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '재사용 자재',         sub: '재사용 자재 관리' },
         { id: 'painting-inspection',   tab: 'nonconform-standard', icon: 'description',     label: '부적합품 처리 기준서',   sub: '기준서 업로드 및 인쇄' }
     ];
 
@@ -636,6 +636,9 @@ const PaintingIncomingModule = (function() {
             category: 'manager_notice',
             priority: 'high'
         });
+        if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+            AuthModule.saveProdNotifyRecipients(recipientIds);
+        }
     }
 
     function render(container) {
@@ -1235,7 +1238,7 @@ const PaintingWorkModule = (function() {
             });
     }
 
-    function _buildNotifySelectorHtml(prefix, helpText) {
+    function _buildNotifySelectorHtml(prefix, helpText, selectedIds) {
         const isPlanNotify = (prefix === 'plan' || prefix === 'editPlan');
         let users = _getNotifyUsersByRole();
         if (isPlanNotify) users = users.filter(function(u) { return u.role === 'prod_manager'; });
@@ -1254,8 +1257,13 @@ const PaintingWorkModule = (function() {
                 '<div style="font-size:0.72rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:5px;">' +
                 group.items.map(function(user) {
+                    const checked = (typeof AuthModule !== 'undefined' && AuthModule.shouldPrecheckProdNotify)
+                        ? AuthModule.shouldPrecheckProdNotify(user.id, { explicitIds: selectedIds, defaultChecked: false })
+                        : false;
                     return '<label style="display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid rgba(239,68,68,0.18);border-radius:6px;background:#fff;cursor:pointer;">' +
-                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '" style="width:13px;height:13px;accent-color:#dc2626;flex-shrink:0;">' +
+                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '"' +
+                        (checked ? ' checked' : '') +
+                        ' style="width:13px;height:13px;accent-color:#dc2626;flex-shrink:0;">' +
                         '<span style="font-size:0.76rem;color:var(--text-primary);font-weight:600;">' + user.name + '</span>' +
                         '</label>';
                 }).join('') +
@@ -1267,7 +1275,8 @@ const PaintingWorkModule = (function() {
             '<div style="font-size:0.76rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
             '<button type="button" class="btn btn-outline btn-sm" onclick="PaintingWorkModule.toggleNotifyUsers(\'' + prefix + '\', true)">전체 선택</button>' +
             '</div>' +
-            '<div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:5px;">' + helpText + '</div>' +
+            '<div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:5px;">' + helpText +
+            ' 선택한 담당자는 저장되어 다음에도 미리 선택됩니다.</div>' +
             '<div id="' + prefix + 'NotifyUserWrap" style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow:auto;">' + roleBlocks + '</div>' +
             '</div>';
     }
@@ -1298,6 +1307,9 @@ const PaintingWorkModule = (function() {
             category: 'manager_notice',
             priority: 'high'
         });
+        if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+            AuthModule.saveProdNotifyRecipients(recipientIds);
+        }
     }
 
     function render(container) {
@@ -2101,7 +2113,7 @@ const PaintingWorkModule = (function() {
                             '입고 처리</button></td></tr>';
                 }).join('') +
                 '</tbody></table>')
-            : '<p style="margin:0;font-size:0.82rem;color:var(--text-muted);">이 품목에 대해 현장 미확인 창고/리워크 출고가 없습니다.</p>';
+            : '<p style="margin:0;font-size:0.82rem;color:var(--text-muted);">이 품목에 대해 현장 미확인 창고/재사용 자재 출고가 없습니다.</p>';
 
         var existingHtml = existing.length
             ? ('<table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:0.82rem;">' +
@@ -2399,6 +2411,7 @@ const PaintingWorkModule = (function() {
         function _dayHitsPlan(r) {
             var fields = [
                 r && r.shipDate,
+                r && r.matchedPaintDate,
                 r && r.useDate,
                 r && r.receivedAt,
                 r && r.date
@@ -3057,18 +3070,119 @@ const PaintingWorkModule = (function() {
     // ──────────────────────────────────────────────
     // 레이져 후 재공품 LOT 잔량 (레이져→도장-B 전용)
     // LASER_WORK_LOG.paintLots (사출 LOT 정보) 기준으로 WIP 잔량 계산
+    // 같은 사출 LOT이 재공·현장리워크에 동시에 있으면 option value를 분리한다.
     // ──────────────────────────────────────────────
-    function getLaserWipLots(carModel, partName) {
-        // 단일 원천: LaserWipModule LOT표 (이력 리셋·도장 LOT 포함)
+    function _lotOptionKey(l) {
+        if (!l) return '';
+        if (l.optionKey) return String(l.optionKey);
+        if (l.lotSource === 'site_rework') return 'rework:' + String(l.lotNo || '');
+        var paint = String(l.paintLot || '').trim();
+        if (paint && paint !== '-') return 'wip:' + paint + ':' + String(l.lotNo || '');
+        return 'wip:' + String(l.lotNo || '');
+    }
+
+    function _lotNoFromOptionValue(val) {
+        var s = String(val || '').trim();
+        if (s.indexOf('rework:') === 0) return s.slice(7);
+        if (s.indexOf('wip:') === 0) {
+            var rest = s.slice(4);
+            var i = rest.lastIndexOf(':');
+            return i >= 0 ? rest.slice(i + 1) : rest;
+        }
+        return s;
+    }
+
+    function _laserWipLotOptionHtml(l, selected) {
+        var key = _lotOptionKey(l);
+        var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '';
+        var isRework = l.lotSource === 'site_rework';
+        var label = isRework
+            ? '현장 재사용 자재 / 사출 ' + l.lotNo + (l.color ? ' │ ' + l.color : '') +
+              ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA'
+            : '도장 ' + (paint || '미지정') + ' / 사출 ' + l.lotNo +
+              (l.color ? ' │ ' + l.color : '') +
+              ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA';
+        return '<option value="' + _pwEsc(key) + '"' + (selected ? ' selected' : '') +
+            ' data-balance="' + l.balance + '"' +
+            ' data-lot-no="' + _pwEsc(l.lotNo || '') + '"' +
+            ' data-lot-source="' + (isRework ? 'site_rework' : 'laser_wip') + '"' +
+            ' data-paint-lot="' + _pwEsc(paint) + '"' +
+            ' data-part-name="' + _pwEsc(l.partName || '') + '"' +
+            ' data-color="' + _pwEsc(l.color || '') + '">' +
+            label + '</option>';
+    }
+
+    function _getSiteReworkLotsForLaserWip(carModel, partName, opts) {
+        if (typeof PaintingInputModule === 'undefined') return [];
+        opts = opts || {};
+        var color = String(opts.color || '').trim()
+            || ((document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '').trim();
+        var inj = '';
+        try { inj = _resolveInjPartNameForWork(carModel, partName, color) || ''; } catch (e) { inj = ''; }
+        var line = String(opts.line || '').trim()
+            || ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
+            || (typeof _currentLine !== 'undefined' ? _currentLine : '');
+        var names = [];
+        if (inj) names.push(inj);
+        if (partName && names.indexOf(partName) < 0) names.push(partName);
+        var lines = line ? [line] : ['도장-B', '도장-A'];
+        if (line && lines.indexOf('도장-B') < 0) lines.push('도장-B');
+        var seen = {};
+        var out = [];
+        function absorb(lots, nm) {
+            (lots || []).forEach(function (l) {
+                var k = 'rework:' + String(l.lotNo || '');
+                if (!l.lotNo || seen[k]) return;
+                seen[k] = true;
+                out.push({
+                    lotNo: l.lotNo,
+                    paintLot: '',
+                    color: l.color || color || '',
+                    balance: Math.max(0, Number(l.balance) || 0),
+                    partName: l.partName || nm,
+                    lotSource: 'site_rework',
+                    optionKey: k
+                });
+            });
+        }
+        names.forEach(function (nm) {
+            lines.forEach(function (ln) {
+                if (typeof PaintingInputModule.getSiteReworkLots === 'function') {
+                    absorb(PaintingInputModule.getSiteReworkLots(ln, carModel, nm, color), nm);
+                }
+                if (typeof PaintingInputModule.getLotsByInjPart === 'function') {
+                    absorb(PaintingInputModule.getLotsByInjPart(ln, nm, color, carModel), nm);
+                }
+                if (typeof PaintingInputModule.getLotsByCarPart === 'function') {
+                    absorb((PaintingInputModule.getLotsByCarPart(ln, carModel, nm) || []).filter(function (l) {
+                        if (!color) return true;
+                        if (!l.color) return false;
+                        return typeof PaintingInputModule.colorLooseMatch === 'function'
+                            ? PaintingInputModule.colorLooseMatch(l.color, color)
+                            : String(l.color).toLowerCase() === String(color).toLowerCase();
+                    }), nm);
+                }
+            });
+        });
+        return out.filter(function (l) { return l.balance > 0; });
+    }
+
+    function getLaserWipLots(carModel, partName, opts) {
+        opts = opts || {};
+        var wip = [];
         if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getWipLotDetail === 'function') {
-            return (LaserWipModule.getWipLotDetail(carModel, partName) || [])
+            wip = (LaserWipModule.getWipLotDetail(carModel, partName) || [])
                 .map(function(l) {
-                    return {
+                    var row = {
                         lotNo: l.lotNo || '-',
                         paintLot: l.paintLot || '-',
                         color: l.color || '',
-                        balance: Math.max(0, Number(l.balance) || 0)
+                        balance: Math.max(0, Number(l.balance) || 0),
+                        partName: l.partName || partName || '',
+                        lotSource: 'laser_wip'
                     };
+                    row.optionKey = _lotOptionKey(row);
+                    return row;
                 })
                 .filter(function(l) { return l.balance > 0 && l.lotNo && l.lotNo !== '-'; })
                 .sort(function(a, b) {
@@ -3076,23 +3190,26 @@ const PaintingWorkModule = (function() {
                         || String(a.lotNo).localeCompare(String(b.lotNo));
                 });
         }
-        return [];
+        return wip.concat(_getSiteReworkLotsForLaserWip(carModel, partName, opts));
     }
 
-    function buildLaserWipLotOptionsHtml(carModel, partName) {
-        var lots = getLaserWipLots(carModel, partName);
-        if (lots.length === 0) return '<option value="" data-balance="">-- 재공품 재고 없음 --</option>';
-        return lots.map(function(l, i) {
-            var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '미지정';
-            var label = '도장 ' + paint + ' / 사출 ' + l.lotNo +
-                (l.color ? ' │ ' + l.color : '') +
-                ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA';
-            return '<option value="' + l.lotNo + '"' + (i === 0 ? ' selected' : '') +
-                ' data-balance="' + l.balance + '"' +
-                ' data-paint-lot="' + String(paint === '미지정' ? '' : paint).replace(/"/g, '&quot;') + '"' +
-                ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                label + '</option>';
-        }).join('');
+    function buildLaserWipLotOptionsHtml(carModel, partName, opts) {
+        var lots = getLaserWipLots(carModel, partName, opts);
+        if (lots.length === 0) return '<option value="" data-balance="">-- 재공품·현장 재사용 자재 LOT 없음 --</option>';
+        var wipLots = lots.filter(function (l) { return l.lotSource !== 'site_rework'; });
+        var reworkLots = lots.filter(function (l) { return l.lotSource === 'site_rework'; });
+        var html = '<option value="" data-balance="">-- LOT 선택 --</option>';
+        if (wipLots.length) {
+            html += '<optgroup label="▶ 레이져 후 재공품 LOT">';
+            html += wipLots.map(function (l, i) { return _laserWipLotOptionHtml(l, i === 0 && !reworkLots.length); }).join('');
+            html += '</optgroup>';
+        }
+        if (reworkLots.length) {
+            html += '<optgroup label="▶ 현장입고 재사용 자재 (레이져 생략)">';
+            html += reworkLots.map(function (l, i) { return _laserWipLotOptionHtml(l, !wipLots.length && i === 0); }).join('');
+            html += '</optgroup>';
+        }
+        return html;
     }
 
     // ──────────────────────────────────────────────
@@ -3363,25 +3480,32 @@ const PaintingWorkModule = (function() {
         // 레이져→도장-B 제품: 사출 창고 대신 재공품 LOT 사용
         var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
         if (isLaserWip) {
-            var wipLots = getLaserWipLots(carModel, partName);
+            var wipLots = getLaserWipLots(carModel, partName, { color: planColor });
+            if (!_reworkUseOn()) {
+                wipLots = wipLots.filter(function (l) { return l.lotSource !== 'site_rework'; });
+            }
             var wipFiltered = excludeLotNos && excludeLotNos.length > 0
-                ? wipLots.filter(function(l) { return excludeLotNos.indexOf(l.lotNo) < 0; })
+                ? wipLots.filter(function(l) {
+                    var key = _lotOptionKey(l);
+                    // 재공(wip:…)과 재사용(rework:…)은 같은 사출 LOT이어도 다른 행이다.
+                    return excludeLotNos.indexOf(key) < 0;
+                })
                 : wipLots;
-            if (wipFiltered.length === 0) return '<option value="" data-balance="">-- 재공품 재고 없음 --</option>';
-            var html = '<option value="" data-balance="">-- 재공품 LOT 선택 --</option>';
-            html += '<optgroup label="▶ 레이져 후 재공품 LOT (선입선출)">';
-            html += wipFiltered.map(function(l) {
-                var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '미지정';
-                return '<option value="' + l.lotNo + '"' +
-                    ' data-balance="' + l.balance + '"' +
-                    ' data-paint-lot="' + String(paint === '미지정' ? '' : paint).replace(/"/g, '&quot;') + '"' +
-                    ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                    '도장 ' + paint + ' / 사출 ' + l.lotNo +
-                    (l.color ? ' │ ' + l.color : '') +
-                    ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA</option>';
-            }).join('');
-            html += '</optgroup>';
-            return html;
+            if (wipFiltered.length === 0) return '<option value="" data-balance="">-- 재공품·현장 재사용 자재 LOT 없음 --</option>';
+            var laserHtml = '<option value="" data-balance="">-- LOT 선택 --</option>';
+            var wipOnly = wipFiltered.filter(function (l) { return l.lotSource !== 'site_rework'; });
+            var reworkOnly = wipFiltered.filter(function (l) { return l.lotSource === 'site_rework'; });
+            if (wipOnly.length) {
+                laserHtml += '<optgroup label="▶ 레이져 후 재공품 LOT (선입선출)">';
+                laserHtml += wipOnly.map(function (l) { return _laserWipLotOptionHtml(l, false); }).join('');
+                laserHtml += '</optgroup>';
+            }
+            if (reworkOnly.length) {
+                laserHtml += '<optgroup label="▶ 현장입고 재사용 자재 (레이져 생략)">';
+                laserHtml += reworkOnly.map(function (l) { return _laserWipLotOptionHtml(l, false); }).join('');
+                laserHtml += '</optgroup>';
+            }
+            return laserHtml;
         }
 
         var primaryLots, otherLots;
@@ -3455,7 +3579,7 @@ const PaintingWorkModule = (function() {
         } else {
             allLots = getInjectionLots(cm, '', planDate);
         }
-        var lot = allLots.find(function(l) { return l.lotNo === lotNo; });
+        var lot = allLots.find(function(l) { return (_lotOptionKey(l) === lotNo) || l.lotNo === lotNo; });
         // 당일 필터로 못 찾으면(수정 화면의 기존 LOT 등) 잔량만 전체에서 조회
         if (!lot && !isLaserWip) {
             allLots = injPartName
@@ -3681,16 +3805,41 @@ const PaintingWorkModule = (function() {
         }
     }
 
-    function openMaterialHistory(line) {
+    function openPastInboundPicker() {
+        var line = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
+            || (typeof _currentLine !== 'undefined' ? _currentLine : '') || '도장-A';
+        var date = ((document.getElementById('addPwDateHidden') || {}).value || '').slice(0, 10);
+        var car = ((document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '').trim();
+        var part = ((document.getElementById('pwInjPartSelect') || {}).value || '').trim()
+            || ((document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '').trim();
+        var color = ((document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '').trim();
+        openMaterialHistory(line, {
+            pickMode: true,
+            date: date,
+            carModel: car,
+            partName: part,
+            color: color
+        });
+    }
+
+    function openMaterialHistory(line, opts) {
+        opts = opts || {};
         const want = line || _currentLine || '도장-A';
+        const pickMode = !!opts.pickMode;
+        const prefCar = String(opts.carModel || '').trim();
+        const prefPart = String(opts.partName || '').trim();
+        const prefColor = String(opts.color || '').trim();
+        const prefDate = String(opts.date || '').slice(0, 10);
         const STORE_INV = DB.STORES.PAINTING_INPUT_INVENTORY;
         const today = UIUtils.today();
         const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
-        const defaultStart = (typeof UIUtils.daysAgo === 'function') ? UIUtils.daysAgo(30) : (function () {
+        // 선택 모드: 실적일부터 오늘까지(입고가 하루 늦는 경우 포함). 조회 모드는 최근 30일.
+        const defaultStart = prefDate || ((typeof UIUtils.daysAgo === 'function') ? UIUtils.daysAgo(30) : (function () {
             const d = new Date(today + 'T00:00:00');
             d.setDate(d.getDate() - 30);
             return d.toISOString().slice(0, 10);
-        })();
+        })());
+        const defaultEnd = today;
 
         // PaintingWorkModule 스코프에는 공통 _esc/_fmt가 없음 — 로컬 정의 필수
         function _esc(s) {
@@ -3733,6 +3882,91 @@ const PaintingWorkModule = (function() {
             }
             return r.lotNo || '-';
         }
+        function _primaryLot(r) {
+            if (Array.isArray(r.lots) && r.lots[0] && r.lots[0].lotNo) return String(r.lots[0].lotNo).trim();
+            return String(r.lotNo || '').trim();
+        }
+        function _partHit(recPart, wantPart) {
+            var a = String(recPart || '').trim();
+            var b = String(wantPart || '').trim();
+            if (!b) return true;
+            if (!a) return false;
+            if (a === b) return true;
+            if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.partNamesMatch) {
+                try { if (PaintingInputModule.partNamesMatch(a, b, prefCar)) return true; } catch (e0) { /* ignore */ }
+            }
+            try { return typeof _partsLooselyRelated === 'function' && _partsLooselyRelated(a, b); }
+            catch (e) { return a.toLowerCase() === b.toLowerCase(); }
+        }
+        function _displayHistPart(r) {
+            var raw = String((r && r.partName) || '').trim();
+            if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.toInjPartName) {
+                try {
+                    var inj = ReworkWipModule.toInjPartName(r && r.carModel, raw);
+                    if (inj) return inj;
+                } catch (e) { /* ignore */ }
+            }
+            var resolved = _resolveInjPartNameForWork(r && r.carModel, raw, r && r.color);
+            return resolved || raw || '-';
+        }
+        function _colorHit(recColor, wantColor) {
+            if (!wantColor) return true;
+            var rec = String(recColor || '').trim();
+            if (!rec) return false;
+            if (typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.colorLooseMatch === 'function') {
+                try { return !!PaintingInputModule.colorLooseMatch(rec, wantColor); } catch (e) { /* ignore */ }
+            }
+            return rec.toLowerCase().replace(/\s+/g, '') === String(wantColor).toLowerCase().replace(/\s+/g, '');
+        }
+        function _lotUsage(r) {
+            var lotNo = _primaryLot(r);
+            var inboundQty = Number(r.quantity) || 0;
+            var received = inboundQty;
+            var consumed = 0;
+            var balance = inboundQty;
+            if (lotNo && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getExactLotLedger) {
+                var led = PaintingInputModule.getExactLotLedger(want, r.carModel, r.partName, lotNo) || {};
+                received = Number(led.received) || inboundQty;
+                consumed = Number(led.consumed) || 0;
+                balance = Number(led.balance);
+                if (!Number.isFinite(balance)) balance = Math.max(0, received - consumed);
+            }
+            var workHits = [];
+            if (lotNo && typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
+                (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+                    if (!w) return;
+                    if (r.carModel && w.carModel && String(w.carModel) !== String(r.carModel)) return;
+                    var used = 0;
+                    (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
+                        if (String((l && l.lotNo) || '').trim() === lotNo) used += Number(l && l.qty) || 0;
+                    });
+                    if (used > 0) {
+                        workHits.push(String(w.date || '').slice(0, 10) + ' ' + UIUtils.formatNumber(used) + 'EA');
+                    }
+                });
+            }
+            var status = 'unused';
+            if (consumed > 0.001 && balance > 0.001) status = 'partial';
+            else if (balance <= 0.001 || consumed >= received - 0.001) status = 'used';
+            return {
+                lotNo: lotNo,
+                inboundQty: inboundQty,
+                received: received,
+                consumed: consumed,
+                balance: Math.max(0, balance),
+                status: status,
+                workHits: workHits
+            };
+        }
+        function _statusBadge(u) {
+            if (u.status === 'unused') {
+                return '<span style="color:#16a34a;font-weight:700;white-space:nowrap;">미사용</span>';
+            }
+            if (u.status === 'partial') {
+                return '<span style="color:#d97706;font-weight:700;white-space:nowrap;" title="' + _esc(u.workHits.join(', ')) + '">일부사용</span>';
+            }
+            return '<span style="color:var(--text-muted);font-weight:700;white-space:nowrap;" title="' + _esc(u.workHits.join(', ')) + '">전량사용</span>';
+        }
 
         function _loadRows(start, end) {
             const s = String(start || '').slice(0, 10);
@@ -3751,33 +3985,125 @@ const PaintingWorkModule = (function() {
             });
         }
 
+        function _fillSelect(sel, values, preferred, emptyLabel) {
+            if (!sel) return;
+            var list = values.slice();
+            if (preferred && list.indexOf(preferred) < 0) list.unshift(preferred);
+            var cur;
+            if (!sel.getAttribute('data-inited')) {
+                cur = preferred || '';
+                sel.setAttribute('data-inited', '1');
+            } else {
+                cur = sel.value;
+            }
+            var opts = '<option value="">' + _esc(emptyLabel) + '</option>';
+            list.forEach(function (v) {
+                opts += '<option value="' + _esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + _esc(v) + '</option>';
+            });
+            sel.innerHTML = opts;
+            sel.value = cur;
+        }
+
         function _render() {
             const startEl = document.getElementById('pwMatHistStart');
             const endEl = document.getElementById('pwMatHistEnd');
+            const carEl = document.getElementById('pwMatHistCar');
+            const partEl = document.getElementById('pwMatHistPart');
+            const colorEl = document.getElementById('pwMatHistColor');
+            const usedEl = document.getElementById('pwMatHistUsed');
             const start = startEl ? startEl.value : defaultStart;
-            const end = endEl ? endEl.value : today;
-            const rows = _loadRows(start, end);
+            const end = endEl ? endEl.value : defaultEnd;
+            const allRows = _loadRows(start, end);
+            const cars = [];
+            const parts = [];
+            const colors = [];
+            allRows.forEach(function (r) {
+                var c = String(r.carModel || '').trim();
+                var p = String(r.partName || '').trim();
+                var col = String(r.color || '').trim();
+                if (c && cars.indexOf(c) < 0) cars.push(c);
+                if (p && parts.indexOf(p) < 0) parts.push(p);
+                if (col && colors.indexOf(col) < 0) colors.push(col);
+            });
+            cars.sort();
+            parts.sort();
+            colors.sort();
+            _fillSelect(carEl, cars, prefCar, '차종 전체');
+            _fillSelect(partEl, parts, prefPart, '품명 전체');
+            _fillSelect(colorEl, colors, prefColor, '컬러 전체');
+            if (pickMode && prefCar && carEl) carEl.disabled = true;
+            if (pickMode && prefPart && partEl) partEl.disabled = true;
+            if (pickMode && prefColor && colorEl) colorEl.disabled = true;
+            const wantCar = carEl ? carEl.value : prefCar;
+            const wantPart = partEl ? partEl.value : prefPart;
+            const wantColor = colorEl ? colorEl.value : prefColor;
+            const usedFilter = usedEl ? usedEl.value : '';
+            const rows = allRows.filter(function (r) {
+                if (wantCar && String(r.carModel || '').trim() !== wantCar) return false;
+                if (wantPart && !_partHit(r.partName, wantPart)) return false;
+                if (wantColor && !_colorHit(r.color, wantColor)) return false;
+                return true;
+            });
             const tbody = document.getElementById('pwMatHistBody');
             const countEl = document.getElementById('pwMatHistCount');
-            const colCount = isAdmin ? 9 : 8;
-            if (countEl) countEl.textContent = rows.length + '건';
+            const needCarPart = pickMode && (!wantCar || !wantPart);
+            // 실적 폼은 이 조회 모달이 덮어써서 #pwLotRows가 잠시 없다.
+            // 선택 열을 그 존재에 묶으면 헤더만 남고 관리(수정) 버튼이 선택 칸으로 밀린다.
+            const canPick = pickMode && !needCarPart;
+            const colCount = 10 + (pickMode ? 1 : 0) + (isAdmin ? 1 : 0);
             if (!tbody) return;
-            if (!rows.length) {
+            const decorated = rows.map(function (r) {
+                return { rec: r, usage: _lotUsage(r) };
+            }).filter(function (row) {
+                if (usedFilter === 'unused') return row.usage.status === 'unused';
+                if (usedFilter === 'partial') return row.usage.status === 'partial';
+                if (usedFilter === 'used') return row.usage.status === 'used';
+                return true;
+            });
+            if (countEl) countEl.textContent = decorated.length + '건';
+            var pickAllEl = document.getElementById('pwMatHistPickAll');
+            if (pickAllEl) pickAllEl.checked = false;
+            if (needCarPart) {
                 tbody.innerHTML = '<tr><td colspan="' + colCount + '" style="text-align:center;padding:30px;color:var(--text-muted);">' +
-                    '선택한 기간에 현장 입고 이력이 없습니다.</td></tr>';
+                    '차종과 품명을 먼저 고른 뒤 조회하세요. 전체 입고를 한 번에 선택할 수 없습니다.</td></tr>';
                 return;
             }
-            tbody.innerHTML = rows.map(function (r) {
-                const qty = Number(r.quantity) || 0;
+            if (!decorated.length) {
+                tbody.innerHTML = '<tr><td colspan="' + colCount + '" style="text-align:center;padding:30px;color:var(--text-muted);">' +
+                    '같은 입고일·차종·품명·컬러의 현장 입고 이력이 없습니다. 입고일이 실적일과 다르면 날짜 범위를 넓혀 보세요.</td></tr>';
+                return;
+            }
+            tbody.innerHTML = decorated.map(function (row) {
+                const r = row.rec;
+                const u = row.usage;
+                const pickable = canPick && u.balance > 0.001;
+                const pickTd = canPick
+                    ? ('<td style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
+                        '<input type="checkbox" class="pw-mat-hist-pick" data-id="' + _esc(r.id) + '"' +
+                        ' data-lot="' + _esc(u.lotNo || '') + '" data-qty="' + Math.floor(u.balance) + '"' +
+                        (pickable ? '' : ' disabled') +
+                        ' style="width:16px;height:16px;accent-color:#2563eb;vertical-align:middle;cursor:' +
+                        (pickable ? 'pointer' : 'not-allowed') + ';"' +
+                        (pickable ? ' title="실적에 넣을 LOT"' : ' title="잔량이 없어 선택할 수 없습니다"') + '>' +
+                        (pickable ? '' : '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">잔량없음</div>') +
+                      '</td>')
+                    : '';
                 return '<tr>' +
                     '<td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">' + _esc(_dayOf(r)) + '</td>' +
                     '<td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">' + _esc(_timeOf(r)) + '</td>' +
                     '<td style="white-space:nowrap;padding:6px 10px;"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;">' + _esc(r.partName || '-') + '</td>' +
+                    '<td style="white-space:nowrap;padding:6px 10px;">' + _esc(_displayHistPart(r)) + '</td>' +
                     '<td style="white-space:nowrap;padding:6px 10px;">' + _esc(r.color || '-') + '</td>' +
                     '<td style="white-space:nowrap;padding:6px 10px;font-family:monospace;font-size:0.8rem;">' + _esc(_lotsLabel(r)) + '</td>' +
-                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;">' + _fmt(qty) + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;font-size:0.78rem;">' + _esc(r.receivedBy || r.source || '입고') + '</td>' +
+                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;">' + _fmt(u.inboundQty) + '</td>' +
+                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;">' + _fmt(u.consumed) + '</td>' +
+                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;color:' +
+                        (u.balance > 0 ? '#16a34a' : 'var(--text-muted)') + ';">' + _fmt(u.balance) + '</td>' +
+                    '<td style="white-space:nowrap;padding:6px 10px;">' + _statusBadge(u) +
+                        (u.workHits.length ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">' + _esc(u.workHits[0]) +
+                            (u.workHits.length > 1 ? ' 외 ' + (u.workHits.length - 1) : '') + '</div>' : '') +
+                    '</td>' +
+                    pickTd +
                     (isAdmin ? (
                         '<td style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
                             '<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;margin-right:4px;" ' +
@@ -3792,6 +4118,119 @@ const PaintingWorkModule = (function() {
                     ) : '') +
                 '</tr>';
             }).join('');
+        }
+
+        function _payloadFromId(id) {
+            const rec = Storage.getById(STORE_INV, id);
+            if (!rec) return { error: '입고 이력을 찾을 수 없습니다.', kind: 'error' };
+            if (prefCar && String(rec.carModel || '').trim() !== prefCar) {
+                return { error: '이 실적의 차종과 다른 입고입니다.', kind: 'warning' };
+            }
+            if (prefPart && !_partHit(rec.partName, prefPart)) {
+                return { error: '이 실적의 품명과 다른 입고입니다.', kind: 'warning' };
+            }
+            if (prefColor && !_colorHit(rec.color, prefColor)) {
+                return { error: '이 실적의 컬러와 다른 입고입니다.', kind: 'warning' };
+            }
+            const u = _lotUsage(rec);
+            var qty = Math.floor(Math.min(u.inboundQty || u.balance, u.balance));
+            if (!(qty > 0)) {
+                return { error: '이 LOT은 이미 사용되어 잔량이 없습니다.', kind: 'warning' };
+            }
+            return { lotNo: u.lotNo, qty: qty };
+        }
+
+        function _putPicks(picks) {
+            if (!document.getElementById('pwLotRows')) {
+                UIUtils.toast('실적 입력 화면이 열려 있을 때만 LOT을 선택할 수 있습니다.', 'warning');
+                return;
+            }
+            var flag = document.getElementById('pwUseReworkMaterial');
+            if (flag) {
+                flag.checked = true;
+                toggleReworkUseBox(flag);
+            }
+            var added = 0;
+            picks.forEach(function (p) {
+                var before = document.querySelectorAll('#pwLotRows .pw-lot-row').length;
+                addMissingLotRow({
+                    dataset: {
+                        lot: p.lotNo,
+                        qty: String(p.qty),
+                        forceRework: '1',
+                        source: 'site_rework'
+                    }
+                });
+                if (document.querySelectorAll('#pwLotRows .pw-lot-row').length > before) added++;
+            });
+            if (added > 0) {
+                UIUtils.toast(added + '개 재사용 LOT을 도장 투입에 추가했습니다.', 'success');
+                var rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
+                var last = rows[rows.length - 1];
+                if (last && last.scrollIntoView) {
+                    last.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    last.style.outline = '2px solid #7c3aed';
+                    setTimeout(function () { last.style.outline = ''; }, 1800);
+                }
+            }
+        }
+
+        function _applyAfterFormRestore(picks) {
+            var hasForm = !!document.getElementById('pwLotRows');
+            if (hasForm) {
+                _putPicks(picks);
+                if (typeof UIUtils.closeChildModal === 'function' && typeof UIUtils.isChildModalOpen === 'function'
+                    && UIUtils.isChildModalOpen()) {
+                    UIUtils.closeChildModal();
+                }
+                return;
+            }
+            UIUtils.closeModal();
+            setTimeout(function () { _putPicks(picks); }, 0);
+        }
+
+        function _pick(id) {
+            const p = _payloadFromId(id);
+            if (p.error) {
+                UIUtils.toast(p.error, p.kind || 'warning');
+                return;
+            }
+            _applyAfterFormRestore([p]);
+        }
+
+        function _toggleAll(el) {
+            document.querySelectorAll('#pwMatHistBody input.pw-mat-hist-pick:not([disabled])').forEach(function (cb) {
+                cb.checked = !!(el && el.checked);
+            });
+        }
+
+        function _applySelected() {
+            const boxes = document.querySelectorAll('#pwMatHistBody input.pw-mat-hist-pick:checked:not([disabled])');
+            if (!boxes.length) {
+                UIUtils.toast('선택한 LOT이 없습니다. 잔량이 있는 행의 체크를 켜 주세요.', 'warning');
+                return;
+            }
+            const picks = [];
+            var firstErr = '';
+            boxes.forEach(function (cb) {
+                var lotNo = String(cb.getAttribute('data-lot') || '').trim();
+                var qty = Math.floor(Number(cb.getAttribute('data-qty')) || 0);
+                if (lotNo && qty > 0) {
+                    picks.push({ lotNo: lotNo, qty: qty });
+                    return;
+                }
+                const p = _payloadFromId(cb.getAttribute('data-id') || cb.value);
+                if (p.error) {
+                    if (!firstErr) firstErr = p.error;
+                    return;
+                }
+                picks.push(p);
+            });
+            if (!picks.length) {
+                UIUtils.toast(firstErr || '선택한 LOT을 넣을 수 없습니다.', 'warning');
+                return;
+            }
+            _applyAfterFormRestore(picks);
         }
 
         function _delete(id) {
@@ -3896,46 +4335,91 @@ const PaintingWorkModule = (function() {
             }
         }
 
-        UIUtils.showModal(
-            _esc(want) + ' 과거 사출 자재 입고 조회',
+        var openHist = (pickMode && typeof UIUtils.showChildModal === 'function')
+            ? UIUtils.showChildModal
+            : UIUtils.showModal;
+        var closeHist = (pickMode && typeof UIUtils.closeChildModal === 'function')
+            ? 'UIUtils.closeChildModal()'
+            : 'UIUtils.closeModal()';
+        openHist(
+            _esc(want) + (pickMode ? ' 과거 입고 LOT 선택' : ' 과거 사출 자재 입고 조회'),
             '<div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:12px;flex-wrap:wrap;">' +
                 '<div class="form-group" style="margin:0;">' +
-                    '<label class="form-label" style="font-size:0.75rem;">시작일</label>' +
-                    '<input type="date" id="pwMatHistStart" class="form-input" style="width:150px;padding:4px 8px;" value="' + defaultStart + '" max="' + today + '">' +
+                    '<label class="form-label" style="font-size:0.75rem;">입고일(시작)</label>' +
+                    '<input type="date" id="pwMatHistStart" class="form-input" style="width:auto;min-width:9em;padding:4px 8px;" value="' + defaultStart + '" max="' + today + '">' +
                 '</div>' +
                 '<div class="form-group" style="margin:0;">' +
-                    '<label class="form-label" style="font-size:0.75rem;">종료일</label>' +
-                    '<input type="date" id="pwMatHistEnd" class="form-input" style="width:150px;padding:4px 8px;" value="' + today + '" max="' + today + '">' +
+                    '<label class="form-label" style="font-size:0.75rem;">입고일(종료)</label>' +
+                    '<input type="date" id="pwMatHistEnd" class="form-input" style="width:auto;min-width:9em;padding:4px 8px;" value="' + defaultEnd + '" max="' + today + '">' +
+                '</div>' +
+                '<div class="form-group" style="margin:0;">' +
+                    '<label class="form-label" style="font-size:0.75rem;">차종</label>' +
+                    '<select id="pwMatHistCar" class="form-select" style="width:auto;min-width:8em;padding:4px 8px;" onchange="PaintingWorkModule._matHistRender()">' +
+                        '<option value="">차종 전체</option></select>' +
+                '</div>' +
+                '<div class="form-group" style="margin:0;">' +
+                    '<label class="form-label" style="font-size:0.75rem;">품명(사출명)</label>' +
+                    '<select id="pwMatHistPart" class="form-select" style="width:auto;min-width:10em;padding:4px 8px;" onchange="PaintingWorkModule._matHistRender()">' +
+                        '<option value="">품명 전체</option></select>' +
+                '</div>' +
+                '<div class="form-group" style="margin:0;">' +
+                    '<label class="form-label" style="font-size:0.75rem;">컬러</label>' +
+                    '<select id="pwMatHistColor" class="form-select" style="width:auto;min-width:8em;padding:4px 8px;" onchange="PaintingWorkModule._matHistRender()">' +
+                        '<option value="">컬러 전체</option></select>' +
+                '</div>' +
+                '<div class="form-group" style="margin:0;">' +
+                    '<label class="form-label" style="font-size:0.75rem;">사용여부</label>' +
+                    '<select id="pwMatHistUsed" class="form-select" style="width:auto;min-width:7em;padding:4px 8px;" onchange="PaintingWorkModule._matHistRender()">' +
+                        '<option value="">전체</option>' +
+                        '<option value="unused"' + (pickMode ? ' selected' : '') + '>미사용</option>' +
+                        '<option value="partial">일부사용</option>' +
+                        '<option value="used">전량사용</option>' +
+                    '</select>' +
                 '</div>' +
                 '<button type="button" class="btn btn-sm btn-primary" onclick="PaintingWorkModule._matHistRender()">' +
                     '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">search</span> 조회</button>' +
                 '<button type="button" class="btn btn-sm btn-outline" onclick="' +
                     'document.getElementById(\'pwMatHistStart\').value=\'' + defaultStart + '\';' +
-                    'document.getElementById(\'pwMatHistEnd\').value=\'' + today + '\';' +
-                    'PaintingWorkModule._matHistRender();">최근 30일</button>' +
-                '<span id="pwMatHistCount" style="font-size:0.78rem;color:var(--text-muted);margin-left:auto;">0건</span>' +
+                    'document.getElementById(\'pwMatHistEnd\').value=\'' + defaultEnd + '\';' +
+                    'PaintingWorkModule._matHistRender();">' + (prefDate ? '작업일~오늘' : '최근 30일') + '</button>' +
+                '<span id="pwMatHistCount" style="font-size:0.78rem;color:var(--text-muted);margin-left:auto;white-space:nowrap;">0건</span>' +
             '</div>' +
             '<div style="margin-bottom:8px;padding:8px 10px;border-radius:8px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);font-size:0.78rem;color:var(--text-secondary);">' +
-                '현장 입고(<code>painting_input_inventory</code>) 기준입니다. 사출 창고 생산출고만 있고 현장 입고 확인이 안 된 건은 여기에 표시되지 않습니다.' +
-                (isAdmin ? '<br>관리자 권한으로 사용일·수량을 수정하거나, 잘못 등록된 이력을 삭제할 수 있습니다.' : '') +
+                '같은 <strong>차종 · 사출명 · 컬러</strong>의 도장현장 입고만 고르세요. 사용수량/잔량은 해당 사출 LOT 전체 기준입니다.' +
+                (pickMode ? ' 실적일과 입고일이 하루 어긋나면 종료일을 넓히세요. 잔량이 있는 행의 <strong>체크</strong>를 켠 뒤 아래 <strong>도장 투입에 추가</strong>를 누르면 ② 투입 LOT에 행이 생깁니다.' : '') +
+                (prefCar || prefPart || prefColor ? ' 현재 실적: <strong>' + _esc(prefCar || '-') + ' / ' + _esc(prefPart || '-') + (prefColor ? ' / ' + _esc(prefColor) : '') + '</strong>.' : '') +
+                ' 사출 창고 생산출고만 있고 현장 입고 확인이 안 된 건은 여기에 없습니다.' +
             '</div>' +
-            '<div class="data-table-wrapper" style="max-height:420px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">' +
-                '<table class="data-table compact" style="width:100%;border-collapse:collapse;">' +
+            '<div class="data-table-wrapper" style="max-height:420px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;">' +
+                '<table class="data-table data-table--content compact" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
                     '<thead><tr>' +
                         '<th style="white-space:nowrap;padding:6px 10px;">입고일</th>' +
                         '<th style="white-space:nowrap;padding:6px 10px;">시간</th>' +
                         '<th style="white-space:nowrap;padding:6px 10px;">차종</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">사출명</th>' +
+                        '<th style="white-space:nowrap;padding:6px 10px;">품명</th>' +
                         '<th style="white-space:nowrap;padding:6px 10px;">컬러</th>' +
                         '<th style="white-space:nowrap;padding:6px 10px;">사출LOT</th>' +
-                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">수량</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">담당/출처</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">입고수량</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">사용수량</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">잔량</th>' +
+                        '<th style="white-space:nowrap;padding:6px 10px;">사용여부</th>' +
+                        (pickMode
+                            ? '<th style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
+                                '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin:0;">' +
+                                '<input type="checkbox" id="pwMatHistPickAll" style="width:16px;height:16px;accent-color:#2563eb;" ' +
+                                'onchange="PaintingWorkModule._matHistToggleAll(this)">' +
+                                '선택</label></th>'
+                            : '') +
                         (isAdmin ? '<th style="white-space:nowrap;padding:6px 10px;text-align:center;">관리</th>' : '') +
                     '</tr></thead>' +
                     '<tbody id="pwMatHistBody"></tbody>' +
                 '</table>' +
             '</div>',
-            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            (pickMode
+                ? '<button class="btn btn-primary" type="button" onclick="PaintingWorkModule._matHistApplySelected()">' +
+                    '<span class="material-symbols-outlined" style="font-size:16px;vertical-align:middle;">playlist_add</span> 도장 투입에 추가</button>'
+                : '') +
+            '<button class="btn btn-secondary" type="button" onclick="' + closeHist + '">닫기</button>',
             'xl'
         );
 
@@ -3943,6 +4427,9 @@ const PaintingWorkModule = (function() {
         PaintingWorkModule._matHistDelete = _delete;
         PaintingWorkModule._matHistEdit = _edit;
         PaintingWorkModule._matHistSaveEdit = _saveEdit;
+        PaintingWorkModule._matHistPick = _pick;
+        PaintingWorkModule._matHistToggleAll = _toggleAll;
+        PaintingWorkModule._matHistApplySelected = _applySelected;
         setTimeout(_render, 0);
     }
 
@@ -4124,12 +4611,14 @@ const PaintingWorkModule = (function() {
                     '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">mail</span> 물류 담당자 통보' +
                     '</button>';
             } else if (hasInboundHist) {
-                // 현장 입고 이력은 있으나 잔량 0 (이미 사용·소진)
-                guideHtml =
-                    '현장 입고 이력은 있으나 <strong>사용 가능 잔량이 없습니다</strong>. ' +
-                    '추가 투입을 위해 사출 창고 생산출고 → 현장 입고가 필요합니다.<br>' +
-                    '물류 담당자 사용자 <strong>' + nameText + '</strong> 에게 ' +
-                    '<strong style="color:#dc2626;">' + UIUtils.formatNumber(shortage) + '개</strong> 공급을 요청하세요.';
+                var isLaserWipSummary = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+                guideHtml = isLaserWipSummary
+                    ? '레이져 후 재공품과 현장입고 재사용 자재를 함께 선택할 수 있습니다. 재사용 자재는 레이져를 거치지 않아도 됩니다.<br>' +
+                      '위 LOT 목록에서 <strong>현장입고 재사용 자재</strong>를 추가하거나, 재공품 잔량을 늘려 투입하세요.'
+                    : ('현장 입고 이력은 있으나 <strong>사용 가능 잔량이 없습니다</strong>. ' +
+                      '추가 투입을 위해 사출 창고 생산출고 → 현장 입고가 필요합니다.<br>' +
+                      '물류 담당자 사용자 <strong>' + nameText + '</strong> 에게 ' +
+                      '<strong style="color:#dc2626;">' + UIUtils.formatNumber(shortage) + '개</strong> 공급을 요청하세요.');
                 actionHtml =
                     '<button type="button" id="pwLogisticsNotifyBtn" class="btn btn-sm btn-primary" style="font-size:0.78rem;"' +
                     ' onclick="PaintingWorkModule.promptLogisticsSupplyNotify(' + shortage + ')">' +
@@ -4198,7 +4687,8 @@ const PaintingWorkModule = (function() {
             }
             if (bm) autoBalance = parseInt(bm[1], 10);
         }
-        const noVal = autoLotNo ? ' value="' + autoLotNo + '"' : '';
+        const actualLotNo = _lotNoFromOptionValue(autoLotNo) || autoLotNo;
+        const noVal = actualLotNo ? ' value="' + actualLotNo + '"' : '';
         const qtyVal = (qty !== '' && qty != null && Number(qty) > 0) ? ' value="' + qty + '"' : '';
         const maxAttr = (!isNaN(autoBalance) && autoBalance >= 0)
             ? ' max="' + autoBalance + '" placeholder="최대 ' + UIUtils.formatNumber(autoBalance) + '"'
@@ -4206,8 +4696,8 @@ const PaintingWorkModule = (function() {
         // 도장 현장 입고 일시(사출창고→도장라인 이동 시점) — 수입검사 입고일(사출창고에 외부
         // 입고·검사받은 시점, 별개 개념)과 헷갈리지 않도록 라벨을 명시하고 툴팁으로도 구분한다.
         // 같은 LOT번호가 다른 시각에 나눠 입고될 수 있어 날짜 + 시간을 같이 보여준다.
-        const inboundStamp = autoLotNo ? _findSiteInboundDateForLot(autoLotNo) : '';
-        const inspStamp = autoLotNo ? _findIncomingInspectionDateForLot('', autoLotNo) : '';
+        const inboundStamp = actualLotNo ? _findSiteInboundDateForLot(actualLotNo) : '';
+        const inspStamp = actualLotNo ? _findIncomingInspectionDateForLot('', actualLotNo) : '';
         const inboundDateHtml = (function() {
             const title = '현장입고(사출→도장 이동): ' + (inboundStamp || '기록 없음') +
                 (inspStamp ? ' / 수입검사입고(사출창고 입고): ' + inspStamp : '');
@@ -4281,7 +4771,13 @@ const PaintingWorkModule = (function() {
         _autoFillTimer = setTimeout(_execAutoFill, 400);
     }
 
-    /** 현장 투입(또는 재공) LOT 목록 — 당일 현장입고분 우선, lotNo 오름차순 = FIFO */
+    function _reworkUseOn() {
+        var el = document.getElementById('pwUseReworkMaterial');
+        return !!(el && el.checked);
+    }
+
+    /** 현장 투입(또는 재공) LOT 목록 — 당일 현장입고분 우선, lotNo 오름차순 = FIFO.
+     *  「재사용 자재 사용」이 켜져 있으면 현장입고 재사용 LOT을 뒤에 이어 붙인다. */
     function _getAvailableLotsFifo() {
         var injPartSel = document.getElementById('pwInjPartSelect');
         var injPartName = injPartSel ? injPartSel.value : '';
@@ -4290,22 +4786,52 @@ const PaintingWorkModule = (function() {
         var planColor = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
         var planDate = (document.getElementById('addPwDateHidden') || {}).value || '';
         var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        var useRework = _reworkUseOn();
         // 사출명 미선택이면 ①번과 동일하게 느슨 매칭으로 복구 — 없으면 당일 필터만 적용
         if (!isLaserWip && !injPartName && pn) {
             injPartName = _resolveInjPartNameForWork(cm, pn, planColor) || '';
         }
         var lots;
         if (isLaserWip) {
-            lots = getLaserWipLots(cm, pn) || [];
+            var all = getLaserWipLots(cm, pn, { color: planColor }) || [];
+            var wip = all.filter(function (l) { return l.lotSource !== 'site_rework'; });
+            var rew = useRework ? all.filter(function (l) { return l.lotSource === 'site_rework'; }) : [];
+            lots = wip.concat(rew);
         } else if (injPartName) {
             lots = getInjectionLotsByInjPart(injPartName, planColor, cm, planDate) || [];
+            if (useRework && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
+                var line = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
+                    || (typeof _currentLine !== 'undefined' ? _currentLine : '');
+                var extra = PaintingInputModule.getLotsByInjPart(line, injPartName, planColor, cm) || [];
+                var seen = {};
+                lots.forEach(function (l) { seen[String(l.lotNo || '')] = true; });
+                extra.forEach(function (l) {
+                    var no = String(l.lotNo || '');
+                    if (!no || seen[no] || !(Number(l.balance) > 0)) return;
+                    seen[no] = true;
+                    lots.push({
+                        lotNo: no,
+                        color: l.color || planColor || '',
+                        balance: Number(l.balance) || 0,
+                        partName: l.partName || injPartName,
+                        lotSource: 'site_rework',
+                        optionKey: 'rework:' + no
+                    });
+                });
+            }
         } else {
             lots = getInjectionLots(cm, '', planDate) || [];
         }
         return lots
             .filter(function (l) { return l && l.lotNo && (Number(l.balance) || 0) > 0; })
             .slice()
-            .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
+            .sort(function (a, b) {
+                var ar = a.lotSource === 'site_rework' ? 1 : 0;
+                var br = b.lotSource === 'site_rework' ? 1 : 0;
+                if (ar !== br) return ar - br;
+                return String(a.paintLot || a.lotNo).localeCompare(String(b.paintLot || b.lotNo))
+                    || String(a.lotNo).localeCompare(String(b.lotNo));
+            });
     }
 
     /** 이 LOT이 실제로 현장 입고 확인(또는 재공품 편입) 기록이 있는 LOT인지 확인.
@@ -4318,7 +4844,16 @@ const PaintingWorkModule = (function() {
         if (!lot) return false;
         if (isLaserWipProduct) {
             var wipLots = getLaserWipLots(carModel, partName);
-            return wipLots.some(function (l) { return l.lotNo === lot; });
+            if (wipLots.some(function (l) {
+                return l.lotNo === lot || _lotOptionKey(l) === lot;
+            })) return true;
+            if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getExactLotLedger) {
+                var inj = injPartName;
+                try { inj = inj || _resolveInjPartNameForWork(carModel, partName, '') || partName; } catch (e1) { inj = injPartName || partName; }
+                var ledger = PaintingInputModule.getExactLotLedger(_currentLine, carModel, inj, lot);
+                if ((ledger.received || 0) > 0.001) return true;
+            }
+            return false;
         }
         if (!injPartName) return true; // 사출명이 특정 안 되면(마스터 미등록 등) 기존 동작 유지
         if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.getExactLotLedger) return true;
@@ -4359,7 +4894,25 @@ const PaintingWorkModule = (function() {
         if (needed <= 0) { _updateLotSummary(); return; }
 
         var fifoLots = _getAvailableLotsFifo();
-        if (!fifoLots.length) {
+        var useRework = _reworkUseOn();
+        var keptRework = [];
+        if (useRework && (document.getElementById('addPwIsLaserWip') || {}).value === '1') {
+            container.querySelectorAll('.pw-lot-row').forEach(function (row) {
+                var sel = row.querySelector('.pw-lot-sel');
+                var opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+                if (!opt || String(opt.getAttribute('data-lot-source') || '') !== 'site_rework') return;
+                var qty = Number((row.querySelector('.pw-lot-qty') || {}).value) || 0;
+                var lotNo = String(opt.getAttribute('data-lot-no') || _lotNoFromOptionValue(sel.value) || '').trim();
+                if (!lotNo || qty <= 0) return;
+                keptRework.push({
+                    lotNo: lotNo,
+                    optionKey: sel.value,
+                    qty: qty,
+                    balance: Number(opt.getAttribute('data-balance')) || qty
+                });
+            });
+        }
+        if (!fifoLots.length && !keptRework.length) {
             _updateLotSummary();
             return;
         }
@@ -4368,17 +4921,45 @@ const PaintingWorkModule = (function() {
         var injPartName = injPartSel ? injPartSel.value : '';
         var cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
         var pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
+        var planColor = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
 
-        // FIFO로 투입수량만큼 배분
         var allocations = [];
-        var remain = needed;
-        for (var i = 0; i < fifoLots.length && remain > 0; i++) {
-            var bal = Number(fifoLots[i].balance) || 0;
+        var reworkTaken = keptRework.reduce(function (s, a) { return s + (Number(a.qty) || 0); }, 0);
+        var remain = Math.max(0, needed - reworkTaken);
+        var fifoWip = fifoLots.filter(function (l) { return l.lotSource !== 'site_rework'; });
+        var fifoRework = useRework ? fifoLots.filter(function (l) { return l.lotSource === 'site_rework'; }) : [];
+        for (var i = 0; i < fifoWip.length && remain > 0; i++) {
+            var bal = Number(fifoWip[i].balance) || 0;
             if (bal <= 0) continue;
             var take = Math.min(bal, remain);
-            allocations.push({ lotNo: fifoLots[i].lotNo, qty: take, balance: bal });
+            allocations.push({
+                lotNo: fifoWip[i].lotNo,
+                optionKey: _lotOptionKey(fifoWip[i]) || fifoWip[i].lotNo,
+                qty: take,
+                balance: bal
+            });
             remain -= take;
         }
+        if (useRework && remain > 0.001) {
+            var keptKeys = {};
+            keptRework.forEach(function (k) { keptKeys[String(k.optionKey || k.lotNo)] = true; });
+            fifoRework.forEach(function (l) {
+                if (remain <= 0) return;
+                var key = _lotOptionKey(l) || ('rework:' + l.lotNo);
+                if (keptKeys[key]) return;
+                var rBal = Number(l.balance) || 0;
+                if (rBal <= 0) return;
+                var rTake = Math.min(rBal, remain);
+                allocations.push({
+                    lotNo: l.lotNo,
+                    optionKey: key,
+                    qty: rTake,
+                    balance: rBal
+                });
+                remain -= rTake;
+            });
+        }
+        allocations = allocations.concat(keptRework);
         if (!allocations.length) { _updateLotSummary(); return; }
 
         // 행 전체 재구성 — 드롭다운·LOT번호·수량 동기화
@@ -4386,17 +4967,34 @@ const PaintingWorkModule = (function() {
         allocations.forEach(function (a, idx) {
             var excludeOthers = allocations
                 .filter(function (_, j) { return j !== idx; })
-                .map(function (x) { return x.lotNo; });
+                .map(function (x) { return x.optionKey || x.lotNo; });
             var lotsHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeOthers);
-            container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, a.lotNo, a.qty));
+            var selectVal = a.optionKey || a.lotNo;
+            var wantRework = String(selectVal).indexOf('rework:') === 0;
+            var lotOptRe = new RegExp('value="' + String(selectVal).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"');
+            if (wantRework && !lotOptRe.test(lotsHtml)) {
+                lotsHtml = '<option value="' + _pwEsc(selectVal) + '" data-lot-no="' + _pwEsc(a.lotNo) +
+                    '" data-lot-source="site_rework" data-balance="' + a.balance + '" selected>' +
+                    '현장 재사용 자재 / 사출 ' + _pwEsc(a.lotNo) + ' │ ' + UIUtils.formatNumber(a.balance) + ' EA</option>' +
+                    lotsHtml;
+            }
+            container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, selectVal, a.qty));
             var row = container.querySelectorAll('.pw-lot-row')[idx];
             if (!row) return;
             var sel = row.querySelector('.pw-lot-sel');
             if (sel) {
-                sel.value = a.lotNo;
-                if (sel.value !== a.lotNo) {
+                sel.value = selectVal;
+                if (sel.value !== selectVal) {
                     for (var k = 0; k < sel.options.length; k++) {
-                        if (sel.options[k].value === a.lotNo) { sel.selectedIndex = k; break; }
+                        if (sel.options[k].value === selectVal) {
+                            sel.selectedIndex = k;
+                            break;
+                        }
+                        // 재사용 행은 같은 사출 LOT의 재공 옵션으로 떨어지면 안 된다
+                        if (!wantRework && sel.options[k].getAttribute('data-lot-no') === a.lotNo) {
+                            sel.selectedIndex = k;
+                            break;
+                        }
                     }
                 }
             }
@@ -4458,7 +5056,11 @@ const PaintingWorkModule = (function() {
         const row = sel.closest('.pw-lot-row');
         if (!row) return;
         const inp = row.querySelector('.pw-lot-no');
-        if (inp && sel.value) inp.value = sel.value;
+        const selectedOpt = sel.options[sel.selectedIndex];
+        const actualLotNo = selectedOpt
+            ? (selectedOpt.getAttribute('data-lot-no') || _lotNoFromOptionValue(sel.value) || sel.value)
+            : sel.value;
+        if (inp && actualLotNo) inp.value = actualLotNo;
         checkFifoWarning(row, sel);
 
         // data-balance에서 직접 max 설정 (DB 조회 불필요)
@@ -4553,13 +5155,17 @@ const PaintingWorkModule = (function() {
         const rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
         const lots = [];
         rows.forEach(function(row) {
-            const lotNo = (row.querySelector('.pw-lot-no') ? row.querySelector('.pw-lot-no').value : '').trim();
-            const qty = Number(row.querySelector('.pw-lot-qty') ? row.querySelector('.pw-lot-qty').value : 0) || 0;
             const sel = row.querySelector('.pw-lot-sel');
             const opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+            const actualFromOpt = opt ? String(opt.getAttribute('data-lot-no') || '').trim() : '';
+            const lotNo = actualFromOpt
+                || _lotNoFromOptionValue(sel && sel.value)
+                || (row.querySelector('.pw-lot-no') ? row.querySelector('.pw-lot-no').value : '').trim();
+            const qty = Number(row.querySelector('.pw-lot-qty') ? row.querySelector('.pw-lot-qty').value : 0) || 0;
             const partName = opt ? String(opt.getAttribute('data-part-name') || '').trim() : '';
             const color = opt ? String(opt.getAttribute('data-color') || '').trim() : '';
             const paintLot = opt ? String(opt.getAttribute('data-paint-lot') || '').trim() : '';
+            const lotSource = opt ? String(opt.getAttribute('data-lot-source') || '').trim() : '';
             const warnEl = row.querySelector('.pw-fifo-warn');
             const isFifoViolated = warnEl && warnEl.style.display !== 'none';
             const fifoReason = isFifoViolated
@@ -4571,6 +5177,8 @@ const PaintingWorkModule = (function() {
                     rowData.paintLot = paintLot;
                     rowData.paintDate = paintLot;
                 }
+                if (lotSource) rowData.lotSource = lotSource;
+                if (sel && sel.value && sel.value !== lotNo) rowData.optionKey = sel.value;
                 lots.push(rowData);
             }
         });
@@ -5166,17 +5774,22 @@ const PaintingWorkModule = (function() {
             var _resolvedInj = _resolveInjPartNameForWork(carModel, partName, color);
             if (_resolvedInj) autoInjPartName = _resolvedInj;
         }
+        var laserInjPartName = '';
+        if (isLaserWipProduct && partName) {
+            try { laserInjPartName = _resolveInjPartNameForWork(carModel, partName, color) || partName; }
+            catch (eLaserInj) { laserInjPartName = partName; }
+        }
         var injPartOptsHtml = isLaserWipProduct ? '' : buildInjPartOptionsHtml(partName, carModel, color);
         // 레이져 다음 도장 라인: 재공품 LOT / 그 외(도장-A 등): 당일 현장 입고 LOT
         var _lotPlanDate = p.planDate || _currentDate;
         var lotsHtml = isLaserWipProduct
-            ? buildLaserWipLotOptionsHtml(carModel, partName)
+            ? buildLaserWipLotOptionsHtml(carModel, partName, { color: color, line: effectiveLine })
             : (autoInjPartName
                 ? buildLotOptionsHtmlByInjPart(autoInjPartName, color, carModel, _lotPlanDate)
                 : buildLotOptionsHtml(carModel, '', _lotPlanDate));
         // LOT 추가 버튼 활성화 여부
         var initialLotCount = isLaserWipProduct
-            ? getLaserWipLots(carModel, partName).length
+            ? getLaserWipLots(carModel, partName, { color: color, line: effectiveLine }).length
             : (autoInjPartName
                 ? getInjectionLotsByInjPart(autoInjPartName, color, carModel, _lotPlanDate).length
                 : getInjectionLots(carModel, '', _lotPlanDate).length);
@@ -5337,9 +5950,9 @@ const PaintingWorkModule = (function() {
         var _lotSectionIcon = isLaserWipProduct ? 'bolt' : 'inventory_2';
         var _lotSectionTitle = isLaserWipProduct ? '재공품 LOT' : '사출 LOT';
         var _lotSectionDesc  = isLaserWipProduct
-            ? '(레이져 후 재공품 잔량 기준 조회 · 복수 LOT 입력 가능)'
+            ? '(레이져 후 재공품 + 현장입고 재사용 자재 · 재사용 자재는 레이져 생략)'
             : '(당일 도장 현장 입고 잔량 · 복수 LOT 입력 가능)';
-        var _lotColHeader = isLaserWipProduct ? '재공품 LOT 선택' : '현장 투입 LOT 선택';
+        var _lotColHeader = isLaserWipProduct ? '재공·재사용 자재 LOT 선택' : '현장 투입 LOT 선택';
         var _lotAddBtnDisabled = initialLotCount <= 1
             ? ' disabled title="' + (isLaserWipProduct ? '재공품 LOT가 1개 이하여서 추가할 수 없습니다' : '현장 투입 LOT가 1개 이하여서 추가할 수 없습니다') + '"'
             : '';
@@ -5348,9 +5961,15 @@ const PaintingWorkModule = (function() {
         // 여기서 바로 보여준다. 이게 없으면, 예전에 확인 처리해 둔 오래된 잔여 LOT이 FIFO상
         // 먼저 걸려서 자동으로 채워지고, 정작 오늘 들어온(아직 미입고 처리 중인) 새 LOT은
         // 화면에 안 보인 채 조용히 묻혀버리는 사고로 이어진다.
-        var unmatchedInboundHtml = (!isLaserWipProduct && carModel && partName)
-            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
-               _buildUnmatchedInboundWarningHtml({ carModel: carModel, partName: partName, color: color, line: effectiveLine, date: (p.planDate || _currentDate) }))
+        var unmatchedInboundHtml = (carModel && partName)
+            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
+               _buildUnmatchedInboundWarningHtml({
+                   carModel: carModel,
+                   partName: isLaserWipProduct ? (laserInjPartName || partName) : partName,
+                   color: color,
+                   line: effectiveLine,
+                   date: (p.planDate || _currentDate)
+               }))
             : '';
 
         // 위 배너는 "이미 입고 처리(현장 확인) 끝난" 자재만 본다 — 사출창고에서 방금 출고됐지만
@@ -5358,11 +5977,11 @@ const PaintingWorkModule = (function() {
         // 방금 도착한 새 LOT은 아예 선택 목록에 안 뜨고, 예전에 확인해 둔 옛 잔여 LOT만 조용히
         // 선택돼 버리는 사고가 난다 — 따로 확인해서 "먼저 입고 처리하라"고 안내한다.
         var pendingShipmentHtml = '';
-        if (!isLaserWipProduct && carModel && typeof PaintingInputModule !== 'undefined'
+        if (carModel && typeof PaintingInputModule !== 'undefined'
             && typeof PaintingInputModule.listPendingWarehouseShipments === 'function') {
             var _pendingShips = PaintingInputModule.listPendingWarehouseShipments(effectiveLine, {
                 carModel: carModel,
-                partName: autoInjPartName || undefined,
+                partName: (isLaserWipProduct ? laserInjPartName : autoInjPartName) || undefined,
                 date: (p.planDate || _currentDate)
             });
             if (_pendingShips.length) {
@@ -5379,38 +5998,37 @@ const PaintingWorkModule = (function() {
             }
         }
 
-        // 리워크 재공품 사용 — IL 등 리워크 대상 사출명일 때만, ①(창고→도장현장 입고)과
-        // ②(도장 투입) 사이에 노출. 체크 후 수량을 적용하면 리워크 재공품에서 즉시 출고·
-        // 현장 입고 확정까지 처리되고, 사출 창고 「현장 사출 요청」은 그만큼 자동 취소된다
-        // (기본은 여전히 사출 창고 요청 — 이 박스를 쓰지 않으면 기존과 동일하게 동작).
+        // 리워크 사용 — 체크하면 리워크 재공 창고가 아니라 도장현장 입고에서
+        // 같은 차종·사출명·컬러 LOT을 고른다.
         var reworkUseHtml = '';
-        if (!isLaserWipProduct && carModel && autoInjPartName &&
-            typeof InjectionWarehouseModule !== 'undefined' &&
-            typeof InjectionWarehouseModule.isReworkSourcedPart === 'function' &&
-            InjectionWarehouseModule.isReworkSourcedPart(autoInjPartName)) {
-            var _reworkStockNow = (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty)
-                ? ReworkWipModule.getStockQty(carModel, autoInjPartName, color) : 0;
+        if (carModel && partName) {
+            var _rwInjName = (isLaserWipProduct ? (laserInjPartName || partName) : (autoInjPartName || partName)) || '';
+            var _siteRwQty = 0;
+            try {
+                if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
+                    var _siteLots = PaintingInputModule.getLotsByInjPart(effectiveLine, _rwInjName, color, carModel) || [];
+                    _siteRwQty = _siteLots.reduce(function (s, l) { return s + (Number(l.balance) || 0); }, 0);
+                }
+            } catch (eRwSite) { _siteRwQty = 0; }
             reworkUseHtml =
                 '<div id="pwReworkUseBox" style="margin-bottom:12px;padding:12px 14px;border-radius:8px;' +
                 'border:1px solid rgba(124,58,237,.3);background:rgba(124,58,237,.05);">' +
                 '<label style="display:flex;align-items:center;gap:8px;font-size:0.86rem;font-weight:700;color:#7c3aed;cursor:pointer;">' +
                 '<input type="checkbox" id="pwUseReworkMaterial" onchange="PaintingWorkModule.toggleReworkUseBox(this)" style="width:16px;height:16px;accent-color:#7c3aed;">' +
                 '<span class="material-symbols-outlined" style="font-size:17px;">autorenew</span>' +
-                '리워크 재공품 사용 (사출 창고 대신 리워크 재공품에서 투입)' +
+                '재사용 자재 사용' +
                 '</label>' +
-                '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;margin-left:24px;">' +
-                '현재 리워크 재공 재고 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(_reworkStockNow) + ' EA</strong>' +
-                ' · 체크 후 수량을 적용하면 리워크에서 즉시 출고·현장 입고 처리되고, 사출 창고 「현장 사출 요청」은 취소됩니다.' +
+                '<div id="pwReworkUseExtras" style="display:none;margin-top:8px;">' +
+                '<button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none;padding:4px 10px;white-space:nowrap;" ' +
+                'onclick="PaintingWorkModule.openPastInboundPicker()">' +
+                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">history</span> 도장현장 입고에서 선택</button>' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;line-height:1.45;">' +
+                '같은 <strong>차종 · 사출명 · 컬러</strong>의 도장현장 입고 LOT만 고릅니다. 재사용 자재 창고에서 바로 빼지 않습니다.' +
+                (_siteRwQty > 0
+                    ? '<br>현재 현장 잔량 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(_siteRwQty) + ' EA</strong>' +
+                      (color ? ' (' + _pwEsc(color) + ')' : '')
+                    : '') +
                 '</div>' +
-                '<div id="pwReworkUseQtyRow" style="display:none;margin-top:10px;margin-left:24px;">' +
-                '<div style="display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;">' +
-                '<div><label class="form-label" style="font-size:0.76rem;">사용 수량 (EA)</label>' +
-                '<input type="number" class="form-input" id="pwReworkUseQty" min="1" style="max-width:160px;text-align:right;font-weight:700;"></div>' +
-                '<button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none;padding:7px 14px;" ' +
-                'onclick="PaintingWorkModule.applyReworkMaterial(this)">' +
-                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">bolt</span> 리워크에서 투입 처리</button>' +
-                '</div>' +
-                '<div id="pwReworkUseStatus" style="margin-top:6px;font-size:0.76rem;"></div>' +
                 '</div>' +
                 '</div>';
         }
@@ -5431,8 +6049,8 @@ const PaintingWorkModule = (function() {
             (isLaserWipProduct
                 ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--border);font-size:0.82rem;color:var(--accent-blue);">' +
                   '<span class="material-symbols-outlined" style="font-size:16px;">bolt</span>' +
-                  '<strong>레이져 후 재공품</strong>에서 자동 조회됩니다. (사출 창고 LOT 연계 선입선출)' +
-                  '<input type="hidden" id="pwInjPartSelect" value="">' +
+                  '<strong>레이져 후 재공품</strong>과 <strong>현장입고 재사용 자재</strong>를 함께 선택할 수 있습니다. 재사용 자재는 레이져를 거치지 않아도 됩니다.' +
+                  '<input type="hidden" id="pwInjPartSelect" value="' + _pwEsc(laserInjPartName || '') + '">' +
                   '</div>'
                 : '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;' +
                   'border-bottom:1px solid var(--border);">' +
@@ -5999,7 +6617,11 @@ const PaintingWorkModule = (function() {
         for (var vi = 0; vi < data.lots.length; vi++) {
             var vl = data.lots[vi];
             if (!vl.lotNo || !vl.qty) continue;
-            var vLotInfo = allLots.find(function(l) { return l.lotNo === vl.lotNo; });
+            var vLotInfo = allLots.find(function(l) {
+                if (vl.optionKey && _lotOptionKey(l) === vl.optionKey) return true;
+                if (vl.lotSource && l.lotSource === vl.lotSource && l.lotNo === vl.lotNo) return true;
+                return l.lotNo === vl.lotNo;
+            });
             if (vLotInfo && vl.qty > vLotInfo.balance) {
                 vl.qty = vLotInfo.balance; // 초과분 조용히 잔량으로 대체
             }
@@ -6038,6 +6660,19 @@ const PaintingWorkModule = (function() {
         if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
             try { await PaintingInputModule.deductForWork(savedWork || data); }
             catch (eDeduct) { console.warn('[PaintingWork] 투입 자재 차감 실패:', eDeduct); }
+        } else if (isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
+            var reworkLots = (data.lots || []).filter(function (l) {
+                return l && (l.lotSource === 'site_rework' || String(l.optionKey || '').indexOf('rework:') === 0);
+            });
+            if (reworkLots.length) {
+                try {
+                    var reworkQty = reworkLots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+                    await PaintingInputModule.deductForWork(Object.assign({}, savedWork || data, {
+                        lots: reworkLots,
+                        inputQty: reworkQty
+                    }));
+                } catch (eRwDeduct) { console.warn('[PaintingWork] 리워크 현장 LOT 차감 실패:', eRwDeduct); }
+            }
         }
         if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined'
             && typeof PaintingInputModule.writeOffExpiredSiteLots === 'function') {
@@ -7247,6 +7882,18 @@ const PaintingWorkModule = (function() {
         return found ? found.injPartName : '';
     }
 
+    function _displayInjPartName(carModel, partName, color) {
+        var raw = String(partName || '').trim();
+        if (!raw) return '';
+        if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.toInjPartName === 'function') {
+            try {
+                var n = ReworkWipModule.toInjPartName(carModel, raw);
+                if (n) return n;
+            } catch (e) { /* ignore */ }
+        }
+        return _resolveInjPartNameForWork(carModel, raw, color) || raw;
+    }
+
     function _buildEditLotOptionsHtml(d) {
         var injPartName = _resolveInjPartNameForWork(d.carModel, d.partName, d.color);
         if (injPartName && typeof buildLotOptionsHtmlByInjPart === 'function') {
@@ -7287,7 +7934,7 @@ const PaintingWorkModule = (function() {
         rows.forEach(function (r) {
             if (String(r.type || '') !== '입고') return;
             if (carModel && String(r.carModel || '') !== String(carModel)) return;
-            if (injPartName && String(r.partName || '') !== String(injPartName)) return;
+            if (injPartName && !_partsLooselyRelated(r.partName, injPartName) && String(r.partName || '') !== String(injPartName)) return;
             var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
             var hit = lots.some(function (l) { return String((l && l.lotNo) || '').trim() === want; });
             if (!hit) return;
@@ -7541,7 +8188,7 @@ const PaintingWorkModule = (function() {
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(time) + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _inboundLocationCellHtml(isRework) + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.carModel || '-') + '</td>' +
-                    '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.partName || '-') + '</td>' +
+                    '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(_displayInjPartName(r.carModel, r.partName, r.color) || r.partName || '-') + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(r.color || '-') + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;font-family:monospace;">' + _pwEsc(lotNo) + '</td>' +
                     '<td style="padding:4px 8px;white-space:nowrap;">' + _pwEsc(_inspDateTextForInboundLot(r.partName, lotNo, r)) + '</td>' +
@@ -7582,8 +8229,8 @@ const PaintingWorkModule = (function() {
             '</div>';
     }
 
-    // 리워크 재공품 → 도장현장 출고로 들어온 입고분(isReworkInbound)임을 표시하는 배지.
-    // 창고 생산출고와 뒤섞여 보이면 이 LOT이 사출 창고 재고가 아니라 리워크 재공품에서 온
+    // 재사용 자재 → 도장현장 출고로 들어온 입고분(isReworkInbound)임을 표시하는 배지.
+    // 창고 생산출고와 뒤섞여 보이면 이 LOT이 사출 창고 재고가 아니라 재사용 자재에서 온
     // 것을 놓쳐, 사출 창고 재고와 대조하며 혼란스러워하는 문제가 있었다.
     // 플래그(isReworkInbound)는 이 기능 이후 확인된 입고 건에만 붙어 있어, 그전 건이나 자동
     // 입고 경로 건은 리워크인데도 플래그가 없다 — 실제 리워크 출고 원장까지 대조해 판정한다.
@@ -7598,14 +8245,14 @@ const PaintingWorkModule = (function() {
 
     function _reworkInboundBadgeHtml() {
         return ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;' +
-            'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">리워크</span>';
+            'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">재사용 자재</span>';
     }
 
     /** 입고 위치 칸 — 사출 창고 / 리워크를 배지로 구분 */
     function _inboundLocationCellHtml(isRework) {
         return isRework
             ? '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
-              'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">리워크</span>'
+              'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">재사용 자재</span>'
             : '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
               'background:rgba(37,99,235,.10);color:#2563eb;white-space:nowrap;">사출 창고</span>';
     }
@@ -7634,7 +8281,7 @@ const PaintingWorkModule = (function() {
     function _siteInboundTableHeadHtml() {
         return '<thead><tr style="color:var(--text-muted);text-align:left;">' +
             '<th style="padding:4px 8px;white-space:nowrap;">입고시간</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;" title="사출 창고 또는 리워크">입고 위치</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;" title="사출 창고 또는 재사용 자재">입고 위치</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
@@ -7897,7 +8544,7 @@ const PaintingWorkModule = (function() {
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.time || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _inboundLocationCellHtml(!!detail.isRework) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.carModel || maps.carModel || '-') + '</td>' +
-                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.partName || maps.injPartName || '-') + '</td>' +
+                '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(_displayInjPartName(detail.carModel || maps.carModel, detail.partName || maps.injPartName, detail.color) || detail.partName || maps.injPartName || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.color || '-') + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;font-family:monospace;font-weight:700;">' + _pwEsc(lotNo) + '</td>' +
                 '<td style="padding:5px 8px;white-space:nowrap;">' + _pwEsc(detail.inspDate || '-') + '</td>' +
@@ -7971,19 +8618,44 @@ const PaintingWorkModule = (function() {
     function addMissingLotRow(btnEl) {
         var lotNo = btnEl && btnEl.dataset ? btnEl.dataset.lot : '';
         var qty = btnEl && btnEl.dataset ? Number(btnEl.dataset.qty) || 0 : 0;
+        var forceRework = !!(btnEl && btnEl.dataset && (
+            btnEl.dataset.forceRework === '1' || btnEl.dataset.source === 'site_rework'
+        ));
         if (!lotNo) return;
         var container = document.getElementById('pwLotRows');
         if (!container) return;
+        var reworkKey = 'rework:' + lotNo;
         var excludeLots = _getSelectedLotNos(null);
-        // 이 LOT이 이미 다른 행에 선택돼 있으면 같은 미반영분을 다시 새 행으로 추가하지 않는다.
-        // (경고 박스는 저장된 실적 기준으로만 "미반영"을 계산해, 방금 UI에서 추가한 행은 모르는
-        // 채로 남아 있어 같은 버튼을 두 번 누르면 동일 LOT·동일 잔량이 중복 행으로 쌓였다.)
-        if (excludeLots.indexOf(lotNo) >= 0) {
+        var alreadySelected = false;
+        container.querySelectorAll('.pw-lot-row').forEach(function (row) {
+            var s = row.querySelector('.pw-lot-sel');
+            if (!s) return;
+            var opt = s.options[s.selectedIndex];
+            var dataNo = opt ? String(opt.getAttribute('data-lot-no') || '').trim() : '';
+            var src = opt ? String(opt.getAttribute('data-lot-source') || '').trim() : '';
+            if (forceRework) {
+                if (s.value === reworkKey || (src === 'site_rework' && dataNo === lotNo)) alreadySelected = true;
+            } else if (s.value === lotNo || s.value === reworkKey || dataNo === lotNo) {
+                alreadySelected = true;
+            }
+        });
+        var isDup = forceRework
+            ? (alreadySelected || excludeLots.indexOf(reworkKey) >= 0)
+            : (alreadySelected || excludeLots.indexOf(lotNo) >= 0 || excludeLots.indexOf(reworkKey) >= 0);
+        if (isDup) {
             var dupRow = null;
             container.querySelectorAll('.pw-lot-row').forEach(function (row) {
                 if (dupRow) return;
                 var s = row.querySelector('.pw-lot-sel');
-                if (s && s.value === lotNo) dupRow = row;
+                if (!s) return;
+                var opt = s.options[s.selectedIndex];
+                var dataNo = opt ? String(opt.getAttribute('data-lot-no') || '').trim() : '';
+                var src = opt ? String(opt.getAttribute('data-lot-source') || '').trim() : '';
+                if (forceRework) {
+                    if (s.value === reworkKey || (src === 'site_rework' && dataNo === lotNo)) dupRow = row;
+                } else if (s.value === lotNo || s.value === reworkKey || dataNo === lotNo) {
+                    dupRow = row;
+                }
             });
             if (dupRow && dupRow.scrollIntoView) {
                 dupRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -7998,22 +8670,27 @@ const PaintingWorkModule = (function() {
         var cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
         var pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
         var lotsHtml = _buildFilteredLotOptions(injPartName, cm, pn, excludeLots);
-        // 이 LOT은 다른 행에 이미 일부 반영돼 있어 위 목록에서 제외돼 있을 수 있다 — 드롭다운이
-        // 텅 빈 채로 남아 잔량을 확인할 수 없게 되므로, "미반영 몫" 옵션을 직접 끼워 넣는다.
-        var lotOptRe = new RegExp('value="' + lotNo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"');
+        var selectVal = forceRework ? reworkKey : lotNo;
+        var isLaser = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
+        if (!forceRework && isLaser && lotsHtml.indexOf('value="rework:' + lotNo + '"') >= 0) selectVal = reworkKey;
+        var lotOptRe = new RegExp('value="' + selectVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"');
         if (!lotOptRe.test(lotsHtml)) {
-            var missingOpt = '<option value="' + _pwEsc(lotNo) + '" data-balance="' + qty + '" selected>' +
-                '이 도장작업일 미반영분 │ LOT ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA</option>';
+            var missingLabel = forceRework || selectVal === reworkKey
+                ? ('현장 재사용 자재 / 사출 ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA')
+                : ('이 도장작업일 미반영분 │ LOT ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA');
+            var missingOpt = '<option value="' + _pwEsc(selectVal) + '" data-lot-no="' + _pwEsc(lotNo) + '" data-lot-source="' +
+                ((forceRework || isLaser) ? 'site_rework' : '') + '" data-balance="' + qty + '" selected>' +
+                missingLabel + '</option>';
             lotsHtml = missingOpt + lotsHtml;
         }
-        container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, lotNo, qty));
+        container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, selectVal, qty));
         var rows = container.querySelectorAll('.pw-lot-row');
         var newRow = rows[rows.length - 1];
         if (newRow) {
             var sel = newRow.querySelector('.pw-lot-sel');
             var noInput = newRow.querySelector('.pw-lot-no');
             var qtyInput = newRow.querySelector('.pw-lot-qty');
-            if (sel) sel.value = lotNo;
+            if (sel) sel.value = selectVal;
             if (noInput) noInput.value = lotNo;
             if (qtyInput) qtyInput.value = qty;
         }
@@ -8043,17 +8720,29 @@ const PaintingWorkModule = (function() {
     }
 
     function toggleReworkUseBox(checkboxEl) {
-        var row = document.getElementById('pwReworkUseQtyRow');
-        if (!row) return;
-        row.style.display = (checkboxEl && checkboxEl.checked) ? '' : 'none';
-        if (checkboxEl && checkboxEl.checked) {
-            var qtyEl = document.getElementById('pwReworkUseQty');
-            if (qtyEl) qtyEl.focus();
+        var extras = document.getElementById('pwReworkUseExtras');
+        var on = !!(checkboxEl && checkboxEl.checked);
+        if (extras) extras.style.display = on ? '' : 'none';
+        // 체크하는 즉시 ② 도장 투입에 현장 재사용 LOT 행을 붙이고, 해제하면 재사용 행을 뺀다.
+        _execAutoFill();
+        if (on && !_reworkLotRowCount()) {
+            UIUtils.toast('현장 재사용 자재 잔량이 없거나, 차종·사출명·컬러가 맞는 입고가 없습니다.', 'warning');
         }
     }
 
-    /** "리워크 재공품 사용" 박스의 [리워크에서 투입 처리] 버튼 — 별도 화면 이동 없이 그 자리에서
-     *  ① 리워크 재공품 출고(즉시 차감) → ② 도장현장 입고 확정(자동) → ③ 사출 창고 「현장 사출
+    function _reworkLotRowCount() {
+        var n = 0;
+        document.querySelectorAll('#pwLotRows .pw-lot-row').forEach(function (row) {
+            var sel = row.querySelector('.pw-lot-sel');
+            var opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+            if (opt && String(opt.getAttribute('data-lot-source') || '') === 'site_rework') n++;
+            else if (sel && String(sel.value || '').indexOf('rework:') === 0) n++;
+        });
+        return n;
+    }
+
+    /** "재사용 자재 사용" 박스의 [리워크에서 투입 처리] 버튼 — 별도 화면 이동 없이 그 자리에서
+     *  ① 재사용 자재 출고(즉시 차감) → ② 도장현장 입고 확정(자동) → ③ 사출 창고 「현장 사출
      *  요청」 취소(acked 반영)까지 한 번에 처리하고, 방금 확정된 LOT을 ②투입 목록에 자동
      *  추가한다. 기본 흐름(사출 창고에서 공급)은 이 박스를 쓰지 않으면 그대로 유지된다. */
     async function applyReworkMaterial(btnEl) {
@@ -8080,7 +8769,7 @@ const PaintingWorkModule = (function() {
             return;
         }
         if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.dispatchFromPaintingWork !== 'function') {
-            UIUtils.toast('리워크 재공품 모듈을 사용할 수 없습니다.', 'error');
+            UIUtils.toast('재사용 자재 모듈을 사용할 수 없습니다.', 'error');
             return;
         }
 
@@ -8091,10 +8780,10 @@ const PaintingWorkModule = (function() {
 
             var outRec = await ReworkWipModule.dispatchFromPaintingWork({
                 carModel: cm, partName: injPartName, color: color, qty: qty, line: line,
-                note: '도장 실적 입력 — 리워크 재공품 사용'
+                note: '도장 실적 입력 — 재사용 자재 사용'
             });
             if (!outRec) {
-                UIUtils.toast('리워크 출고 처리에 실패했습니다.', 'error');
+                UIUtils.toast('재사용 자재 출고 처리에 실패했습니다.', 'error');
                 return;
             }
 
@@ -8106,11 +8795,11 @@ const PaintingWorkModule = (function() {
 
             if (typeof InjectionWarehouseModule !== 'undefined' && typeof InjectionWarehouseModule.ackReworkUsageFromWork === 'function') {
                 await InjectionWarehouseModule.ackReworkUsageFromWork(cm, injPartName, color, qty, {
-                    note: '도장 실적 입력 — 리워크 재공품 사용 (' + line + ')'
+                    note: '도장 실적 입력 — 재사용 자재 사용 (' + line + ')'
                 });
             }
 
-            UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 리워크 재공품에서 투입 처리했습니다. 사출 창고 요청도 취소됩니다.', 'success');
+            UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 재사용 자재에서 투입 처리했습니다. 사출 창고 요청도 취소됩니다.', 'success');
 
             var lotNo = outRec.lotNo || (Array.isArray(outRec.lots) && outRec.lots[0] && outRec.lots[0].lotNo) || '';
             if (lotNo) {
@@ -8126,7 +8815,7 @@ const PaintingWorkModule = (function() {
             }
             if (qtyEl) qtyEl.value = '';
         } catch (e) {
-            UIUtils.toast('리워크 재공품 적용 실패: ' + (e && e.message ? e.message : e), 'error');
+            UIUtils.toast('재사용 자재 적용 실패: ' + (e && e.message ? e.message : e), 'error');
         } finally {
             if (btnEl) btnEl.disabled = false;
         }
@@ -8181,7 +8870,7 @@ const PaintingWorkModule = (function() {
               '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
               '<input type="checkbox" id="editPwPlanManagerNotified" style="width:16px;height:16px;"' + (d.planManagerNotified ? ' checked' : '') + '>' +
               '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">관리자 통보 완료</span></label></div>' +
-              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자') +
+              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자', d.planManagerRecipients) +
               '</div>' : '';
 
         var editQtyDiffHtml =
@@ -8203,7 +8892,7 @@ const PaintingWorkModule = (function() {
             '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;">' +
             '<input type="checkbox" id="editPwQtyDiffManagerNotified" style="width:16px;height:16px;"' + (d.qtyDiffManagerNotified ? ' checked' : '') + '>' +
             '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">관리자 통보 완료</span></label></div>' +
-            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보 담당자') +
+            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보 담당자', d.qtyDiffManagerRecipients) +
             '</div>';
 
         var wp = (d.date || '').split('-');
@@ -8257,7 +8946,7 @@ const PaintingWorkModule = (function() {
             '<label class="form-label">사출LOT</label>' +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +
@@ -8390,7 +9079,7 @@ const PaintingWorkModule = (function() {
               '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
               '</label>' +
               '</div>' +
-              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자를 여러 명 선택하세요.') +
+              _buildNotifySelectorHtml('editPlan', '계획 미달 통보를 받을 담당자를 여러 명 선택하세요.', d.planManagerRecipients) +
               '</div>'
             : '';
         const editQtyDiffHtml =
@@ -8424,7 +9113,7 @@ const PaintingWorkModule = (function() {
             '<span style="font-size:0.82rem;font-weight:600;color:#dc2626;">통보 완료</span>' +
             '</label>' +
             '</div>' +
-            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보를 받을 담당자를 여러 명 선택하세요.') +
+            _buildNotifySelectorHtml('editQtyDiff', '투입/산출 차이 통보를 받을 담당자를 여러 명 선택하세요.', d.qtyDiffManagerRecipients) +
             '</div>';
 
         UIUtils.showModal('도장 작업 수정',
@@ -8456,7 +9145,7 @@ const PaintingWorkModule = (function() {
             '<label class="form-label" style="font-size:0.84rem;">사출LOT</label>' +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·리워크 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +
@@ -8684,6 +9373,13 @@ const PaintingWorkModule = (function() {
             qtyDiffManagerRecipients: editQtyDiffNotifyUsers,
             note: ((document.getElementById('editPwNote') || {}).value || '').trim()
         });
+
+        var rememberIds = []
+            .concat(editPlanNotifyUsers || [])
+            .concat(editQtyDiffNotifyUsers || []);
+        if (rememberIds.length && typeof AuthModule !== 'undefined' && AuthModule.saveProdNotifyRecipients) {
+            AuthModule.saveProdNotifyRecipients(rememberIds);
+        }
 
         // ✓ Case 3: 수량 변경 시 검사 기록 동기화 처리
         if (qtyChanged) {
@@ -9086,6 +9782,7 @@ const PaintingWorkModule = (function() {
         saveQuickAddPlan,
         confirmInputInbound,
         openMaterialHistory,
+        openPastInboundPicker,
         openMissingInboundForPlan,
         confirmPendingInboundForPlan,
         applyInboundUseDate,
@@ -9097,6 +9794,9 @@ const PaintingWorkModule = (function() {
         _matHistDelete: function() {},
         _matHistEdit: function() {},
         _matHistSaveEdit: function() {},
+        _matHistPick: function() {},
+        _matHistToggleAll: function() {},
+        _matHistApplySelected: function() {},
         renderInputStockSection,
         _validateLotQty,
         _updateLotSummary,
@@ -9555,7 +10255,11 @@ const PaintingInspectionModule = (function() {
 
     function _buildEditNotifySelectorHtml(prefix, helpText, selectedIds) {
         const users = _getManagerNotifyUsers();
-        const selected = new Set((Array.isArray(selectedIds) ? selectedIds : users.map(function(u) { return u.id; })).map(String));
+        var ids = Array.isArray(selectedIds) ? selectedIds.map(String).filter(Boolean) : [];
+        if (!ids.length && typeof AuthModule !== 'undefined' && AuthModule.getProdNotifyRecipientIds) {
+            ids = AuthModule.getProdNotifyRecipientIds();
+        }
+        const selected = new Set((ids.length ? ids : users.map(function(u) { return u.id; })).map(String));
         if (!users.length) {
             return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">통보 가능한 관리자 사용자가 없습니다.</div>';
         }
@@ -9614,6 +10318,9 @@ const PaintingInspectionModule = (function() {
             category: 'manager_notice',
             priority: 'high'
         });
+        if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+            AuthModule.saveProdNotifyRecipients(recipientIds);
+        }
         return true;
     }
 

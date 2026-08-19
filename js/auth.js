@@ -17,10 +17,13 @@ const AuthModule = (function () {
     const AUTH_PERMS_CONFIG_KEY = 'auth_role_permissions';
     const AUTH_MESSAGES_CONFIG_KEY = 'auth_internal_messages';
     const AUTH_ROLES_CONFIG_KEY    = 'auth_roles';
+    const PROD_NOTIFY_RECIPIENTS_KEY = 'prod_notify_recipients_v1';
     let _usersCache = null;
     let _permissionsCache = null;
     let _messagesCache = null;
     let _rolesCache = null; /* null = 하드코딩 ROLES 사용 */
+    let _prodNotifyIds = [];
+    let _prodNotifyLoaded = false;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -62,7 +65,7 @@ const AuthModule = (function () {
         { id:'painting-work-a',           label:'도장-A 작업',        group:'도장공정' },
         { id:'painting-work-b',           label:'도장-B 작업',        group:'도장공정' },
         { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
-        { id:'painting-rework-wip',       label:'리워크 재공품',      group:'도장공정' },
+        { id:'painting-rework-wip',       label:'재사용 자재',      group:'도장공정' },
         { id:'paint-mix',                 label:'배합작업',           group:'도장공정' },
         { id:'laser-process',             label:'레이저 작업',        group:'레이저공정' },
         { id:'laser-standby',             label:'레이져 대기품',      group:'레이져공정' },
@@ -1367,10 +1370,60 @@ const AuthModule = (function () {
     async function init() {
         await _loadAuthStateFromServer();
         await ensureAdminUser();
+        await ensureProdNotifyRecipients();
         _setupInterceptor();
         _applyWriteMode();
         _updateTopbar();
         showUnreadInboxPopup();
+    }
+
+    /** 생산 관련 통보자(계획 미달·수량 보정·특채 등). 한 번 저장하면 다음에도 미리 선택. */
+    async function ensureProdNotifyRecipients(forceReload) {
+        if (_prodNotifyLoaded && !forceReload) return _prodNotifyIds.slice();
+        try {
+            const raw = (typeof Storage !== 'undefined' && Storage.getConfigValue)
+                ? await Storage.getConfigValue(PROD_NOTIFY_RECIPIENTS_KEY)
+                : null;
+            _prodNotifyIds = Array.isArray(raw)
+                ? [...new Set(raw.map(function (id) { return String(id || '').trim(); }).filter(Boolean))]
+                : [];
+        } catch (e) {
+            _prodNotifyIds = [];
+        }
+        _prodNotifyLoaded = true;
+        return _prodNotifyIds.slice();
+    }
+
+    function getProdNotifyRecipientIds() {
+        return Array.isArray(_prodNotifyIds) ? _prodNotifyIds.slice() : [];
+    }
+
+    async function saveProdNotifyRecipients(ids) {
+        _prodNotifyIds = [...new Set((Array.isArray(ids) ? ids : [])
+            .map(function (id) { return String(id || '').trim(); })
+            .filter(Boolean))];
+        _prodNotifyLoaded = true;
+        if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+            try {
+                await Storage.setConfigValue(PROD_NOTIFY_RECIPIENTS_KEY, _prodNotifyIds);
+            } catch (e) {
+                console.warn('[AuthModule] 생산 통보자 저장 실패:', e);
+            }
+        }
+        return _prodNotifyIds.slice();
+    }
+
+    function shouldPrecheckProdNotify(userId, opts) {
+        opts = opts || {};
+        const id = String(userId || '').trim();
+        if (!id) return false;
+        const explicit = Array.isArray(opts.explicitIds)
+            ? opts.explicitIds.map(function (v) { return String(v || '').trim(); }).filter(Boolean)
+            : [];
+        if (explicit.length) return explicit.indexOf(id) >= 0;
+        const saved = getProdNotifyRecipientIds();
+        if (saved.length) return saved.indexOf(id) >= 0;
+        return opts.defaultChecked === true;
     }
 
     function _normalizeMessageTargetIds(payload) {
@@ -1633,6 +1686,10 @@ const AuthModule = (function () {
         updateTopbar: _updateTopbar,
         _applyWriteMode,
         init,
+        ensureProdNotifyRecipients,
+        getProdNotifyRecipientIds,
+        saveProdNotifyRecipients,
+        shouldPrecheckProdNotify,
     };
 })();
 

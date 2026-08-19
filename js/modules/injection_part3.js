@@ -782,12 +782,28 @@ var PaintIncomingInspectionModule = (function() {
     }
 
     function _defaultNotifyRecipientIds() {
-        return _getProdNotifyUsers().map(u => u.id);
+        const users = _getProdNotifyUsers();
+        const saved = (typeof AuthModule !== 'undefined' && AuthModule.getProdNotifyRecipientIds)
+            ? AuthModule.getProdNotifyRecipientIds()
+            : [];
+        if (saved.length) {
+            const idSet = new Set(saved.map(String));
+            const hit = users.filter(function (u) { return idSet.has(u.id); }).map(function (u) { return u.id; });
+            if (hit.length) return hit;
+        }
+        return users.map(function (u) { return u.id; });
     }
 
     function _autoSelectNotifyUsers(checkboxClass) {
         const checks = Array.from(document.querySelectorAll('.' + (checkboxClass || 'pi-special-notify-user')));
-        checks.forEach(check => { check.checked = true; });
+        const saved = (typeof AuthModule !== 'undefined' && AuthModule.getProdNotifyRecipientIds)
+            ? AuthModule.getProdNotifyRecipientIds()
+            : [];
+        const savedSet = new Set(saved.map(String));
+        const useSaved = savedSet.size > 0 && checks.some(function (check) { return savedSet.has(String(check.value || '')); });
+        checks.forEach(function (check) {
+            check.checked = useSaved ? savedSet.has(String(check.value || '')) : true;
+        });
     }
 
     function _buildProdNotifySelectorHtml(selectedIds, checkboxClass) {
@@ -825,7 +841,7 @@ var PaintIncomingInspectionModule = (function() {
                 <div style="font-size:0.8rem;font-weight:700;color:#dc2626;">생산 통보 수신자 지정</div>
                 <button type="button" class="btn btn-outline btn-sm" onclick="PaintIncomingInspectionModule.toggleOver6NotifyUsers(true, '${cls}')">전체 선택</button>
             </div>
-            <div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">품질 관리자·생산 관리자 중 통보받을 담당자를 선택하세요.</div>
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">품질 관리자·생산 관리자 중 통보받을 담당자를 선택하세요. 선택한 담당자는 저장되어 다음에도 미리 선택됩니다.</div>
             <div style="display:flex;flex-direction:column;gap:12px;max-height:180px;overflow:auto;">${roleBlocks}</div>
         </div>`;
     }
@@ -852,7 +868,7 @@ var PaintIncomingInspectionModule = (function() {
         if (!Array.isArray(recipientIds) || !recipientIds.length) return false;
         const months = _monthsSinceMfg(data.mfgDate, (data.date || '').split(' ')[0] || UIUtils.today());
         const isSpecial = !!(opts && opts.special);
-        return AuthModule.sendInternalMessage({
+        const ok = AuthModule.sendInternalMessage({
             targetType: 'user',
             targetIds: recipientIds,
             title: isSpecial
@@ -884,6 +900,10 @@ var PaintIncomingInspectionModule = (function() {
             category: isSpecial ? 'paint_incoming_special' : 'paint_incoming_over6',
             priority: 'high'
         });
+        if (ok && typeof AuthModule.saveProdNotifyRecipients === 'function') {
+            AuthModule.saveProdNotifyRecipients(recipientIds);
+        }
+        return ok;
     }
 
     // ── 사진 이벤트 핸들러 ──────────────────────────────────────────

@@ -79,8 +79,12 @@ var LaserWorkModule = (function() {
                 '<div style="font-size:0.78rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
                 '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;">' +
                 group.items.map(function(user) {
+                    const checked = (typeof AuthModule !== 'undefined' && AuthModule.shouldPrecheckProdNotify)
+                        ? AuthModule.shouldPrecheckProdNotify(user.id, { defaultChecked: false })
+                        : false;
                     return '<label style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.18);border-radius:8px;background:#fff;cursor:pointer;">' +
-                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '" style="width:16px;height:16px;accent-color:#dc2626;">' +
+                        '<input type="checkbox" class="' + prefix + '-notify-user" value="' + user.id + '"' +
+                        (checked ? ' checked' : '') + ' style="width:16px;height:16px;accent-color:#dc2626;">' +
                         '<span style="font-size:0.82rem;color:var(--text-primary);font-weight:600;">' + user.name + '</span>' +
                         '</label>';
                 }).join('') +
@@ -92,7 +96,8 @@ var LaserWorkModule = (function() {
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
             '<button type="button" class="btn btn-outline btn-sm" onclick="LaserWorkModule.toggleNotifyUsers(\'' + prefix + '\', true)">전체 선택</button>' +
             '</div>' +
-            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + helpText + '</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + helpText +
+            ' 선택한 담당자는 저장되어 다음에도 미리 선택됩니다.</div>' +
             '<div id="' + prefix + 'NotifyUserWrap" style="display:flex;flex-direction:column;gap:12px;max-height:180px;overflow:auto;">' + roleBlocks + '</div>' +
             '</div>';
     }
@@ -123,6 +128,9 @@ var LaserWorkModule = (function() {
             category: 'manager_notice',
             priority: 'high'
         });
+        if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+            AuthModule.saveProdNotifyRecipients(recipientIds);
+        }
     }
 
     function _esc(value) {
@@ -8900,8 +8908,11 @@ var LaserStandbyModule = (function() {
         const users = _getProdManagerUsers();
         if (!users.length) return '';
         const checks = users.map(function(u) {
+            const checked = (typeof AuthModule !== 'undefined' && AuthModule.shouldPrecheckProdNotify)
+                ? AuthModule.shouldPrecheckProdNotify(u.id, { defaultChecked: true })
+                : true;
             return `<label style="display:flex;align-items:center;gap:6px;padding:6px 8px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);font-size:0.8rem;cursor:pointer;">
-                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeAttr(u.id)}" checked style="width:14px;height:14px;accent-color:#dc2626;">
+                <input type="checkbox" class="${prefix}-notify-user" value="${_escapeAttr(u.id)}"${checked ? ' checked' : ''} style="width:14px;height:14px;accent-color:#dc2626;">
                 ${_escapeHtml(u.name)}
             </label>`;
         }).join('');
@@ -8912,6 +8923,7 @@ var LaserStandbyModule = (function() {
                         onchange="document.getElementById('${prefix}NotifyUserWrap').style.display=this.checked?'grid':'none';">
                     생산관리자에게 해당 사항을 전달합니다.
                 </label>
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">선택한 담당자는 저장되어 다음에도 미리 선택됩니다.</div>
                 <div id="${prefix}NotifyUserWrap" style="margin-top:8px;display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;">
                     ${checks}
                 </div>
@@ -8936,6 +8948,9 @@ var LaserStandbyModule = (function() {
                     priority: opts.priority || 'high'
                 });
             });
+            if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+                AuthModule.saveProdNotifyRecipients(userIds);
+            }
         } catch (e) {
             console.warn('[LaserStandbyModule] 생산관리자 통보 실패:', e);
         }
