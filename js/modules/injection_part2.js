@@ -2191,7 +2191,7 @@ var InjectionWarehouseModule = (function() {
             + ' title="' + _escapeHtml(match.title || match.label) + '">' + match.label + '</span>';
     }
 
-    function _renderInvHistoryRow(step, isLast) {
+    function _renderInvHistoryRow(step, isLast, showActions) {
         const d = step.rec;
         const isOut = d.type === '출고';
         const isReset = _isStockErrorResetRecord(d);
@@ -2259,6 +2259,15 @@ var InjectionWarehouseModule = (function() {
         } else if (route.label === '현장 반납') {
             inspLine = `<div style="font-size:0.68rem;color:#059669;font-weight:600;margin-top:2px;">출고분 재입고 (검사 입고 아님)</div>`;
         }
+        // 현재고 확정(기준점)은 잘못 확정된 경우 되돌릴 방법이 없었다 — 관리자에 한해 수정/삭제 제공.
+        const actionsHtml = (isBaseline && showActions)
+            ? `<div style="display:flex;gap:4px;flex-wrap:nowrap;">
+                <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
+                    onclick="InjectionWarehouseModule.openEditBaselineModal('${d.id}')">수정</button>
+                <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#dc2626;border-color:#fca5a5;"
+                    onclick="InjectionWarehouseModule.deleteBaselineRecord('${d.id}')">삭제</button>
+               </div>`
+            : '';
         return `
             <tr${rowBg}>
                 <td style="white-space:nowrap;font-size:0.8rem;">
@@ -2284,6 +2293,7 @@ var InjectionWarehouseModule = (function() {
                     ${unmatchedAfter > 0 ? `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;">미차감 ${_fmtStockQty(unmatchedAfter)}</div>` : ''}
                 </td>
                 <td style="font-size:0.78rem;color:var(--text-muted);">${who || '-'}</td>
+                ${showActions ? `<td style="white-space:nowrap;">${actionsHtml}</td>` : ''}
             </tr>`;
     }
 
@@ -3523,9 +3533,10 @@ var InjectionWarehouseModule = (function() {
             .filter(function(l) { return l.lot !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
             .reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
         // 입출고 이력 표는 전체 원장 유지(기준점 이전 포함). 재고 숫자만 기준점 이후.
+        const showHistoryActions = _isAdminUser();
         const historySteps = InvCalc.replaySteps(items).slice().reverse();
         const historyRows = historySteps.map(function(step, idx) {
-            return _renderInvHistoryRow(step, idx === 0);
+            return _renderInvHistoryRow(step, idx === 0, showHistoryActions);
         }).join('');
         const _cmJs = carModel.replace(/'/g, "\\'");
         const _pnJs = partName.replace(/'/g, "\\'");
@@ -3800,10 +3811,11 @@ var InjectionWarehouseModule = (function() {
                             <th style="text-align:right;">기존 수량</th>
                             <th style="text-align:right;">현재 수량</th>
                             <th>담당</th>
+                            ${showHistoryActions ? '<th style="white-space:nowrap;">관리</th>' : ''}
                         </tr>
                     </thead>
                     <tbody>
-                        ${historyRows || `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">입출고 이력이 없습니다.</td></tr>`}
+                        ${historyRows || `<tr><td colspan="${showHistoryActions ? 9 : 8}" style="text-align:center;padding:20px;color:var(--text-muted);">입출고 이력이 없습니다.</td></tr>`}
                     </tbody>
                 </table>
             </div>
@@ -9268,7 +9280,7 @@ var InjectionWarehouseModule = (function() {
                 for (const c of g.items) {
                     const adjQty = Math.abs(c.diff);
                     await _addInventoryRecord({
-                        date: InvCalc.stampFor(new Date()),
+                        date: InvCalc.stampFor(UIUtils.today()),
                         type: c.diff > 0 ? '입고' : '출고',
                         carModel: g.carModel,
                         partName: g.partName,
@@ -9304,7 +9316,7 @@ var InjectionWarehouseModule = (function() {
                     const fullTotal = InvCalc.lotBalances(productItems).total;
 
                     await _addInventoryRecord({
-                        date: InvCalc.stampFor(new Date()),
+                        date: InvCalc.stampFor(UIUtils.today()),
                         type: '기준재고',
                         carModel: g.carModel,
                         partName: g.partName,
@@ -9423,7 +9435,7 @@ var InjectionWarehouseModule = (function() {
         const material = _findInjectionMaterial(carModel, partName, color);
         const resetActor = _getResetActorFields();
         const record = {
-            date: InvCalc.stampFor(new Date()),
+            date: InvCalc.stampFor(UIUtils.today()),
             type: '입고',
             carModel: carModel,
             partName: partName,
@@ -9578,7 +9590,7 @@ var InjectionWarehouseModule = (function() {
         const fullTotal = InvCalc.lotBalances(all).total;
 
         const record = {
-            date: InvCalc.stampFor(new Date()),
+            date: InvCalc.stampFor(UIUtils.today()),
             type: '기준재고',
             carModel: carModel,
             partName: partName,
@@ -9631,6 +9643,166 @@ var InjectionWarehouseModule = (function() {
             console.error('[InjectionWarehouse] stock baseline failed:', e);
             UIUtils.toast('현재고 확정에 실패했습니다: ' + (e && e.message ? e.message : e), 'error');
         }
+    }
+
+    // 잘못 확정된 "현재고 확정"(기준점)을 되돌릴 방법이 없어 실수가 그대로 굳어지는 문제가
+    // 있었다 — 관리자에 한해 LOT 잔량/사유 수정과 삭제를 제공한다.
+    function openEditBaselineModal(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 현재고 확정을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d || !_isStockBaselineRecord(d)) {
+            UIUtils.toast('현재고 확정 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const lots = (Array.isArray(d.lots) && d.lots.length)
+            ? d.lots
+            : (d.lotNo ? [{ lotNo: d.lotNo, qty: d.quantity || 0 }] : []);
+        const total0 = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        const lotRows = lots.length
+            ? lots.map(function (l, idx) {
+                return `<tr>
+                    <td style="font-family:monospace;">${_escapeHtml(String(l.lotNo || '무표기'))}</td>
+                    <td style="text-align:right;">
+                        <input type="number" class="form-input editBaselineLotQty" data-idx="${idx}"
+                            value="${Number(l.qty) || 0}" min="0" style="width:110px;text-align:right;"
+                            oninput="InjectionWarehouseModule.calcEditBaselineTotal()">
+                    </td>
+                </tr>`;
+            }).join('')
+            : `<tr><td colspan="2" style="text-align:center;color:var(--text-muted);padding:12px;">LOT 없음</td></tr>`;
+
+        UIUtils.showModal('현재고 확정 수정', `
+            <div style="background:rgba(15,118,110,0.06);border:1px solid rgba(15,118,110,0.25);border-radius:8px;padding:12px 14px;margin-bottom:14px;font-size:0.86rem;line-height:1.6;">
+                <div><strong>${_escapeHtml(d.carModel)}</strong> / <strong>${_escapeHtml(d.partName)}</strong>${d.color ? ` / <strong>${_escapeHtml(d.color)}</strong>` : ''}</div>
+                <div style="color:var(--text-secondary);margin-top:6px;">확정 일시: ${_escapeHtml(InvCalc.recordStamp(d) || String(d.date || '-'))}</div>
+                <div style="color:#b45309;margin-top:6px;">⚠ 이 기준점 이후 재고는 이 값을 시작점으로 계산됩니다. 잘못 수정하면 이후 이력의 재고 수치가 모두 바뀝니다.</div>
+            </div>
+            <div style="max-height:220px;overflow:auto;margin-bottom:12px;border:1px solid var(--border-color);border-radius:8px;">
+                <table class="data-table compact" style="width:100%;font-size:0.82rem;">
+                    <thead><tr><th>LOT</th><th style="text-align:right;">잔량</th></tr></thead>
+                    <tbody id="editBaselineLotBody">${lotRows}</tbody>
+                </table>
+            </div>
+            <div style="text-align:right;font-weight:700;margin-bottom:12px;">
+                합계: <span id="editBaselineTotal">${UIUtils.formatNumber(total0)}</span> EA
+            </div>
+            <div class="form-group">
+                <label class="form-label">수정 사유 <span style="color:var(--accent-red)">*</span></label>
+                <textarea id="editBaselineReason" class="form-textarea" rows="3"
+                    placeholder="예: 확정 시 LOT 잔량 오기 정정">${_escapeHtml(d.baselineReason || '')}</textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:#0f766e;border-color:#0f766e;"
+                onclick="InjectionWarehouseModule.saveEditBaseline('${id}')">수정 저장</button>
+        `, 'md');
+
+        setTimeout(function () {
+            const el = document.getElementById('editBaselineReason');
+            if (el) el.focus();
+        }, 100);
+    }
+
+    function calcEditBaselineTotal() {
+        const inputs = document.querySelectorAll('.editBaselineLotQty');
+        let total = 0;
+        inputs.forEach(function (i) { total += Number(i.value) || 0; });
+        const el = document.getElementById('editBaselineTotal');
+        if (el) el.textContent = UIUtils.formatNumber(total);
+    }
+
+    async function saveEditBaseline(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 현재고 확정을 수정할 수 있습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d || !_isStockBaselineRecord(d)) {
+            UIUtils.toast('현재고 확정 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const reasonEl = document.getElementById('editBaselineReason');
+        const reason = reasonEl ? reasonEl.value.trim() : '';
+        if (!reason) {
+            UIUtils.toast('수정 사유를 입력해주세요.', 'warning');
+            if (reasonEl) reasonEl.focus();
+            return;
+        }
+
+        const origLots = (Array.isArray(d.lots) && d.lots.length)
+            ? d.lots
+            : (d.lotNo ? [{ lotNo: d.lotNo, qty: d.quantity || 0 }] : []);
+        const qtyInputs = document.querySelectorAll('.editBaselineLotQty');
+        const lots = origLots.map(function (l, idx) {
+            const input = qtyInputs[idx];
+            const qty = input ? (Math.max(0, Number(input.value) || 0)) : (Number(l.qty) || 0);
+            return { ...l, qty: qty };
+        }).filter(function (l) { return (Number(l.qty) || 0) > 0; });
+        const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        const actor = _getResetActorFields();
+        const before = { lots: d.lots, quantity: d.quantity, baselineReason: d.baselineReason };
+
+        const updates = {
+            lots: lots,
+            lotNo: lots.length ? lots[0].lotNo : '',
+            quantity: total,
+            baselineReason: reason,
+            note: `[현재고 확정 수정] ${reason} · ${UIUtils.formatNumber(total)} EA · LOT ${lots.length}개`,
+            stockAfterTarget: total
+        };
+
+        try {
+            await Storage.update(STORE, id, updates);
+            await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, {
+                id: Storage.generateId(),
+                type: 'injection_inventory_baseline_edit',
+                typeLabel: '사출 창고 현재고 확정 수정',
+                deletedAt: actor.resetAt || new Date().toISOString(),
+                deletedBy: actor.resetBy || '',
+                reason: reason,
+                originalData: {
+                    carModel: d.carModel, partName: d.partName, color: d.color || '',
+                    before: before, after: { lots: lots, quantity: total }
+                },
+                summary: `${d.carModel} / ${d.partName} ${d.color || ''} / 확정 수정 → ${UIUtils.formatNumber(total)} EA`
+            });
+            UIUtils.closeModal();
+            UIUtils.toast('현재고 확정이 수정되었습니다.', 'success');
+            loadData();
+            setTimeout(function () {
+                showPartDetail(d.carModel, d.partName, d.color);
+            }, 80);
+        } catch (e) {
+            console.error('[InjectionWarehouse] baseline edit failed:', e);
+            UIUtils.toast('수정 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
+    async function deleteBaselineRecord(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d || !_isStockBaselineRecord(d)) {
+            UIUtils.toast('현재고 확정 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const carModel = d.carModel, partName = d.partName, color = d.color;
+        UIUtils.confirm(
+            '이 현재고 확정(기준점)을 삭제하시겠습니까? 삭제하면 이 시점 이후 재고는 그 이전 이력부터 다시 계산됩니다.',
+            async () => {
+                await Storage.remove(STORE, id);
+                UIUtils.toast('삭제되었습니다.', 'success');
+                loadData();
+                setTimeout(function () {
+                    showPartDetail(carModel, partName, color);
+                }, 80);
+            }
+        );
     }
 
     function openResetStockErrorModal(carModelEnc, partNameEnc, colorEnc, currentStock) {
@@ -11404,6 +11576,10 @@ var InjectionWarehouseModule = (function() {
         jumpToTxHistory,
         openConfirmStockBaselineModal,
         confirmStockBaseline,
+        openEditBaselineModal,
+        calcEditBaselineTotal,
+        saveEditBaseline,
+        deleteBaselineRecord,
         openResetStockErrorModal,
         confirmResetStockError,
         openUnmatchedActionModal,

@@ -781,6 +781,7 @@ var InjectionIncomingModule = (function() {
     }
 
     async function saveEdit(id) {
+        const original = Storage.getById(STORE, id);
         const dateVal = document.getElementById('editInjDate').value;
         const timeVal = document.getElementById('editInjTime').value;
 
@@ -793,7 +794,7 @@ var InjectionIncomingModule = (function() {
             inspectionQty: Number(document.getElementById('editInjInspQty').value) || 0,
             passQty: Number(document.getElementById('editInjPassQty').value) || 0,
             failQty: Number(document.getElementById('editInjFailQty').value) || 0,
-            defectDetails: {}, 
+            defectDetails: {},
             note: document.getElementById('editInjNote').value.trim()
         };
 
@@ -806,10 +807,51 @@ var InjectionIncomingModule = (function() {
             }
         });
 
-        await Storage.update(STORE, id, updateData);
-        UIUtils.closeModal();
-        UIUtils.toast('수정되었습니다.', 'success');
-        search();
+        const dateChanged = !!(original && original.date && original.date !== updateData.date);
+
+        const doSave = async () => {
+            await Storage.update(STORE, id, updateData);
+            UIUtils.closeModal();
+            UIUtils.toast('수정되었습니다.', 'success');
+            search();
+            if (dateChanged) _notifyInjDateChange(original, updateData);
+        };
+
+        if (dateChanged) {
+            UIUtils.confirm(
+                '수입검사 일자/시간을 수정하면 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생할 수 있습니다. 수정 시 관련 담당자에게 쪽지가 발송됩니다. 계속하시겠습니까?',
+                doSave
+            );
+        } else {
+            await doSave();
+        }
+    }
+
+    /** 사출 수입검사 일자/시간 수정 시 생산관리자/품질관리자에게 통보 — 검사일 변경으로 인한 재고 수량 NG 가능성 안내 */
+    function _notifyInjDateChange(original, updateData) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            AuthModule.sendInternalMessage({
+                targetType: 'role',
+                targetIds: ['prod_manager', 'quality_manager'],
+                title: '사출 수입검사 일자 수정 — ' + (updateData.partName || original.partName || ''),
+                body: [
+                    '수입검사 일자가 수정되었습니다.',
+                    '',
+                    'LOT번호: ' + (updateData.lotNo || original.lotNo || '-'),
+                    '품명: ' + (updateData.partName || original.partName || '-'),
+                    '기존 검사일자: ' + (original.date || '-'),
+                    '변경 검사일자: ' + (updateData.date || '-'),
+                    '',
+                    '수입검사 일자 수정시 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생함. 이에 해당 담당자들에게 쪽지를 발송합니다.',
+                    '재고 및 이력을 확인해 주세요.'
+                ].join('\n'),
+                category: 'injection-inspection-date-change',
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[InjectionIncomingModule] 검사일자 수정 통보 실패:', e);
+        }
     }
 
     function remove(id) {

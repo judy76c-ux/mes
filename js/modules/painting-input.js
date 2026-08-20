@@ -23,6 +23,16 @@ var PaintingInputModule = (function () {
         return '도장-A';
     }
 
+    /** 창고 출고 수량 — quantity와 LOT 합계가 어긋나면 더 큰 쪽(화면 출고수량)을 따른다. */
+    function _outShipQty(outRec) {
+        const declared = Number(outRec && (outRec.quantity != null ? outRec.quantity : outRec.qty)) || 0;
+        let lotSum = 0;
+        if (Array.isArray(outRec && outRec.lots)) {
+            outRec.lots.forEach(function (l) { lotSum += Number(l && l.qty) || 0; });
+        }
+        return Math.max(declared, lotSum);
+    }
+
     /** 제작품명(T1XX KNOB LOWER)과 사출명(KNOB LOWER)을 같은 품목으로 본다. */
     function _partNamesMatch(stored, want, carModel) {
         var x = String(stored || '').trim();
@@ -30,6 +40,9 @@ var PaintingInputModule = (function () {
         if (!y) return true;
         if (!x) return false;
         if (x === y) return true;
+        var sa = String(x).toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '').match(/(\d+)spot/);
+        var sb = String(y).toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '').match(/(\d+)spot/);
+        if (sa && sb && sa[1] !== sb[1]) return false;
         if (typeof ReworkWipModule !== 'undefined') {
             if (typeof ReworkWipModule.partsMatch === 'function') {
                 try { return !!ReworkWipModule.partsMatch(x, y, carModel); } catch (e) { /* fall through */ }
@@ -207,7 +220,7 @@ var PaintingInputModule = (function () {
             const lotNo = _primaryLot(r);
             const inspDateHtml = _inspDateCellHtml(r, lotNo, inspMap);
             const autoTag = r.isAutoReceived
-                ? ' <span style="font-size:0.62rem;font-weight:700;padding:1px 5px;border-radius:999px;background:rgba(37,99,235,0.12);color:#2563eb;" title="계획 종료시각 경과로 시스템이 자동 확정">자동</span>'
+                ? ' <span style="font-size:0.62rem;font-weight:700;padding:1px 5px;border-radius:999px;background:rgba(37,99,235,0.12);color:#2563eb;" title="계획 종료시각으로부터 ' + AUTO_INBOUND_DELAY_HOURS + '시간 경과로 시스템이 자동 확정">자동</span>'
                 : '';
             return '<tr>' +
                 '<td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">' + _esc(dt.day) + '</td>' +
@@ -308,10 +321,11 @@ var PaintingInputModule = (function () {
         var lots = Object.values(lotMap).filter(function (l) { return l.balance > 0; })
             .sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
         if (planColor) {
-            return lots.filter(function (l) {
-                if (!l.color) return false;
+            var colored = lots.filter(function (l) {
+                if (!l.color) return true;
                 return _colorLooseMatch(l.color, planColor);
             });
+            if (colored.length) return colored;
         }
         return lots;
     }
@@ -509,14 +523,22 @@ var PaintingInputModule = (function () {
      *  끌어다 채우는 동작)를 거치지 않는다. 전체 재고 총량 계산에는 스필오버가 맞지만,
      *  "이 LOT으로 실제 얼마나 입고됐고 얼마나 빠졌는지"(반납 대상 LOT을 정확히 짚어야 하는
      *  화면)에는 스필오버가 엉뚱한 LOT에 잔량을 몰아줘서 오히려 틀린 그림을 보여준다. */
-    function getExactLotLedger(line, carModel, partName, lotNo) {
+    // sinceDay(선택)를 주면 그 날짜 이전 기록은 아예 무시한다 — LOT번호(YYMMDD)가 다른 시점의
+    // 배치에서 재사용될 수 있어서, sinceDay 없이 전체 이력을 합치면 "오늘 막 들어온 배치"에
+    // "그 LOT번호로 이미 오래전에 끝난 다른 배치"의 사용/반납량이 섞여 들어온다(자재 이력 화면에서
+    // 오늘 입고 20,000 옆에 훨씬 큰 과거 사용량이 붙어 보이는 사고). 반납은 입고보다 먼저 있을 수
+    // 없으므로 sinceDay 하한은 안전하다. LOT 확인 용도(_isLotConfirmedReceived 등 "입고된 적
+    // 있는지"만 보는 호출)는 sinceDay를 주지 않아 기존처럼 전체 이력을 본다.
+    function getExactLotLedger(line, carModel, partName, lotNo, sinceDay) {
         const want = _normLine(line);
         const targetLot = String(lotNo || '').trim();
+        const since = String(sinceDay || '').slice(0, 10);
         let received = 0;
         let consumed = 0;
         _recordsForLine(want).forEach(function (r) {
             if (carModel && String(r.carModel || '') !== String(carModel)) return;
             if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return;
+            if (since && String(r.date || '').slice(0, 10) < since) return;
             const es = (Array.isArray(r.lots) && r.lots.length)
                 ? r.lots
                 : (r.lotNo ? [{ lotNo: r.lotNo, qty: r.quantity }] : []);
@@ -541,7 +563,7 @@ var PaintingInputModule = (function () {
         if (!outRec) return null;
         const isRework = !!(outRec.isReworkDispatch || String(outRec.source || '') === 'dispatch_to_line');
         const line = _normLine(outRec.paintLine || outRec.line);
-        const shipQty = Number(outRec.quantity) || Number(outRec.qty) || 0;
+        const shipQty = _outShipQty(outRec);
         let lots;
         let qty;
         if (Array.isArray(opts.lots) && opts.lots.length) {
@@ -549,8 +571,15 @@ var PaintingInputModule = (function () {
                 return { lotNo: String((l && l.lotNo) || outRec.lotNo || '').trim() || '무표기', qty: Math.max(0, Number(l && l.qty) || 0) };
             }).filter(function (l) { return l.qty > 0; });
             qty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+            // LOT별 확인 합이 출고수량보다 작으면, 단일 LOT은 출고수량으로 맞춘다.
+            // (quantity=12,000 인데 lots[].qty만 11,500 인 손상 기록 보정)
+            if (qty < shipQty && lots.length === 1 && opts.actualQty == null) {
+                lots[0].qty = shipQty;
+                qty = shipQty;
+            }
         } else {
             qty = opts.actualQty != null ? Math.max(0, Number(opts.actualQty) || 0) : shipQty;
+            if (qty < shipQty && opts.actualQty == null) qty = shipQty;
             lots = Array.isArray(outRec.lots) && outRec.lots.length
                 ? outRec.lots.map(function (l) {
                     return { lotNo: String(l.lotNo || outRec.lotNo || '').trim() || '무표기', qty: Number(l.qty) || 0 };
@@ -834,7 +863,7 @@ var PaintingInputModule = (function () {
             const day = String(r.date || '').slice(0, 10);
             if (!day || day < start || day > end) return false;
             if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
-            if (opts.partName && String(r.partName || '') !== String(opts.partName)) return false;
+            if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
             if (_findReceiveByOutId(r.id)) return false;
             return true;
         }).map(function (r) {
@@ -851,7 +880,7 @@ var PaintingInputModule = (function () {
                 const day = String(r.date || '').slice(0, 10);
                 if (!day || day < start || day > end) return false;
                 if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
-                if (opts.partName && String(r.partName || '') !== String(opts.partName)) return false;
+                if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
                 if (_findReceiveByReworkOutId(r.id)) return false;
                 return true;
             }).map(function (r) {
@@ -871,7 +900,7 @@ var PaintingInputModule = (function () {
         return (_recordsForLine(want) || []).some(function (r) {
             if (String(r.type || '') !== '입고') return false;
             if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
-            if (opts.partName && String(r.partName || '') !== String(opts.partName)) return false;
+            if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
             return true;
         });
     }
@@ -941,7 +970,7 @@ var PaintingInputModule = (function () {
         }
         const out = resolved.out;
         const want = _normLine(line || out.paintLine || out.line);
-        const shipQty = Number(out.quantity) || Number(out.qty) || 0;
+        const shipQty = _outShipQty(out);
         const today = UIUtils.today ? UIUtils.today() : '';
         const shipDay = String(out.date || '').slice(0, 10);
         const defaultUseDate = String(opts.useDate || '').slice(0, 10)
@@ -952,6 +981,11 @@ var PaintingInputModule = (function () {
         const outLots = (Array.isArray(out.lots) && out.lots.length)
             ? out.lots.map(function (l) { return { lotNo: String(l.lotNo || '').trim() || '무표기', qty: Number(l.qty) || 0 }; }).filter(function (l) { return l.qty > 0; })
             : [{ lotNo: String(out.lotNo || '').trim() || '무표기', qty: shipQty }];
+        if (outLots.length === 1 && outLots[0].qty < shipQty) outLots[0].qty = shipQty;
+        if (outLots.length > 1) {
+            const lotSum = outLots.reduce(function (s, l) { return s + l.qty; }, 0);
+            if (lotSum < shipQty) outLots[0].qty += (shipQty - lotSum);
+        }
         const hasMultiLot = outLots.length > 1;
         const srcHint = resolved.isRework
             ? '<div style="margin-top:6px;font-size:0.78rem;color:#7c3aed;font-weight:700;">재사용 자재 출고 — 현장 입고 확인 후 투입 가능</div>'
@@ -1155,6 +1189,19 @@ var PaintingInputModule = (function () {
         const d = new Date();
         const p = function (n) { return String(n).padStart(2, '0'); };
         return p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    // 자동 입고는 도장 작업 완료 시각(계획 종료시각) 그 시각이 아니라, 그로부터 일정 시간이
+    // 지난 뒤에 처리한다 — 완료 직후엔 아직 실물이 현장에 도착하지 않았을 수 있기 때문.
+    const AUTO_INBOUND_DELAY_HOURS = 3;
+
+    /** 'HH:MM' 시각에 지정한 시간(hours)을 더한다. 자정을 넘기면 23:59로 고정(당일 안에서만 비교하므로) */
+    function _addHoursToHm(hm, hours) {
+        const m = String(hm || '').match(/^(\d{1,2}):(\d{2})/);
+        if (!m) return hm;
+        const total = Math.max(0, Math.min(23 * 60 + 59, Number(m[1]) * 60 + Number(m[2]) + Math.round(Number(hours) * 60)));
+        const p = function (n) { return String(n).padStart(2, '0'); };
+        return p(Math.floor(total / 60)) + ':' + p(total % 60);
     }
 
     // 사출명(injPartName) → 제품명(PRODUCTION_PLANS.partName) 역매핑.
@@ -1457,7 +1504,7 @@ var PaintingInputModule = (function () {
         if (resolved.already) return resolved.already;
         const out = resolved.out;
         const want = _normLine(line || out.paintLine || out.line);
-        const shipQty = Number(out.quantity) || Number(out.qty) || 0;
+        const shipQty = _outShipQty(out);
         if (shipQty <= 0) return null;
         const today = UIUtils.today ? UIUtils.today() : '';
         try {
@@ -1478,15 +1525,55 @@ var PaintingInputModule = (function () {
     }
 
     let _autoInboundBusy = false;
+    let _qtyAlignDone = {};
+
+    /** 창고 출고수량보다 작게 저장된 미사용 현장입고를 출고수량에 맞춘다. */
+    async function _alignInboundQtyToWarehouseOut(line) {
+        const want = _normLine(line);
+        if (_qtyAlignDone[want]) return 0;
+        _qtyAlignDone[want] = true;
+        const rows = _recordsForLine(want) || [];
+        let fixed = 0;
+        for (let i = 0; i < rows.length; i++) {
+            const rec = rows[i];
+            if (!rec || String(rec.type || '') !== '입고' || !rec.refOutId) continue;
+            const out = Storage.getById(DB.STORES.INJECTION_INVENTORY, rec.refOutId);
+            if (!out) continue;
+            const shipQty = _outShipQty(out);
+            const have = Number(rec.quantity) || 0;
+            if (!(shipQty > have)) continue;
+            const lots = Array.isArray(rec.lots) ? rec.lots : [];
+            if (lots.length > 1) continue;
+            const lotNo = String((lots[0] && lots[0].lotNo) || rec.lotNo || out.lotNo || '무표기').trim();
+            const since = String(rec.shipDate || rec.date || '').slice(0, 10);
+            const led = getExactLotLedger(want, rec.carModel, rec.partName, lotNo, since) || {};
+            if (Number(led.consumed) > 0.001) continue;
+            try {
+                await Storage.update(STORE, rec.id, {
+                    quantity: shipQty,
+                    shipQty: shipQty,
+                    lots: [{ lotNo: lotNo, qty: shipQty }],
+                    lotNo: lotNo
+                });
+                fixed++;
+            } catch (e) { /* ignore */ }
+        }
+        return fixed;
+    }
 
     /** 생산계획 작업 완료 시각(endTime) 경과 시 미입고 건 자동 입고 */
     async function runAutoSiteInbound(line) {
         const want = _normLine(line);
         if (!_canConfirmInbound(want) || _autoInboundBusy) return { processed: 0 };
+        let aligned = 0;
+        try { aligned = await _alignInboundQtyToWarehouseOut(want) || 0; } catch (eAlign) { aligned = 0; }
         const today = UIUtils.today ? UIUtils.today() : '';
         const nowHm = _nowHm();
         const pending = listTodayWarehouseShipments(want, today).filter(function (r) { return !r.received; });
-        if (!pending.length) return { processed: 0 };
+        if (!pending.length) {
+            if (aligned > 0) _refreshInboundViews();
+            return { processed: 0 };
+        }
 
         _autoInboundBusy = true;
         let processed = 0;
@@ -1494,12 +1581,14 @@ var PaintingInputModule = (function () {
             for (let i = 0; i < pending.length; i++) {
                 const r = pending[i];
                 const endTime = getPlanEndTimeForShipment(r, want, today);
-                if (!endTime || nowHm < endTime) continue;
+                if (!endTime) continue;
+                const autoAt = _addHoursToHm(endTime, AUTO_INBOUND_DELAY_HOURS);
+                if (nowHm < autoAt) continue;
                 const rec = await autoReceiveFromWarehouseOut(r.id, want);
                 if (rec) processed++;
             }
             if (processed > 0) {
-                UIUtils.toast('작업 완료 시각 도달 — 자동 입고 ' + processed + '건 처리', 'success');
+                UIUtils.toast('작업 완료 ' + AUTO_INBOUND_DELAY_HOURS + '시간 경과 — 자동 입고 ' + processed + '건 처리', 'success');
                 _refreshInboundViews();
             }
         } finally {
@@ -1608,14 +1697,15 @@ var PaintingInputModule = (function () {
             const statusHtml = r.received
                 ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(22,163,74,0.12);color:#16a34a;">입고완료</span>'
                     + (isAutoReceived
-                        ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(37,99,235,0.12);color:#2563eb;" title="계획 종료시각 경과로 시스템이 자동 확정 — 실물 LOT별 수량 확인이 안 됐을 수 있습니다">자동입고</span>'
+                        ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(37,99,235,0.12);color:#2563eb;" title="계획 종료시각으로부터 ' + AUTO_INBOUND_DELAY_HOURS + '시간 경과로 시스템이 자동 확정 — 실물 LOT별 수량 확인이 안 됐을 수 있습니다">자동입고</span>'
                         : '')
                     + reworkTag
                 : '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(234,88,12,0.12);color:#ea580c;">미입고</span>' + reworkTag;
             const autoScheduleLabel = (!r.received && endTime)
                 ? (function () {
-                    const m = String(endTime).match(/^(\d{1,2}):(\d{2})/);
-                    if (!m) return String(endTime) + '에 자동입고 처리예정';
+                    const autoAt = _addHoursToHm(endTime, AUTO_INBOUND_DELAY_HOURS);
+                    const m = String(autoAt).match(/^(\d{1,2}):(\d{2})/);
+                    if (!m) return String(autoAt) + '에 자동입고 처리예정';
                     return Number(m[1]) + '시' + m[2] + '분에 자동입고 처리예정';
                 })()
                 : '';
@@ -1643,12 +1733,12 @@ var PaintingInputModule = (function () {
                             <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 입고 처리
                         </button>` +
                         (autoScheduleLabel
-                            ? `<span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;" title="계획 완료시각 경과 시 자동 입고 처리">${_esc(autoScheduleLabel)}</span>`
+                            ? `<span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;" title="계획 완료시각으로부터 ${AUTO_INBOUND_DELAY_HOURS}시간 경과 시 자동 입고 처리">${_esc(autoScheduleLabel)}</span>`
                             : '') +
                        `</div>`
                     : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>');
             const endHint = endTime && !r.received
-                ? ' title="작업 완료 ' + _esc(endTime) + ' 이후 자동 입고"'
+                ? ' title="작업 완료 ' + _esc(endTime) + ' + ' + AUTO_INBOUND_DELAY_HOURS + '시간 이후 자동 입고"'
                 : '';
             return `<tr${endHint}>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.82rem;">${_esc(dt.day)}</td>
@@ -2067,8 +2157,13 @@ var PaintingInputModule = (function () {
             }
             if (r.refWorkId) return;   // 다른 실적이 만든 반납은 LOT매칭 폴백에서도 제외
 
-            // LOT 정보가 있으면 LOT 번호로만 매칭(날짜 무관). LOT 정보가 없는 구 데이터일 때만
-            // 날짜를 폴백 기준으로 쓴다.
+            // LOT번호(YYMMDD)는 이 작업일과 무관한 예전 배치에서도 재사용될 수 있다. 이 작업일보다
+            // 앞선 반납은 이 작업이 투입한 물량과 무관한 과거 배치의 반납이므로(반납은 사용/작업보다
+            // 먼저 있을 수 없다) 하한으로 제외한다 — 없으면 "이 실적은 반납한 적 없는데 LOT번호만
+            // 같은 몇 주 전 반납량이 자재 반납 열에 그대로 붙어 보이는" 사고가 난다.
+            if (String(r.date || '').slice(0, 10) < day) return;
+            // LOT 정보가 있으면 LOT 번호로만 매칭(날짜 상한 무관, 반납은 다음날 등 처리될 수 있음).
+            // LOT 정보가 없는 구 데이터일 때만 당일 일치를 폴백 기준으로 쓴다.
             if (!hasLots && String(r.date || '').slice(0, 10) !== day) return;
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
 
@@ -2076,6 +2171,9 @@ var PaintingInputModule = (function () {
                 ? r.lots
                 : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
             if (hasLots) {
+                // LOT번호는 여러 제품이 같은 원료 배치를 나눠 쓰면 재사용될 수 있다 — partName까지
+                // 맞아야 이 실적과 무관한 다른 제품의 같은 LOT번호 반납이 섞이지 않는다.
+                if (injPart && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPart) return;
                 rLots.forEach(function (l) {
                     const n = String(l.lotNo || '').trim();
                     if (n && lotSet[n]) total += Number(l.qty) || 0;
@@ -2152,9 +2250,19 @@ var PaintingInputModule = (function () {
             if (planMatched) return planTotal;
         }
 
+        // LOT번호(YYMMDD)는 하나의 원료 배치가 여러 제품(사출명)에 걸쳐 재사용될 수 있다
+        // (예: 같은 사출 원료 LOT이 HIGH ROOM KNOB과 HIGH DOOR KNOB에 나눠 입고). 아래 injNames
+        // 필터 없이 LOT번호만으로 dayRecords를 훑으면, 이 실적과 무관한 다른 제품의 같은 LOT번호
+        // 입고분까지 합산되어 실제 이 실적이 받은 양보다 훨씬 큰 수치가 나온다(자재과잉/유실
+        // 오탐의 원인). 아래 사출명(품명) 폴백과 동일한 기준으로 좁힌다.
         let total = 0;
         if (hasLots) {
+            const requirePartMatch = Object.keys(injNames).length > 0;
             dayRecords.forEach(function (r) {
+                if (requirePartMatch) {
+                    const rPart = String(r.partName || '').trim();
+                    if (!rPart || !injNames[rPart]) return;
+                }
                 const rLots = Array.isArray(r.lots) && r.lots.length
                     ? r.lots
                     : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];

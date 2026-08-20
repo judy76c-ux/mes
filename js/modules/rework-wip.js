@@ -131,6 +131,9 @@ var ReworkWipModule = (function () {
         var na = String(a || '').toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
         var nb = String(b || '').toLowerCase().replace(/[\s\[\]\(\)\{\}\-_\/·.]/g, '');
         if (!na || !nb) return false;
+        var sa = na.match(/(\d+)spot/);
+        var sb = nb.match(/(\d+)spot/);
+        if (sa && sb && sa[1] !== sb[1]) return false;
         if (na === nb) return true;
         if (na.length >= 3 && nb.length >= 3 && (na.indexOf(nb) >= 0 || nb.indexOf(na) >= 0)) return true;
         return false;
@@ -176,13 +179,103 @@ var ReworkWipModule = (function () {
         return _toInjPartName(carModel, partName) || String(partName || '').trim();
     }
 
+    function _splitInjColors(raw) {
+        return String(raw || '').split(/[,，、\/·|]/).map(function (s) { return s.trim(); }).filter(Boolean);
+    }
+
+    /** 제품 라인코드(6PS·AZ3·1PH 등) — 사출 컬러가 아님 */
+    function _isProductLineCode(color) {
+        var c = String(color || '').trim().toLowerCase().replace(/\s+/g, '');
+        if (!c) return false;
+        if (/^\d{1,2}[a-z]{2,4}$/i.test(c)) return true;
+        return ['6ps', 'az3', '1ph', '2ph', '3ph'].indexOf(c) >= 0;
+    }
+
+    function _isInjColorToken(c) {
+        var s = String(c || '').trim();
+        return !!s && !_isProductLineCode(s);
+    }
+
+    function _masterInjColors(carModel, partName) {
+        var car = String(carModel || '').trim();
+        var part = String(partName || '').trim();
+        var injPart = _toInjPartName(car, part) || part;
+        var list = [];
+        _injMats().forEach(function (m) {
+            if (!m) return;
+            if (car && m.carModel && m.carModel !== car) return;
+            if (!_partsMatch(m.injPartName, injPart, car)
+                && !_partsMatch(m.injPartName, part, car)
+                && !_partsMatch(m.mfgProductName, part, car)
+                && !_partsMatch(m.mfgProductName2, part, car)) return;
+            _splitInjColors(m.injColor).forEach(function (c) {
+                if (_isInjColorToken(c) && list.indexOf(c) < 0) list.push(c);
+            });
+        });
+        return list;
+    }
+
+    /** 재사용 자재 색상 → 사출자재 마스터의 사출 컬러.
+     *  도장 컬러(BK+CLEAR)나 라인코드(6PS·AZ3)가 저장돼 있어도 소재 컬러(WHITE 등)로 보여 준다. */
+    function _toInjColor(carModel, partName, storedColor) {
+        var want = String(storedColor || '').trim();
+        var injPart = _toInjPartName(carModel, partName) || String(partName || '').trim();
+        var injColors = _masterInjColors(carModel, partName);
+        if (want && injColors.length) {
+            for (var i = 0; i < injColors.length; i++) {
+                if (_colorsEqual(injColors[i], want)) return injColors[i];
+            }
+        }
+        if (want && !_isProductLineCode(want)) {
+            var products = _productRows().filter(function (p) {
+                if (!p) return false;
+                if (carModel && p.carModel && p.carModel !== carModel) return false;
+                if (!_colorsEqual(p.color, want) && String(p.color || '').trim() !== want) return false;
+                return _partsMatch(p.partName, partName, carModel)
+                    || _partsMatch(p.partName, injPart, carModel);
+            });
+            for (var pi = 0; pi < products.length; pi++) {
+                var pName = products[pi].partName;
+                var viaMfg = _injMats().filter(function (m) {
+                    if (!m) return false;
+                    if (carModel && m.carModel && m.carModel !== carModel) return false;
+                    return m.mfgProductName === pName || m.mfgProductName2 === pName
+                        || _namesLooselyRelated(m.mfgProductName, pName)
+                        || _namesLooselyRelated(m.mfgProductName2, pName);
+                });
+                var fromProd = [];
+                viaMfg.forEach(function (m) {
+                    _splitInjColors(m.injColor).forEach(function (c) {
+                        if (_isInjColorToken(c) && fromProd.indexOf(c) < 0) fromProd.push(c);
+                    });
+                });
+                if (fromProd.length === 1) return fromProd[0];
+            }
+        }
+        if (injColors.length === 1) return injColors[0];
+        if (want && _isProductLineCode(want)) return injColors.length === 1 ? injColors[0] : '';
+        return want && _isInjColorToken(want) ? want : (injColors[0] || '');
+    }
+
+    function _sameStockColor(carModel, partName, a, b) {
+        if (_colorsEqual(a, b)) return true;
+        var ia = _toInjColor(carModel, partName, a);
+        var ib = _toInjColor(carModel, partName, b);
+        return !!(ia && ib && _colorsEqual(ia, ib));
+    }
+
+    function _displayInjColor(carModel, partName, storedColor) {
+        return _toInjColor(carModel, partName, storedColor) || String(storedColor || '').trim();
+    }
+
     function _calcStock(records) {
         const map = {};
         records.forEach(function (r) {
             const injPart = _displayPartName(r.carModel, r.partName);
-            const key = (r.carModel || '') + '||' + injPart + '||' + (r.color || '');
+            const injColor = _displayInjColor(r.carModel, r.partName, r.color);
+            const key = (r.carModel || '') + '||' + injPart + '||' + injColor;
             if (!map[key]) {
-                map[key] = { carModel: r.carModel, partName: injPart, color: r.color, qty: 0 };
+                map[key] = { carModel: r.carModel, partName: injPart, color: injColor, qty: 0 };
             }
             if (r.type === '입고') map[key].qty += (Number(r.qty) || 0);
             else map[key].qty -= (Number(r.qty) || 0);
@@ -232,7 +325,8 @@ var ReworkWipModule = (function () {
             if (!partOk) return;
             // 합쳐진 품명으로 이미 컬러를 포함한 경우 컬러 추가 비교는 생략
             const partIncludesColor = combined && rPart.replace(/\s+/g, ' ').toUpperCase() === combined.replace(/\s+/g, ' ').toUpperCase();
-            if (!partIncludesColor && wantColor && rColor && !_colorsEqual(wantColor, rColor)) return;
+            if (!partIncludesColor && wantColor && rColor
+                && !_sameStockColor(wantCar, wantPart, wantColor, rColor)) return;
             if (r.type === '입고') total += Number(r.qty) || 0;
             else total -= Number(r.qty) || 0;
         });
@@ -320,7 +414,7 @@ var ReworkWipModule = (function () {
                       <tr style="background:var(--bg-secondary);text-align:left;">
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출명</th>
-                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">색상</th>
+                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출 컬러</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);text-align:right;white-space:nowrap;">재공수량(EA)</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">작업</th>
@@ -375,7 +469,7 @@ var ReworkWipModule = (function () {
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">구분</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출명</th>
-                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">색상</th>
+                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출 컬러</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);text-align:right;white-space:nowrap;">수량(EA)</th>
                         ${_lotThHtml('8px 12px')}
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">리워크 종류</th>
@@ -398,7 +492,7 @@ var ReworkWipModule = (function () {
                           </td>
                           <td style="padding:8px 12px;white-space:nowrap;">${_esc(r.carModel || '-')}</td>
                           <td style="padding:8px 12px;font-weight:600;white-space:nowrap;">${_esc(_displayPartName(r.carModel, r.partName))}</td>
-                          <td style="padding:8px 12px;white-space:nowrap;">${_esc(r.color || '-')}</td>
+                          <td style="padding:8px 12px;white-space:nowrap;">${_esc(_displayInjColor(r.carModel, r.partName, r.color) || '-')}</td>
                           <td style="padding:8px 12px;text-align:right;font-weight:700;white-space:nowrap;">${_fmt(r.qty)}</td>
                           ${_lotTdHtml(r, '8px 12px')}
                           <td style="padding:8px 12px;white-space:nowrap;">${_reworkTypeBadge(r.reworkType)}</td>
@@ -455,21 +549,13 @@ var ReworkWipModule = (function () {
         const car = String(carModel || '').trim();
         const part = String(partName || '').trim();
         if (!car || !part) return [];
-        const fromMats = _injMats()
-            .filter(function (m) {
-                if (car && m.carModel && m.carModel !== car) return false;
-                return _partsMatch(m.injPartName, part, car)
-                    || _partsMatch(m.mfgProductName, part, car)
-                    || _partsMatch(m.mfgProductName2, part, car);
-            })
-            .map(function (m) { return m.injColor || m.color; });
+        const fromMats = _masterInjColors(car, part);
+        if (fromMats.length) return _uniqueSorted(fromMats);
         const fromWip = _getAll()
             .filter(function (r) { return String(r.carModel || '').trim() === car && _partsMatch(r.partName, part, car); })
-            .map(function (r) { return r.color; });
-        const fromProd = _productRows()
-            .filter(function (p) { return p.carModel === car && _partsMatch(p.partName, part, car); })
-            .map(function (p) { return p.color; });
-        return _uniqueSorted(fromMats.concat(fromWip).concat(fromProd).filter(Boolean));
+            .map(function (r) { return _displayInjColor(r.carModel, r.partName, r.color); })
+            .filter(_isInjColorToken);
+        return _uniqueSorted(fromWip);
     }
 
     function _selectOpts(list, selected, emptyLabel) {
@@ -495,7 +581,9 @@ var ReworkWipModule = (function () {
         const car = String(carModel || '').trim();
         const part = String(partName || '').trim();
         if (!car || !part) return '<option value="">-- 사출명 먼저 선택 --</option>';
-        return _selectOpts(_colors(car, part), selected, '-- 선택 --');
+        const colors = _colors(car, part);
+        const sel = _isInjColorToken(selected) ? String(selected || '').trim() : (_displayInjColor(car, part, selected) || '');
+        return _selectOpts(colors, sel, '-- 선택 --');
     }
 
     function onCarModelChange() {
@@ -559,9 +647,9 @@ var ReworkWipModule = (function () {
             </select>
           </div>
           <div>
-            <label class="form-label">색상</label>
+            <label class="form-label">사출 컬러</label>
             <select id="rwColor" class="form-input">
-              ${_colorSelectHtml(r.carModel || '', _displayPartName(r.carModel, r.partName) || r.partName || '', r.color || '')}
+              ${_colorSelectHtml(r.carModel || '', _displayPartName(r.carModel, r.partName) || r.partName || '', _displayInjColor(r.carModel, r.partName, r.color) || r.color || '')}
             </select>
           </div>
           <div>
@@ -653,7 +741,9 @@ var ReworkWipModule = (function () {
 
         // 색상까지 일치하는 이력을 우선 보여주되, 없으면 색상 무시하고 전체를 보여준다
         // (LOT 오타 예방이 목적이므로, 후보를 좁혀서 아예 못 찾는 것보다 넓게 보여주는 편이 안전).
-        const byColor = color ? inspections.filter(function (i) { return !i.color || String(i.color).trim() === color; }) : inspections;
+        const byColor = color ? inspections.filter(function (i) {
+            return !i.color || _sameStockColor(carModel, partName, i.color, color);
+        }) : inspections;
         const filtered = byColor.length ? byColor : inspections;
 
         if (!filtered.length) {
@@ -770,7 +860,7 @@ var ReworkWipModule = (function () {
         const type = (document.getElementById('rwType') || {}).value || '';
         const carModel = ((document.getElementById('rwCarModel') || {}).value || '').trim();
         const partName = _toInjPartName(carModel, ((document.getElementById('rwPartName') || {}).value || '').trim());
-        const color = ((document.getElementById('rwColor') || {}).value || '').trim();
+        const color = _displayInjColor(carModel, partName, ((document.getElementById('rwColor') || {}).value || '').trim());
         const qty = parseInt((document.getElementById('rwQty') || {}).value, 10);
         const location = ((document.getElementById('rwLocation') || {}).value || '').trim();
         const note = ((document.getElementById('rwNote') || {}).value || '').trim();
@@ -846,7 +936,8 @@ var ReworkWipModule = (function () {
             const src = _getAll()
                 .filter(function (rec) {
                     return rec.type === '입고' &&
-                        (rec.carModel || '') === carModel && _partsMatch(rec.partName, partName, carModel) && (rec.color || '') === color;
+                        (rec.carModel || '') === carModel && _partsMatch(rec.partName, partName, carModel)
+                        && _sameStockColor(carModel, partName, rec.color, color);
                 })
                 .sort(function (a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
             if (!src.length) return { injLot: '', inspDate: '', paintLot: '', trace: undefined };
@@ -971,19 +1062,18 @@ var ReworkWipModule = (function () {
         }
     }
 
-    /** 도장 실적 입력에서 넘어온 컬러(도장 컬러, 예: BLACK)를 재공 재고에 실제 쌓여 있는
-     *  컬러 표기(사출 소재 컬러, 예: BK+CLEAR)로 되돌린다. 그대로 쓰면 재고 조회(getStockQty)는
-     *  느슨한 컬러 비교라 맞게 나오지만, 이 출고 기록 자체는 다른 컬러 문자열로 남아 부품별
-     *  현황 표(_calcStock, 정확 일치)에 엉뚱한 마이너스 행을 새로 만들고 _defaultLotsForStock
-     *  (정확 일치)도 기존 입고분의 LOT 계보를 못 찾아 매번 새 RST LOT을 만들게 된다. */
+    /** 도장 실적 등에서 넘어온 컬러를 사출 컬러로 맞춘다. BK+CLEAR 같은 도장 표기는
+     *  사출자재 마스터 injColor(BLACK 등)로 통일해, 현황·이력·출고가 같은 색으로 묶이게 한다. */
     function _resolveStockColor(carModel, partName, color) {
         const want = String(color || '').trim();
         if (!want) return want;
+        const wantInj = _displayInjColor(carModel, partName, want) || want;
         const match = _getAll().find(function (r) {
             return r.type === '입고' && (r.carModel || '') === carModel && _partsMatch(r.partName, partName, carModel)
-                && _colorsEqual(r.color, want);
+                && _sameStockColor(carModel, partName, r.color, wantInj);
         });
-        return match ? String(match.color || '').trim() : want;
+        if (match) return _displayInjColor(match.carModel, match.partName, match.color) || String(match.color || '').trim();
+        return wantInj;
     }
 
     /** 도장 작업 실적 입력 화면에서 "재사용 자재 사용"을 적용했을 때 호출 — 별도 출고 모달
@@ -1110,7 +1200,8 @@ var ReworkWipModule = (function () {
      */
     function openStockDetailModal(carModel, partName, color) {
         const all = _getAll().filter(function (r) {
-            return (r.carModel || '') === carModel && _partsMatch(r.partName, partName, carModel) && (r.color || '') === color;
+            return (r.carModel || '') === carModel && _partsMatch(r.partName, partName, carModel)
+                && _sameStockColor(carModel, partName, r.color, color);
         }).sort(function (a, b) {
             return String(b.date || '').localeCompare(String(a.date || ''));
         });
@@ -1187,7 +1278,7 @@ var ReworkWipModule = (function () {
             type: '입고',
             carModel: payload.carModel || '',
             partName: _toInjPartName(payload.carModel, payload.partName) || payload.partName || '',
-            color: payload.color || '',
+            color: _displayInjColor(payload.carModel, payload.partName, payload.color || payload.injColor) || payload.color || '',
             qty: qty,
             location: payload.location || '',
             note: payload.note || '도장 외관검사 리워크',
