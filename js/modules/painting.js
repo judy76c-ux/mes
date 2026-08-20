@@ -3153,15 +3153,18 @@ const PaintingWorkModule = (function() {
             ? UIUtils.formatNumber(_plan.planQty)
             : '<span style="color:var(--text-muted);">-</span>';
         // 사출현장입고수(LOT수) — 자재 분출 수량 + 이 실적에 반영된 LOT 개수를 한 칸에 표시.
-        // "-"로 뜨면 왜 매칭이 안 됐는지 마우스 오버로 바로 확인할 수 있게 진단을 붙인다.
+        // "-"로 뜨거나(매칭 실패) 이 실적 자신의 투입+반납보다 훨씬 크게 뜨면(중복/타 실적 혼입
+        // 의심) 왜 그 값이 나왔는지 마우스 오버로 바로 확인할 수 있게 합산 근거를 붙인다.
         const _lotCount = _issuedLotCount;
-        const issuedWithLotHtml = _issued > 0
+        const _issuedSuspicious = _issued > 0.001 && Math.abs(_issued - (_inQ + _returned)) > 0.001;
+        const issuedWithLotHtml = (_issued > 0 && !_issuedSuspicious)
             ? UIUtils.formatNumber(_issued) + (_lotCount > 0 ? '<div style="font-size:0.66rem;color:var(--text-muted);">' + _lotCount + '개 LOT</div>' : '')
             : (function () {
                 const reason = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.debugIssuedQtyInfo)
                     ? PaintingInputModule.debugIssuedQtyInfo(d.line || _currentLine, _issuedOpts)
                     : '';
-                return '<span style="color:var(--text-muted);cursor:help;border-bottom:1px dotted var(--text-muted);" title="' + _pwEsc(reason) + '">-</span>';
+                const label = _issued > 0 ? UIUtils.formatNumber(_issued) : '-';
+                return '<span style="color:' + (_issued > 0 ? '#dc2626' : 'var(--text-muted)') + ';cursor:help;border-bottom:1px dotted currentColor;font-weight:' + (_issued > 0 ? '700' : '400') + ';" title="' + _pwEsc(reason) + '">' + label + '</span>';
             })();
 
         const td = 'padding:8px 10px;';

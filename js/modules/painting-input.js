@@ -2106,9 +2106,45 @@ var PaintingInputModule = (function () {
                     '이 실적의 LOT: ' + (workLots.join(', ') || '(없음)') + ' | 같은 날짜·차종·라인 입고 LOT: ' + (availLots.length ? availLots.join(', ') : '(없음)');
             }
             if (hasLots) {
+                // 실제로 합산에 잡힌 개별 입고 레코드를 나열한다 — "현장입고사출"이 이 실적
+                // 자신의 LOT 합계보다 훨씬 크게 나올 때(중복 레코드·다른 실적 몫 혼입 등), 그
+                // 원인이 된 레코드를 화면에서 바로 짚어낼 수 있게 하기 위함이다.
+                const injNames = {};
+                if (opts.injPartName) injNames[String(opts.injPartName).trim()] = true;
+                if (opts.partName) injNames[String(opts.partName).trim()] = true;
+                try {
+                    const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+                    mats.forEach(function (m) {
+                        if (!m || !m.injPartName) return;
+                        if (opts.carModel && m.carModel && m.carModel !== opts.carModel) return;
+                        const mfg1 = String(m.mfgProductName || '').trim();
+                        const mfg2 = String(m.mfgProductName2 || '').trim();
+                        if (opts.partName && (mfg1 === opts.partName || mfg2 === opts.partName)) {
+                            injNames[String(m.injPartName).trim()] = true;
+                        }
+                    });
+                } catch (e2) { /* ignore */ }
+                const requirePartMatch = Object.keys(injNames).length > 0;
+                const contributions = [];
+                let sum = 0;
+                sameDayCarLine.forEach(function (r) {
+                    if (requirePartMatch) {
+                        const rPart = String(r.partName || '').trim();
+                        if (!rPart || !injNames[rPart]) return;
+                    }
+                    const rLots = Array.isArray(r.lots) && r.lots.length ? r.lots : [{ lotNo: r.lotNo, qty: r.quantity }];
+                    rLots.forEach(function (l) {
+                        const n = String((l && l.lotNo) || '').trim();
+                        if (!n || workLots.indexOf(n) < 0) return;
+                        const q = Number(l.qty) || 0;
+                        sum += q;
+                        contributions.push((r.partName || '(품명없음)') + ' · LOT ' + n + ' · ' + q + 'EA · id=' + String(r.id || '').slice(-6) + ' · ' + String(r.date || '').slice(0, 16));
+                    });
+                });
                 return '이 실적의 LOT: ' + (workLots.join(', ') || '(없음)') +
-                    ' | 같은 날짜·차종·라인 입고 LOT: ' + (availLots.length ? availLots.join(', ') : '(없음)') +
-                    ' — LOT번호가 정확히 일치해야 합산됩니다. LOT이 안 맞고, 같은 날짜·차종·사출명 실적이 이 건 말고 더 있으면(누구 몫인지 알 수 없어) "-"로 남깁니다.';
+                    ' | 사출명 필터: ' + (requirePartMatch ? Object.keys(injNames).join(', ') : '(없음 — 필터 미적용)') +
+                    ' | 합산 근거 ' + contributions.length + '건 (합계 ' + sum + 'EA): ' +
+                    (contributions.length ? contributions.join(' / ') : '없음 — 같은 날짜·차종·사출명 실적이 이 건 말고 더 있으면 "-"로 남깁니다.');
             }
             return '이 실적에 LOT이 입력되어 있지 않아 품명(사출명)으로 매칭합니다. ' +
                 '같은 날짜·차종·라인 입고 건: ' + sameDayCarLine.length + '건. ' +
