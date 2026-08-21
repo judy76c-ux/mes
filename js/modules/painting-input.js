@@ -5,6 +5,7 @@
  */
 var PaintingInputModule = (function () {
     const STORE = DB.STORES.PAINTING_INPUT_INVENTORY;
+    var _inboundInFlight = {};
 
     function _esc(s) {
         return String(s == null ? '' : s)
@@ -553,6 +554,70 @@ var PaintingInputModule = (function () {
         return { received: received, consumed: consumed, balance: received - consumed };
     }
 
+    function notifyTodaySiteInbound(rows) {
+        const list = Array.isArray(rows) ? rows : (rows ? [rows] : []);
+        if (!list.length) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        const groups = { '도장-A': [], '도장-B': [] };
+        list.forEach(function (r) {
+            if (!r) return;
+            const oType = String(r.outgoingType || '');
+            const src = String(r.source || '');
+            const isProd = oType === '생산출고' || src === '사출 창고 생산출고' || src === 'dispatch_to_line';
+            if (!isProd) return;
+            const line = _normLine(r.paintLine || r.line);
+            if (line !== '도장-A' && line !== '도장-B') return;
+            groups[line].push(r);
+        });
+        ['도장-A', '도장-B'].forEach(function (line) {
+            _sendTodaySiteInboundNotify(line, groups[line]);
+        });
+    }
+
+    function _sendTodaySiteInboundNotify(line, rows) {
+        if (!rows || !rows.length) return;
+        try {
+            const kind = (typeof AuthModule.siteInboundNotifyKindForLine === 'function')
+                ? AuthModule.siteInboundNotifyKindForLine(line)
+                : (line === '도장-B' ? 'site_inbound_b' : 'site_inbound_a');
+            if (!kind) return;
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
+                : [];
+            if (!recipients.length) return;
+            const lines = rows.map(function (r) {
+                const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                    ? r.lots.map(function (l) {
+                        return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                    }).join(', ')
+                    : ((r.lotNo || '-') + (r.quantity != null || r.qty != null
+                        ? (' ' + UIUtils.formatNumber(r.quantity != null ? r.quantity : r.qty) + ' EA')
+                        : ''));
+                return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                    (r.color ? ' / ' + r.color : '') +
+                    ' · ' + (lotsTxt || UIUtils.formatNumber(r.quantity || r.qty) + ' EA');
+            });
+            const actor = rows.map(function (r) { return r.outgoingBy || r.returnedBy || ''; })
+                .filter(Boolean)[0] || '';
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: line + ' 금일 현장 사출 입고',
+                body: [
+                    '사출품이 ' + line + ' 현장으로 출고되었습니다. 현장에서 입고 처리해 주세요.',
+                    '',
+                    lines.join('\n'),
+                    '',
+                    actor ? ('출고자: ' + actor) : ''
+                ].filter(Boolean).join('\n'),
+                category: 'site_inbound_' + (line === '도장-B' ? 'b' : 'a'),
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintingInputModule] 금일 현장 입고 통보 실패:', e);
+        }
+    }
+
     /** 사출 창고 생산출고 → 현장 입고 처리 시 도장 투입 재고 반영
      *  opts: { actualQty, useDate, receivedBy, lots }
      *  opts.lots를 주면(LOT별 실수량 직접 확인) 그 값을 그대로 쓴다 — 안 주면 기존처럼
@@ -588,14 +653,38 @@ var PaintingInputModule = (function () {
             lots = _scaleLotsToQty(lots, qty);
         }
         if (qty <= 0) return null;
+        const lockKey = outRec.id
+            ? ((isRework ? 'site-in-rw-' : 'site-in-') + String(outRec.id))
+            : '';
         if (outRec.id) {
-            if (isRework) {
-                const existRw = _findReceiveByReworkOutId(outRec.id);
-                if (existRw) return existRw;
-            } else {
-                const existInj = _findReceiveByOutId(outRec.id);
-                if (existInj) return existInj;
-            }
+            const exist = isRework ? _findReceiveByReworkOutId(outRec.id) : _findReceiveByOutId(outRec.id);
+            if (exist) return exist;
+            if (_inboundInFlight[lockKey]) return _inboundInFlight[lockKey];
+        }
+
+        const task = _commitReceiveFromWarehouseOut(outRec, opts, {
+            isRework: isRework,
+            line: line,
+            qty: qty,
+            lots: lots,
+            shipQty: shipQty,
+            lockKey: lockKey
+        });
+        if (lockKey) _inboundInFlight[lockKey] = task;
+        try {
+            return await task;
+        } finally {
+            if (lockKey) delete _inboundInFlight[lockKey];
+        }
+    }
+
+    async function _commitReceiveFromWarehouseOut(outRec, opts, ctx) {
+        opts = opts || {};
+        if (outRec && outRec.id) {
+            const exist = ctx.isRework
+                ? _findReceiveByReworkOutId(outRec.id)
+                : _findReceiveByOutId(outRec.id);
+            if (exist) return exist;
         }
         const useDate = String(opts.useDate || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
         const nowTime = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')).slice(11, 16);
@@ -608,32 +697,37 @@ var PaintingInputModule = (function () {
         const shipStamp = _outDisplayStamp(outRec);
 
         const actor = opts.receivedBy || _currentActorLabel();
-        return Storage.add(STORE, {
+        const payload = {
             date: stampDate,
             useDate: useDate || undefined,
             shipDate: shipStamp || undefined,
             type: '입고',
-            line: line,
-            paintLine: line,
+            line: ctx.line,
+            paintLine: ctx.line,
             carModel: outRec.carModel || '',
             partName: _toInjPartName(outRec.carModel, outRec.partName) || outRec.partName || '',
             color: outRec.color || '',
-            lots: lots,
-            lotNo: lots[0] ? lots[0].lotNo : (outRec.lotNo || ''),
-            quantity: qty,
-            shipQty: shipQty,
+            lots: ctx.lots,
+            lotNo: (ctx.lots && ctx.lots[0]) ? ctx.lots[0].lotNo : (outRec.lotNo || ''),
+            quantity: ctx.qty,
+            shipQty: ctx.shipQty,
             unit: 'EA',
-            source: isRework ? '재사용 자재 출고' : '사출 창고 생산출고',
-            refOutId: isRework ? '' : (outRec.id || ''),
-            refReworkOutId: isRework ? (outRec.id || '') : undefined,
+            source: ctx.isRework ? '재사용 자재 출고' : '사출 창고 생산출고',
+            refOutId: ctx.isRework ? '' : (outRec.id || ''),
+            refReworkOutId: ctx.isRework ? (outRec.id || '') : undefined,
             siteReceived: true,
             isAutoReceived: !!opts.isAutoReceived,
-            isReworkInbound: !!isRework,
+            isReworkInbound: !!ctx.isRework,
             receivedBy: actor || outRec.outgoingBy || '',
             receivedAt: UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '),
             note: outRec.note || outRec.memo || '',
             trace: outRec.trace || undefined
-        });
+        };
+        if (ctx.lockKey) payload.id = ctx.lockKey;
+        if (payload.id && typeof Storage.put === 'function') {
+            return Storage.put(STORE, payload);
+        }
+        return Storage.add(STORE, payload);
     }
 
     function _scaleLotsToQty(lots, newTotal) {
@@ -970,6 +1064,11 @@ var PaintingInputModule = (function () {
         }
         const out = resolved.out;
         const want = _normLine(line || out.paintLine || out.line);
+        const lock = getManualInboundLock(out, want, UIUtils.today ? UIUtils.today() : '');
+        if (lock.locked) {
+            UIUtils.toast('자동입고 5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
+            return null;
+        }
         const shipQty = _outShipQty(out);
         const today = UIUtils.today ? UIUtils.today() : '';
         const shipDay = String(out.date || '').slice(0, 10);
@@ -1133,6 +1232,12 @@ var PaintingInputModule = (function () {
 
         const out = resolved.out;
         const want = _normLine(line || out.paintLine || out.line);
+        const lock = getManualInboundLock(out, want, UIUtils.today ? UIUtils.today() : '');
+        if (lock.locked) {
+            UIUtils.toast('자동입고 5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
+            UIUtils.closeModal();
+            return;
+        }
         try {
             const rec = await receiveFromWarehouseOut(Object.assign({}, out, {
                 paintLine: want,
@@ -1194,6 +1299,7 @@ var PaintingInputModule = (function () {
     // 자동 입고는 도장 작업 완료 시각(계획 종료시각) 그 시각이 아니라, 그로부터 일정 시간이
     // 지난 뒤에 처리한다 — 완료 직후엔 아직 실물이 현장에 도착하지 않았을 수 있기 때문.
     const AUTO_INBOUND_DELAY_HOURS = 3;
+    const AUTO_INBOUND_MANUAL_LOCK_MINUTES = 5;
 
     /** 'HH:MM' 시각에 지정한 시간(hours)을 더한다. 자정을 넘기면 23:59로 고정(당일 안에서만 비교하므로) */
     function _addHoursToHm(hm, hours) {
@@ -1202,6 +1308,45 @@ var PaintingInputModule = (function () {
         const total = Math.max(0, Math.min(23 * 60 + 59, Number(m[1]) * 60 + Number(m[2]) + Math.round(Number(hours) * 60)));
         const p = function (n) { return String(n).padStart(2, '0'); };
         return p(Math.floor(total / 60)) + ':' + p(total % 60);
+    }
+
+    function _hmToMinutes(hm) {
+        const m = String(hm || '').match(/^(\d{1,2}):(\d{2})/);
+        if (!m) return null;
+        return Number(m[1]) * 60 + Number(m[2]);
+    }
+
+    /** 자동입고 예정 시각(계획 종료 + 3시간). 매칭 계획이 없으면 빈 문자열. */
+    function getAutoInboundAt(record, line, date) {
+        const endTime = getPlanEndTimeForShipment(record, line, date);
+        if (!endTime) return '';
+        return _addHoursToHm(endTime, AUTO_INBOUND_DELAY_HOURS);
+    }
+
+    /**
+     * 자동입고 5분 전부터 수동 입고를 막는다.
+     * 자동입고는 금일 출고만 대상이므로, 날짜가 다른 미입고(지난 건)는 막지 않는다.
+     */
+    function getManualInboundLock(record, line, date) {
+        const today = String(date || (UIUtils.today ? UIUtils.today() : '')).slice(0, 10);
+        const shipDay = String((record && record.date) || '').slice(0, 10);
+        if (shipDay && today && shipDay !== today) {
+            return { locked: false, autoAt: '', label: '' };
+        }
+        const autoAt = getAutoInboundAt(record, line, today);
+        if (!autoAt) return { locked: false, autoAt: '', label: '' };
+        const autoMin = _hmToMinutes(autoAt);
+        const nowMin = _hmToMinutes(_nowHm());
+        if (autoMin == null || nowMin == null) return { locked: false, autoAt: autoAt, label: '' };
+        if (nowMin < autoMin - AUTO_INBOUND_MANUAL_LOCK_MINUTES) {
+            return { locked: false, autoAt: autoAt, label: '' };
+        }
+        return {
+            locked: true,
+            autoAt: autoAt,
+            label: '자동입고 5분전',
+            title: '자동입고(' + autoAt + ') 5분 전부터 수동 입고를 막아 중복 저장을 방지합니다. 잠시 후 시스템이 입고 처리합니다.'
+        };
     }
 
     // 사출명(injPartName) → 제품명(PRODUCTION_PLANS.partName) 역매핑.
@@ -1526,6 +1671,47 @@ var PaintingInputModule = (function () {
 
     let _autoInboundBusy = false;
     let _qtyAlignDone = {};
+    let _inboundDedupeDone = false;
+
+    /** 같은 창고 출고(refOutId)로 현장 입고가 2건 이상이면 1건만 남긴다. */
+    async function _dedupeSiteInboundByOutRef() {
+        if (_inboundDedupeDone) return 0;
+        _inboundDedupeDone = true;
+        const rows = (Storage.getAll(STORE) || []).filter(function (r) {
+            if (!r || String(r.type || '') !== '입고') return false;
+            return !!(r.refOutId || r.refReworkOutId);
+        });
+        const groups = {};
+        rows.forEach(function (r) {
+            const key = r.refReworkOutId
+                ? ('rw:' + String(r.refReworkOutId))
+                : ('inj:' + String(r.refOutId));
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(r);
+        });
+        let removed = 0;
+        const keys = Object.keys(groups);
+        for (let g = 0; g < keys.length; g++) {
+            const list = groups[keys[g]];
+            if (list.length < 2) continue;
+            list.sort(function (a, b) {
+                const am = a.isAutoReceived ? 1 : 0;
+                const bm = b.isAutoReceived ? 1 : 0;
+                if (am !== bm) return am - bm;
+                return String(a.createdAt || a.receivedAt || a.date || '')
+                    .localeCompare(String(b.createdAt || b.receivedAt || b.date || ''));
+            });
+            for (let i = 1; i < list.length; i++) {
+                try {
+                    await Storage.remove(STORE, list[i].id);
+                    removed++;
+                } catch (e) {
+                    console.warn('[PaintingInput] 중복 입고 정리 실패:', e);
+                }
+            }
+        }
+        return removed;
+    }
 
     /** 창고 출고수량보다 작게 저장된 미사용 현장입고를 출고수량에 맞춘다. */
     async function _alignInboundQtyToWarehouseOut(line) {
@@ -1565,19 +1751,21 @@ var PaintingInputModule = (function () {
     async function runAutoSiteInbound(line) {
         const want = _normLine(line);
         if (!_canConfirmInbound(want) || _autoInboundBusy) return { processed: 0 };
-        let aligned = 0;
-        try { aligned = await _alignInboundQtyToWarehouseOut(want) || 0; } catch (eAlign) { aligned = 0; }
-        const today = UIUtils.today ? UIUtils.today() : '';
-        const nowHm = _nowHm();
-        const pending = listTodayWarehouseShipments(want, today).filter(function (r) { return !r.received; });
-        if (!pending.length) {
-            if (aligned > 0) _refreshInboundViews();
-            return { processed: 0 };
-        }
-
         _autoInboundBusy = true;
-        let processed = 0;
+        let aligned = 0;
+        let deduped = 0;
         try {
+            try { deduped = await _dedupeSiteInboundByOutRef() || 0; } catch (eDup) { deduped = 0; }
+            try { aligned = await _alignInboundQtyToWarehouseOut(want) || 0; } catch (eAlign) { aligned = 0; }
+            const today = UIUtils.today ? UIUtils.today() : '';
+            const nowHm = _nowHm();
+            const pending = listTodayWarehouseShipments(want, today).filter(function (r) { return !r.received; });
+            if (!pending.length) {
+                if (aligned > 0 || deduped > 0) _refreshInboundViews();
+                return { processed: 0 };
+            }
+
+            let processed = 0;
             for (let i = 0; i < pending.length; i++) {
                 const r = pending[i];
                 const endTime = getPlanEndTimeForShipment(r, want, today);
@@ -1590,11 +1778,13 @@ var PaintingInputModule = (function () {
             if (processed > 0) {
                 UIUtils.toast('작업 완료 ' + AUTO_INBOUND_DELAY_HOURS + '시간 경과 — 자동 입고 ' + processed + '건 처리', 'success');
                 _refreshInboundViews();
+            } else if (aligned > 0 || deduped > 0) {
+                _refreshInboundViews();
             }
+            return { processed: processed };
         } finally {
             _autoInboundBusy = false;
         }
-        return { processed: processed };
     }
 
     /** 도장 작업현황 — 금일 창고 출고 목록 + 입고 처리
@@ -1718,6 +1908,7 @@ var PaintingInputModule = (function () {
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">undo</span> 반납
                    </button>`
                 : '';
+            const lock = (!r.received) ? getManualInboundLock(r, want, today) : { locked: false };
             const actionHtml = r.received
                 ? `<div style="display:inline-flex;align-items:center;gap:6px;white-space:nowrap;">
                     <button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
@@ -1726,7 +1917,9 @@ var PaintingInputModule = (function () {
                     ${reworkReturnBtn}
                     <span style="font-size:0.75rem;color:var(--text-muted);">${_esc((recv && recv.receivedBy) || '-')}${isAutoReceived ? ' (자동)' : ''}</span>
                    </div>`
-                : (canWrite
+                : (lock.locked
+                    ? `<span style="font-size:0.78rem;font-weight:800;color:#b45309;white-space:nowrap;" title="${_esc(lock.title || '자동입고 5분전')}">자동입고 5분전</span>`
+                    : (canWrite
                     ? `<div style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
                         <button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;white-space:nowrap;"
                             onclick="${confirmFn}('${_esc(r.id)}','${_esc(want)}')">
@@ -1736,7 +1929,7 @@ var PaintingInputModule = (function () {
                             ? `<span style="font-size:0.72rem;color:var(--text-muted);font-weight:600;" title="계획 완료시각으로부터 ${AUTO_INBOUND_DELAY_HOURS}시간 경과 시 자동 입고 처리">${_esc(autoScheduleLabel)}</span>`
                             : '') +
                        `</div>`
-                    : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>');
+                    : '<span style="font-size:0.75rem;color:var(--text-muted);">입력 권한 필요</span>'));
             const endHint = endTime && !r.received
                 ? ' title="작업 완료 ' + _esc(endTime) + ' + ' + AUTO_INBOUND_DELAY_HOURS + '시간 이후 자동 입고"'
                 : '';
@@ -2821,6 +3014,45 @@ var PaintingInputModule = (function () {
         }
     }
 
+    function _notifySiteReturnPending(rec) {
+        if (!rec) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds('site_return')
+                : [];
+            if (!recipients.length) return;
+            const lotsTxt = (Array.isArray(rec.lots) && rec.lots.length)
+                ? rec.lots.map(function (l) {
+                    return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                }).join(', ')
+                : ((rec.lotNo || '-') + (rec.quantity != null ? (' ' + UIUtils.formatNumber(rec.quantity) + ' EA') : ''));
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '도장현장 반납 입고 확인 대기',
+                body: [
+                    '도장현장에서 사출 소재가 반납되어 사출창고 입고 확인이 필요합니다.',
+                    '',
+                    '반납일시: ' + (rec.date || '-'),
+                    '라인: ' + (rec.line || rec.paintLine || '-'),
+                    '차종: ' + (rec.carModel || '-'),
+                    '사출명: ' + (rec.partName || '-'),
+                    '컬러: ' + (rec.color || '-'),
+                    'LOT: ' + (lotsTxt || '-'),
+                    '합계수량: ' + UIUtils.formatNumber(rec.quantity) + ' EA',
+                    rec.isReworkReturn ? '구분: 재사용 자재' : '',
+                    '반납 사유: ' + (rec.returnReason || '-'),
+                    '반납자: ' + (rec.returnedBy || '-')
+                ].filter(Boolean).join('\n'),
+                category: 'site_return_pending',
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintingInputModule] 반납 입고 확인 통보 실패:', e);
+        }
+    }
+
     /** 계획 미달 등으로 남은 도장현장 자재를 사출창고로 반납 처리 (반납 대기 상태로 기록) */
     async function createSiteReturn(opts) {
         opts = opts || {};
@@ -2863,6 +3095,9 @@ var PaintingInputModule = (function () {
             // 실물 확인 여부 — 창고에서 「입고 처리」할 때 판단 근거가 된다
             physicalVerified: !!opts.physicalVerified,
             verifiedAt: opts.verifiedAt || ''
+        }).then(function (rec) {
+            _notifySiteReturnPending(rec);
+            return rec;
         });
     }
 
@@ -3071,6 +3306,7 @@ var PaintingInputModule = (function () {
         createSiteReturn: createSiteReturn,
         openReworkInboundReturnModal: openReworkInboundReturnModal,
         submitReworkInboundReturn: submitReworkInboundReturn,
+        notifyTodaySiteInbound: notifyTodaySiteInbound,
         listPendingReturns: listPendingReturns,
         confirmSiteReturn: confirmSiteReturn,
         cancelSiteReturn: cancelSiteReturn,
@@ -3078,6 +3314,7 @@ var PaintingInputModule = (function () {
         receiveFromWarehouseOut: receiveFromWarehouseOut,
         autoReceiveFromWarehouseOut: autoReceiveFromWarehouseOut,
         runAutoSiteInbound: runAutoSiteInbound,
+        dedupeDuplicateSiteInbounds: _dedupeSiteInboundByOutRef,
         findPlansForShipment: findPlansForShipment,
         getPlanQtyForShipment: getPlanQtyForShipment,
         getPlanEndTimeForShipment: getPlanEndTimeForShipment,

@@ -4682,7 +4682,11 @@ var LaserInspectionModule = (function() {
             inspectionGoodQty: Number(data.goodQty) || 0,
             shippingEligibleQty: Number(data.packQty) || 0,
             laserResidualQty: Number(data.residualQty) || 0,
-            laserResidualStatus: (Number(data.residualQty) || 0) > 0 ? '잔량' : ''
+            laserResidualStatus: (Number(data.residualQty) || 0) > 0 ? '잔량' : '',
+            // 이번 포장이 소진한 "기존 잔량" — LaserWipModule의 LOT 원장이 이 값을 읽어
+            // 옛 LOT 잔량을 실제로 차감한다. 저장 안 하면 신규 잔량만 계속 더해지고
+            // 기존 잔량은 영구히 남아 누적되는 버그가 생긴다.
+            prevResidualQty: Number(data.prevResidualQty) || 0
         };
 
         if (qtyChanged) {
@@ -5348,7 +5352,10 @@ var LaserStandbyModule = (function() {
                             도장 완료 후 레이져 공정 대기 중인 재공품 현황과 재고 흐름을 확인합니다.
                         </p>
                     </div>
-                    <div style="display:flex;gap:8px;align-items:center;">
+                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
+                        ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                            ? AuthModule.incomingInspNotifyAdminButtonHtml('laser_inbound', { small: true })
+                            : ''}
                         <button class="btn btn-secondary" onclick="LaserStandbyModule.refresh()">
                             <span class="material-symbols-outlined">refresh</span> 새로고침
                         </button>
@@ -7496,6 +7503,62 @@ var LaserStandbyModule = (function() {
         return list.sort(function(a, b) { return String(a.stamp).localeCompare(String(b.stamp)); });
     }
 
+    function notifyInboundPending(rows) {
+        const list = Array.isArray(rows) ? rows.filter(Boolean) : (rows ? [rows] : []);
+        if (!list.length) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+
+        const run = function () {
+            try {
+                const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                    ? AuthModule.getIncomingInspNotifyRecipientIds('laser_inbound')
+                    : [];
+                if (!recipients.length) return;
+                if (!_confirmCutover) return;
+                const pending = list.filter(function (r) {
+                    const stamp = _inventoryEventStamp(r, r.date || '', r.endTime || r.startTime || '');
+                    return _isConfirmGated(stamp);
+                });
+                if (!pending.length) return;
+                const lines = pending.map(function (r) {
+                    const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                        ? r.lots.map(function (l) {
+                            return (l.lotNo || l.injectionLot || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                        }).join(', ')
+                        : String(r.lotNo || r.injLot || '').trim();
+                    const qty = r.qty != null ? r.qty : r.paintQty;
+                    return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                        (r.color && r.color !== '-' ? ' / ' + r.color : '') +
+                        ' · ' + UIUtils.formatNumber(qty) + ' EA' +
+                        (r.line ? ' (' + r.line + ')' : '') +
+                        (lotsTxt ? ' · LOT ' + lotsTxt : '');
+                });
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetIds: recipients,
+                    title: '레이져 입고 확인 대기 ' + pending.length + '건',
+                    body: [
+                        '레이져 대기품에 입고 확인이 필요한 건이 등록되었습니다.',
+                        '레이져 대기품 현황에서 「입고처리 · 수량보정」으로 확인해 주세요.',
+                        '',
+                        lines.join('\n')
+                    ].join('\n'),
+                    category: 'laser_inbound',
+                    priority: 'high'
+                });
+            } catch (e) {
+                console.warn('[LaserStandbyModule] 입고 확인 대기 통보 실패:', e);
+            }
+        };
+
+        Promise.resolve()
+            .then(function () { return _ensureConfirmCutoverLoaded(); })
+            .then(run)
+            .catch(function (e) {
+                console.warn('[LaserStandbyModule] 입고 확인 대기 통보 실패:', e);
+            });
+    }
+
     function _collectStandbyUnmatched(items) {
         const result = [];
         (items || []).forEach(function(item) {
@@ -7815,6 +7878,9 @@ var LaserStandbyModule = (function() {
                         <span style="font-size:0.78rem;color:var(--text-secondary);">
                             ${list.length}건 · 산출 ${UIUtils.formatNumber(totalQty)} EA
                         </span>
+                        ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                            ? AuthModule.incomingInspNotifyAdminButtonHtml('laser_inbound', { small: true })
+                            : ''}
                     </div>
                     <div style="margin-top:6px;padding:8px 10px;border-radius:6px;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.18);font-size:0.78rem;line-height:1.5;color:var(--text-secondary);">
                         <div>아래 건은 <strong>아직 재공 재고에 반영되지 않았습니다.</strong></div>
@@ -10597,6 +10663,7 @@ var LaserStandbyModule = (function() {
         ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
         isLaserInboundConfirmed,
         isPaintingWorkLaserStandbyInbound: _isPaintingWorkLaserStandbyInbound,
+        notifyInboundPending,
         getInboundConfirmRecord,
         getInboundConfirmDiffInfo,
         resolveInboundConfirmDiff,

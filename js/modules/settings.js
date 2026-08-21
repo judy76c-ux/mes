@@ -10613,7 +10613,7 @@ const SettingsModule = (function() {
                             Chat ID가 없는 사용자는 MES 쪽지만 받습니다. 「테스트」는 등록된 Chat ID로 실제 메시지를 보냅니다.
                         </span>
                     </p>
-                    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:12px;">
+                    <div style="display:grid;grid-template-columns:1fr auto;gap:10px;align-items:flex-end;margin-bottom:10px;">
                         <div>
                             <label class="form-label">Bot Token</label>
                             <input class="form-input" id="telegramBotToken" type="password"
@@ -10627,6 +10627,14 @@ const SettingsModule = (function() {
                                 <span class="material-symbols-outlined" style="font-size:16px;">wifi_tethering</span> 테스트
                             </button>
                         </div>
+                    </div>
+                    <div style="margin-bottom:12px;max-width:360px;">
+                        <label class="form-label">테스트 대상</label>
+                        <select class="form-select" id="telegramTestTarget">
+                            <option value="__latest__">최근 등록된 사용자만 (신규 Chat ID 확인용)</option>
+                            <option value="__all__">전체 등록된 사용자</option>
+                        </select>
+                        <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">기본값은 방금 등록한 사용자 1명에게만 보냅니다 — 기존에 이미 확인된 사람들에게는 매번 알림이 가지 않습니다.</div>
                     </div>
                     <div id="alimtalkStatus" style="font-size:0.82rem;"></div>
                 </div>
@@ -10660,6 +10668,7 @@ const SettingsModule = (function() {
             refreshSystemInfo();
             loadImageStoragePolicy();
             _loadTelegramConfig();
+            _populateTelegramTestTargets();
             _loadSlackConfig();
         }, 50);
     }
@@ -10789,7 +10798,9 @@ const SettingsModule = (function() {
         });
     }
 
-    function _telegramTestTargets() {
+    /** mode: '__latest__'(기본, 가장 최근에 등록된 Chat ID 1명만) | '__all__'(등록된 전체) | 특정 user.id(그 1명만).
+     *  기존 등록자 전체에게 매번 알림이 가지 않도록, 지정하지 않으면 신규 등록자 1명만 테스트한다. */
+    function _telegramTestTargets(mode) {
         const targets = [];
         const seen = {};
         function add(chatId, name) {
@@ -10799,15 +10810,54 @@ const SettingsModule = (function() {
             targets.push({ chatId: id, name: String(name || '').trim() || id });
         }
         try {
-            if (typeof AuthModule === 'undefined') return targets;
-            const cur = AuthModule.getCurrentUser && AuthModule.getCurrentUser();
-            if (cur) add(cur.chatId, cur.displayName || cur.username);
-            const users = (AuthModule.getUsers && AuthModule.getUsers()) || [];
-            users.forEach(function (u) {
-                if (u && u.active !== false) add(u.chatId, u.displayName || u.username);
+            if (typeof AuthModule === 'undefined' || !AuthModule.getUsers) return targets;
+            const usersWithChat = (AuthModule.getUsers() || [])
+                .filter(function (u) { return u && u.active !== false && String(u.chatId || '').trim(); });
+
+            if (mode && mode !== '__all__' && mode !== '__latest__') {
+                const u = usersWithChat.find(function (x) { return String(x.id) === String(mode); });
+                if (u) add(u.chatId, u.displayName || u.username);
+                return targets;
+            }
+
+            if (mode === '__all__') {
+                const cur = AuthModule.getCurrentUser && AuthModule.getCurrentUser();
+                if (cur) add(cur.chatId, cur.displayName || cur.username);
+                usersWithChat.forEach(function (u) { add(u.chatId, u.displayName || u.username); });
+                return targets;
+            }
+
+            // '__latest__' (기본값) — createdAt 기준 가장 최근에 등록된 사용자 1명만.
+            let latest = null;
+            let latestTs = -1;
+            usersWithChat.forEach(function (u) {
+                const ts = u.createdAt ? Date.parse(u.createdAt) || 0 : 0;
+                if (ts >= latestTs) { latest = u; latestTs = ts; }
             });
+            if (latest) add(latest.chatId, latest.displayName || latest.username);
         } catch (e) { /* ignore */ }
         return targets;
+    }
+
+    /** 「테스트 대상」 셀렉트에 Chat ID가 등록된 사용자 목록을 채운다 — 특정 1명만 골라 테스트할 수 있게. */
+    function _populateTelegramTestTargets() {
+        const sel = document.getElementById('telegramTestTarget');
+        if (!sel || typeof AuthModule === 'undefined' || !AuthModule.getUsers) return;
+        const cur = sel.value || '__latest__';
+        const usersWithChat = (AuthModule.getUsers() || [])
+            .filter(function (u) { return u && u.active !== false && String(u.chatId || '').trim(); })
+            .sort(function (a, b) {
+                return String(a.displayName || a.username || '').localeCompare(String(b.displayName || b.username || ''));
+            });
+        const userOptions = usersWithChat.map(function (u) {
+            const label = String(u.displayName || u.username || u.id) + ' (' + u.chatId + ')';
+            return '<option value="' + _tgEsc(u.id) + '">' + _tgEsc(label) + '</option>';
+        }).join('');
+        sel.innerHTML =
+            '<option value="__latest__">최근 등록된 사용자만 (신규 Chat ID 확인용)</option>' +
+            (userOptions ? '<optgroup label="특정 사용자만">' + userOptions + '</optgroup>' : '') +
+            '<option value="__all__">전체 등록된 사용자</option>';
+        sel.value = Array.from(sel.options).some(function (o) { return o.value === cur; }) ? cur : '__latest__';
     }
 
     function _formatTelegramTestHtml(result) {
@@ -10847,9 +10897,16 @@ const SettingsModule = (function() {
 
     async function testAlimtalk() {
         const statusEl = document.getElementById('alimtalkStatus');
-        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">테스트 중… 등록된 Chat ID로 실제 메시지를 보냅니다.</span>';
+        const targetEl = document.getElementById('telegramTestTarget');
+        const mode = targetEl ? targetEl.value : '__latest__';
+        const modeLabel = mode === '__all__' ? '등록된 모든 사용자에게' : '선택한 대상에게만';
+        if (statusEl) statusEl.innerHTML = '<span style="color:var(--text-muted);">테스트 중… ' + modeLabel + ' 실제 메시지를 보냅니다.</span>';
         try {
-            const recipients = _telegramTestTargets();
+            const recipients = _telegramTestTargets(mode);
+            if (!recipients.length) {
+                if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">error</span> 테스트할 대상이 없습니다. 사용자 관리에서 Chat ID를 먼저 등록하세요.</span>';
+                return;
+            }
             const result = await ApiClient.testNotifyConnection({ recipients });
             if (statusEl) statusEl.innerHTML = _formatTelegramTestHtml(result);
         } catch (e) {

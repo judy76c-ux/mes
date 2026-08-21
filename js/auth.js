@@ -18,12 +18,15 @@ const AuthModule = (function () {
     const AUTH_MESSAGES_CONFIG_KEY = 'auth_internal_messages';
     const AUTH_ROLES_CONFIG_KEY    = 'auth_roles';
     const PROD_NOTIFY_RECIPIENTS_KEY = 'prod_notify_recipients_v1';
+    const INCOMING_INSP_NOTIFY_KEY = 'incoming_insp_notify_recipients_v1';
     let _usersCache = null;
     let _permissionsCache = null;
     let _messagesCache = null;
     let _rolesCache = null; /* null = 하드코딩 ROLES 사용 */
     let _prodNotifyIds = [];
     let _prodNotifyLoaded = false;
+    let _incomingInspNotify = { injection: [], paint: [], site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+    let _incomingInspNotifyLoaded = false;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -1371,6 +1374,7 @@ const AuthModule = (function () {
         await _loadAuthStateFromServer();
         await ensureAdminUser();
         await ensureProdNotifyRecipients();
+        await ensureIncomingInspNotifyRecipients();
         _setupInterceptor();
         _applyWriteMode();
         _updateTopbar();
@@ -1411,6 +1415,298 @@ const AuthModule = (function () {
             }
         }
         return _prodNotifyIds.slice();
+    }
+
+    function _incomingInspKind(kind) {
+        if (kind === 'paint') return 'paint';
+        if (kind === 'site_return') return 'site_return';
+        if (kind === 'site_inbound_b') return 'site_inbound_b';
+        if (kind === 'site_inbound_a' || kind === 'site_inbound') return 'site_inbound_a';
+        if (kind === 'paint_insp') return 'paint_insp';
+        if (kind === 'missing_inbound_b') return 'missing_inbound_b';
+        if (kind === 'missing_inbound_a') return 'missing_inbound_a';
+        if (kind === 'laser_inbound') return 'laser_inbound';
+        if (kind === 'paint_out') return 'paint_out';
+        return 'injection';
+    }
+
+    function _incomingInspKindLabel(kind) {
+        const key = _incomingInspKind(kind);
+        if (key === 'paint') return '도료 수입검사';
+        if (key === 'site_return') return '도장현장 반납 입고 확인';
+        if (key === 'site_inbound_b') return '금일 현장 사출 입고 (도장-B)';
+        if (key === 'site_inbound_a') return '금일 현장 사출 입고 (도장-A)';
+        if (key === 'paint_insp') return '외관 검사 완료';
+        if (key === 'missing_inbound_b') return '소재 입고 필요 (도장-B)';
+        if (key === 'missing_inbound_a') return '소재 입고 필요 (도장-A)';
+        if (key === 'laser_inbound') return '레이져 입고 확인 대기';
+        if (key === 'paint_out') return '도료 창고 출고';
+        return '사출 수입검사';
+    }
+
+    function _incomingInspKindHint(kind) {
+        const key = _incomingInspKind(kind);
+        if (key === 'site_return') {
+            return '도장현장에서 사출 소재를 반납하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'site_inbound_a' || key === 'site_inbound_b') {
+            const line = key === 'site_inbound_b' ? '도장-B' : '도장-A';
+            return '사출 창고에서 ' + line + ' 현장으로 생산출고되면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'paint_insp') {
+            return '외관 검사(부분검사 포함)를 등록하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
+            const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
+            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'laser_inbound') {
+            return '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'paint_out') {
+            return '도료 창고에서 출고 완료하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        return '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+    }
+
+    function missingInboundNotifyKindForLine(line) {
+        const s = String(line || '').trim();
+        if (s === '도장-B' || s === '도장(B)') return 'missing_inbound_b';
+        if (s === '도장-A' || s === '도장(A)') return 'missing_inbound_a';
+        return '';
+    }
+
+    function siteInboundNotifyKindForLine(line) {
+        const s = String(line || '').trim();
+        if (s === '도장-B' || s === '도장(B)') return 'site_inbound_b';
+        if (s === '도장-A' || s === '도장(A)') return 'site_inbound_a';
+        return '';
+    }
+
+    function _snapshotIncomingInspNotify() {
+        return {
+            injection: (_incomingInspNotify.injection || []).slice(),
+            paint: (_incomingInspNotify.paint || []).slice(),
+            site_return: (_incomingInspNotify.site_return || []).slice(),
+            site_inbound_a: (_incomingInspNotify.site_inbound_a || []).slice(),
+            site_inbound_b: (_incomingInspNotify.site_inbound_b || []).slice(),
+            paint_insp: (_incomingInspNotify.paint_insp || []).slice(),
+            missing_inbound_a: (_incomingInspNotify.missing_inbound_a || []).slice(),
+            missing_inbound_b: (_incomingInspNotify.missing_inbound_b || []).slice(),
+            laser_inbound: (_incomingInspNotify.laser_inbound || []).slice(),
+            paint_out: (_incomingInspNotify.paint_out || []).slice()
+        };
+    }
+
+    function _normalizeIncomingInspIdList(raw) {
+        return [...new Set((Array.isArray(raw) ? raw : [])
+            .map(function (id) { return String(id || '').trim(); })
+            .filter(Boolean))];
+    }
+
+    function _normalizeIncomingInspNotify(raw) {
+        if (Array.isArray(raw)) {
+            const ids = _normalizeIncomingInspIdList(raw);
+            return { injection: ids.slice(), paint: ids.slice(), site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+        }
+        const src = raw && typeof raw === 'object' ? raw : {};
+        return {
+            injection: _normalizeIncomingInspIdList(src.injection),
+            paint: _normalizeIncomingInspIdList(src.paint),
+            site_return: _normalizeIncomingInspIdList(src.site_return),
+            site_inbound_a: _normalizeIncomingInspIdList(src.site_inbound_a),
+            site_inbound_b: _normalizeIncomingInspIdList(src.site_inbound_b),
+            paint_insp: _normalizeIncomingInspIdList(src.paint_insp),
+            missing_inbound_a: _normalizeIncomingInspIdList(src.missing_inbound_a),
+            missing_inbound_b: _normalizeIncomingInspIdList(src.missing_inbound_b),
+            laser_inbound: _normalizeIncomingInspIdList(src.laser_inbound),
+            paint_out: _normalizeIncomingInspIdList(src.paint_out)
+        };
+    }
+
+    async function ensureIncomingInspNotifyRecipients(forceReload) {
+        if (_incomingInspNotifyLoaded && !forceReload) {
+            return _snapshotIncomingInspNotify();
+        }
+        try {
+            const raw = (typeof Storage !== 'undefined' && Storage.getConfigValue)
+                ? await Storage.getConfigValue(INCOMING_INSP_NOTIFY_KEY)
+                : null;
+            _incomingInspNotify = _normalizeIncomingInspNotify(raw);
+        } catch (e) {
+            _incomingInspNotify = { injection: [], paint: [], site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+        }
+        _incomingInspNotifyLoaded = true;
+        return _snapshotIncomingInspNotify();
+    }
+
+    function getIncomingInspNotifyRecipientIds(kind) {
+        const key = _incomingInspKind(kind);
+        const ids = (_incomingInspNotify && _incomingInspNotify[key]) || [];
+        return Array.isArray(ids) ? ids.slice() : [];
+    }
+
+    async function saveIncomingInspNotifyRecipients(kind, ids) {
+        const key = _incomingInspKind(kind);
+        _incomingInspNotify = _normalizeIncomingInspNotify(_incomingInspNotify);
+        _incomingInspNotify[key] = _normalizeIncomingInspIdList(ids);
+        _incomingInspNotifyLoaded = true;
+        if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+            try {
+                await Storage.setConfigValue(INCOMING_INSP_NOTIFY_KEY, _snapshotIncomingInspNotify());
+            } catch (e) {
+                console.warn('[AuthModule] 수입검사 알림 수신자 저장 실패:', e);
+            }
+        }
+        return getIncomingInspNotifyRecipientIds(key);
+    }
+
+    function collectIncomingInspNotifySelection(checkboxClass) {
+        const cls = String(checkboxClass || '').trim();
+        if (!cls) return [];
+        return Array.from(document.querySelectorAll('.' + cls + ':checked'))
+            .map(function (el) { return String(el.value || '').trim(); })
+            .filter(Boolean);
+    }
+
+    function resolveIncomingInspNotifyRecipientIds(kind, checkboxClass) {
+        if (isAdminUser() && checkboxClass) {
+            const checks = document.querySelectorAll('.' + checkboxClass);
+            if (checks.length) return collectIncomingInspNotifySelection(checkboxClass);
+        }
+        return getIncomingInspNotifyRecipientIds(kind);
+    }
+
+    function toggleIncomingInspNotifyUsers(checkboxClass, forceCheck) {
+        const cls = String(checkboxClass || '').trim();
+        if (!cls) return;
+        const checks = Array.from(document.querySelectorAll('.' + cls));
+        if (!checks.length) return;
+        const shouldCheck = typeof forceCheck === 'boolean'
+            ? forceCheck
+            : checks.some(function (check) { return !check.checked; });
+        checks.forEach(function (check) { check.checked = shouldCheck; });
+    }
+
+    function incomingInspNotifyAdminButtonHtml(kind, opts) {
+        if (!isAdminUser()) return '';
+        opts = opts || {};
+        const safe = _incomingInspKind(kind);
+        const sm = opts.small ? ' btn-sm' : '';
+        return '<button type="button" class="btn btn-outline' + sm + '" onclick="AuthModule.openIncomingInspNotifyModal(\'' + safe + '\')">' +
+            '<span class="material-symbols-outlined"' + (opts.small ? ' style="font-size:16px;"' : '') + '>notifications</span> 알림 수신자</button>';
+    }
+
+    function buildIncomingInspNotifyAdminHtml(kind, checkboxClass, opts) {
+        if (!isAdminUser()) return '';
+        opts = opts || {};
+        const cls = String(checkboxClass || ('incoming-insp-notify-' + _incomingInspKind(kind))).trim();
+        const users = _getUsers().filter(function (u) { return u && u.active !== false; });
+        const saved = new Set(getIncomingInspNotifyRecipientIds(kind).map(String));
+        const roles = _getDynamicRoles ? _getDynamicRoles() : ROLES;
+        if (!users.length) {
+            return '<div style="margin-top:12px;padding:10px 12px;border:1px dashed rgba(220,38,38,0.3);border-radius:8px;font-size:0.8rem;color:var(--text-muted);">' +
+                '선택 가능한 사용자가 없습니다.</div>';
+        }
+        const grouped = {};
+        const leftover = [];
+        users.forEach(function (u) {
+            const roleKey = String(u.role || '');
+            const role = (roles || []).find(function (r) { return r.key === roleKey; });
+            const item = {
+                id: String(u.id || ''),
+                name: String(u.displayName || u.username || u.id || ''),
+                roleLabel: role ? role.label : (roleKey || '기타'),
+                roleColor: role ? role.color : 'var(--text-muted)'
+            };
+            if (!item.id) return;
+            if (role) {
+                if (!grouped[role.key]) grouped[role.key] = { label: item.roleLabel, color: item.roleColor, items: [] };
+                grouped[role.key].items.push(item);
+            } else leftover.push(item);
+        });
+        const blocks = (roles || []).filter(function (r) { return grouped[r.key]; }).map(function (r) {
+            const g = grouped[r.key];
+            return '<div style="display:flex;flex-direction:column;gap:6px;">' +
+                '<div style="font-size:0.78rem;font-weight:700;color:' + _esc(g.color) + ';">' + _esc(g.label) + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;">' +
+                g.items.map(function (u) {
+                    const checked = saved.has(u.id) ? ' checked' : '';
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid rgba(220,38,38,0.2);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="' + _esc(cls) + '" value="' + _esc(u.id) + '"' + checked +
+                        ' style="width:15px;height:15px;accent-color:#dc2626;">' +
+                        '<span style="font-size:0.82rem;font-weight:600;">' + _esc(u.name) + '</span></label>';
+                }).join('') +
+                '</div></div>';
+        }).join('');
+        const extra = leftover.length
+            ? '<div style="display:flex;flex-direction:column;gap:6px;"><div style="font-size:0.78rem;font-weight:700;color:var(--text-muted);">기타</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:6px;">' +
+                leftover.map(function (u) {
+                    const checked = saved.has(u.id) ? ' checked' : '';
+                    return '<label style="display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid rgba(220,38,38,0.2);border-radius:8px;background:#fff;cursor:pointer;">' +
+                        '<input type="checkbox" class="' + _esc(cls) + '" value="' + _esc(u.id) + '"' + checked +
+                        ' style="width:15px;height:15px;accent-color:#dc2626;">' +
+                        '<span style="font-size:0.82rem;font-weight:600;">' + _esc(u.name) + '</span></label>';
+                }).join('') + '</div></div>'
+            : '';
+        const inner = '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:8px;">' + _esc(_incomingInspKindLabel(kind)) + ' 알림 수신자</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">체크한 사용자만 쪽지를 받습니다. 지정하지 않으면 알림을 보내지 않습니다.</div>' +
+            '<div style="display:flex;flex-direction:column;gap:12px;max-height:240px;overflow:auto;">' + blocks + extra + '</div>';
+        if (opts.alwaysExpanded) {
+            return '<div style="border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff7f7;padding:10px 12px;">' + inner + '</div>';
+        }
+        return '<details style="margin-top:14px;border:1px dashed rgba(220,38,38,0.4);border-radius:8px;padding:8px 12px;background:#fff7f7;">' +
+            '<summary style="cursor:pointer;font-size:0.8rem;font-weight:700;color:#dc2626;">알림 수신자 지정 (관리자만 표시)</summary>' +
+            '<div style="margin-top:10px;">' + inner + '</div></details>';
+    }
+
+    function openIncomingInspNotifyModal(kind) {
+        if (!isAdminUser()) {
+            UIUtils.toast('관리자만 수신자를 지정할 수 있습니다.', 'warning');
+            return;
+        }
+        const safe = _incomingInspKind(kind);
+        const cls = 'incoming-insp-notify-modal-' + safe;
+        const label = _incomingInspKindLabel(safe);
+        const open = function () {
+            UIUtils.showModal(label + ' 알림 수신자',
+                '<p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 12px;">' +
+                _esc(_incomingInspKindHint(safe)) + '</p>' +
+                buildIncomingInspNotifyAdminHtml(safe, cls, { alwaysExpanded: true }),
+                '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+                '<button class="btn btn-primary" onclick="AuthModule.saveIncomingInspNotifyFromForm(\'' + safe + '\',\'' + cls + '\')">저장</button>',
+                '720px'
+            );
+        };
+        if (_incomingInspNotifyLoaded) {
+            open();
+            return;
+        }
+        ensureIncomingInspNotifyRecipients().then(open).catch(open);
+    }
+
+    async function saveIncomingInspNotifyFromForm(kind, checkboxClass) {
+        if (!isAdminUser()) {
+            UIUtils.toast('관리자만 수신자를 지정할 수 있습니다.', 'warning');
+            return;
+        }
+        const ids = collectIncomingInspNotifySelection(checkboxClass);
+        await saveIncomingInspNotifyRecipients(kind, ids);
+        UIUtils.closeModal();
+        UIUtils.toast(
+            ids.length
+                ? ('수신자 ' + ids.length + '명을 저장했습니다.')
+                : '수신자를 비웠습니다. 등록 알림을 보내지 않습니다.',
+            'success'
+        );
+    }
+
+    function persistIncomingInspNotifyIfAdmin(kind, checkboxClass) {
+        if (!isAdminUser() || !checkboxClass) return;
+        const checks = document.querySelectorAll('.' + checkboxClass);
+        if (!checks.length) return;
+        saveIncomingInspNotifyRecipients(kind, collectIncomingInspNotifySelection(checkboxClass));
     }
 
     function shouldPrecheckProdNotify(userId, opts) {
@@ -1690,6 +1986,19 @@ const AuthModule = (function () {
         getProdNotifyRecipientIds,
         saveProdNotifyRecipients,
         shouldPrecheckProdNotify,
+        ensureIncomingInspNotifyRecipients,
+        getIncomingInspNotifyRecipientIds,
+        saveIncomingInspNotifyRecipients,
+        resolveIncomingInspNotifyRecipientIds,
+        collectIncomingInspNotifySelection,
+        toggleIncomingInspNotifyUsers,
+        incomingInspNotifyAdminButtonHtml,
+        buildIncomingInspNotifyAdminHtml,
+        openIncomingInspNotifyModal,
+        saveIncomingInspNotifyFromForm,
+        persistIncomingInspNotifyIfAdmin,
+        siteInboundNotifyKindForLine,
+        missingInboundNotifyKindForLine,
     };
 })();
 

@@ -955,6 +955,19 @@ body.sidebar-hidden .sidebar-show-btn {
     white-space: normal;
 }
 
+/* 과거 입고/반납 조회 — 1% 열폭이 모달 가로를 채워 차종·품명·컬러·LOT이 벌어지지 않게 */
+.pw-mat-hist-table.data-table.data-table--content th,
+.pw-mat-hist-table.data-table.data-table--content td {
+    width: auto !important;
+    padding-left: 6px;
+    padding-right: 6px;
+}
+.pw-mat-hist-table th.pw-hist-tight,
+.pw-mat-hist-table td.pw-hist-tight {
+    padding-left: 5px;
+    padding-right: 5px;
+}
+
 /* 관리항목 드래그 피드백 */
 .pq-master-item-row.pq-drag-over {
     outline: 2px dashed var(--accent-blue);

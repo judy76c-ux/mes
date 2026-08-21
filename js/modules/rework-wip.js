@@ -1052,6 +1052,12 @@ var ReworkWipModule = (function () {
             // ② 도장현장 입고는 자동 확정하지 않는다 — 해당 라인 「현장 사출 입고」에서
             //    입고 처리해야 투입 LOT으로 쓸 수 있다(사출 생산출고와 동일).
             await Storage.add(WIP_STORE, outRec);
+            if (typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.notifyTodaySiteInbound === 'function') {
+                PaintingInputModule.notifyTodaySiteInbound([Object.assign({}, outRec, {
+                    outgoingType: '생산출고',
+                    quantity: qty
+                })]);
+            }
 
             UIUtils.closeModal();
             UIUtils.toast(`${_fmt(qty)} EA를 ${line}으로 출고했습니다. 현장에서 입고 처리해 주세요.`, 'success');

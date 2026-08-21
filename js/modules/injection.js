@@ -10,6 +10,7 @@
 var InjectionIncomingModule = (function() {
             const STORE = DB.STORES.INJECTION_INSPECTIONS;
             const INV_STORE = DB.STORES.INJECTION_INVENTORY;
+            let _pendingInjDateChangeSave = null;
 
             function render(container) {
                 container.innerHTML = `
@@ -809,46 +810,147 @@ var InjectionIncomingModule = (function() {
 
         const dateChanged = !!(original && original.date && original.date !== updateData.date);
 
-        const doSave = async () => {
+        const doSave = async (recipientIds, hasCandidates) => {
             await Storage.update(STORE, id, updateData);
             UIUtils.closeModal();
             UIUtils.toast('수정되었습니다.', 'success');
             search();
-            if (dateChanged) _notifyInjDateChange(original, updateData);
+            if (dateChanged) _notifyInjDateChange(original, updateData, recipientIds, hasCandidates);
         };
 
         if (dateChanged) {
-            UIUtils.confirm(
-                '수입검사 일자/시간을 수정하면 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생할 수 있습니다. 수정 시 관련 담당자에게 쪽지가 발송됩니다. 계속하시겠습니까?',
-                doSave
+            _pendingInjDateChangeSave = doSave;
+            UIUtils.showModal(
+                '수입검사 일자 수정 확인',
+                '<p style="margin:4px 0 0;font-size:0.85rem;color:var(--text-primary);line-height:1.5;">' +
+                    '수입검사 일자/시간을 수정하면 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생할 수 있습니다.<br>' +
+                    '통보받을 담당자를 선택한 뒤 저장하세요.</p>' +
+                    _buildInjDateChangeNotifyHtml(),
+                '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+                '<button class="btn btn-primary" onclick="InjectionIncomingModule._confirmInjDateChangeSave()">저장</button>'
             );
         } else {
-            await doSave();
+            await doSave([], false);
         }
     }
 
-    /** 사출 수입검사 일자/시간 수정 시 생산관리자/품질관리자에게 통보 — 검사일 변경으로 인한 재고 수량 NG 가능성 안내 */
-    function _notifyInjDateChange(original, updateData) {
+    /** 수입검사 일자 수정 통보 대상 후보 — 생산관리자·품질관리자 역할의 활성 사용자 */
+    function _getInjDateChangeNotifyUsers() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.getUsers !== 'function') return [];
+        const roleMap = (AuthModule.ROLES || []).reduce(function(map, role) { map[role.key] = role; return map; }, {});
+        return (AuthModule.getUsers() || [])
+            .filter(function(u) { return u && u.active !== false && (u.role === 'prod_manager' || u.role === 'quality_manager'); })
+            .map(function(u) {
+                const role = roleMap[u.role] || null;
+                return {
+                    id: String(u.id || ''),
+                    name: String(u.displayName || u.username || u.id || ''),
+                    role: String(u.role || ''),
+                    roleLabel: role ? role.label : String(u.role || ''),
+                    roleColor: role ? role.color : 'var(--text-muted)'
+                };
+            });
+    }
+
+    /** 통보 대상(생산관리자/품질관리자)을 역할별로 묶어 보여주는 체크리스트. 선택은 저장돼 다음에도 미리 선택된다. */
+    function _buildInjDateChangeNotifyHtml() {
+        const users = _getInjDateChangeNotifyUsers();
+        if (!users.length) {
+            return '<div style="margin-top:10px;padding:10px 12px;border:1px dashed rgba(239,68,68,0.35);border-radius:6px;font-size:0.8rem;color:var(--text-muted);">선택 가능한 통보 대상(생산관리자·품질관리자)이 없어, 저장 시 해당 역할 전체에게 통보됩니다.</div>';
+        }
+        const groups = {};
+        users.forEach(function(u) {
+            const key = u.role || '__none__';
+            if (!groups[key]) groups[key] = { label: u.roleLabel, color: u.roleColor, items: [] };
+            groups[key].items.push(u);
+        });
+        const roleBlocks = Object.keys(groups).map(function(key) {
+            const group = groups[key];
+            return '<div style="display:flex;flex-direction:column;gap:4px;">' +
+                '<div style="font-size:0.72rem;font-weight:700;color:' + group.color + ';">' + group.label + '</div>' +
+                '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:5px;">' +
+                group.items.map(function(u) {
+                    const checked = (typeof AuthModule !== 'undefined' && AuthModule.shouldPrecheckProdNotify)
+                        ? AuthModule.shouldPrecheckProdNotify(u.id, { defaultChecked: true })
+                        : true;
+                    return '<label style="display:flex;align-items:center;gap:5px;padding:4px 7px;border:1px solid rgba(220,38,38,0.18);border-radius:6px;background:var(--bg-primary);cursor:pointer;">' +
+                        '<input type="checkbox" class="injDateChangeNotifyUser" value="' + u.id + '"' +
+                        (checked ? ' checked' : '') +
+                        ' style="width:13px;height:13px;accent-color:#dc2626;flex-shrink:0;">' +
+                        '<span style="font-size:0.76rem;color:var(--text-primary);font-weight:600;">' + u.name + '</span>' +
+                        '</label>';
+                }).join('') +
+                '</div></div>';
+        }).join('');
+        return '<div style="margin-top:12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:rgba(220,38,38,0.03);padding:9px 10px;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:4px;">' +
+            '<div style="font-size:0.78rem;font-weight:700;color:#dc2626;">통보 대상 선택</div>' +
+            '<button type="button" class="btn btn-outline btn-sm" onclick="InjectionIncomingModule._toggleInjDateChangeNotifyUsers()">전체 선택</button>' +
+            '</div>' +
+            '<div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:6px;">체크한 담당자에게만 쪽지가 발송됩니다. 선택은 저장되어 다음에도 미리 선택됩니다.</div>' +
+            '<div style="display:flex;flex-direction:column;gap:6px;max-height:160px;overflow:auto;">' + roleBlocks + '</div>' +
+            '</div>';
+    }
+
+    function _toggleInjDateChangeNotifyUsers() {
+        const checks = Array.from(document.querySelectorAll('.injDateChangeNotifyUser'));
+        if (!checks.length) return;
+        const shouldCheck = checks.some(function(c) { return !c.checked; });
+        checks.forEach(function(c) { c.checked = shouldCheck; });
+    }
+
+    function _confirmInjDateChangeSave() {
+        const allBoxes = Array.from(document.querySelectorAll('.injDateChangeNotifyUser'));
+        const recipientIds = allBoxes.filter(function(c) { return c.checked; })
+            .map(function(c) { return String(c.value || '').trim(); })
+            .filter(Boolean);
+        const save = _pendingInjDateChangeSave;
+        _pendingInjDateChangeSave = null;
+        if (typeof save === 'function') save(recipientIds, allBoxes.length > 0);
+    }
+
+    /** 사출 수입검사 일자/시간 수정 시 지정한 담당자에게 통보 — 검사일 변경으로 인한 재고 수량 NG 가능성 안내.
+     *  통보 대상을 고를 수 없었던 경우(후보 없음 등)에만 기존처럼 역할 전체 통보로 폴백한다 — 사용자가
+     *  체크리스트에서 일부러 전체 해제했다면(hasCandidates=true, recipientIds=[]) 그 선택을 존중해 보내지 않는다. */
+    function _notifyInjDateChange(original, updateData, recipientIds, hasCandidates) {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
         try {
-            AuthModule.sendInternalMessage({
-                targetType: 'role',
-                targetIds: ['prod_manager', 'quality_manager'],
-                title: '사출 수입검사 일자 수정 — ' + (updateData.partName || original.partName || ''),
-                body: [
-                    '수입검사 일자가 수정되었습니다.',
-                    '',
-                    'LOT번호: ' + (updateData.lotNo || original.lotNo || '-'),
-                    '품명: ' + (updateData.partName || original.partName || '-'),
-                    '기존 검사일자: ' + (original.date || '-'),
-                    '변경 검사일자: ' + (updateData.date || '-'),
-                    '',
-                    '수입검사 일자 수정시 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생함. 이에 해당 담당자들에게 쪽지를 발송합니다.',
-                    '재고 및 이력을 확인해 주세요.'
-                ].join('\n'),
-                category: 'injection-inspection-date-change',
-                priority: 'high'
-            });
+            const title = '사출 수입검사 일자 수정 — ' + (updateData.partName || original.partName || '');
+            const body = [
+                '수입검사 일자가 수정되었습니다.',
+                '',
+                'LOT번호: ' + (updateData.lotNo || original.lotNo || '-'),
+                '품명: ' + (updateData.partName || original.partName || '-'),
+                '기존 검사일자: ' + (original.date || '-'),
+                '변경 검사일자: ' + (updateData.date || '-'),
+                '',
+                '수입검사 일자 수정시 생산을 먼저 한 자재에 대한 재고 수량 NG가 발생함. 이에 해당 담당자들에게 쪽지를 발송합니다.',
+                '재고 및 이력을 확인해 주세요.'
+            ].join('\n');
+            const ids = Array.isArray(recipientIds) ? recipientIds.filter(Boolean) : [];
+            if (hasCandidates) {
+                if (!ids.length) return;
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetIds: ids,
+                    title: title,
+                    body: body,
+                    category: 'injection-inspection-date-change',
+                    priority: 'high'
+                });
+                if (typeof AuthModule.saveProdNotifyRecipients === 'function') {
+                    AuthModule.saveProdNotifyRecipients(ids);
+                }
+            } else {
+                AuthModule.sendInternalMessage({
+                    targetType: 'role',
+                    targetIds: ['prod_manager', 'quality_manager'],
+                    title: title,
+                    body: body,
+                    category: 'injection-inspection-date-change',
+                    priority: 'high'
+                });
+            }
         } catch (e) {
             console.warn('[InjectionIncomingModule] 검사일자 수정 통보 실패:', e);
         }
@@ -1206,6 +1308,8 @@ var InjectionIncomingModule = (function() {
         saveNew,
         edit,
         saveEdit,
+        _confirmInjDateChangeSave,
+        _toggleInjDateChangeNotifyUsers,
         calcTotalAddFailQty,
         calcTotalEditFailQty,
         remove,

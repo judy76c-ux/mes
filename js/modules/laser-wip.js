@@ -2774,6 +2774,22 @@ var LaserWipModule = (function() {
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+            // 이 작업이 포장할 때 소진한 "기존 잔량"을 옛 LOT 잔량에서 먼저 빼준다.
+            // 이걸 빼지 않으면 아래 +resQty(신규 잔량)만 계속 새 LOT으로 쌓이고, 실제로는
+            // 다 써버린 기존 LOT 잔량이 영구히 남아 잔량이 끝없이 누적되는 버그가 생긴다.
+            // (consume 이벤트를 delta 이벤트보다 먼저 push해 같은 시각 동률일 때도 항상
+            //  "옛 LOT부터 소진 → 그다음 새 LOT 적립" 순서로 재생되게 한다)
+            const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
+            if (prevUsed > 0) {
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'unassigned',
+                    qty: -prevUsed,
+                    sourceId: w.id || '',
+                    author: w.author || ''
+                });
+            }
             if (resQty <= 0) return;
             _workResidualLotKeys(w).forEach(function(key) {
                 const pipeIdx = key.indexOf('|');

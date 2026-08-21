@@ -456,6 +456,35 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
+    function _notifyLaserInboundFromOutgoing(rows) {
+        const list = (Array.isArray(rows) ? rows : [rows]).filter(function (r) {
+            if (!r) return false;
+            const oType = String(r.outgoingType || '');
+            const src = String(r.source || '');
+            const isProd = oType === '생산출고' || src === '사출 창고 생산출고' || src === 'dispatch_to_line';
+            if (!isProd) return false;
+            const line = String(r.paintLine || r.line || '').trim();
+            return line === '레이져' || line === '레이저';
+        });
+        if (!list.length) return;
+        if (typeof LaserStandbyModule === 'undefined'
+            || typeof LaserStandbyModule.notifyInboundPending !== 'function') return;
+        LaserStandbyModule.notifyInboundPending(list.map(function (r) {
+            return {
+                carModel: r.carModel,
+                partName: r.partName,
+                color: r.color,
+                qty: r.quantity != null ? r.quantity : r.qty,
+                line: '레이져',
+                date: r.date,
+                lots: r.lots,
+                lotNo: r.lotNo,
+                createdAt: r.createdAt,
+                source: '사출 창고 출고(레이져 직행)'
+            };
+        }));
+    }
+
     function openSiteInboundShortageResolve(carEnc, partEnc, colorEnc, need, stock, shortage, fromReworkFlag) {
         const carModel = decodeURIComponent(carEnc || '');
         const partName = decodeURIComponent(partEnc || '');
@@ -2416,7 +2445,11 @@ var InjectionWarehouseModule = (function() {
                                 도장현장 반납 입고 확인 대기
                                 <span id="injSiteReturnBadge" style="font-size:0.78rem;background:#7c2d12;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;"></span>
                             </h4>
-                            <span style="font-size:0.75rem;color:var(--text-muted);">도장현장에서 계획 미달 등으로 반납한 사출 소재입니다. 실물을 확인한 뒤 입고 처리하세요.</span>
+                            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                                ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                    ? AuthModule.incomingInspNotifyAdminButtonHtml('site_return', { small: true }) : ''}
+                                <span style="font-size:0.75rem;color:var(--text-muted);">도장현장에서 계획 미달 등으로 반납한 사출 소재입니다. 실물을 확인한 뒤 입고 처리하세요.</span>
+                            </div>
                         </div>
                         <div class="card-body" style="padding:0;">
                             <div class="data-table-wrapper" style="overflow-x:auto;">
@@ -4909,6 +4942,43 @@ var InjectionWarehouseModule = (function() {
 
         _injOutListupRows = (_injOutListupRows || []).filter(r => !checkedKeys.has(r.key));
         const hasPaintOut = items.some(function (it) { return it.outgoingType === '생산출고'; });
+        if (hasPaintOut && typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.notifyTodaySiteInbound === 'function') {
+            PaintingInputModule.notifyTodaySiteInbound(items.filter(function (it) {
+                return it.outgoingType === '생산출고';
+            }).map(function (it) {
+                return {
+                    outgoingType: '생산출고',
+                    source: '사출 창고 생산출고',
+                    paintLine: it.paintLine === '도장-B' ? '도장-B' : (it.paintLine === '레이져' ? '레이져' : '도장-A'),
+                    line: it.paintLine,
+                    carModel: it.carModel,
+                    partName: it.partName,
+                    color: it.color,
+                    lots: [{ lotNo: it.lotNo, qty: it.qty }],
+                    lotNo: it.lotNo,
+                    quantity: it.qty,
+                    outgoingBy: issuer
+                };
+            }));
+        }
+        if (hasPaintOut) {
+            _notifyLaserInboundFromOutgoing(items.filter(function (it) {
+                return it.outgoingType === '생산출고';
+            }).map(function (it) {
+                return {
+                    outgoingType: '생산출고',
+                    source: '사출 창고 생산출고',
+                    paintLine: it.paintLine === '레이져' || it.paintLine === '레이저' ? '레이져' : it.paintLine,
+                    line: it.paintLine,
+                    carModel: it.carModel,
+                    partName: it.partName,
+                    color: it.color,
+                    lots: [{ lotNo: it.lotNo, qty: it.qty }],
+                    lotNo: it.lotNo,
+                    quantity: it.qty
+                };
+            }));
+        }
         UIUtils.toast(
             hasPaintOut
                 ? `${items.length}건 출고 완료 — 도장 라인에서 입고 처리하세요.`
@@ -4940,14 +5010,21 @@ var InjectionWarehouseModule = (function() {
             return;
         }
         const list = PaintingInputModule.listPendingReturns();
-        if (!list.length) {
+        const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+        if (!list.length && !isAdmin) {
             card.style.display = 'none';
             body.innerHTML = '';
             return;
         }
         card.style.display = '';
-        if (badge) badge.textContent = list.length + '건';
-        const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+        if (badge) {
+            badge.textContent = list.length ? (list.length + '건') : '';
+            badge.style.display = list.length ? '' : 'none';
+        }
+        if (!list.length) {
+            body.innerHTML = '<tr><td colspan="9" style="padding:18px;text-align:center;color:var(--text-muted);font-size:0.85rem;">대기 중인 반납 입고가 없습니다.</td></tr>';
+            return;
+        }
         body.innerHTML = list.map(function (r) {
             const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
                 ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
@@ -10525,6 +10602,15 @@ var InjectionWarehouseModule = (function() {
         }
         await _addInventoryRecord(data);
         _lockedInspInbound = null;
+
+        if (data.type === '출고' && data.outgoingType === '생산출고'
+            && typeof PaintingInputModule !== 'undefined'
+            && typeof PaintingInputModule.notifyTodaySiteInbound === 'function') {
+            PaintingInputModule.notifyTodaySiteInbound([data]);
+        }
+        if (data.type === '출고' && data.outgoingType === '생산출고') {
+            _notifyLaserInboundFromOutgoing([data]);
+        }
 
         // 사출 창고 '사출입고' 버튼 = 수입검사 우회 임의입고 → 외부 공급 건만 수입검사 담당에 통보
         if (data.type === '입고' && !data.inspDate && !data.inspId

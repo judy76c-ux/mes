@@ -681,6 +681,9 @@ const PaintInventoryModule = (function() {
                                 <span id="paintOutListupBadge" style="font-size:0.78rem; background:var(--accent-red); color:#fff; padding:2px 8px; border-radius:12px; font-weight:600; display:none;"></span>
                             </h4>
                             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                                ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                    ? AuthModule.incomingInspNotifyAdminButtonHtml('paint_out', { small: true })
+                                    : ''}
                                 <input type="date" class="form-input" id="paintOutListupDate" value="${UIUtils.today()}"
                                     style="width:140px;font-size:0.82rem;padding:4px 8px;"
                                     onchange="PaintInventoryModule.onOutgoingListupDateChange()">
@@ -2167,9 +2170,46 @@ const PaintInventoryModule = (function() {
         await Storage.executeTransaction(txOps);
         const doneKeys = new Set(checkedRows.map(r => r.key));
         _outListupManualRows = (_outListupManualRows || []).filter(r => !doneKeys.has(r.key));
+        _notifyPaintOutgoing(checkedRows, issuer);
         UIUtils.toast(`출고 ${checkedRows.length}건 완료 (출고자: ${issuer})`, 'success');
         renderPaintOutgoingListup();
         loadData();
+    }
+
+    function _notifyPaintOutgoing(items, issuer) {
+        if (!items || !items.length) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds('paint_out')
+                : [];
+            if (!recipients.length) return;
+            const materials = Storage.getAll(MATERIALS_STORE) || [];
+            const lines = items.map(function (item) {
+                const mat = materials.find(function (m) { return m.id === item.materialId; }) || {};
+                const name = mat.name || item.paintName || '-';
+                return '- ' + name +
+                    (mat.supplier ? ' (' + mat.supplier + ')' : '') +
+                    ' · LOT ' + (item.prodLot || '-') +
+                    ' · ' + UIUtils.formatNumber(item.qty) + '캔';
+            });
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '도료 창고 출고 ' + items.length + '건',
+                body: [
+                    '도료 창고에서 출고가 완료되었습니다.',
+                    '',
+                    lines.join('\n'),
+                    '',
+                    issuer ? ('출고자: ' + issuer) : ''
+                ].filter(Boolean).join('\n'),
+                category: 'paint_out',
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintInventory] 도료 출고 통보 실패:', e);
+        }
     }
 
     function renderPaintOutgoingStandby() { renderPaintOutgoingListup(); }

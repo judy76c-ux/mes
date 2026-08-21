@@ -89,7 +89,7 @@ const ApiClient = (function() {
 
   // 전체 조회
   async function getAll(storeName) {
-    return request('GET', `/api/docs/${storeName}`);
+    return request('GET', `/api/docs/${storeName}`, undefined, 60000);
   }
 
   // 단건 저장 (upsert)

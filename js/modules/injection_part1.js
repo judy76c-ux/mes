@@ -16,6 +16,8 @@ var InjectionIncomingModule = (function() {
                 ${IncomingUI.renderSection('injection-incoming')}
                 <div class="page-header">
                     <div class="page-actions">
+                        ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                            ? AuthModule.incomingInspNotifyAdminButtonHtml('injection') : ''}
                         <button class="btn btn-primary" onclick="InjectionIncomingModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
                         </button>
@@ -1198,10 +1200,56 @@ var InjectionIncomingModule = (function() {
         await Storage.add(STORE, data);
         await propagateCertReceived(data.lots);
         // 자동 창고 입고 없음 → 사출 창고 "입고 대기품" 섹션에서 LOT별 수동 처리
+        _notifyIncomingInspectionRegistered(data);
 
         UIUtils.closeModal();
         UIUtils.toast('수입검사가 등록되었습니다.', 'success');
         search();
+    }
+
+    function _notifyIncomingInspectionRegistered(data) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds('injection')
+                : [];
+            if (!recipients.length) return;
+            const lotText = Array.isArray(data.lots) && data.lots.length
+                ? data.lots.map(function (l) {
+                    return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                }).join(', ')
+                : ((data.lotNo || '-') + (data.incomingQty != null ? (' ' + UIUtils.formatNumber(data.incomingQty) + ' EA') : ''));
+            const defects = Object.entries(data.defectDetails || {})
+                .filter(function (row) { return Number(row[1]) > 0; })
+                .map(function (row) { return row[0] + '(' + row[1] + ')'; })
+                .join(', ');
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '사출 수입검사 등록',
+                body: [
+                    '사출 수입검사가 등록되었습니다.',
+                    '',
+                    '검사일: ' + (data.date || '-'),
+                    '차종: ' + (data.carModel || '-'),
+                    '품명: ' + (data.partName || '-'),
+                    '컬러: ' + (data.color || '-'),
+                    '사출처: ' + (data.supplierName || '-'),
+                    'LOT: ' + (lotText || '-'),
+                    '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
+                    '검사수량: ' + UIUtils.formatNumber(data.inspectionQty),
+                    '합격: ' + UIUtils.formatNumber(data.passQty) + ' / 불합격: ' + UIUtils.formatNumber(data.failQty),
+                    '판정: ' + (data.verdict || '-'),
+                    defects ? ('불량: ' + defects) : '',
+                    '검사자: ' + (data.inspector || '-'),
+                    data.note ? ('비고: ' + data.note) : ''
+                ].filter(Boolean).join('\n'),
+                category: 'injection_incoming_insp',
+                priority: data.verdict === '불합격' ? 'high' : 'normal'
+            });
+        } catch (e) {
+            console.warn('[InjectionIncomingModule] 수입검사 등록 통보 실패:', e);
+        }
     }
 
     function remove(id) {

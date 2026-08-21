@@ -1,7 +1,7 @@
 /**
  * MES 운영 게시판 (BoardModule)
  * - 오류·문제점 보고
- * - 텍스트 + 스크린샷 첨부
+ * - 텍스트 + 본문 중간 사진 삽입 · 스크린샷 첨부
  * - 답글 기능
  */
 var BoardModule = (function () {
@@ -20,6 +20,8 @@ var BoardModule = (function () {
 
     let _filterCat = '';
     let _filterKw  = '';
+    let _savedEditorRange = null;
+    let _draftImages = [];
 
     // ── 렌더 ──────────────────────────────────────────────────────────
     function render(container) {
@@ -92,7 +94,21 @@ var BoardModule = (function () {
         }
 
         const replies = Storage.getAll(ST_REPLY) || [];
-        wrap.innerHTML = posts.map(p => _postCard(p, replies)).join('');
+        try {
+            wrap.innerHTML = posts.map(p => {
+                try { return _postCard(p, replies); }
+                catch (err) {
+                    console.error('[Board] 게시글 표시 오류', p && p.id, err);
+                    return `<div class="card" style="margin-bottom:14px;padding:16px 18px;">
+                        <strong>${_esc((p && p.title) || '(제목 없음)')}</strong>
+                        <div style="margin-top:6px;font-size:0.82rem;color:var(--text-muted);white-space:pre-wrap;">${_esc((p && p.content) || '')}</div>
+                    </div>`;
+                }
+            }).join('');
+        } catch (err) {
+            console.error('[Board] 목록 표시 오류', err);
+            wrap.innerHTML = `<div style="padding:28px;color:var(--accent-red);">게시글 목록을 표시하지 못했습니다. 페이지를 새로고침해 주세요.</div>`;
+        }
     }
 
     function _postCard(p, replies) {
@@ -119,6 +135,7 @@ var BoardModule = (function () {
                 </div>
             </div>`).join('');
 
+        const unusedImgs = _unusedImages(p);
         const replyFormId = `replyForm_${p.id}`;
         return `
         <div class="card" style="margin-bottom:14px;" id="post_${p.id}">
@@ -143,14 +160,14 @@ var BoardModule = (function () {
                     </div>
                 </div>
 
-                <!-- 본문 -->
-                <div style="font-size:0.88rem;color:var(--text-primary);white-space:pre-wrap;line-height:1.65;margin-bottom:10px;padding:10px 14px;background:var(--bg-secondary);border-radius:6px;">${_esc(p.content||'')}</div>
+                <!-- 본문 (글 중간 사진 포함) -->
+                <div style="font-size:0.88rem;color:var(--text-primary);white-space:pre-wrap;line-height:1.65;margin-bottom:10px;padding:10px 14px;background:var(--bg-secondary);border-radius:6px;">${_renderPostBody(p)}</div>
 
-                <!-- 첨부 이미지 -->
-                ${(p.images||[]).length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
-                    ${(p.images||[]).map((src,i)=>`
+                <!-- 본문에 넣지 않은 첨부 이미지(구 게시글 호환) -->
+                ${unusedImgs.length ? `<div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px;">
+                    ${unusedImgs.map(im => `
                     <div style="position:relative;">
-                        <img src="${src}" style="width:120px;height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);cursor:pointer;"
+                        <img src="${im.src}" style="width:120px;height:90px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);cursor:pointer;"
                             onclick="BoardModule._enlargeImg(this.src)">
                     </div>`).join('')}
                 </div>` : ''}
@@ -201,6 +218,7 @@ var BoardModule = (function () {
     function openWriteModal(prefill) {
         const p = prefill || {};
         const isEdit = !!p.id;
+        _draftImages = _normImages(p.images);
         UIUtils.showModal(isEdit ? '게시글 수정' : '게시글 작성', `
             <div class="form-row">
                 <div class="form-group" style="flex:0 0 130px;">
@@ -220,19 +238,18 @@ var BoardModule = (function () {
             </div>
             <div class="form-group">
                 <label class="form-label">내용 <span style="color:var(--accent-red)">*</span></label>
-                <textarea class="form-textarea" id="bdContent" rows="6"
-                    placeholder="발생 상황, 재현 방법, 오류 메시지 등을 상세히 적어주세요."
-                    style="resize:vertical;">${_esc(p.content||'')}</textarea>
+                <div id="bdContent" contenteditable="true" role="textbox"
+                    style="min-height:160px;max-height:420px;overflow-y:auto;padding:10px 12px;border:1px solid var(--border-color);border-radius:8px;line-height:1.65;white-space:pre-wrap;background:var(--bg-primary);"></div>
             </div>
 
-            <!-- 이미지 첨부 -->
+            <!-- 이미지 첨부 → 본문 중간에 넣기 -->
             <div class="form-group">
                 <label class="form-label" style="display:flex;align-items:center;gap:6px;">
-                    <span class="material-symbols-outlined" style="font-size:18px;">add_photo_alternate</span>
-                    스크린샷 / 이미지 첨부
+                    <span class="material-symbols-outlined" style="font-size:18px;">attach_file</span>
+                    사진 첨부
                     <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(최대 5장)</span>
                 </label>
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
                     <label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;
                         padding:6px 14px;border:1.5px dashed var(--border-color);border-radius:8px;
                         font-size:0.82rem;color:var(--text-secondary);transition:all .15s;"
@@ -243,11 +260,12 @@ var BoardModule = (function () {
                         <input type="file" id="bdImgInput" accept="image/*" multiple style="display:none;"
                             onchange="BoardModule._onImgSelect(this)">
                     </label>
-                    <span style="font-size:0.78rem;color:var(--text-muted);">또는 Ctrl+V 로 클립보드 이미지 붙여넣기</span>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">또는 Ctrl+V 로 첨부</span>
                 </div>
-                <!-- 미리보기 그리드 -->
-                <div id="bdImgPreview" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:10px;"></div>
-                <input type="hidden" id="bdImgData" value="${_esc(JSON.stringify(p.images||[]))}">
+                <p style="margin:0 0 8px;font-size:0.78rem;color:var(--text-secondary);line-height:1.5;">
+                    첨부만으로는 글 아래에 모입니다. <strong>본문에서 넣을 위치를 클릭</strong>한 뒤, 아래 사진의 <strong>글 중간에 넣기</strong>를 누르세요.
+                </p>
+                <div id="bdImgPreview" style="display:flex;flex-wrap:wrap;gap:10px;"></div>
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -257,34 +275,47 @@ var BoardModule = (function () {
             </button>
         `, 'lg');
 
-        // 기존 이미지 미리보기 복원
+        // 본문·첨부는 모달 HTML에 넣지 않고 열린 뒤에 채운다 (사진 data URL이 기존 글을 깨지 않게)
         setTimeout(() => {
-            _refreshImgPreview();
-            // Ctrl+V 클립보드 붙여넣기
             const bodyEl = document.getElementById('bdContent');
             if (bodyEl) {
+                bodyEl.innerHTML = _editorHtmlFromPost(p);
+                const saveRange = () => BoardModule._saveEditorRange();
+                bodyEl.addEventListener('keyup', saveRange);
+                bodyEl.addEventListener('mouseup', saveRange);
+                bodyEl.addEventListener('focus', saveRange);
+                bodyEl.addEventListener('click', _onEditorImgClick);
+                bodyEl.addEventListener('input', _onEditorImgInput);
                 bodyEl.addEventListener('paste', e => {
-                    const items = (e.clipboardData || {}).items || [];
-                    for (const item of items) {
-                        if (item.type.startsWith('image/')) {
-                            e.preventDefault();
-                            const blob = item.getAsFile();
-                            if (blob) _addImgBlob(blob);
-                        }
+                    const items = Array.from((e.clipboardData || {}).items || []);
+                    const imgItem = items.find(item => item.type && item.type.startsWith('image/'));
+                    if (imgItem) {
+                        e.preventDefault();
+                        BoardModule._saveEditorRange();
+                        const blob = imgItem.getAsFile();
+                        if (blob) _addImgBlob(blob, true);
+                        return;
+                    }
+                    const text = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+                    if (text && (e.clipboardData.types || []).indexOf('text/html') >= 0) {
+                        e.preventDefault();
+                        document.execCommand('insertText', false, text);
                     }
                 });
             }
-            // 전역 붙여넣기도 감지 (모달 열려있는 동안)
-            document.getElementById('modal')?.addEventListener('paste', function _mpaste(e) {
-                const items = (e.clipboardData || {}).items || [];
+            _refreshImgPreview();
+            document.addEventListener('selectionchange', BoardModule._saveEditorRange);
+            document.getElementById('modal')?.addEventListener('paste', function (e) {
+                if ((e.target && e.target.id) === 'bdContent') return;
+                const items = Array.from((e.clipboardData || {}).items || []);
                 for (const item of items) {
-                    if (item.type.startsWith('image/')) {
+                    if (item.type && item.type.startsWith('image/')) {
                         e.preventDefault();
                         const blob = item.getAsFile();
-                        if (blob) _addImgBlob(blob);
+                        if (blob) _addImgBlob(blob, false);
                     }
                 }
-            }, { once: false, capture: false });
+            });
         }, 80);
     }
 
@@ -294,30 +325,292 @@ var BoardModule = (function () {
         openWriteModal(p);
     }
 
+    // ── 본문 중간 이미지 ({{IMG:id}} 마커) ────────────────────────────────
+    function _newImgId() {
+        return 'img_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 7);
+    }
+
+    function _normImages(images) {
+        let arr = images;
+        if (typeof arr === 'string') {
+            try { arr = JSON.parse(arr); } catch (e) { arr = []; }
+        }
+        if (!Array.isArray(arr)) arr = [];
+        return arr.map((item, i) => {
+            if (typeof item === 'string') return { id: 'legacy_' + i, src: item };
+            if (item && item.src) return { id: item.id || ('legacy_' + i), src: item.src };
+            return null;
+        }).filter(Boolean);
+    }
+
+    function _splitContentParts(content) {
+        const s = String(content || '');
+        const parts = [];
+        let last = 0;
+        const re = /\{\{IMG:([^}:]+)(?::([0-9]+|full))?\}\}/g;
+        let m;
+        while ((m = re.exec(s))) {
+            if (m.index > last) parts.push({ type: 'text', value: s.slice(last, m.index) });
+            parts.push({ type: 'img', id: m[1], width: m[2] || '' });
+            last = m.index + m[0].length;
+        }
+        if (last < s.length) parts.push({ type: 'text', value: s.slice(last) });
+        if (!parts.length && s) parts.push({ type: 'text', value: s });
+        return parts;
+    }
+
+    function _normImgW(w) {
+        if (w === 'full') return 'full';
+        const n = parseInt(w, 10);
+        if (n >= 80 && n <= 900) return String(n);
+        return '280';
+    }
+
+    function _imgWidthCss(w) {
+        w = _normImgW(w);
+        if (w === 'full') return 'width:100%;max-width:720px;height:auto;';
+        return 'width:' + w + 'px;max-width:100%;height:auto;';
+    }
+
+    function _imgMarker(id, width) {
+        const w = width ? _normImgW(width) : '';
+        return '{{IMG:' + id + (w && w !== '280' ? ':' + w : '') + '}}';
+    }
+
+    function _editorImgWrapHtml(id, src, width) {
+        width = _normImgW(width);
+        const rangeVal = width === 'full' ? '700' : width;
+        const chip = (w, label) =>
+            `<button type="button" data-bd-img-w="${w}"
+                style="border:1px solid var(--border-color);background:${width===w?'var(--accent-blue)':'var(--bg-primary)'};
+                color:${width===w?'#fff':'var(--text-secondary)'};border-radius:4px;padding:2px 8px;
+                font-size:0.72rem;cursor:pointer;">${label}</button>`;
+        return `<div class="bd-img-wrap" contenteditable="false" data-img-id="${_esc(id)}" data-img-w="${_esc(width)}"
+            style="display:block;margin:10px 0;max-width:100%;">
+            <img src="${src}" alt="" style="${_imgWidthCss(width)}display:block;object-fit:contain;border-radius:6px;border:1px solid var(--border-color);">
+            <div style="display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:6px;">
+                ${chip('160','작게')}${chip('280','보통')}${chip('420','크게')}${chip('full','최대')}
+                <input type="range" min="120" max="700" step="10" value="${_esc(rangeVal)}" data-bd-img-range="1"
+                    title="너비 조절" style="width:110px;accent-color:var(--accent-blue);">
+                <button type="button" data-bd-img-del="1"
+                    style="margin-left:auto;border:1px solid var(--accent-red);background:#fff;color:var(--accent-red);
+                    border-radius:4px;padding:2px 10px;font-size:0.72rem;cursor:pointer;font-weight:700;">삭제</button>
+            </div>
+        </div>`;
+    }
+
+    function _setWrapWidth(wrap, width) {
+        if (!wrap) return;
+        width = _normImgW(width);
+        wrap.setAttribute('data-img-w', width);
+        const img = wrap.querySelector('img');
+        if (img) {
+            img.style.width = width === 'full' ? '100%' : (width + 'px');
+            img.style.maxWidth = width === 'full' ? '720px' : '100%';
+            img.style.height = 'auto';
+        }
+        const range = wrap.querySelector('[data-bd-img-range]');
+        if (range) range.value = width === 'full' ? '700' : width;
+        wrap.querySelectorAll('[data-bd-img-w]').forEach(btn => {
+            const on = btn.getAttribute('data-bd-img-w') === width;
+            btn.style.background = on ? 'var(--accent-blue)' : 'var(--bg-primary)';
+            btn.style.color = on ? '#fff' : 'var(--text-secondary)';
+        });
+    }
+
+    function _onEditorImgClick(e) {
+        const wrap = e.target && e.target.closest ? e.target.closest('.bd-img-wrap') : null;
+        if (!wrap) return;
+        if (e.target.closest('[data-bd-img-del]')) {
+            e.preventDefault();
+            wrap.remove();
+            UIUtils.toast('본문에서 사진을 삭제했습니다.', 'info');
+            return;
+        }
+        const sizeBtn = e.target.closest('[data-bd-img-w]');
+        if (sizeBtn) {
+            e.preventDefault();
+            _setWrapWidth(wrap, sizeBtn.getAttribute('data-bd-img-w'));
+        }
+    }
+
+    function _onEditorImgInput(e) {
+        if (!e.target || !e.target.getAttribute || e.target.getAttribute('data-bd-img-range') !== '1') return;
+        const wrap = e.target.closest('.bd-img-wrap');
+        if (wrap) _setWrapWidth(wrap, e.target.value);
+    }
+
+    function _unusedImages(p) {
+        const imgs = _normImages(p && p.images);
+        const used = new Set();
+        String((p && p.content) || '').replace(/\{\{IMG:([^}:]+)(?::[0-9]+|:full)?\}\}/g, (_, id) => { used.add(id); return ''; });
+        return imgs.filter(im => !used.has(im.id));
+    }
+
+    function _viewImgStyle(width) {
+        return _imgWidthCss(width) + 'display:block;object-fit:contain;border-radius:8px;border:1px solid var(--border-color);margin:10px 0;cursor:pointer;';
+    }
+
+    function _editorHtmlFromPost(p) {
+        const imgs = _normImages(p && p.images);
+        const byId = {};
+        imgs.forEach(im => { byId[im.id] = im.src; });
+        const parts = _splitContentParts(p && p.content);
+        if (!parts.length) return '';
+        return parts.map(part => {
+            if (part.type === 'text') return _esc(part.value).replace(/\n/g, '<br>');
+            const src = byId[part.id];
+            if (!src) return '';
+            return _editorImgWrapHtml(part.id, src, part.width);
+        }).join('');
+    }
+
+    function _renderPostBody(p) {
+        const imgs = _normImages(p && p.images);
+        const byId = {};
+        imgs.forEach(im => { byId[im.id] = im.src; });
+        const parts = _splitContentParts(p && p.content);
+        if (!parts.length) return '';
+        return parts.map(part => {
+            if (part.type === 'text') return _esc(part.value);
+            const src = byId[part.id];
+            if (!src) return '';
+            return `<img src="${src}" style="${_viewImgStyle(part.width)}" onclick="BoardModule._enlargeImg(this.src)">`;
+        }).join('');
+    }
+
+    function _serializeEditor(el) {
+        if (!el) return '';
+        function nodeToText(node) {
+            if (!node) return '';
+            if (node.nodeType === 3) return node.nodeValue || '';
+            if (node.nodeType !== 1) return '';
+            const tag = node.tagName;
+            if (node.classList && node.classList.contains('bd-img-wrap')) {
+                const id = node.getAttribute('data-img-id');
+                const w = node.getAttribute('data-img-w') || '';
+                return id ? _imgMarker(id, w) : '';
+            }
+            if (tag === 'IMG') {
+                const id = node.getAttribute('data-img-id');
+                const w = node.getAttribute('data-img-w') || '';
+                return id ? _imgMarker(id, w) : '';
+            }
+            if (tag === 'BR') return '\n';
+            let s = '';
+            for (let i = 0; i < node.childNodes.length; i++) s += nodeToText(node.childNodes[i]);
+            if (/^(DIV|P|LI|H[1-6])$/.test(tag)) s += '\n';
+            return s;
+        }
+        return nodeToText(el).replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trim();
+    }
+
+    function _saveEditorRange() {
+        const editor = document.getElementById('bdContent');
+        const sel = window.getSelection();
+        if (sel && sel.rangeCount && editor && editor.contains(sel.anchorNode)) {
+            _savedEditorRange = sel.getRangeAt(0).cloneRange();
+        }
+    }
+
+    function _restoreEditorRange() {
+        const editor = document.getElementById('bdContent');
+        if (!editor) return;
+        editor.focus();
+        const sel = window.getSelection();
+        if (!sel) return;
+        try {
+            if (_savedEditorRange && editor.contains(_savedEditorRange.startContainer)) {
+                sel.removeAllRanges();
+                sel.addRange(_savedEditorRange);
+            }
+        } catch (e) { /* 무시 */ }
+    }
+
+    function _insertNodeAtEditor(node) {
+        const editor = document.getElementById('bdContent');
+        if (!editor || !node) return;
+        editor.focus();
+        const sel = window.getSelection();
+        let range = null;
+        try {
+            if (_savedEditorRange && editor.contains(_savedEditorRange.startContainer)) {
+                range = _savedEditorRange;
+            } else if (sel && sel.rangeCount && editor.contains(sel.anchorNode)) {
+                range = sel.getRangeAt(0);
+            }
+        } catch (e) { range = null; }
+        if (!range) {
+            range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+        }
+        range.deleteContents();
+        const caretNode = node.nodeType === 11 ? node.lastChild : node;
+        range.insertNode(node);
+        if (caretNode && caretNode.parentNode) {
+            const after = document.createRange();
+            after.setStartAfter(caretNode);
+            after.collapse(true);
+            if (sel) {
+                sel.removeAllRanges();
+                sel.addRange(after);
+            }
+            _savedEditorRange = after.cloneRange();
+        }
+    }
+
+    function _makeEditorImgWrap(id, src, width) {
+        const box = document.createElement('div');
+        box.innerHTML = _editorImgWrapHtml(id, src, width || '280');
+        return box.firstElementChild;
+    }
+
+    function _insertExistingAtCursor(id) {
+        const imgs = _getImgList();
+        const found = imgs.find(im => im.id === id);
+        if (!found) return;
+        const editor = document.getElementById('bdContent');
+        if (!editor) return;
+        _restoreEditorRange();
+        const frag = document.createDocumentFragment();
+        frag.appendChild(_makeEditorImgWrap(found.id, found.src, '280'));
+        frag.appendChild(document.createElement('br'));
+        _insertNodeAtEditor(frag);
+        UIUtils.toast('사진을 본문 중간에 넣었습니다. 크기 조절·삭제는 사진 아래에서 하세요.', 'success');
+    }
+
     // ── 이미지 처리 ──────────────────────────────────────────────────
     function _getImgList() {
-        try { return JSON.parse(document.getElementById('bdImgData')?.value || '[]'); }
-        catch { return []; }
+        return _normImages(_draftImages);
     }
     function _setImgList(arr) {
-        const el = document.getElementById('bdImgData');
-        if (el) el.value = JSON.stringify(arr);
+        _draftImages = _normImages(arr);
     }
 
     function _onImgSelect(input) {
         if (!input.files) return;
-        Array.from(input.files).forEach(f => _addImgBlob(f));
+        Array.from(input.files).forEach(f => _addImgBlob(f, false));
         input.value = '';
+        UIUtils.toast('사진을 첨부했습니다. 본문에서 위치를 클릭한 뒤 「글 중간에 넣기」를 누르세요.', 'info');
     }
 
-    function _addImgBlob(blob) {
+    function _addImgBlob(blob, insertAtCursor) {
         const imgs = _getImgList();
         if (imgs.length >= 5) { UIUtils.toast('이미지는 최대 5장까지 첨부 가능합니다.', 'warning'); return; }
         const reader = new FileReader();
         reader.onload = e => {
-            imgs.push(e.target.result);
+            const item = { id: _newImgId(), src: e.target.result };
+            imgs.push(item);
             _setImgList(imgs);
             _refreshImgPreview();
+            if (insertAtCursor !== false) {
+                _restoreEditorRange();
+                const frag = document.createDocumentFragment();
+                frag.appendChild(_makeEditorImgWrap(item.id, item.src, '280'));
+                frag.appendChild(document.createElement('br'));
+                _insertNodeAtEditor(frag);
+            }
         };
         reader.readAsDataURL(blob);
     }
@@ -326,24 +619,43 @@ var BoardModule = (function () {
         const grid = document.getElementById('bdImgPreview');
         if (!grid) return;
         const imgs = _getImgList();
-        grid.innerHTML = imgs.map((src, i) => `
-            <div style="position:relative;display:inline-block;">
-                <img src="${src}" style="width:110px;height:80px;object-fit:cover;border-radius:6px;
-                    border:1.5px solid var(--border-color);cursor:pointer;"
-                    onclick="BoardModule._enlargeImg(this.src)">
-                <button onclick="BoardModule._removeImg(${i})"
-                    style="position:absolute;top:-6px;right:-6px;width:20px;height:20px;
+        if (!imgs.length) {
+            grid.innerHTML = '';
+            return;
+        }
+        grid.innerHTML = imgs.map((im, i) => `
+            <div style="position:relative;width:148px;border:1px solid var(--border-color);border-radius:10px;overflow:hidden;background:var(--bg-secondary);">
+                <img src="${im.src}" title="클릭하면 커서 위치에 들어갑니다"
+                    style="width:148px;height:100px;object-fit:cover;display:block;cursor:pointer;"
+                    onmousedown="event.preventDefault()"
+                    onclick="BoardModule._insertExistingAtCursor('${_esc(im.id)}')">
+                <button type="button" class="btn btn-sm btn-primary"
+                    style="width:100%;border-radius:0;font-size:0.75rem;padding:6px 8px;"
+                    onmousedown="event.preventDefault()"
+                    onclick="BoardModule._insertExistingAtCursor('${_esc(im.id)}')">
+                    글 중간에 넣기
+                </button>
+                <button type="button" onclick="BoardModule._removeImg(${i})"
+                    style="position:absolute;top:6px;right:6px;width:20px;height:20px;
                     border-radius:50%;background:var(--accent-red);color:#fff;border:none;
-                    cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;
-                    line-height:1;">×</button>
+                    cursor:pointer;font-size:12px;line-height:1;">×</button>
             </div>`).join('');
     }
 
     function _removeImg(idx) {
         const imgs = _getImgList();
-        imgs.splice(idx, 1);
+        const removed = imgs.splice(idx, 1)[0];
         _setImgList(imgs);
         _refreshImgPreview();
+        if (removed && removed.id) {
+            const editor = document.getElementById('bdContent');
+            if (editor) {
+                editor.querySelectorAll('.bd-img-wrap[data-img-id="' + removed.id + '"], img[data-img-id="' + removed.id + '"]').forEach(el => {
+                    const wrap = el.classList && el.classList.contains('bd-img-wrap') ? el : el.closest('.bd-img-wrap');
+                    (wrap || el).remove();
+                });
+            }
+        }
     }
 
     // ── 게시글 저장 ──────────────────────────────────────────────────
@@ -351,15 +663,19 @@ var BoardModule = (function () {
         const category = document.getElementById('bdCat')?.value || '기타';
         const author   = (document.getElementById('bdAuthor')?.value || '').trim();
         const title    = (document.getElementById('bdTitle')?.value || '').trim();
-        const content  = (document.getElementById('bdContent')?.value || '').trim();
+        const prev     = existingId ? (Storage.getById(ST_POST, existingId) || {}) : {};
+        let content    = _serializeEditor(document.getElementById('bdContent'));
         const images   = _getImgList();
 
         if (!title)   { UIUtils.toast('제목을 입력하세요.', 'warning'); return; }
-        if (!content) { UIUtils.toast('내용을 입력하세요.', 'warning'); return; }
+        if (existingId && !content && prev.content) {
+            UIUtils.toast('본문을 읽지 못해 저장하지 않았습니다. 창을 닫고 다시 수정해 주세요.', 'error');
+            return;
+        }
+        if (!content && !images.length) { UIUtils.toast('내용을 입력하세요.', 'warning'); return; }
 
         const now = new Date().toISOString();
         if (existingId) {
-            const prev = Storage.getById(ST_POST, existingId) || {};
             await Storage.update(ST_POST, existingId, { ...prev, category, author, title, content, images, updatedAt: now });
             UIUtils.toast('수정되었습니다.', 'success');
         } else {
@@ -480,5 +796,7 @@ var BoardModule = (function () {
         _deleteReply,
         _refreshImgPreview,
         _addImgBlob,
+        _saveEditorRange,
+        _insertExistingAtCursor,
     };
 })();

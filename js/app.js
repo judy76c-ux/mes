@@ -8,7 +8,8 @@ const App = (function() {
     const API_BASE_LS_KEY = '__mes_api_base__';
     const MIGRATION_FLAGS = {
         CAR_MODEL_UPPERCASE: 'mig_carModelUppercase_done_v1',
-        PAINT_PROCESS_ALIAS: 'mig_paintProcessAlias_done_v1'
+        PAINT_PROCESS_ALIAS: 'mig_paintProcessAlias_done_v1',
+        LASER_RESIDUAL_PREV_BACKFILL: 'mig_laserResidualPrevBackfill_done_v1'
     };
 
     function installImeDoneBlurHandler() {
@@ -74,6 +75,10 @@ const App = (function() {
             // 2-2. 제품 제조공정 '도장(A)'/'도장(B)' 오표기 → '도장-A'/'도장-B' 자동 교정
             await _runOnceMigration(MIGRATION_FLAGS.PAINT_PROCESS_ALIAS, _migratePaintProcessAlias);
 
+            // 2-3. 레이저 잔량 원장 소급 정리 — prevResidualQty 미저장으로 기존 잔량이
+            // 차감되지 않고 계속 누적되던 과거 작업일지를 역산해 한 번만 보정
+            await _runOnceMigration(MIGRATION_FLAGS.LASER_RESIDUAL_PREV_BACKFILL, _migrateLaserResidualPrevBackfill);
+
             // 3. 모듈 등록
             registerModules();
 
@@ -82,7 +87,7 @@ const App = (function() {
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
                  'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=271',
+                'js/modules/production_mgmt_v91.js?v=273',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -855,6 +860,37 @@ const App = (function() {
             }
         } catch (_) { /* 무시 */ }
         if (updated > 0) console.log(`[제조공정 표기 교정] ${updated}건 업데이트 완료 (도장(A)→도장-A, 도장(B)→도장-B)`);
+    }
+
+    // ── 레이저 잔량 원장 소급 정리 ──────────────────────────────────
+    // laser.js가 검사 저장 시 "이번에 소진한 기존 잔량(prevResidualQty)"을 작업일지에
+    // 저장하지 않던 버그가 있었다(laser-wip.js의 LOT 원장이 이 값을 읽어 옛 LOT을 차감).
+    // 그래서 신규 잔량(+laserResidualQty)만 계속 새 LOT으로 쌓이고 옛 LOT은 영원히
+    // 안 빠져 잔량이 끝없이 누적됐다. prevResidualQty = laserResidualQty − inspectionGoodQty
+    // + shippingEligibleQty 로 역산 가능(포장 계산식의 역함수)하므로, 이미 저장된 과거
+    // 작업일지도 한 번만 되짚어 보정한다. 이 값이 채워지면 다음 원장 재계산부터 옛 LOT이
+    // FIFO로 정상 차감된다(코드 수정만으로는 재계산 시점이 없는 이미 저장된 레코드에는
+    // 소급 적용되지 않아 별도 마이그레이션이 필요했다).
+    async function _migrateLaserResidualPrevBackfill() {
+        let updated = 0;
+        try {
+            const works = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+            for (const w of works) {
+                if (!w || w.isManualOut || w.isResidualManualIn || w.isResidualManualOut) continue;
+                const resQty = Number(w.laserResidualQty) || 0;
+                if (resQty <= 0) continue;
+                if (w.prevResidualQty != null) continue; // 이미 값이 있으면(수정 후 재저장 등) 건드리지 않음
+                const goodQty = Number(w.inspectionGoodQty) || 0;
+                const packQty = Number(w.shippingEligibleQty) || 0;
+                const derivedPrev = Math.max(0, resQty - goodQty + packQty);
+                if (derivedPrev <= 0) continue;
+                await Storage.update(DB.STORES.LASER_WORK_LOG, w.id, { prevResidualQty: derivedPrev });
+                updated++;
+            }
+        } catch (e) {
+            console.warn('[레이저 잔량 원장 소급 정리] 실패:', e);
+        }
+        if (updated > 0) console.log(`[레이저 잔량 원장 소급 정리] ${updated}건 prevResidualQty 보정 완료`);
     }
 
     // DOMContentLoaded

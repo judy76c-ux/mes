@@ -17213,6 +17213,282 @@ var PaintMixModule = (function() {
         </div>`;
     }
 
+    function _invDay(rec) {
+        return String((rec && rec.date) || '').slice(0, 10);
+    }
+
+    function _recStamp(rec) {
+        if (typeof InvCalc !== 'undefined' && typeof InvCalc.recordStamp === 'function') {
+            return InvCalc.recordStamp(rec) || String((rec && rec.date) || '');
+        }
+        return String((rec && rec.date) || '');
+    }
+
+    function _stampHasClock(stamp) {
+        return / \d{2}:\d{2}/.test(String(stamp || '')) && !/ 00:00$/.test(String(stamp || ''));
+    }
+
+    function _fmtQtyG(g) {
+        const n = Math.round(Number(g) || 0);
+        if (n === 0) return '없음';
+        return n.toLocaleString('ko-KR') + 'g';
+    }
+
+    function _fmtQtyCans(n) {
+        const q = Number(n);
+        if (!Number.isFinite(q)) return '-';
+        return q.toLocaleString('ko-KR') + '캔';
+    }
+
+    /** 도료창고 출고 원장 → 배합실 입고 표시행. 오늘 목록·과거 조회가 같은 원장을 쓴다. */
+    function _warehouseOutgoingToInboundRow(d, mats) {
+        const mat = (mats || []).find(m => m.id === d.materialId);
+        const cans = Number(d.quantity) || 0;
+        const packUnit = Number(d.packUnit) || (mat ? Number(mat.packUnit) || 0 : 0);
+        return {
+            id: d.id || '',
+            materialId: d.materialId || '',
+            date: _invDay(d),
+            dateFull: String(d.date || ''),
+            stamp: _recStamp(d),
+            paintName: (mat && mat.name) || '-',
+            supplier: (mat && mat.supplier) || '-',
+            lotNo: d.prodLot || d.lotNo || '-',
+            cans,
+            gramLabel: packUnit > 0 ? UIUtils.formatNumber(cans * packUnit) + 'kg' : '-',
+            issuedBy: d.issuedBy || d.processedBy || '-',
+            source: d.source || '-',
+            prevMixG: 0,
+            prevMixLotG: 0,
+            prevWhCans: null
+        };
+    }
+
+    function _mixingRoomDeltaEvents() {
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const matById = {};
+        mats.forEach(m => { if (m && m.id) matById[m.id] = m; });
+        const events = [];
+
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (!r || r.type !== '출고' || r.paintMixId) return;
+            const mat = matById[r.materialId];
+            if (!mat) return;
+            const packKg = Number(r.packUnit) || Number(mat.packUnit) || 0;
+            const inG = (Number(r.quantity) || 0) * packKg * 1000;
+            if (!inG) return;
+            const stamp = _recStamp(r);
+            events.push({
+                kind: 'wh_out',
+                id: r.id || '',
+                materialId: r.materialId || '',
+                lotNo: r.prodLot || r.lotNo || '미기입',
+                deltaG: inG,
+                stamp,
+                day: String(stamp || r.date || '').slice(0, 10),
+                hasTime: _stampHasClock(stamp)
+            });
+        });
+
+        _mixes().forEach(m => {
+            const stamp = _recStamp(m);
+            const day = String(stamp || m.date || '').slice(0, 10);
+            const hasTime = _stampHasClock(stamp);
+            (m.usages || []).forEach(u => {
+                const matId = u.materialId || '';
+                const mat = matById[matId];
+                const lotNo = u.residualProdLot || u.prodLot || u.lotNo || '미기입';
+                const packKg = Number(u.packUnitKg) || Number(u.packUnit) || (mat ? Number(mat.packUnit) || 0 : 0);
+                const inG = (Number(u.warehouseCans) || 0) * packKg * 1000;
+                const usedG = Number(u.usageG) || 0;
+                if (inG) events.push({ kind: 'mix_in', id: m.id || '', materialId: matId, lotNo, deltaG: inG, stamp, day, hasTime });
+                if (usedG) events.push({ kind: 'mix_use', id: m.id || '', materialId: matId, lotNo, deltaG: -usedG, stamp, day, hasTime });
+            });
+        });
+
+        _residualAdjustments().forEach(a => {
+            const deltaG = Number(a.adjustG) || 0;
+            if (!deltaG) return;
+            const stamp = _recStamp(a);
+            events.push({
+                kind: 'adjust',
+                id: a.id || '',
+                materialId: a.materialId || '',
+                lotNo: a.lotNo || '미기입',
+                deltaG,
+                stamp,
+                day: String(stamp || a.date || '').slice(0, 10),
+                hasTime: _stampHasClock(stamp)
+            });
+        });
+        return events;
+    }
+
+    function _eventBeforeInbound(ev, row) {
+        if (!ev || !row || ev.materialId !== row.materialId) return false;
+        if (ev.kind === 'wh_out' && ev.id && ev.id === row.id) return false;
+        if (ev.day < row.date) return true;
+        if (ev.day > row.date) return false;
+        if (ev.kind === 'wh_out') {
+            const cmp = String(ev.stamp || '').localeCompare(String(row.stamp || ''));
+            if (cmp < 0) return true;
+            if (cmp > 0) return false;
+            return String(ev.id || '').localeCompare(String(row.id || '')) < 0;
+        }
+        if (ev.hasTime) return String(ev.stamp || '') < String(row.stamp || '');
+        return false;
+    }
+
+    function _warehouseStockBeforeByRecId() {
+        const map = {};
+        if (typeof InvCalc === 'undefined' || typeof InvCalc.replaySteps !== 'function') return map;
+        const grouped = {};
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (!r) return;
+            const key = r.materialId || '__';
+            (grouped[key] || (grouped[key] = [])).push(r);
+        });
+        Object.keys(grouped).forEach(key => {
+            InvCalc.replaySteps(grouped[key]).forEach(step => {
+                if (step.rec && step.rec.id) map[step.rec.id] = step.stockBefore;
+            });
+        });
+        return map;
+    }
+
+    function _attachInboundPrevStock(rows) {
+        if (!rows || !rows.length) return rows;
+        const events = _mixingRoomDeltaEvents();
+        const whBefore = _warehouseStockBeforeByRecId();
+        rows.forEach(row => {
+            let mixG = 0;
+            let mixLotG = 0;
+            events.forEach(ev => {
+                if (!_eventBeforeInbound(ev, row)) return;
+                mixG += Number(ev.deltaG) || 0;
+                if ((ev.lotNo || '미기입') === (row.lotNo || '미기입')) mixLotG += Number(ev.deltaG) || 0;
+            });
+            row.prevMixG = mixG;
+            row.prevMixLotG = mixLotG;
+            row.prevWhCans = Object.prototype.hasOwnProperty.call(whBefore, row.id) ? whBefore[row.id] : null;
+        });
+        return rows;
+    }
+
+    function _prevStockCellHtml(r) {
+        const mixG = Number(r.prevMixG) || 0;
+        const lotG = Number(r.prevMixLotG) || 0;
+        const mixColor = mixG > 0 ? '#0f766e' : 'var(--text-muted)';
+        const lotNote = (mixG > 0 && lotG !== mixG)
+            ? `<div style="font-size:0.7rem;color:var(--text-muted);">이 LOT ${_fmtQtyG(lotG)}</div>`
+            : '';
+        const wh = (r.prevWhCans == null)
+            ? ''
+            : `<div style="font-size:0.7rem;color:var(--text-muted);">창고 ${_fmtQtyCans(r.prevWhCans)}</div>`;
+        return `<div style="text-align:right;white-space:nowrap;line-height:1.35;">
+            <span style="font-weight:700;color:${mixColor};">배합실 ${_fmtQtyG(mixG)}</span>
+            ${lotNote}${wh}
+        </div>`;
+    }
+
+    function _warehouseOutgoingInboundRows(fromDay, toDay) {
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const rows = (Storage.getAll(PAINT_INV_STORE) || [])
+            .filter(d => d && d.type === '출고')
+            .map(d => _warehouseOutgoingToInboundRow(d, mats))
+            .filter(r => {
+                const day = r.date || '';
+                if (fromDay && day < fromDay) return false;
+                if (toDay && day > toDay) return false;
+                return true;
+            })
+            .sort((a, b) => String(b.dateFull || b.id).localeCompare(String(a.dateFull || a.id)));
+        return _attachInboundPrevStock(rows);
+    }
+
+    function _warehouseInboundTableHtml(rows, includeDate) {
+        const colCount = includeDate ? 9 : 8;
+        if (!rows.length) {
+            return `<tr><td colspan="${colCount}" style="text-align:center;padding:28px;color:var(--text-muted);">해당 기간의 창고 출고(배합실 입고) 이력이 없습니다.</td></tr>`;
+        }
+        return rows.map(r => `<tr>
+            ${includeDate ? `<td style="white-space:nowrap;padding:8px 10px;">${_esc(r.date || '-')}</td>` : ''}
+            <td style="font-weight:600;white-space:nowrap;padding:8px 10px;">${_esc(r.paintName)}</td>
+            <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;">${_esc(r.supplier)}</td>
+            <td style="font-family:monospace;white-space:nowrap;padding:8px 10px;">${_esc(r.lotNo)}</td>
+            <td style="text-align:right;font-weight:700;color:#2563eb;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(r.cans)}캔</td>
+            <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${_esc(r.gramLabel)}</td>
+            <td style="padding:8px 10px;background:rgba(15,118,110,0.06);">${_prevStockCellHtml(r)}</td>
+            <td style="font-size:0.78rem;color:var(--text-muted);white-space:nowrap;padding:8px 10px;">${_esc(r.source)}</td>
+            <td style="white-space:nowrap;padding:8px 10px;">${_esc(r.issuedBy)}</td>
+        </tr>`).join('');
+    }
+
+    function openWarehouseInboundHistory() {
+        const start = UIUtils.monthAgo();
+        const end = (typeof UIUtils.daysAgo === 'function') ? UIUtils.daysAgo(1) : UIUtils.today();
+        UIUtils.showModal({
+            title: '과거 창고 입고 이력',
+            size: 'lg',
+            body: `
+            <p style="margin:0 0 12px;font-size:0.82rem;color:var(--text-muted);line-height:1.55;">
+                배합실 입고는 <strong>도료창고 출고 원장</strong>과 동일합니다. 기간을 지정해 과거 입고(창고 출고) 건을 조회하세요.
+            </p>
+            <div class="filter-bar" style="flex-wrap:wrap;gap:10px;margin-bottom:12px;align-items:flex-end;">
+                <div class="form-group">
+                    <label class="form-label">시작일</label>
+                    <input type="date" class="form-input" id="pmixWhInStart" value="${_esc(start)}"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();PaintMixModule.searchWarehouseInboundHistory();}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">종료일</label>
+                    <input type="date" class="form-input" id="pmixWhInEnd" value="${_esc(end)}"
+                        onkeydown="if(event.key==='Enter'){event.preventDefault();PaintMixModule.searchWarehouseInboundHistory();}">
+                </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button class="btn btn-outline" onclick="PaintMixModule.searchWarehouseInboundHistory()">
+                        <span class="material-symbols-outlined">search</span> 조회
+                    </button>
+                </div>
+            </div>
+            <div id="pmixWhInHistMeta" style="font-size:0.78rem;color:var(--text-muted);margin-bottom:8px;"></div>
+            <div class="data-table-wrapper" style="overflow-x:auto;">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.83rem;">
+                    <thead><tr>
+                        <th style="white-space:nowrap;padding:8px 10px;">입고일</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">도료명</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">제조사</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">제조 LOT</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">출고 캔수</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">환산량(g)</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;color:#0f766e;">입고 당시<br>기존 현재고</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">용도/출처</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">처리자</th>
+                    </tr></thead>
+                    <tbody id="pmixWhInHistBody"></tbody>
+                </table>
+            </div>`,
+            footer: `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`
+        });
+        searchWarehouseInboundHistory();
+    }
+
+    function searchWarehouseInboundHistory() {
+        const tbody = document.getElementById('pmixWhInHistBody');
+        const meta = document.getElementById('pmixWhInHistMeta');
+        if (!tbody) return;
+        const start = document.getElementById('pmixWhInStart')?.value || '';
+        const end = document.getElementById('pmixWhInEnd')?.value || '';
+        const rows = _warehouseOutgoingInboundRows(start, end);
+        const totalCans = rows.reduce((s, r) => s + (Number(r.cans) || 0), 0);
+        tbody.innerHTML = _warehouseInboundTableHtml(rows, true);
+        if (meta) {
+            meta.textContent = (start || end)
+                ? `${start || '시작'} ~ ${end || '종료'} · ${rows.length}건 · 출고 ${UIUtils.formatNumber(totalCans)}캔 (도료창고 출고 원장)`
+                : `${rows.length}건 · 출고 ${UIUtils.formatNumber(totalCans)}캔 (도료창고 출고 원장)`;
+        }
+    }
+
     function renderResidualTab() {
         const pane = document.getElementById('pmixPane_residual');
         if (!pane) return;
@@ -17223,25 +17499,9 @@ var PaintMixModule = (function() {
         const mats = Storage.getAll(PAINT_MAT_STORE) || [];
 
         // 오늘 도료창고 → 배합실 출고 목록 (배합실 작업자가 오늘 뭐가 들어왔는지 바로 확인)
+        // 원장은 도료창고 출고 이력과 동일 (PAINT_INVENTORY type=출고)
         const _pmixToday = UIUtils.today();
-        const todayOutgoing = (Storage.getAll(PAINT_INV_STORE) || [])
-            .filter(d => d.type === '출고' && String(d.date || '').slice(0, 10) === _pmixToday)
-            .map(d => {
-                const mat = mats.find(m => m.id === d.materialId);
-                const cans = Number(d.quantity) || 0;
-                const packUnit = Number(d.packUnit) || (mat ? Number(mat.packUnit) || 0 : 0);
-                return {
-                    id: d.id || '',
-                    paintName: (mat && mat.name) || '-',
-                    supplier: (mat && mat.supplier) || '-',
-                    lotNo: d.prodLot || d.lotNo || '-',
-                    cans,
-                    gramLabel: packUnit > 0 ? UIUtils.formatNumber(cans * packUnit) + 'g' : '-',
-                    issuedBy: d.issuedBy || d.processedBy || '-',
-                    source: d.source || '-'
-                };
-            })
-            .sort((a, b) => String(b.id).localeCompare(String(a.id)));
+        const todayOutgoing = _warehouseOutgoingInboundRows(_pmixToday, _pmixToday);
 
         // 잔량 있는 mix 레코드: 사용된 도료 중 mixResiduals에 포함된 것 (warehouseCans > 0 사용 기록)
         const residualLotKeys = new Set(mixResiduals.map(r => `${r.materialId}__${r.lotNo}`));
@@ -17303,36 +17563,37 @@ var PaintMixModule = (function() {
 
         pane.innerHTML = `
         <div style="margin-bottom:14px;">
-            ${todayOutgoing.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined" style="color:#2563eb;">local_shipping</span> 오늘 도료창고 출고 목록
                         <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">${_esc(_pmixToday)} · ${todayOutgoing.length}건</span>
                     </h4>
+                    <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openWarehouseInboundHistory()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">history</span> 과거 입고 이력 조회
+                    </button>
                 </div>
                 <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table" style="font-size:0.83rem;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.83rem;">
                             <thead><tr>
-                                <th>도료명</th><th>제조사</th><th>제조 LOT</th>
-                                <th style="text-align:right;">출고 캔수</th><th style="text-align:right;">환산량(g)</th>
-                                <th>용도/출처</th><th>처리자</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">도료명</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">제조사</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">제조 LOT</th>
+                                <th style="text-align:right;white-space:nowrap;padding:8px 10px;">출고 캔수</th>
+                                <th style="text-align:right;white-space:nowrap;padding:8px 10px;">환산량(g)</th>
+                                <th style="text-align:right;white-space:nowrap;padding:8px 10px;color:#0f766e;">입고 당시<br>기존 현재고</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">용도/출처</th>
+                                <th style="white-space:nowrap;padding:8px 10px;">처리자</th>
                             </tr></thead>
                             <tbody>
-                                ${todayOutgoing.map(r => `<tr>
-                                    <td style="font-weight:600;">${_esc(r.paintName)}</td>
-                                    <td style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.supplier)}</td>
-                                    <td style="font-family:monospace;">${_esc(r.lotNo)}</td>
-                                    <td style="text-align:right;font-weight:700;color:#2563eb;">${UIUtils.formatNumber(r.cans)}캔</td>
-                                    <td style="text-align:right;">${_esc(r.gramLabel)}</td>
-                                    <td style="font-size:0.78rem;color:var(--text-muted);">${_esc(r.source)}</td>
-                                    <td>${_esc(r.issuedBy)}</td>
-                                </tr>`).join('')}
+                                ${todayOutgoing.length
+                                    ? _warehouseInboundTableHtml(todayOutgoing, false)
+                                    : `<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted);">오늘 도료창고 출고가 없습니다. 과거 이력은 오른쪽 버튼에서 조회하세요.</td></tr>`}
                             </tbody>
                         </table>
                     </div>
                 </div>
-            </div>` : ''}
+            </div>
             <div class="stat-cards" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap;">
                 <div class="stat-card green">
                     <div class="stat-card-value">${mixResiduals.length}</div>
@@ -18669,6 +18930,7 @@ var PaintMixModule = (function() {
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
         openMixResidualAdjust, saveMixResidualAdjust, deleteMixResidual, openResidualHistory, _onResLotBlur,
         onResCategoryChange, onResSupplierChange,
+        openWarehouseInboundHistory, searchWarehouseInboundHistory,
         saveNew, edit, saveEdit, remove, exportData,
         renderFormulaAsStandard, renderUsageAsStandard
     };

@@ -100,6 +100,8 @@ var PaintIncomingInspectionModule = (function() {
                 ${IncomingUI.renderSection('paint-incoming-inspection')}
                 <div class="page-header">
                     <div class="page-actions">
+                        ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                            ? AuthModule.incomingInspNotifyAdminButtonHtml('paint') : ''}
                         <button class="btn btn-primary" onclick="PaintIncomingInspectionModule.openAddModal()">
                             <span class="material-symbols-outlined">add</span> 검사 등록
                         </button>
@@ -706,12 +708,6 @@ var PaintIncomingInspectionModule = (function() {
                             placeholder="특채 사유 (예: 생산 긴급 투입, 품질 확인 후 사용 등)"
                             value="${d.specialReason || (d.expDateCheck === '6개월 이상' ? '제조일로부터 6개월 이상 — 특채 입고' : '')}">
                     </div>
-                    <div id="piSpecialNotifyWrap">
-                        ${_buildProdNotifySelectorHtml(
-                            d.specialNotifyRecipients || d.over6NotifyRecipients || _defaultNotifyRecipientIds(),
-                            'pi-special-notify-user'
-                        )}
-                    </div>
                 </div>
             </div>
         `;
@@ -746,10 +742,45 @@ var PaintIncomingInspectionModule = (function() {
             note: document.getElementById('piNote').value.trim(),
             specialReason: (document.getElementById('piSpecialReason') || {}).value
                 ? document.getElementById('piSpecialReason').value.trim() : '',
-            specialNotifyRecipients: _getSelectedProdNotifyUsers('pi-special-notify-user'),
-            over6NotifyRecipients: _getSelectedProdNotifyUsers('pi-over6-notify-user'),
+            specialNotifyRecipients: _resolvePaintInspNotifyRecipients(),
+            over6NotifyRecipients: _resolvePaintInspNotifyRecipients(),
             over6Notified: (document.getElementById('piOver6Notified') || {}).value === '1'
         };
+    }
+
+    function _resolvePaintInspNotifyRecipients() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function') {
+            return AuthModule.getIncomingInspNotifyRecipientIds('paint') || [];
+        }
+        return [];
+    }
+
+    function _sendPaintInspRegisteredNotify(data) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return false;
+        const recipients = _resolvePaintInspNotifyRecipients();
+        if (!recipients.length) return false;
+        return AuthModule.sendInternalMessage({
+            targetType: 'user',
+            targetIds: recipients,
+            title: '도료 수입검사 등록',
+            body: [
+                '도료 수입검사가 등록되었습니다.',
+                '',
+                '검사일: ' + (data.date || '-'),
+                '구매처: ' + (data.supplier || '-'),
+                '원료명: ' + (data.paintName || '-'),
+                '제조일자: ' + (data.mfgDate || '-'),
+                '제조사 LOT: ' + (data.lotNo || '-'),
+                '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
+                '용기 상태: ' + (data.containerStatus || '-'),
+                '유효기간 확인: ' + (data.expDateCheck || '-'),
+                '최종 판정: ' + (data.verdict || '-'),
+                '검사자: ' + (data.inspector || '-'),
+                data.note ? ('비고: ' + data.note) : ''
+            ].filter(Boolean).join('\n'),
+            category: 'paint_incoming_insp',
+            priority: data.verdict === '불합격' ? 'high' : 'normal'
+        });
     }
 
     // ── 생산 통보 (6개월 이상 / 특채) ────────────────────────────────
@@ -900,9 +931,6 @@ var PaintIncomingInspectionModule = (function() {
             category: isSpecial ? 'paint_incoming_special' : 'paint_incoming_over6',
             priority: 'high'
         });
-        if (ok && typeof AuthModule.saveProdNotifyRecipients === 'function') {
-            AuthModule.saveProdNotifyRecipients(recipientIds);
-        }
         return ok;
     }
 
@@ -1127,14 +1155,7 @@ var PaintIncomingInspectionModule = (function() {
                 UIUtils.toast('특채 사유를 입력하세요.', 'warning');
                 return false;
             }
-            const recipients = (data.specialNotifyRecipients && data.specialNotifyRecipients.length)
-                ? data.specialNotifyRecipients
-                : _defaultNotifyRecipientIds();
-            if (!recipients.length) {
-                UIUtils.toast('통보할 품질/생산 관리자가 없습니다. 사용자 역할을 확인하세요.', 'warning');
-                return false;
-            }
-            data.specialNotifyRecipients = recipients;
+            data.specialNotifyRecipients = _resolvePaintInspNotifyRecipients();
             return true;
         }
 
@@ -1143,14 +1164,7 @@ var PaintIncomingInspectionModule = (function() {
                 UIUtils.toast('특채 사유를 입력하세요.', 'warning');
                 return false;
             }
-            const recipients = (data.specialNotifyRecipients && data.specialNotifyRecipients.length)
-                ? data.specialNotifyRecipients
-                : _defaultNotifyRecipientIds();
-            if (!recipients.length) {
-                UIUtils.toast('특채 시 품질/생산 관리자 통보 대상이 없습니다.', 'warning');
-                return false;
-            }
-            data.specialNotifyRecipients = recipients;
+            data.specialNotifyRecipients = _resolvePaintInspNotifyRecipients();
             return true;
         }
 
@@ -1490,26 +1504,24 @@ var PaintIncomingInspectionModule = (function() {
             }
         }
         if (finalData.verdict === '특채' || finalData.expDateCheck === '6개월 이상') {
-            const recipients = (finalData.specialNotifyRecipients && finalData.specialNotifyRecipients.length)
-                ? finalData.specialNotifyRecipients
-                : _defaultNotifyRecipientIds();
-            if (!recipients.length) {
-                UIUtils.toast('통보할 품질/생산 관리자가 없습니다.', 'error');
-                return;
-            }
+            const recipients = _resolvePaintInspNotifyRecipients();
             finalData.verdict = '특채';
             finalData.specialNotifyRecipients = recipients;
             finalData.over6NotifyRecipients = recipients;
-            const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
-            if (!ok) {
-                UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
-                return;
+            if (recipients.length) {
+                const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
+                if (!ok) {
+                    UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
+                    return;
+                }
+                finalData.over6Notified = true;
+                finalData.over6NotifiedAt = new Date().toISOString();
+                finalData.specialNotified = true;
+                finalData.specialNotifiedAt = finalData.over6NotifiedAt;
             }
-            finalData.over6Notified = true;
-            finalData.over6NotifiedAt = new Date().toISOString();
-            finalData.specialNotified = true;
-            finalData.specialNotifiedAt = finalData.over6NotifiedAt;
             finalData.prodConfirmed = false;
+        } else {
+            _sendPaintInspRegisteredNotify(finalData);
         }
         await Storage.add(STORE, finalData);
         UIUtils.closeModal();
@@ -1563,25 +1575,21 @@ var PaintIncomingInspectionModule = (function() {
             }
         }
         if ((finalData.verdict === '특채' || finalData.expDateCheck === '6개월 이상') && !prev.specialNotified && !prev.over6Notified) {
-            const recipients = (finalData.specialNotifyRecipients && finalData.specialNotifyRecipients.length)
-                ? finalData.specialNotifyRecipients
-                : _defaultNotifyRecipientIds();
-            if (!recipients.length) {
-                UIUtils.toast('통보할 품질/생산 관리자가 없습니다.', 'error');
-                return;
-            }
+            const recipients = _resolvePaintInspNotifyRecipients();
             finalData.verdict = '특채';
             finalData.specialNotifyRecipients = recipients;
             finalData.over6NotifyRecipients = recipients;
-            const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
-            if (!ok) {
-                UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
-                return;
+            if (recipients.length) {
+                const ok = _sendOver6ProdNotification(finalData, recipients, { special: true });
+                if (!ok) {
+                    UIUtils.toast('특채 통보 전송에 실패했습니다. 로그인 상태를 확인하세요.', 'error');
+                    return;
+                }
+                finalData.over6Notified = true;
+                finalData.over6NotifiedAt = new Date().toISOString();
+                finalData.specialNotified = true;
+                finalData.specialNotifiedAt = finalData.over6NotifiedAt;
             }
-            finalData.over6Notified = true;
-            finalData.over6NotifiedAt = new Date().toISOString();
-            finalData.specialNotified = true;
-            finalData.specialNotifiedAt = finalData.over6NotifiedAt;
             finalData.prodConfirmed = false;
         } else if (prev.over6Notified || prev.specialNotified) {
             finalData.over6Notified = true;

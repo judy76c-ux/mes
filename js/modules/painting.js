@@ -1382,11 +1382,19 @@ const PaintingWorkModule = (function() {
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                             <span id="pwInputStockSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
                         </h4>
-                        <div style="display:flex;align-items:center;gap:8px;">
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml(
+                                    (typeof AuthModule.siteInboundNotifyKindForLine === 'function'
+                                        ? AuthModule.siteInboundNotifyKindForLine(_currentLine)
+                                        : (_currentLine === '도장-B' ? 'site_inbound_b' : 'site_inbound_a')),
+                                    { small: true }
+                                  )
+                                : ''}
                             <span style="font-size:0.78rem;color:var(--text-muted);">금일 현장으로 입고된 사출품입니다. 계획 대비 오차를 확인하세요.</span>
                             <button type="button" class="btn btn-sm btn-outline" style="padding:3px 10px;font-size:0.75rem;white-space:nowrap;"
                                 onclick="PaintingWorkModule.openMaterialHistory('${_currentLine}')">
-                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">history</span>과거 사출 자재 입고 조회
+                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">history</span>과거 사출 자재 입고/반납 조회
                             </button>
                         </div>
                     </div>
@@ -4319,6 +4327,31 @@ const PaintingWorkModule = (function() {
             });
         }
 
+        // 현장에서 사출창고로 되돌린 반납 이력 — 입고와 같은 목록에서 "구분" 열로 구별해 보여준다.
+        function _loadReturnRows(start, end) {
+            const s = String(start || '').slice(0, 10);
+            const e = String(end || today).slice(0, 10);
+            return (Storage.getAll(STORE_INV) || []).filter(function (r) {
+                if (!r || !r.isSiteReturn) return false;
+                if (_normLineLocal(r.line || r.paintLine) !== _normLineLocal(want)) return false;
+                const d = _dayOf(r);
+                if (!d) return false;
+                if (s && d < s) return false;
+                if (e && d > e) return false;
+                return true;
+            }).sort(function (a, b) {
+                return _dayOf(b).localeCompare(_dayOf(a))
+                    || String(b.date || '').localeCompare(String(a.date || ''));
+            });
+        }
+        function _returnStatusBadge(r) {
+            var reason = String(r.returnReason || '').trim();
+            if (r.returnStatus === 'confirmed') {
+                return '<span style="color:#16a34a;font-weight:700;white-space:nowrap;" title="' + _esc(reason) + '">반납확정</span>';
+            }
+            return '<span style="color:#d97706;font-weight:700;white-space:nowrap;" title="' + _esc(reason) + '">반납대기</span>';
+        }
+
         function _fillSelect(sel, values, preferred, emptyLabel) {
             if (!sel) return;
             var list = values.slice();
@@ -4348,10 +4381,12 @@ const PaintingWorkModule = (function() {
             const start = startEl ? startEl.value : defaultStart;
             const end = endEl ? endEl.value : defaultEnd;
             const allRows = _loadRows(start, end);
+            // 반납 이력은 선택(pickMode) 화면에서는 의미가 없다 — 실적에 넣을 잔량이 아니므로 조회 전용 화면에만 섞는다.
+            const allReturnRows = pickMode ? [] : _loadReturnRows(start, end);
             const cars = [];
             const parts = [];
             const colors = [];
-            allRows.forEach(function (r) {
+            allRows.concat(allReturnRows).forEach(function (r) {
                 var c = String(r.carModel || '').trim();
                 var p = String(r.partName || '').trim();
                 var col = String(r.color || '').trim();
@@ -4372,29 +4407,40 @@ const PaintingWorkModule = (function() {
             const wantPart = partEl ? partEl.value : prefPart;
             const wantColor = colorEl ? colorEl.value : prefColor;
             const usedFilter = usedEl ? usedEl.value : '';
-            const rows = allRows.filter(function (r) {
+            const filterFn = function (r) {
                 if (wantCar && String(r.carModel || '').trim() !== wantCar) return false;
                 if (wantPart && !_partHit(r.partName, wantPart)) return false;
                 if (wantColor && !_colorHit(r.color, wantColor)) return false;
                 return true;
-            });
+            };
+            const rows = allRows.filter(filterFn);
+            const returnRows = allReturnRows.filter(filterFn);
             const tbody = document.getElementById('pwMatHistBody');
             const countEl = document.getElementById('pwMatHistCount');
             const needCarPart = pickMode && (!wantCar || !wantPart);
             // 실적 폼은 이 조회 모달이 덮어써서 #pwLotRows가 잠시 없다.
             // 선택 열을 그 존재에 묶으면 헤더만 남고 관리(수정) 버튼이 선택 칸으로 밀린다.
             const canPick = pickMode && !needCarPart;
-            const colCount = 10 + (pickMode ? 1 : 0) + (isAdmin ? 1 : 0);
+            const colCount = 11 + (pickMode ? 1 : 0) + (isAdmin ? 1 : 0);
             if (!tbody) return;
             const decorated = rows.map(function (r) {
-                return { rec: r, usage: _lotUsage(r) };
+                return { rec: r, kind: 'inbound', usage: _lotUsage(r) };
             }).filter(function (row) {
                 if (usedFilter === 'unused') return row.usage.status === 'unused';
                 if (usedFilter === 'partial') return row.usage.status === 'partial';
                 if (usedFilter === 'used') return row.usage.status === 'used';
                 return true;
             });
-            if (countEl) countEl.textContent = decorated.length + '건';
+            // 반납 이력은 사용여부(미사용/일부사용/전량사용) 개념이 없으므로, 그 필터를 걸었을 때는 섞지 않는다.
+            const decoratedReturns = usedFilter ? [] : returnRows.map(function (r) {
+                return { rec: r, kind: 'return' };
+            });
+            const combined = decorated.concat(decoratedReturns).sort(function (a, b) {
+                var da = _dayOf(a.rec) + ' ' + _timeOf(a.rec);
+                var db = _dayOf(b.rec) + ' ' + _timeOf(b.rec);
+                return db.localeCompare(da);
+            });
+            if (countEl) countEl.textContent = combined.length + '건';
             var pickAllEl = document.getElementById('pwMatHistPickAll');
             if (pickAllEl) pickAllEl.checked = false;
             if (needCarPart) {
@@ -4402,17 +4448,38 @@ const PaintingWorkModule = (function() {
                     '차종과 품명을 먼저 고른 뒤 조회하세요. 전체 입고를 한 번에 선택할 수 없습니다.</td></tr>';
                 return;
             }
-            if (!decorated.length) {
+            if (!combined.length) {
                 tbody.innerHTML = '<tr><td colspan="' + colCount + '" style="text-align:center;padding:30px;color:var(--text-muted);">' +
-                    '같은 입고일·차종·품명·컬러의 현장 입고 이력이 없습니다. 입고일이 실적일과 다르면 날짜 범위를 넓혀 보세요.</td></tr>';
+                    '같은 입고일·차종·품명·컬러의 현장 입고/반납 이력이 없습니다. 입고일이 실적일과 다르면 날짜 범위를 넓혀 보세요.</td></tr>';
                 return;
             }
-            tbody.innerHTML = decorated.map(function (row) {
+            tbody.innerHTML = combined.map(function (row) {
                 const r = row.rec;
+                const pad = 'white-space:nowrap;padding:4px 6px;width:auto;';
+                const tight = 'white-space:nowrap;padding:4px 5px;width:auto;';
+                if (row.kind === 'return') {
+                    return '<tr style="background:rgba(8,145,178,0.05);">' +
+                        '<td style="' + pad + 'font-size:0.82rem;">' + _esc(_dayOf(r)) + '</td>' +
+                        '<td style="' + pad + 'font-size:0.82rem;">' + _esc(_timeOf(r)) + '</td>' +
+                        '<td style="' + pad + '"><span style="color:#0891b2;font-weight:700;white-space:nowrap;">↩ 반납</span></td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '">' + _esc(_displayHistPart(r)) + '</td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '">' + _esc(r.color || '-') + '</td>' +
+                        '<td class="pw-hist-tight" style="' + tight + 'font-family:monospace;font-size:0.8rem;">' + _esc(_lotsLabel(r)) + '</td>' +
+                        '<td style="text-align:right;' + pad + 'color:var(--text-muted);">-</td>' +
+                        '<td style="text-align:right;' + pad + 'font-weight:700;color:#0891b2;">' + _fmt(Number(r.quantity) || 0) + '</td>' +
+                        '<td style="text-align:right;' + pad + 'color:var(--text-muted);">-</td>' +
+                        '<td style="' + pad + '">' + _returnStatusBadge(r) +
+                            (r.returnedBy ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">' + _esc(r.returnedBy) + '</div>' : '') +
+                        '</td>' +
+                        (pickMode ? '<td style="' + pad + '"></td>' : '') +
+                        (isAdmin ? '<td style="' + pad + '"></td>' : '') +
+                    '</tr>';
+                }
                 const u = row.usage;
                 const pickable = canPick && u.balance > 0.001;
                 const pickTd = canPick
-                    ? ('<td style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
+                    ? ('<td style="' + pad + 'text-align:center;">' +
                         '<input type="checkbox" class="pw-mat-hist-pick" data-id="' + _esc(r.id) + '"' +
                         ' data-lot="' + _esc(u.lotNo || '') + '" data-qty="' + Math.floor(u.balance) + '"' +
                         (pickable ? '' : ' disabled') +
@@ -4423,23 +4490,24 @@ const PaintingWorkModule = (function() {
                       '</td>')
                     : '';
                 return '<tr>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">' + _esc(_dayOf(r)) + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;font-size:0.82rem;">' + _esc(_timeOf(r)) + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;">' + _esc(_displayHistPart(r)) + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;">' + _esc(r.color || '-') + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;font-family:monospace;font-size:0.8rem;">' + _esc(_lotsLabel(r)) + '</td>' +
-                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;">' + _fmt(u.inboundQty) + '</td>' +
-                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;">' + _fmt(u.consumed) + '</td>' +
-                    '<td style="text-align:right;white-space:nowrap;padding:6px 10px;font-weight:700;color:' +
+                    '<td style="' + pad + 'font-size:0.82rem;">' + _esc(_dayOf(r)) + '</td>' +
+                    '<td style="' + pad + 'font-size:0.82rem;">' + _esc(_timeOf(r)) + '</td>' +
+                    '<td style="' + pad + 'color:var(--text-muted);">입고</td>' +
+                    '<td class="pw-hist-tight" style="' + tight + '"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
+                    '<td class="pw-hist-tight" style="' + tight + '">' + _esc(_displayHistPart(r)) + '</td>' +
+                    '<td class="pw-hist-tight" style="' + tight + '">' + _esc(r.color || '-') + '</td>' +
+                    '<td class="pw-hist-tight" style="' + tight + 'font-family:monospace;font-size:0.8rem;">' + _esc(_lotsLabel(r)) + '</td>' +
+                    '<td style="text-align:right;' + pad + 'font-weight:700;">' + _fmt(u.inboundQty) + '</td>' +
+                    '<td style="text-align:right;' + pad + '">' + _fmt(u.consumed) + '</td>' +
+                    '<td style="text-align:right;' + pad + 'font-weight:700;color:' +
                         (u.balance > 0 ? '#16a34a' : 'var(--text-muted)') + ';">' + _fmt(u.balance) + '</td>' +
-                    '<td style="white-space:nowrap;padding:6px 10px;">' + _statusBadge(u) +
+                    '<td style="' + pad + '">' + _statusBadge(u) +
                         (u.workHits.length ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">' + _esc(u.workHits[0]) +
                             (u.workHits.length > 1 ? ' 외 ' + (u.workHits.length - 1) : '') + '</div>' : '') +
                     '</td>' +
                     pickTd +
                     (isAdmin ? (
-                        '<td style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
+                        '<td style="' + pad + 'text-align:center;">' +
                             '<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;margin-right:4px;" ' +
                                 'onclick="PaintingWorkModule._matHistEdit(\'' + _esc(r.id) + '\')" title="사용일·수량 수정">' +
                                 '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span>' +
@@ -4676,7 +4744,7 @@ const PaintingWorkModule = (function() {
             ? 'UIUtils.closeChildModal()'
             : 'UIUtils.closeModal()';
         openHist(
-            _esc(want) + (pickMode ? ' 과거 입고 LOT 선택' : ' 과거 사출 자재 입고 조회'),
+            _esc(want) + (pickMode ? ' 과거 입고 LOT 선택' : ' 과거 사출 자재 입고/반납 조회'),
             '<div style="display:flex;align-items:flex-end;gap:10px;margin-bottom:12px;flex-wrap:wrap;">' +
                 '<div class="form-group" style="margin:0;">' +
                     '<label class="form-label" style="font-size:0.75rem;">입고일(시작)</label>' +
@@ -4723,28 +4791,30 @@ const PaintingWorkModule = (function() {
                 (pickMode ? ' 실적일과 입고일이 하루 어긋나면 종료일을 넓히세요. 잔량이 있는 행의 <strong>체크</strong>를 켠 뒤 아래 <strong>도장 투입에 추가</strong>를 누르면 ② 투입 LOT에 행이 생깁니다.' : '') +
                 (prefCar || prefPart || prefColor ? ' 현재 실적: <strong>' + _esc(prefCar || '-') + ' / ' + _esc(prefPart || '-') + (prefColor ? ' / ' + _esc(prefColor) : '') + '</strong>.' : '') +
                 ' 사출 창고 생산출고만 있고 현장 입고 확인이 안 된 건은 여기에 없습니다.' +
+                (!pickMode ? ' <strong>구분</strong> 열의 <span style="color:#0891b2;font-weight:700;">↩ 반납</span> 행은 현장에서 사출창고로 되돌려보낸 이력입니다.' : '') +
             '</div>' +
             '<div class="data-table-wrapper" style="max-height:420px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;">' +
-                '<table class="data-table data-table--content compact" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
+                '<table class="data-table data-table--content compact pw-mat-hist-table" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
                     '<thead><tr>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">입고일</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">시간</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">차종</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">품명</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">컬러</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">사출LOT</th>' +
-                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">입고수량</th>' +
-                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">사용수량</th>' +
-                        '<th style="text-align:right;white-space:nowrap;padding:6px 10px;">잔량</th>' +
-                        '<th style="white-space:nowrap;padding:6px 10px;">사용여부</th>' +
+                        '<th style="white-space:nowrap;padding:4px 6px;width:auto;">입고일</th>' +
+                        '<th style="white-space:nowrap;padding:4px 6px;width:auto;">시간</th>' +
+                        '<th style="white-space:nowrap;padding:4px 6px;width:auto;">구분</th>' +
+                        '<th class="pw-hist-tight" style="white-space:nowrap;padding:4px 5px;width:auto;">차종</th>' +
+                        '<th class="pw-hist-tight" style="white-space:nowrap;padding:4px 5px;width:auto;">품명</th>' +
+                        '<th class="pw-hist-tight" style="white-space:nowrap;padding:4px 5px;width:auto;">컬러</th>' +
+                        '<th class="pw-hist-tight" style="white-space:nowrap;padding:4px 5px;width:auto;">사출LOT</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:4px 6px;width:auto;">입고수량</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:4px 6px;width:auto;">사용/반납수량</th>' +
+                        '<th style="text-align:right;white-space:nowrap;padding:4px 6px;width:auto;">잔량</th>' +
+                        '<th style="white-space:nowrap;padding:4px 6px;width:auto;">상태</th>' +
                         (pickMode
-                            ? '<th style="white-space:nowrap;padding:6px 10px;text-align:center;">' +
+                            ? '<th style="white-space:nowrap;padding:4px 6px;width:auto;text-align:center;">' +
                                 '<label style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;margin:0;">' +
                                 '<input type="checkbox" id="pwMatHistPickAll" style="width:16px;height:16px;accent-color:#2563eb;" ' +
                                 'onchange="PaintingWorkModule._matHistToggleAll(this)">' +
                                 '선택</label></th>'
                             : '') +
-                        (isAdmin ? '<th style="white-space:nowrap;padding:6px 10px;text-align:center;">관리</th>' : '') +
+                        (isAdmin ? '<th style="white-space:nowrap;padding:4px 6px;width:auto;text-align:center;">관리</th>' : '') +
                     '</tr></thead>' +
                     '<tbody id="pwMatHistBody"></tbody>' +
                 '</table>' +
@@ -4764,7 +4834,15 @@ const PaintingWorkModule = (function() {
         PaintingWorkModule._matHistPick = _pick;
         PaintingWorkModule._matHistToggleAll = _toggleAll;
         PaintingWorkModule._matHistApplySelected = _applySelected;
-        setTimeout(_render, 0);
+        var _startHist = function () { setTimeout(_render, 0); };
+        if (typeof PaintingInputModule !== 'undefined'
+            && typeof PaintingInputModule.dedupeDuplicateSiteInbounds === 'function') {
+            Promise.resolve(PaintingInputModule.dedupeDuplicateSiteInbounds())
+                .then(_startHist)
+                .catch(_startHist);
+        } else {
+            _startHist();
+        }
     }
 
     function _updateLotSummary() {
@@ -7105,6 +7183,41 @@ const PaintingWorkModule = (function() {
         }
 
         UIUtils.toast('작업 실적이 등록되었습니다.', 'success');
+        if (!isLaserWipSave && typeof LaserStandbyModule !== 'undefined'
+            && typeof LaserStandbyModule.notifyInboundPending === 'function') {
+            try {
+                var _lw = savedWork || data;
+                var _prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+                var _prod = (_lw.productId && _prods.find(function (p) {
+                    return String(p.id || '') === String(_lw.productId);
+                })) || _prods.find(function (p) {
+                    return String(p.carModel || '').trim() === String(_lw.carModel || '').trim()
+                        && String(p.partName || '').trim() === String(_lw.partName || '').trim()
+                        && (!String(_lw.color || '').trim()
+                            || String(p.color || '').trim() === String(_lw.color || '').trim());
+                }) || null;
+                if (typeof LaserStandbyModule.isPaintingWorkLaserStandbyInbound === 'function'
+                    ? LaserStandbyModule.isPaintingWorkLaserStandbyInbound(_lw, _prod)
+                    : false) {
+                    LaserStandbyModule.notifyInboundPending([{
+                        carModel: _lw.carModel,
+                        partName: _lw.partName,
+                        color: _lw.color,
+                        qty: _lw.productionQty,
+                        line: _lw.line,
+                        date: _lw.date,
+                        startTime: _lw.startTime,
+                        endTime: _lw.endTime,
+                        createdAt: _lw.createdAt,
+                        lots: _lw.lots,
+                        lotNo: _lw.lotNo,
+                        source: '도장 작업 실적'
+                    }]);
+                }
+            } catch (eLaserN) {
+                console.warn('[PaintingWork] 레이저 입고 대기 통보 실패:', eLaserN);
+            }
+        }
         loadAll();
     }
 
@@ -10865,9 +10978,13 @@ const PaintingInspectionModule = (function() {
             tabContent.innerHTML = `
                 <!-- 검사대기품 (도장 작업 완료 목록) -->
                 <div class="card" style="margin-bottom:20px;width:100%;">
-                    <div class="card-header">
-                        <h4><span class="material-symbols-outlined">done_all</span> 외관 검사 대기품</h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다.</span>
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                        <h4 style="margin:0;"><span class="material-symbols-outlined">done_all</span> 외관 검사 대기품</h4>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml('paint_insp', { small: true }) : ''}
+                            <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다.</span>
+                        </div>
                     </div>
                     <div class="card-body" id="inspectionWaitingList" style="width:100%;"></div>
                 </div>
@@ -13511,6 +13628,56 @@ const PaintingInspectionModule = (function() {
         _updatePaintPackagingCalc();
     }
 
+    function _notifyPaintInspectionRegistered(rec, work, opts) {
+        opts = opts || {};
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        try {
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds('paint_insp')
+                : [];
+            if (!recipients.length) return;
+            const isPartial = !!(opts.isPartial || (rec && rec.isPartial));
+            const remainingQty = Number(opts.remainingQty);
+            const defects = Array.isArray(rec && rec.defects) ? rec.defects : [];
+            const defectTxt = defects
+                .filter(function (d) { return Number(d.defectCount) > 0; })
+                .map(function (d) { return (d.defectName || '-') + '(' + d.defectCount + ')'; })
+                .join(', ');
+            const inspectors = Array.isArray(rec && rec.inspectors) ? rec.inspectors.filter(Boolean).join(', ') : '';
+            const title = isPartial
+                ? (remainingQty > 0 ? '외관 검사 등록 (부분검사)' : '외관 검사 완료 (부분검사 전량 소진)')
+                : '외관 검사 완료';
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: title,
+                body: [
+                    isPartial && remainingQty > 0
+                        ? '외관 부분검사가 등록되었습니다. 남은 수량은 대기 목록에 유지됩니다.'
+                        : '외관 검사가 등록되었습니다.',
+                    '',
+                    '라인: ' + ((work && work.line) || rec.line || '-'),
+                    '검사일: ' + (rec.date || '-'),
+                    '차종: ' + (rec.carModel || (work && work.carModel) || '-'),
+                    '품명: ' + (rec.partName || (work && work.partName) || '-'),
+                    '컬러: ' + (rec.color || (work && work.color) || '-'),
+                    'LOT: ' + (rec.lotNo || '-'),
+                    '검사수량: ' + UIUtils.formatNumber(rec.inspectionQty) + ' EA',
+                    '양품: ' + UIUtils.formatNumber(rec.goodQty) + ' EA',
+                    '불량: ' + UIUtils.formatNumber(rec.defectQty) + ' EA',
+                    rec.reworkQty ? ('리워크: ' + UIUtils.formatNumber(rec.reworkQty) + ' EA') : '',
+                    defectTxt ? ('불량내역: ' + defectTxt) : '',
+                    isPartial ? ('남은 수량: ' + UIUtils.formatNumber(remainingQty) + ' EA') : '',
+                    inspectors ? ('검사자: ' + inspectors) : ''
+                ].filter(Boolean).join('\n'),
+                category: 'paint_insp',
+                priority: isPartial && remainingQty > 0 ? 'normal' : 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintingInspectionModule] 외관 검사 등록 통보 실패:', e);
+        }
+    }
+
     // 검사 데이터 저장 함수
     async function _saveInspection(workId) {
         if (!_canWriteInspection()) {
@@ -13665,6 +13832,12 @@ const PaintingInspectionModule = (function() {
             inspectionStatus: isPartial ? 'partial' : 'completed', // ✓ Case 1: 부분/완료 구분
             isPartial: isPartial, // ✓ Case 1: 부분 검사 플래그
             createdAt: new Date().toISOString()
+        });
+        _notifyPaintInspectionRegistered(savedInspection, work, {
+            isPartial: isPartial,
+            remainingQty: isPartial
+                ? Math.max(0, (work.productionQty || 0) - ((work.inspectedQty || 0) + effectiveInspQty))
+                : 0
         });
 
         // 리워크로 보내기(외관검사 → 리워크 재공 입고)는 UI/기능 삭제됨
