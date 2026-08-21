@@ -16298,13 +16298,19 @@ var PaintMixModule = (function() {
         </div>
         <div class="stat-cards" id="pmixStats" style="margin-bottom:14px;"></div>
         <div class="card">
-            <div class="card-header">
+            <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                 <h4><span class="material-symbols-outlined">format_paint</span> 도장 완료 실적 — 도료사용등록 대상</h4>
                 <span style="font-size:0.78rem;color:var(--text-muted);">미등록: 파란 버튼 / 부분등록: 노란 테두리 / 전체등록 완료: 회색 버튼</span>
-                ${_isAdmin() ? `
-                <button class="btn btn-sm btn-danger" style="margin-left:auto;" onclick="PaintMixModule.removeAllWork()">
-                    <span class="material-symbols-outlined" style="font-size:16px;">visibility_off</span> 전체 제외
-                </button>` : ''}
+                <div style="margin-left:auto;display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                        ? AuthModule.incomingInspNotifyAdminButtonHtml('paint_mix_a', { small: true, label: '도장-A 알림' })
+                          + AuthModule.incomingInspNotifyAdminButtonHtml('paint_mix_b', { small: true, label: '도장-B 알림' })
+                        : ''}
+                    ${_isAdmin() ? `
+                    <button class="btn btn-sm btn-danger" onclick="PaintMixModule.removeAllWork()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">visibility_off</span> 전체 제외
+                    </button>` : ''}
+                </div>
             </div>
             <div class="card-body" style="padding:0;">
                 <div class="data-table-wrapper">

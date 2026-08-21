@@ -25,7 +25,19 @@ const AuthModule = (function () {
     let _rolesCache = null; /* null = 하드코딩 ROLES 사용 */
     let _prodNotifyIds = [];
     let _prodNotifyLoaded = false;
-    let _incomingInspNotify = { injection: [], paint: [], site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+    const INCOMING_INSP_NOTIFY_KEYS = [
+        'injection', 'paint', 'site_return',
+        'site_inbound_a', 'site_inbound_b', 'paint_insp',
+        'missing_inbound_a', 'missing_inbound_b',
+        'laser_inbound', 'paint_out',
+        'paint_mix_a', 'paint_mix_b'
+    ];
+    function _emptyIncomingInspNotify() {
+        const o = {};
+        INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) { o[k] = []; });
+        return o;
+    }
+    let _incomingInspNotify = _emptyIncomingInspNotify();
     let _incomingInspNotifyLoaded = false;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
@@ -1427,6 +1439,8 @@ const AuthModule = (function () {
         if (kind === 'missing_inbound_a') return 'missing_inbound_a';
         if (kind === 'laser_inbound') return 'laser_inbound';
         if (kind === 'paint_out') return 'paint_out';
+        if (kind === 'paint_mix_b') return 'paint_mix_b';
+        if (kind === 'paint_mix_a' || kind === 'paint_mix' || kind === 'paint_mix_missing') return 'paint_mix_a';
         return 'injection';
     }
 
@@ -1441,6 +1455,8 @@ const AuthModule = (function () {
         if (key === 'missing_inbound_a') return '소재 입고 필요 (도장-A)';
         if (key === 'laser_inbound') return '레이져 입고 확인 대기';
         if (key === 'paint_out') return '도료 창고 출고';
+        if (key === 'paint_mix_b') return '도료 사용 미등록 (도장-B)';
+        if (key === 'paint_mix_a') return '도료 사용 미등록 (도장-A)';
         return '사출 수입검사';
     }
 
@@ -1466,6 +1482,10 @@ const AuthModule = (function () {
         if (key === 'paint_out') {
             return '도료 창고에서 출고 완료하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
+        if (key === 'paint_mix_a' || key === 'paint_mix_b') {
+            const line = key === 'paint_mix_b' ? '도장-B' : '도장-A';
+            return line + ' 도장 작업 실적이 등록되면 도료사용등록이 필요한 건으로 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
         return '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
     }
 
@@ -1483,19 +1503,20 @@ const AuthModule = (function () {
         return '';
     }
 
+    function paintMixNotifyKindForLine(line) {
+        const s = String(line || '').trim();
+        if (s === '도장-B' || s === '도장(B)') return 'paint_mix_b';
+        if (s === '도장-A' || s === '도장(A)') return 'paint_mix_a';
+        return '';
+    }
+
     function _snapshotIncomingInspNotify() {
-        return {
-            injection: (_incomingInspNotify.injection || []).slice(),
-            paint: (_incomingInspNotify.paint || []).slice(),
-            site_return: (_incomingInspNotify.site_return || []).slice(),
-            site_inbound_a: (_incomingInspNotify.site_inbound_a || []).slice(),
-            site_inbound_b: (_incomingInspNotify.site_inbound_b || []).slice(),
-            paint_insp: (_incomingInspNotify.paint_insp || []).slice(),
-            missing_inbound_a: (_incomingInspNotify.missing_inbound_a || []).slice(),
-            missing_inbound_b: (_incomingInspNotify.missing_inbound_b || []).slice(),
-            laser_inbound: (_incomingInspNotify.laser_inbound || []).slice(),
-            paint_out: (_incomingInspNotify.paint_out || []).slice()
-        };
+        const src = _incomingInspNotify && typeof _incomingInspNotify === 'object' ? _incomingInspNotify : {};
+        const out = _emptyIncomingInspNotify();
+        INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
+            out[k] = Array.isArray(src[k]) ? src[k].slice() : [];
+        });
+        return out;
     }
 
     function _normalizeIncomingInspIdList(raw) {
@@ -1507,21 +1528,17 @@ const AuthModule = (function () {
     function _normalizeIncomingInspNotify(raw) {
         if (Array.isArray(raw)) {
             const ids = _normalizeIncomingInspIdList(raw);
-            return { injection: ids.slice(), paint: ids.slice(), site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+            const o = _emptyIncomingInspNotify();
+            o.injection = ids.slice();
+            o.paint = ids.slice();
+            return o;
         }
         const src = raw && typeof raw === 'object' ? raw : {};
-        return {
-            injection: _normalizeIncomingInspIdList(src.injection),
-            paint: _normalizeIncomingInspIdList(src.paint),
-            site_return: _normalizeIncomingInspIdList(src.site_return),
-            site_inbound_a: _normalizeIncomingInspIdList(src.site_inbound_a),
-            site_inbound_b: _normalizeIncomingInspIdList(src.site_inbound_b),
-            paint_insp: _normalizeIncomingInspIdList(src.paint_insp),
-            missing_inbound_a: _normalizeIncomingInspIdList(src.missing_inbound_a),
-            missing_inbound_b: _normalizeIncomingInspIdList(src.missing_inbound_b),
-            laser_inbound: _normalizeIncomingInspIdList(src.laser_inbound),
-            paint_out: _normalizeIncomingInspIdList(src.paint_out)
-        };
+        const o = _emptyIncomingInspNotify();
+        INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
+            o[k] = _normalizeIncomingInspIdList(src[k]);
+        });
+        return o;
     }
 
     async function ensureIncomingInspNotifyRecipients(forceReload) {
@@ -1534,7 +1551,7 @@ const AuthModule = (function () {
                 : null;
             _incomingInspNotify = _normalizeIncomingInspNotify(raw);
         } catch (e) {
-            _incomingInspNotify = { injection: [], paint: [], site_return: [], site_inbound_a: [], site_inbound_b: [], paint_insp: [], missing_inbound_a: [], missing_inbound_b: [], laser_inbound: [], paint_out: [] };
+            _incomingInspNotify = _emptyIncomingInspNotify();
         }
         _incomingInspNotifyLoaded = true;
         return _snapshotIncomingInspNotify();
@@ -1593,8 +1610,9 @@ const AuthModule = (function () {
         opts = opts || {};
         const safe = _incomingInspKind(kind);
         const sm = opts.small ? ' btn-sm' : '';
+        const btnLabel = String(opts.label || '알림 수신자');
         return '<button type="button" class="btn btn-outline' + sm + '" onclick="AuthModule.openIncomingInspNotifyModal(\'' + safe + '\')">' +
-            '<span class="material-symbols-outlined"' + (opts.small ? ' style="font-size:16px;"' : '') + '>notifications</span> 알림 수신자</button>';
+            '<span class="material-symbols-outlined"' + (opts.small ? ' style="font-size:16px;"' : '') + '>notifications</span> ' + _esc(btnLabel) + '</button>';
     }
 
     function buildIncomingInspNotifyAdminHtml(kind, checkboxClass, opts) {
@@ -1999,6 +2017,7 @@ const AuthModule = (function () {
         persistIncomingInspNotifyIfAdmin,
         siteInboundNotifyKindForLine,
         missingInboundNotifyKindForLine,
+        paintMixNotifyKindForLine,
     };
 })();
 

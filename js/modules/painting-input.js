@@ -653,6 +653,10 @@ var PaintingInputModule = (function () {
             lots = _scaleLotsToQty(lots, qty);
         }
         if (qty <= 0) return null;
+        if (!opts.isAutoReceived) {
+            const lock = getManualInboundLock(outRec, line, UIUtils.today ? UIUtils.today() : '');
+            if (lock.locked) throw new Error('자동입고5분전');
+        }
         const lockKey = outRec.id
             ? ((isRework ? 'site-in-rw-' : 'site-in-') + String(outRec.id))
             : '';
@@ -1066,7 +1070,7 @@ var PaintingInputModule = (function () {
         const want = _normLine(line || out.paintLine || out.line);
         const lock = getManualInboundLock(out, want, UIUtils.today ? UIUtils.today() : '');
         if (lock.locked) {
-            UIUtils.toast('자동입고 5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
+            UIUtils.toast('자동입고5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
             return null;
         }
         const shipQty = _outShipQty(out);
@@ -1234,7 +1238,7 @@ var PaintingInputModule = (function () {
         const want = _normLine(line || out.paintLine || out.line);
         const lock = getManualInboundLock(out, want, UIUtils.today ? UIUtils.today() : '');
         if (lock.locked) {
-            UIUtils.toast('자동입고 5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
+            UIUtils.toast('자동입고5분전 — 잠시 후 시스템이 입고 처리합니다.', 'warning');
             UIUtils.closeModal();
             return;
         }
@@ -1344,7 +1348,7 @@ var PaintingInputModule = (function () {
         return {
             locked: true,
             autoAt: autoAt,
-            label: '자동입고 5분전',
+            label: '자동입고5분전',
             title: '자동입고(' + autoAt + ') 5분 전부터 수동 입고를 막아 중복 저장을 방지합니다. 잠시 후 시스템이 입고 처리합니다.'
         };
     }
@@ -1918,7 +1922,7 @@ var PaintingInputModule = (function () {
                     <span style="font-size:0.75rem;color:var(--text-muted);">${_esc((recv && recv.receivedBy) || '-')}${isAutoReceived ? ' (자동)' : ''}</span>
                    </div>`
                 : (lock.locked
-                    ? `<span style="font-size:0.78rem;font-weight:800;color:#b45309;white-space:nowrap;" title="${_esc(lock.title || '자동입고 5분전')}">자동입고 5분전</span>`
+                    ? `<span style="font-size:0.78rem;font-weight:800;color:#b45309;white-space:nowrap;" title="${_esc(lock.title || '자동입고5분전')}">자동입고5분전</span>`
                     : (canWrite
                     ? `<div style="display:inline-flex;align-items:center;gap:8px;white-space:nowrap;">
                         <button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:0.78rem;white-space:nowrap;"
@@ -3063,12 +3067,23 @@ var PaintingInputModule = (function () {
         const lots = (opts.lots || []).map(function (l) {
             return { lotNo: String((l && l.lotNo) || '').trim(), qty: Math.max(0, Number(l && l.qty) || 0) };
         }).filter(function (l) { return l.lotNo && l.qty > 0; });
+        const mergedLots = [];
+        const lotIdx = {};
+        lots.forEach(function (l) {
+            const i = lotIdx[l.lotNo];
+            if (i == null) {
+                lotIdx[l.lotNo] = mergedLots.length;
+                mergedLots.push({ lotNo: l.lotNo, qty: l.qty });
+            } else {
+                mergedLots[i].qty += l.qty;
+            }
+        });
         if (!carModel || !partName) throw new Error('차종/사출명이 없습니다.');
-        if (!lots.length) throw new Error('반납할 LOT·수량이 없습니다.');
-        const totalQty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (!mergedLots.length) throw new Error('반납할 LOT·수량이 없습니다.');
+        const totalQty = mergedLots.reduce(function (s, l) { return s + l.qty; }, 0);
         const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
         const isReworkReturn = _shouldReturnToReworkWip(Object.assign({}, opts, {
-            line: line, carModel: carModel, partName: partName, lots: lots
+            line: line, carModel: carModel, partName: partName, lots: mergedLots
         }));
 
         return Storage.add(STORE, {
@@ -3079,8 +3094,8 @@ var PaintingInputModule = (function () {
             carModel: carModel,
             partName: partName,
             color: color,
-            lots: lots,
-            lotNo: lots[0].lotNo,
+            lots: mergedLots,
+            lotNo: mergedLots[0].lotNo,
             quantity: totalQty,
             unit: 'EA',
             source: '현장 반납',
@@ -3099,6 +3114,39 @@ var PaintingInputModule = (function () {
             _notifySiteReturnPending(rec);
             return rec;
         });
+    }
+
+    /** 관리자 — 반납 수량 보정 (LOT 비율은 유지하고 합계만 맞춤) */
+    async function updateSiteReturn(id, patch) {
+        patch = patch || {};
+        const rec = Storage.getById(STORE, id);
+        if (!rec || !rec.isSiteReturn) {
+            UIUtils.toast('반납 이력을 찾을 수 없습니다.', 'error');
+            return null;
+        }
+        if (!_canAdminCorrectInbound() && !_canConfirmInbound(rec.line || rec.paintLine)) {
+            UIUtils.toast('반납 수량을 수정할 권한이 없습니다.', 'warning');
+            return null;
+        }
+        const next = { updatedAt: new Date().toISOString(), updatedBy: _currentActorLabel() };
+        if (patch.quantity != null && patch.quantity !== '') {
+            const qty = Math.max(0, Math.floor(Number(patch.quantity) || 0));
+            if (!(qty > 0)) {
+                UIUtils.toast('반납 수량은 1 이상이어야 합니다.', 'warning');
+                return null;
+            }
+            next.quantity = qty;
+            const curLots = Array.isArray(rec.lots) ? rec.lots : [];
+            next.lots = curLots.length
+                ? _scaleLotsToQty(curLots, qty)
+                : [{ lotNo: String(rec.lotNo || '무표기').trim() || '무표기', qty: qty }];
+            next.lotNo = (next.lots[0] && next.lots[0].lotNo) || rec.lotNo;
+        }
+        if (patch.returnReason != null) next.returnReason = String(patch.returnReason || '').trim();
+        if (patch.note != null) next.note = String(patch.note || '').trim();
+        await Storage.update(STORE, id, next);
+        _refreshInboundViews();
+        return Object.assign({}, rec, next);
     }
 
     /** 사출창고 물류담당자가 아직 확인(입고 처리)하지 않은 반납 목록 */
@@ -3304,6 +3352,7 @@ var PaintingInputModule = (function () {
         deductForWork: deductForWork,
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,
+        updateSiteReturn: updateSiteReturn,
         openReworkInboundReturnModal: openReworkInboundReturnModal,
         submitReworkInboundReturn: submitReworkInboundReturn,
         notifyTodaySiteInbound: notifyTodaySiteInbound,
@@ -3318,6 +3367,7 @@ var PaintingInputModule = (function () {
         findPlansForShipment: findPlansForShipment,
         getPlanQtyForShipment: getPlanQtyForShipment,
         getPlanEndTimeForShipment: getPlanEndTimeForShipment,
+        getManualInboundLock: getManualInboundLock,
         getTodayLinePlanTotal: getTodayLinePlanTotal,
         moveShipmentLine: moveShipmentLine,
         canMoveShipmentLine: _canMoveShipmentLine,

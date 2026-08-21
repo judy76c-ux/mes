@@ -1312,8 +1312,43 @@ const PaintingWorkModule = (function() {
         }
     }
 
-    function render(container) {
-        renderForLine(container, '도장-A');
+    /** 도장 실적 신규 등록 → 해당 라인 도료사용 미등록 수신자에게 쪽지 */
+    function _notifyPaintMixUnregistered(work) {
+        if (!work) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        const kind = (typeof AuthModule.paintMixNotifyKindForLine === 'function')
+            ? AuthModule.paintMixNotifyKindForLine(work.line)
+            : '';
+        if (!kind) return;
+        const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
+            : [];
+        if (!recipients.length) return;
+        const line = String(work.line || '-');
+        const lotsTxt = (Array.isArray(work.lots) && work.lots.length)
+            ? work.lots.map(function (l) { return String((l && l.lotNo) || '').trim(); }).filter(Boolean).join(', ')
+            : String(work.lotNo || '').trim();
+        try {
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '도료 사용 미등록 (' + line + ')',
+                body: [
+                    '도장 작업 실적이 등록되어 도료사용등록이 필요합니다.',
+                    '배합작업 → 도료사용등록에서 확인해 주세요.',
+                    '',
+                    '- ' + line + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
+                        (work.color ? ' / ' + work.color : '') +
+                        ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
+                        (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                        (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
+                ].join('\n'),
+                category: kind,
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintingWork] 도료 사용 미등록 통보 실패:', e);
+        }
     }
 
     function renderForLine(container, line) {
@@ -2520,7 +2555,9 @@ const PaintingWorkModule = (function() {
         return false;
     }
 
-    /** 입고 기록의 LOT별 수량. lots[].qty가 비어 있으면 quantity로 되돌린다. */
+    /** 입고 기록의 LOT별 수량. lots[].qty가 비어 있으면 quantity로 되돌린다.
+     *  같은 LOT이 배열에 두 번 있으면 합치고, lots 합이 헤더 quantity와 어긋나면 quantity에 맞춘다.
+     *  (LOT 복제·중복 입고로 잔량이 부풀어 반납수량이 실제보다 커지는 사고를 막는다) */
     function _inboundRecordLots(r) {
         var recQty = Number((r && r.quantity) || 0);
         var lots = (Array.isArray(r && r.lots) && r.lots.length)
@@ -2534,6 +2571,18 @@ const PaintingWorkModule = (function() {
         if (!lots.length && r && r.lotNo) {
             lots = [{ lotNo: String(r.lotNo).trim(), qty: recQty }];
         }
+        var merged = [];
+        var idx = {};
+        lots.forEach(function (l) {
+            var i = idx[l.lotNo];
+            if (i == null) {
+                idx[l.lotNo] = merged.length;
+                merged.push({ lotNo: l.lotNo, qty: l.qty });
+            } else {
+                merged[i].qty += l.qty;
+            }
+        });
+        lots = merged;
         var sum = lots.reduce(function (s, l) { return s + l.qty; }, 0);
         if (sum <= 0 && recQty > 0 && lots.length === 1) lots[0].qty = recQty;
         else if (sum <= 0 && recQty > 0 && lots.length > 1) {
@@ -2543,6 +2592,14 @@ const PaintingWorkModule = (function() {
             });
         } else if (lots.length === 1 && recQty > lots[0].qty) {
             lots[0].qty = recQty;
+        } else if (recQty > 0 && sum > 0 && sum !== recQty) {
+            var allocated = 0;
+            lots = lots.map(function (l, i) {
+                if (i === lots.length - 1) return { lotNo: l.lotNo, qty: Math.max(0, recQty - allocated) };
+                var q = Math.floor(l.qty * recQty / sum);
+                allocated += q;
+                return { lotNo: l.lotNo, qty: q };
+            }).filter(function (l) { return l.qty > 0; });
         }
         return lots.filter(function (l) { return l.qty > 0; });
     }
@@ -4473,7 +4530,14 @@ const PaintingWorkModule = (function() {
                             (r.returnedBy ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">' + _esc(r.returnedBy) + '</div>' : '') +
                         '</td>' +
                         (pickMode ? '<td style="' + pad + '"></td>' : '') +
-                        (isAdmin ? '<td style="' + pad + '"></td>' : '') +
+                        (isAdmin ? (
+                            '<td style="' + pad + 'text-align:center;">' +
+                                '<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;" ' +
+                                    'onclick="PaintingWorkModule._matHistEdit(\'' + _esc(r.id) + '\')" title="반납 수량 수정">' +
+                                    '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span>' +
+                                '</button>' +
+                            '</td>'
+                        ) : '') +
                     '</tr>';
                 }
                 const u = row.usage;
@@ -4675,6 +4739,29 @@ const PaintingWorkModule = (function() {
                 UIUtils.toast('이력을 찾을 수 없습니다.', 'error');
                 return;
             }
+            if (rec.isSiteReturn) {
+                const openFn = (typeof UIUtils.showChildModal === 'function') ? UIUtils.showChildModal : UIUtils.showModal;
+                openFn(
+                    '반납 수량 수정',
+                    '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:10px;">' +
+                        _esc(rec.carModel || '-') + ' / ' + _esc(rec.partName || '-') +
+                        (rec.color ? ' / ' + _esc(rec.color) : '') +
+                        ' · 현재 ' + _fmt(Number(rec.quantity) || 0) + ' EA' +
+                    '</div>' +
+                    '<input type="hidden" id="pwMatHistEditId" value="' + _esc(id) + '">' +
+                    '<input type="hidden" id="pwMatHistEditKind" value="return">' +
+                    '<div class="form-group"><label class="form-label">반납 수량 (EA) *</label>' +
+                    '<input type="number" class="form-input" id="pwMatHistEditQty" min="1" value="' + (Number(rec.quantity) || 0) + '"></div>' +
+                    (rec.returnStatus === 'confirmed'
+                        ? '<div style="font-size:0.78rem;color:#b45309;margin-top:6px;">이미 사출창고 입고 처리된 반납입니다. 여기 수량을 고치면 현장 이력만 바뀌고, 창고 재고는 따로 맞춰야 합니다.</div>'
+                        : '<div style="font-size:0.78rem;color:var(--text-muted);margin-top:6px;">LOT별 수량은 합계 비율로 다시 맞춥니다.</div>'),
+                    '<button class="btn btn-secondary" onclick="' +
+                        (typeof UIUtils.closeChildModal === 'function' ? 'UIUtils.closeChildModal()' : 'UIUtils.closeModal()') +
+                        '">취소</button>' +
+                    '<button class="btn btn-primary" onclick="PaintingWorkModule._matHistSaveEdit()">저장</button>'
+                );
+                return;
+            }
             const useDay = String(rec.useDate || rec.date || '').slice(0, 10);
             const lotNo = (Array.isArray(rec.lots) && rec.lots[0] && rec.lots[0].lotNo) ? rec.lots[0].lotNo : (rec.lotNo || '');
             const openFn = (typeof UIUtils.showChildModal === 'function') ? UIUtils.showChildModal : UIUtils.showModal;
@@ -4709,11 +4796,36 @@ const PaintingWorkModule = (function() {
                 return;
             }
             const id = ((document.getElementById('pwMatHistEditId') || {}).value || '').trim();
+            const kind = ((document.getElementById('pwMatHistEditKind') || {}).value || '').trim();
             const useDate = ((document.getElementById('pwMatHistEditDate') || {}).value || '').trim();
             const qty = parseInt((document.getElementById('pwMatHistEditQty') || {}).value, 10);
             const lotNo = ((document.getElementById('pwMatHistEditLot') || {}).value || '').trim();
             const note = ((document.getElementById('pwMatHistEditNote') || {}).value || '').trim();
-            if (!id || !useDate || !(qty > 0)) {
+            if (!id) {
+                UIUtils.toast('이력을 찾을 수 없습니다.', 'warning');
+                return;
+            }
+            if (kind === 'return') {
+                if (!(qty > 0)) {
+                    UIUtils.toast('반납 수량은 1 이상이어야 합니다.', 'warning');
+                    return;
+                }
+                if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.updateSiteReturn) {
+                    UIUtils.toast('투입 자재 모듈을 불러올 수 없습니다.', 'error');
+                    return;
+                }
+                try {
+                    const rec = await PaintingInputModule.updateSiteReturn(id, { quantity: qty });
+                    if (!rec) return;
+                    if (typeof UIUtils.closeChildModal === 'function') UIUtils.closeChildModal();
+                    UIUtils.toast('반납 수량을 ' + _fmt(qty) + ' EA로 수정했습니다.', 'success');
+                    _render();
+                } catch (e) {
+                    UIUtils.toast('수정 실패: ' + (e && e.message ? e.message : e), 'error');
+                }
+                return;
+            }
+            if (!useDate || !(qty > 0)) {
                 UIUtils.toast('사용일, 수량은 필수입니다.', 'warning');
                 return;
             }
@@ -5010,12 +5122,17 @@ const PaintingWorkModule = (function() {
                     '아래 <strong>현장 입고 확인</strong>을 눌러 실제로 받은 만큼 확인하면 그중에서 LOT를 선택할 수 있습니다.';
                 var firstPendingId = pending[0] && pending[0].id ? String(pending[0].id) : '';
                 if (firstPendingId && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.confirmSiteInbound) {
-                    actionHtml =
-                        '<button type="button" class="btn btn-sm btn-primary" style="font-size:0.78rem;margin-right:6px;"' +
+                    var inboundLock = (typeof PaintingInputModule.getManualInboundLock === 'function')
+                        ? PaintingInputModule.getManualInboundLock(pending[0], lineWant)
+                        : { locked: false };
+                    actionHtml = (inboundLock && inboundLock.locked)
+                        ? '<span style="font-size:0.78rem;font-weight:800;color:#b45309;margin-right:8px;white-space:nowrap;" title="' +
+                          _pwEsc((inboundLock && inboundLock.title) || '자동입고5분전') + '">자동입고5분전</span>'
+                        : ('<button type="button" class="btn btn-sm btn-primary" style="font-size:0.78rem;margin-right:6px;"' +
                         ' onclick="PaintingInputModule.confirmSiteInbound(\'' + firstPendingId.replace(/'/g, "\\'") + '\',\'' +
                         String(lineWant).replace(/'/g, "\\'") + '\')">' +
                         '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">move_to_inbox</span> 현장 입고 확인' +
-                        '</button>';
+                        '</button>');
                 }
                 actionHtml +=
                     '<button type="button" id="pwLogisticsNotifyBtn" class="btn btn-sm btn-outline" style="font-size:0.78rem;"' +
@@ -7218,6 +7335,9 @@ const PaintingWorkModule = (function() {
                 console.warn('[PaintingWork] 레이저 입고 대기 통보 실패:', eLaserN);
             }
         }
+        try { _notifyPaintMixUnregistered(savedWork || data); } catch (eMixN) {
+            console.warn('[PaintingWork] 도료 사용 미등록 통보 실패:', eMixN);
+        }
         loadAll();
     }
 
@@ -7549,14 +7669,20 @@ const PaintingWorkModule = (function() {
 
             // ① 그날 이 품목으로 현장에 입고된 LOT별 수량 + 최초 입고 일시
             var inbound = {};   // lotNo -> { qty, date }
+            var seenInboundOut = {};
             (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
                 if (!r || String(r.type || '') !== '입고') return;
                 if (String(r.line || r.paintLine || '').replace(/\s/g, '') !== line) return;
                 if (carModel && String(r.carModel || '').trim() !== carModel) return;
                 if (injPart && String(r.partName || '').trim() !== injPart) return;
                 if (_resolveInboundStamp(r).slice(0, 10) !== day) return;
+                var outKey = r.refReworkOutId
+                    ? ('rw:' + String(r.refReworkOutId))
+                    : (r.refOutId ? ('inj:' + String(r.refOutId)) : ('id:' + String(r.id || '')));
+                if (seenInboundOut[outKey]) return;
+                seenInboundOut[outKey] = true;
                 var stamp = _resolveInboundStamp(r);
-                var rows = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo, qty: r.quantity }] : []);
+                var rows = _inboundRecordLots(r);
                 rows.forEach(function (l) {
                     var n = String((l && l.lotNo) || '').trim();
                     if (!n) return;
@@ -7644,7 +7770,8 @@ const PaintingWorkModule = (function() {
                 '<td style="padding:7px 8px;text-align:right;font-weight:700;color:#b45309;white-space:nowrap;">' + UIUtils.formatNumber(l.remaining) + '</td>' +
                 '<td style="padding:7px 8px;white-space:nowrap;">' +
                 '<input type="number" class="pw-wr-lot-qty" data-lot="' + _pwEsc(l.lotNo || '') + '" data-max="' + l.remaining + '"' +
-                ' value="' + l.remaining + '" min="0" max="' + l.remaining + '"' +
+                ' value="0" min="0" max="' + l.remaining + '"' +
+                ' placeholder="' + UIUtils.formatNumber(l.remaining) + '"' +
                 ' onchange="PaintingWorkModule._recalcWorkReturnTotal()"' +
                 ' style="width:100px;text-align:right;font-weight:700;padding:5px 8px;border:1px solid var(--border-color);border-radius:6px;">' +
                 '</td></tr>';
@@ -7659,7 +7786,7 @@ const PaintingWorkModule = (function() {
             '입고 <strong>' + UIUtils.formatNumber(r.issued) + '</strong> − 투입 <strong>' + UIUtils.formatNumber(r.used) + '</strong>' +
             (r.returned > 0 ? ' − 기반납 <strong>' + UIUtils.formatNumber(r.returned) + '</strong>' : '') +
             ' = <strong style="color:#b45309;">반납 가능 ' + UIUtils.formatNumber(r.returnable) + ' EA</strong></div></div>' +
-            '<div style="margin-top:9px;font-size:0.78rem;color:var(--text-muted);">LOT별 반납 대상 — 입고량·사용량을 비교해 실물 수량이 다르면 반납수량을 직접 수정하세요.</div>' +
+            '<div style="margin-top:9px;font-size:0.78rem;color:var(--text-muted);">LOT별 반납 대상 — 기본값은 0입니다. 현장에 실제로 돌려보낸 수량만 입력하세요. 잔량을 그대로 넣으면 장부 잔량 전부가 반납됩니다.</div>' +
             '<div style="margin-top:5px;overflow-x:auto;border:1px solid var(--border-color);border-radius:8px;">' +
             '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +
             '<thead><tr style="background:var(--bg-secondary);">' +
@@ -7680,7 +7807,7 @@ const PaintingWorkModule = (function() {
             '<div style="margin-top:12px;padding:9px 11px;background:var(--bg-secondary);border-radius:8px;' +
             'display:flex;justify-content:space-between;align-items:center;font-size:0.86rem;">' +
             '<span>반납 합계</span>' +
-            '<strong id="pwWrTotal" style="font-size:1.05rem;color:#7c2d12;">' + UIUtils.formatNumber(r.returnable) + ' EA</strong></div>' +
+            '<strong id="pwWrTotal" style="font-size:1.05rem;color:#7c2d12;">0 EA</strong></div>' +
             '<div class="form-group" style="margin-top:10px;">' +
             '<label class="form-label">반납 사유 <span style="color:var(--accent-red)">*</span></label>' +
             '<input type="text" class="form-input" id="pwWrReason" placeholder="사유 입력">' +
@@ -8603,12 +8730,18 @@ const PaintingWorkModule = (function() {
 
         var receivedQtyByLot = {};
         var receivedPartByLot = {};
+        var seenInboundOut = {};
         (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
             if (String(r.type || '') !== '입고') return;
             if (_inboundLineOf(r) !== line) return;
             if (String(r.carModel || '').trim() !== carModel) return;
             if (!_rowPartOk(r.partName)) return;
             if (!_inboundDayHits(r, day)) return;
+            var outKey = r.refReworkOutId
+                ? ('rw:' + String(r.refReworkOutId))
+                : (r.refOutId ? ('inj:' + String(r.refOutId)) : ('id:' + String(r.id || '')));
+            if (seenInboundOut[outKey]) return;
+            seenInboundOut[outKey] = true;
             var rPart = String(r.partName || '').trim();
             _inboundRecordLots(r).forEach(function (l) {
                 var lotNo = String((l && l.lotNo) || '').trim();
@@ -10284,7 +10417,6 @@ const PaintingWorkModule = (function() {
     }
 
     return {
-        render,
         renderForLine,
         search,
         setLine,
