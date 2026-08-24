@@ -8,6 +8,66 @@ var InjIncomingStdModule = (function () {
 
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 
+    /** 양산품/양산, A/S품/A/S 등 저장 표기를 양산·A/S·개발로 통일 */
+    function _stdNormItemType(t) {
+        const s = String(t || '').trim();
+        if (!s) return '';
+        const n = s.replace(/품$/u, '').replace(/용$/u, '').trim();
+        if (n === '양산') return '양산';
+        if (n === 'A/S' || n === 'AS' || /^A\/?S$/i.test(n)) return 'A/S';
+        if (n === '개발') return '개발';
+        if (/양산/.test(s)) return '양산';
+        if (/A\/?S/i.test(s)) return 'A/S';
+        if (/개발/.test(s)) return '개발';
+        return '';
+    }
+
+    function _stdItemTypeRank(t) {
+        const n = _stdNormItemType(t);
+        if (n === '양산') return 0;
+        if (n === 'A/S') return 1;
+        if (n === '개발') return 2;
+        return 3;
+    }
+
+    function _stdItemTypeBadge(t) {
+        const n = _stdNormItemType(t);
+        if (n === '양산') {
+            return '<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(5,150,105,.12);color:#059669;border:1px solid #6ee7b7;white-space:nowrap;">양산</span>';
+        }
+        if (n === 'A/S') {
+            return '<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(217,119,6,.12);color:#d97706;border:1px solid #fcd34d;white-space:nowrap;">A/S</span>';
+        }
+        if (n === '개발') {
+            return '<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;border:1px solid #c4b5fd;white-space:nowrap;">개발</span>';
+        }
+        return '-';
+    }
+
+    function _stdEffectiveItemType(mat, productsById, products) {
+        const own = _stdNormItemType(mat && mat.itemType);
+        if (own) return own;
+        const ids = (mat && Array.isArray(mat.productIds)) ? mat.productIds : [];
+        for (let i = 0; i < ids.length; i++) {
+            const p = productsById && productsById[ids[i]];
+            const fromId = _stdNormItemType(p && p.itemType);
+            if (fromId) return fromId;
+        }
+        const names = [mat && mat.mfgProductName, mat && mat.mfgProductName2]
+            .map(s => String(s || '').trim()).filter(Boolean);
+        const car = String((mat && mat.carModel) || '').trim();
+        if (names.length && products && products.length) {
+            for (let i = 0; i < products.length; i++) {
+                const p = products[i];
+                if (car && String(p.carModel || '').trim() !== car) continue;
+                if (!names.includes(String(p.partName || '').trim())) continue;
+                const fromName = _stdNormItemType(p.itemType);
+                if (fromName) return fromName;
+            }
+        }
+        return '';
+    }
+
     function _sealForName(name, existingSeal) {
         if (existingSeal && String(existingSeal).trim()) return existingSeal;
         if (!name) return '';
@@ -122,23 +182,41 @@ var InjIncomingStdModule = (function () {
         const regFilter  = (document.getElementById('stdFilterReg')||{}).value||'';
         const kw         = ((document.getElementById('stdFilterKeyword')||{}).value||'').toLowerCase();
 
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productsById = {};
+        products.forEach(p => { if (p && p.id) productsById[p.id] = p; });
+
         const allProds = (Storage.getAll(PROD_ST)||[])
             .filter(p=>p.carModel && p.injPartName)
-            .map(p=>({...p, partName:p.injPartName, color:p.injColor||''}));
+            .map(p=>({
+                ...p,
+                partName: p.injPartName,
+                color: p.injColor||'',
+                _itemType: _stdEffectiveItemType(p, productsById, products)
+            }));
 
         const allStds = Storage.getAll(STORE)||[];
         const stdMap  = {};
         allStds.forEach(s=>{stdMap[s.productId]=s;});
 
+        const typeNorm = _stdNormItemType(typeFilter);
+
         let rows = allProds.filter(p=>{
             if (carFilter  && p.carModel!==carFilter) return false;
-            if (typeFilter && (p.itemType||'')!==typeFilter) return false;
+            if (typeNorm && p._itemType !== typeNorm) return false;
             if (kw && !(p.partName||'').toLowerCase().includes(kw) && !(p.carModel||'').toLowerCase().includes(kw)) return false;
             const has=!!stdMap[p.id];
             if (regFilter==='등록' && !has) return false;
             if (regFilter==='미등록' && has) return false;
             return true;
         });
+
+        rows.sort((a, b) =>
+            _stdItemTypeRank(a._itemType) - _stdItemTypeRank(b._itemType) ||
+            String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
+            String(a.partName || '').localeCompare(String(b.partName || ''), 'ko') ||
+            String(a.color || '').localeCompare(String(b.color || ''), 'ko')
+        );
 
         const totalReg=rows.filter(p=>stdMap[p.id]).length;
         const totalUnreg=rows.filter(p=>!stdMap[p.id]).length;
@@ -152,22 +230,20 @@ var InjIncomingStdModule = (function () {
         if(!tbody) return;
         if(!rows.length){tbody.innerHTML=`<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text-muted);">해당하는 품목이 없습니다.</td></tr>`;return;}
 
-        const IC={'양산품':'#059669','A/S품':'#d97706','개발품':'#7c3aed'};
         tbody.innerHTML=rows.map((p,i)=>{
             const std=stdMap[p.id],has=!!std;
-            const it=p.itemType||'',itC=IC[it]||'#6b7280';
-            const itB=it?`<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:${itC}22;color:${itC};border:1px solid ${itC}44;">${it}</span>`:'-';
+            const itB=_stdItemTypeBadge(p._itemType);
             const regB=has
                 ?`<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:#dcfce7;color:#16a34a;border:1px solid #86efac;">✓ 등록</span>`
                 :`<span style="font-size:.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:#fef9c3;color:#d97706;border:1px solid #fde047;">미등록</span>`;
             return `<tr>
                 <td>${i+1}</td>
-                <td><strong>${_esc(p.carModel)}</strong></td>
-                <td>${_esc(p.partName)}</td>
-                <td>${_esc(p.color||'-')}</td>
-                <td style="text-align:center;">${itB}</td>
+                <td style="white-space:nowrap;"><strong>${_esc(p.carModel)}</strong></td>
+                <td style="white-space:nowrap;">${_esc(p.partName)}</td>
+                <td style="white-space:nowrap;">${_esc(p.color||'-')}</td>
+                <td style="text-align:center;white-space:nowrap;">${itB}</td>
                 <td style="text-align:center;">${regB}</td>
-                <td style="font-family:monospace;font-size:.8rem;">${has?_esc(std.docNo||'-'):'-'}</td>
+                <td style="white-space:nowrap;font-family:monospace;font-size:.8rem;">${has?_esc(std.docNo||'-'):'-'}</td>
                 <td style="text-align:center;">${has?_esc(std.revNo||'00'):'-'}</td>
                 <td>${has?_esc(std.createdDate||'-'):'-'}</td>
                 <td style="text-align:center;white-space:nowrap;">
@@ -192,13 +268,13 @@ var InjIncomingStdModule = (function () {
         if (!std) { UIUtils.toast('기준서를 찾을 수 없습니다.', 'error'); return; }
 
         // 주요검사 Point 읽기 전용
-        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr>
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.item||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;">${_esc(pt.standard||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.method||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.sample||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.management||'')}</td>
+        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr style="${_stdPtRowHeightStyle(pt)}">
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;vertical-align:top;">${_esc(_stdPtNoDisplay(pt,i))}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;vertical-align:top;white-space:nowrap;">${_esc(pt.item||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;vertical-align:top;">${_esc(pt.standard||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;vertical-align:top;">${_esc(pt.method||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;vertical-align:top;">${_esc(pt.sample||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;vertical-align:top;">${_esc(pt.management||'')}</td>
         </tr>`).join('');
 
         // 개정이력 읽기 전용
@@ -221,6 +297,12 @@ var InjIncomingStdModule = (function () {
             </div>`).join('')
             : `<div style="display:flex;align-items:center;justify-content:center;min-height:120px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
 
+        const _layout = _stdReadLayout(std);
+        const _ptColWidths = _stdScale6ColWidths(_layout.ptColWidths);
+        const _splitLeftWidth = _layout.splitLeftWidth;
+        const _bottomLeftWidth = _layout.bottomLeftWidth;
+        const _revDateWidth = _layout.revDateWidth;
+
         UIUtils.showModal('수입검사 기준서 보기', `
         <style>
             #stdViewDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
@@ -230,6 +312,8 @@ var InjIncomingStdModule = (function () {
             #stdViewDoc .dlb { background:#f0f0f0; font-weight:700; text-align:center; white-space:nowrap; }
             #stdViewDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:5px; font-size:12px; }
             #stdViewDoc .dtitle { font-size:20px; font-weight:900; text-align:center; letter-spacing:3px; }
+            #stdViewDoc .std-corrective-stack { height:100%; }
+            #stdViewDoc .std-corrective-body { white-space:pre-wrap; }
         </style>
         <div id="stdViewDoc">
             <!-- 헤더 -->
@@ -252,23 +336,24 @@ var InjIncomingStdModule = (function () {
                 <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
             </table>
             <!-- 이미지 + 검사포인트 -->
-            <table style="margin-top:0;">
-                <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+            <table style="margin-top:0;table-layout:fixed;width:100%;">
+                <colgroup><col style="width:${_esc(_splitLeftWidth)}"><col></colgroup>
                 <tr>
-                    <td style="vertical-align:top;padding:0;">
+                    <td style="width:${_esc(_splitLeftWidth)};vertical-align:top;padding:0;">
                         <div class="dsec">외관 / 치수포인트</div>
                         <div style="padding:6px;display:grid;grid-template-columns:${imgs.length>1?'1fr 1fr':'1fr'};gap:4px;">${imgHtml}</div>
                     </td>
                     <td style="vertical-align:top;padding:0;">
                         <div class="dsec">주요검사 Point</div>
-                        <table style="font-size:10px;">
+                        <table style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
+                            <colgroup>${_ptColWidths.map(w => `<col style="width:${_esc(w)}">`).join('')}</colgroup>
                             <thead><tr>
-                                <td class="dth" style="width:24px;">No</td>
-                                <td class="dth" style="width:65px;">항 목</td>
+                                <td class="dth" style="white-space:nowrap;">No</td>
+                                <td class="dth" style="white-space:nowrap;">항 목</td>
                                 <td class="dth">기 준</td>
-                                <td class="dth" style="width:50px;">확인방법</td>
-                                <td class="dth" style="width:65px;">시 료</td>
-                                <td class="dth" style="width:70px;">관리방안</td>
+                                <td class="dth" style="white-space:nowrap;">확인방법</td>
+                                <td class="dth" style="white-space:nowrap;">시 료</td>
+                                <td class="dth" style="white-space:nowrap;">관리방안</td>
                             </tr></thead>
                             <tbody>${ptRows}</tbody>
                         </table>
@@ -276,37 +361,32 @@ var InjIncomingStdModule = (function () {
                 </tr>
             </table>
             <!-- 검사순서 / 조치사항 -->
-            <table style="margin-top:0;width:100%;">
-                <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+            <table style="margin-top:0;width:100%;table-layout:fixed;">
+                <colgroup><col style="width:${_esc(_bottomLeftWidth)}"><col></colgroup>
                 <tr>
                     <td style="vertical-align:top;padding:0;">
                         <div class="dsec">검 사 순 서</div>
-                        <div style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
+                        <div style="padding:6px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
                     </td>
                     <td style="vertical-align:top;padding:0;height:1px;">
-                        <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                            <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
-                            <tr>
-                                <td colspan="5" class="dsec">조 치 사 항</td>
-                            </tr>
-                            <tr>
-                                <td colspan="5" style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;vertical-align:top;">${_esc(std.corrective||'')}</td>
-                            </tr>
+                        ${_stdRightStackHtml('dsec', _esc(std.corrective||''), `
+                        <table style="font-size:10px;width:100%;border-collapse:collapse;table-layout:fixed;flex:0 0 auto;">
+                            ${_stdRevColgroupHtml(_revDateWidth, false)}
                             <tr style="height:24px;">
                                 <td class="dlb" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
-                                <td class="dth">NO</td>
-                                <td class="dth">개정일자</td>
+                                <td class="dth" style="white-space:nowrap;">NO</td>
+                                <td class="dth" style="white-space:nowrap;">개정일자</td>
                                 <td class="dth">개정사유</td>
-                                <td class="dth">확 인</td>
+                                <td class="dth" style="white-space:nowrap;">확 인</td>
                             </tr>
                             ${revRows}
-                        </table>
+                        </table>`)}
                     </td>
                 </tr>
                 <tr>
                     <td colspan="2" style="border:none;padding:3px 0 0 0;">
                         <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;">
-                            <span style="color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></span>
+                            <span style="color:#555;">${_stdDocNoEditHtml(std)}</span>
                             <span>(주)케이씨케미칼&nbsp;&nbsp;A4(297×210)</span>
                         </div>
                     </td>
@@ -321,6 +401,7 @@ var InjIncomingStdModule = (function () {
             <button class="btn btn-primary" onclick="UIUtils.closeModal();InjIncomingStdModule.openEditForm('${id}')">
                 <span class="material-symbols-outlined">edit</span> 편집
             </button>
+            ${_stdCanWrite() ? `<button class="btn btn-danger" onclick="InjIncomingStdModule.deleteStd('${id}')"><span class="material-symbols-outlined">delete</span> 삭제</button>` : ''}
         `, 'xl');
     }
 
@@ -332,13 +413,13 @@ var InjIncomingStdModule = (function () {
         const old = document.getElementById('_injStdViewOv');
         if (old) old.remove();
 
-        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr>
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.item||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;">${_esc(pt.standard||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.method||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;">${_esc(pt.sample||'')}</td>
-            <td style="padding:4px;border:1px solid #bbb;font-size:10px;">${_esc(pt.management||'')}</td>
+        const ptRows = (std.checkPoints||[]).map((pt,i) => `<tr style="${_stdPtRowHeightStyle(pt)}">
+            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;vertical-align:top;">${_esc(_stdPtNoDisplay(pt,i))}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;vertical-align:top;white-space:nowrap;">${_esc(pt.item||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;white-space:pre-wrap;vertical-align:top;">${_esc(pt.standard||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;vertical-align:top;">${_esc(pt.method||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;text-align:center;vertical-align:top;">${_esc(pt.sample||'')}</td>
+            <td style="padding:4px;border:1px solid #bbb;font-size:10px;vertical-align:top;">${_esc(pt.management||'')}</td>
         </tr>`).join('');
 
         const _DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
@@ -361,6 +442,12 @@ var InjIncomingStdModule = (function () {
             </div>`).join('')
             : `<div style="display:flex;align-items:center;justify-content:center;min-height:120px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
 
+        const _ovLayout = _stdReadLayout(std);
+        const _ovPtCols = _stdScale6ColWidths(_ovLayout.ptColWidths);
+        const _ovSplitLeft = _ovLayout.splitLeftWidth;
+        const _ovBottomLeft = _ovLayout.bottomLeftWidth;
+        const _ovRevDate = _ovLayout.revDateWidth;
+
         const ov = document.createElement('div');
         ov.id = '_injStdViewOv';
         ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:10000;display:flex;flex-direction:column;overflow:auto;padding:16px;';
@@ -375,6 +462,7 @@ var InjIncomingStdModule = (function () {
                     <button class="btn btn-outline btn-sm" onclick="InjIncomingStdModule.printStd('${id}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">print</span> 출력
                     </button>
+                    ${_stdCanWrite() ? `<button class="btn btn-danger btn-sm" onclick="InjIncomingStdModule.deleteStd('${id}')"><span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">delete</span> 삭제</button>` : ''}
                     <button class="btn btn-secondary btn-sm" onclick="document.getElementById('_injStdViewOv').remove()">✕ 닫기</button>
                 </div>
             </div>
@@ -387,6 +475,8 @@ var InjIncomingStdModule = (function () {
                     #_stdOvDoc .dlb { background:#f0f0f0; font-weight:700; text-align:center; white-space:nowrap; }
                     #_stdOvDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:5px; font-size:12px; }
                     #_stdOvDoc .dtitle { font-size:20px; font-weight:900; text-align:center; letter-spacing:3px; }
+                    #_stdOvDoc .std-corrective-stack { height:100%; }
+                    #_stdOvDoc .std-corrective-body { white-space:pre-wrap; }
                 </style>
                 <div id="_stdOvDoc">
                     <table>
@@ -407,60 +497,56 @@ var InjIncomingStdModule = (function () {
                         <tr style="height:20px;"><td class="dlb">차 종</td><td style="text-align:center;font-weight:700;">${_esc(std.carModel||'')}</td></tr>
                         <tr style="height:20px;"><td class="dlb">품 명</td><td style="text-align:center;font-weight:700;color:#1d4ed8;">${_esc(std.partName||'')}</td></tr>
                     </table>
-                    <table style="margin-top:0;">
-                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                    <table style="margin-top:0;table-layout:fixed;width:100%;">
+                        <colgroup><col style="width:${_esc(_ovSplitLeft)}"><col></colgroup>
                         <tr>
-                            <td style="vertical-align:top;padding:0;">
+                            <td style="width:${_esc(_ovSplitLeft)};vertical-align:top;padding:0;">
                                 <div class="dsec">외관 / 치수포인트</div>
                                 <div style="padding:6px;display:grid;grid-template-columns:${imgs.length>1?'1fr 1fr':'1fr'};gap:4px;">${imgHtml}</div>
                             </td>
                             <td style="vertical-align:top;padding:0;">
                                 <div class="dsec">주요검사 Point</div>
-                                <table style="font-size:10px;">
+                                <table style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
+                                    <colgroup>${_ovPtCols.map(w => `<col style="width:${_esc(w)}">`).join('')}</colgroup>
                                     <thead><tr>
-                                        <td class="dth" style="width:24px;">No</td>
-                                        <td class="dth" style="width:65px;">항 목</td>
+                                        <td class="dth" style="white-space:nowrap;">No</td>
+                                        <td class="dth" style="white-space:nowrap;">항 목</td>
                                         <td class="dth">기 준</td>
-                                        <td class="dth" style="width:50px;">확인방법</td>
-                                        <td class="dth" style="width:65px;">시 료</td>
-                                        <td class="dth" style="width:70px;">관리방안</td>
+                                        <td class="dth" style="white-space:nowrap;">확인방법</td>
+                                        <td class="dth" style="white-space:nowrap;">시 료</td>
+                                        <td class="dth" style="white-space:nowrap;">관리방안</td>
                                     </tr></thead>
                                     <tbody>${ptRows}</tbody>
                                 </table>
                             </td>
                         </tr>
                     </table>
-                    <table style="margin-top:0;width:100%;">
-                        <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+                    <table style="margin-top:0;width:100%;table-layout:fixed;">
+                        <colgroup><col style="width:${_esc(_ovBottomLeft)}"><col></colgroup>
                         <tr>
                             <td style="vertical-align:top;padding:0;">
                                 <div class="dsec">검 사 순 서</div>
-                                <div style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
+                                <div style="padding:6px;white-space:pre-wrap;font-size:11px;line-height:1.8;">${_esc(std.procedure||'')}</div>
                             </td>
                             <td style="vertical-align:top;padding:0;height:1px;">
-                                <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
-                                    <tr>
-                                        <td colspan="5" class="dsec">조 치 사 항</td>
-                                    </tr>
-                                    <tr>
-                                        <td colspan="5" style="padding:8px;white-space:pre-wrap;font-size:11px;line-height:1.8;vertical-align:top;">${_esc(std.corrective||'')}</td>
-                                    </tr>
+                                ${_stdRightStackHtml('dsec', _esc(std.corrective||''), `
+                                <table style="font-size:10px;width:100%;border-collapse:collapse;table-layout:fixed;flex:0 0 auto;">
+                                    ${_stdRevColgroupHtml(_ovRevDate, false)}
                                     <tr style="height:24px;">
                                         <td class="dlb" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
-                                        <td class="dth">NO</td>
-                                        <td class="dth">개정일자</td>
+                                        <td class="dth" style="white-space:nowrap;">NO</td>
+                                        <td class="dth" style="white-space:nowrap;">개정일자</td>
                                         <td class="dth">개정사유</td>
-                                        <td class="dth">확 인</td>
+                                        <td class="dth" style="white-space:nowrap;">확 인</td>
                                     </tr>
                                     ${revRows}
-                                </table>
+                                </table>`)}
                             </td>
                         </tr>
                         <tr>
                             <td colspan="2" style="border:none;padding:3px 0 0 0;">
                                 <div style="display:flex;justify-content:space-between;font-size:9px;color:#888;">
-                                    <span style="color:#555;">문서번호 : <strong>${_esc(std.docNo||'')}</strong></span>
+                                    <span style="color:#555;">${_stdDocNoEditHtml(std)}</span>
                                     <span>(주)케이씨케미칼&nbsp;&nbsp;A4(297×210)</span>
                                 </div>
                             </td>
@@ -482,47 +568,152 @@ var InjIncomingStdModule = (function () {
         {},{},{},{},{}
     ];
 
+    function _stdPtNoDisplay(pt, i) {
+        const n = pt && pt.no != null ? String(pt.no).trim() : '';
+        return n || String(i + 1);
+    }
+
+    function _stdCheckRowHtml(pt, i) {
+        pt = pt || {};
+        const no = (pt.no != null && String(pt.no).trim() !== '') ? String(pt.no) : (i == null ? '' : String(i + 1));
+        const rowH = pt.rowHeight ? String(pt.rowHeight).trim() : '';
+        const hStyle = rowH ? `height:${_esc(rowH)};` : '';
+        const stdMin = rowH ? `min-height:${_esc(rowH)};` : 'min-height:1.5em;';
+        return `<tr class="std-pt-row" style="${hStyle}">
+            <td style="padding:2px;border:1px solid #bbb;text-align:center;white-space:nowrap;vertical-align:top;">
+                <input class="std-pt-no" type="text" value="${_esc(no)}"
+                    style="width:100%;border:none;background:transparent;font-size:10px;text-align:center;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;vertical-align:top;"><input class="std-pt-item" type="text" value="${_esc(pt.item||'')}"
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
+            <td style="padding:4px 2px;border:1px solid #bbb;vertical-align:top;"><div class="std-pt-std" contenteditable="true"
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;${stdMin}">${_esc(pt.standard||'')}</div></td>
+            <td style="padding:2px;border:1px solid #bbb;vertical-align:top;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;vertical-align:top;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;vertical-align:top;"><input class="std-pt-mgmt" type="text" value="${_esc(pt.management||'')}"
+                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
+            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;vertical-align:top;">
+                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
+                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
+                <button type="button" onclick="InjIncomingStdModule._removeCheckRow(this)"
+                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
+            </td></tr>
+            <tr class="std-pt-row-sizer">
+                <td colspan="7" class="std-pt-row-handle" title="드래그해서 행 높이 조절"
+                    onmousedown="InjIncomingStdModule._stdStartPtRowResize(event)"></td>
+            </tr>`;
+    }
+
+    function _stdPtRowHeightStyle(pt) {
+        const h = pt && pt.rowHeight ? String(pt.rowHeight).trim() : '';
+        return h ? `height:${_esc(h)};` : '';
+    }
+
+    const _STD_REV_DATE_W = '88px';
+    const _STD_PT_COL_DEFAULTS = ['6%', '14%', '40%', '12%', '10%', '10%', '8%'];
+
+    function _stdScale6ColWidths(saved7) {
+        const fallback = ['7%', '16%', '44%', '13%', '10%', '10%'];
+        if (!Array.isArray(saved7) || saved7.length < 6) return fallback;
+        const nums = saved7.slice(0, 6).map(w => parseFloat(w) || 0);
+        const sum = nums.reduce((a, b) => a + b, 0);
+        if (sum <= 0) return fallback;
+        return nums.map(n => (n / sum * 100).toFixed(2) + '%');
+    }
+
+    function _stdReadLayout(std) {
+        const L = (std && std.layout) || {};
+        return {
+            ptColWidths: _STD_PT_COL_DEFAULTS.map((def, i) => (L.ptColWidths && L.ptColWidths[i]) || def),
+            splitLeftWidth: L.splitLeftWidth || '50%',
+            splitHeight: L.splitHeight || '',
+            bottomLeftWidth: L.bottomLeftWidth || '50%',
+            revDateWidth: L.revDateWidth || _STD_REV_DATE_W
+        };
+    }
+
+    function _stdRevColgroupHtml(dateWidth, forEdit) {
+        const dw = dateWidth || _STD_REV_DATE_W;
+        return `<colgroup>
+            <col style="width:20px">
+            <col style="width:28px">
+            <col${forEdit ? ' id="stdRevDateCol"' : ''} style="width:${_esc(dw)}">
+            <col>
+            <col style="width:72px">
+            ${forEdit ? '<col style="width:44px">' : ''}
+        </colgroup>`;
+    }
+
+    /** 조치사항(남은 높이 채움) + 개정내용 표를 편집/보기/출력에서 같은 비율로 쌓는다 */
+    function _stdRightStackHtml(headerClass, correctiveInner, revTableHtml) {
+        return `<div class="std-corrective-stack" style="display:flex;flex-direction:column;height:100%;">
+            <div style="flex:1 1 auto;min-height:0;display:flex;flex-direction:column;">
+                <div class="${headerClass}" style="flex:0 0 auto;border:none;border-bottom:1px solid #888;">조 치 사 항</div>
+                <div class="std-corrective-body" style="flex:1 1 auto;padding:6px;min-height:0;font-size:11px;line-height:1.8;font-family:'Malgun Gothic','맑은 고딕',sans-serif;">${correctiveInner}</div>
+            </div>
+            ${revTableHtml}
+        </div>`;
+    }
+
+    function _stdStartWidthPx(el, tableWidth, fallback) {
+        const w = (el && el.style && el.style.width) || '';
+        const n = parseFloat(w);
+        if (!n) return fallback;
+        if (String(w).indexOf('%') >= 0) return (n / 100) * (tableWidth || 1);
+        return n;
+    }
+
+    function _stdBindDocDrag(onMove) {
+        const prevSel = document.body.style.userSelect;
+        document.body.style.userSelect = 'none';
+        function move(ev) { onMove(ev); ev.preventDefault(); }
+        function up() {
+            document.body.style.userSelect = prevSel;
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', up);
+        }
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', up);
+    }
+
     function _openForm(std, prod) {
         const isEdit = !!std;
-        const g = k => std ? (std[k]||'') : (prod ? (prod[k]||prod['injPartName']||prod['injColor']||'') : '');
 
-        // 필드값 헬퍼
-        const fv = (field, fallback='') => _esc(std ? (std[field]||fallback) : fallback);
-
-        // 제품 select — 차종/사출품명 2단계 필터
         const allMats = (Storage.getAll(PROD_ST)||[]).filter(p=>p.carModel&&p.injPartName);
-        const selectedMat = std && std.productId ? allMats.find(p=>p.id===std.productId) : null;
-        const selCarModel = selectedMat ? selectedMat.carModel : '';
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productsById = {};
+        products.forEach(p => { if (p && p.id) productsById[p.id] = p; });
+        const selectedMat = (std && std.productId ? allMats.find(p=>p.id===std.productId) : null)
+            || (prod && prod.id ? allMats.find(p=>p.id===prod.id) || prod : null)
+            || null;
+        const selCarModel = selectedMat ? (selectedMat.carModel || '') : '';
+        const selProdId = selectedMat ? selectedMat.id : '';
+        const selectedType = selectedMat ? _stdEffectiveItemType(selectedMat, productsById, products) : '';
+
+        const fv = (field, fallback='') => {
+            if (std && std[field] != null && String(std[field]) !== '') return _esc(std[field]);
+            if (selectedMat) {
+                if (field === 'partName') return _esc(selectedMat.injPartName || selectedMat.partName || fallback);
+                if (field === 'carModel') return _esc(selectedMat.carModel || fallback);
+                if (field === 'itemType') return _esc(selectedType || fallback);
+            }
+            return _esc(fallback);
+        };
+
         const carList = [...new Set(allMats.map(p=>p.carModel))].sort();
         const carOpts = carList.map(c=>`<option value="${_esc(c)}" ${selCarModel===c?'selected':''}>${_esc(c)}</option>`).join('');
         const partMats = selCarModel ? allMats.filter(p=>p.carModel===selCarModel) : [];
         const prodSel = partMats.map(p=>`<option value="${p.id}"
-            ${std&&std.productId===p.id?'selected':''}
+            ${selProdId===p.id?'selected':''}
             data-car="${_esc(p.carModel)}" data-part="${_esc(p.injPartName)}"
-            data-color="${_esc(p.injColor||'')}" data-type="${_esc(p.itemType||'')}">
+            data-color="${_esc(p.injColor||'')}" data-type="${_esc(_stdEffectiveItemType(p, productsById, products))}">
             ${_esc(p.injPartName)}${p.injColor?' / '+_esc(p.injColor):''}
         </option>`).join('');
 
         // 검사 항목 행
         const pts = std ? (std.checkPoints||[]) : DEFAULT_POINTS;
-        const ptRows = pts.map((pt,i)=>`<tr>
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;">${i+1}</td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text" value="${_esc(pt.item||'')}"
-                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
-            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
-                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;">${_esc(pt.standard||'')}</div></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text" value="${_esc(pt.method||'')}"
-                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text" value="${_esc(pt.sample||'')}"
-                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text" value="${_esc(pt.management||'')}"
-                style="width:100%;border:none;background:transparent;font-size:10px;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
-                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
-                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
-                <button type="button" onclick="this.closest('tr').remove()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
-            </td></tr>`).join('');
+        const ptRows = pts.map((pt,i)=>_stdCheckRowHtml(pt, i)).join('');
 
         // 개정이력 행
         const _rawRevs = std ? (std.revisions||[]).filter(r=>!!(r.no||r.reason)) : [];
@@ -553,6 +744,13 @@ var InjIncomingStdModule = (function () {
         // 이미지 목록 초기화 (기존 string 포맷도 정규화)
         _formImages = (std ? (std.images||[]) : []).map(_normImg);
 
+        const _layout = _stdReadLayout(std);
+        const _ptColWidths = _layout.ptColWidths;
+        const _splitLeftWidth = _layout.splitLeftWidth;
+        const _splitHeightStyle = _layout.splitHeight ? `height:${_esc(_layout.splitHeight)};` : '';
+        const _bottomLeftWidth = _layout.bottomLeftWidth;
+        const _revDateWidth = _layout.revDateWidth;
+
         /* ── 인라인 CSS (문서 스타일) ── */
         const docStyle = `
             <style>
@@ -566,6 +764,29 @@ var InjIncomingStdModule = (function () {
             #stdDoc .doc-input { border:none; background:transparent; width:100%; font-family:inherit; font-size:inherit; color:#111; padding:0; outline:none; vertical-align:middle; text-align:left; }
             #stdDoc .doc-input:focus { background:#fffbeb; border-radius:2px; }
             #stdDoc .doc-title { font-size:22px; font-weight:900; text-align:center; letter-spacing:2px; }
+            #stdDoc .std-split-handle:hover { background:rgba(37,99,235,0.35); }
+            #stdDoc .std-split-vresize:hover { background:rgba(37,99,235,0.35); }
+            #stdDoc .std-split-handle { background:rgba(37,99,235,0.14); touch-action:none; }
+            #stdDoc .std-split-vresize { background:rgba(37,99,235,0.10); touch-action:none; }
+            #stdDoc .std-pt-col-handle { background:rgba(37,99,235,0.14); touch-action:none; }
+            #stdDoc .std-pt-col-handle:hover { background:rgba(37,99,235,0.55); }
+            #stdDoc .std-pt-table { width:100%; table-layout:fixed; }
+            #stdDoc .std-pt-table .doc-th { white-space:nowrap; overflow:hidden; }
+            #stdDoc .std-pt-table td { overflow:hidden; }
+            #stdDoc .std-pt-table tbody td { overflow:visible; }
+            #stdDoc .std-pt-table .std-pt-std { white-space:pre-wrap; word-break:break-all; overflow:auto; }
+            #stdDoc .std-pt-row-handle {
+                height:7px; padding:0; margin:0; line-height:0; font-size:0;
+                cursor:row-resize; touch-action:none;
+                background:rgba(37,99,235,0.14);
+                border:1px solid #888; border-top:none;
+            }
+            #stdDoc .std-pt-row-handle:hover { background:rgba(37,99,235,0.55); }
+            #stdDoc .std-pt-table input { width:100% !important; min-width:0 !important; }
+            #stdDoc #stdRevTable { width:100%; table-layout:fixed; }
+            #stdDoc #stdRevTable .std-rev-date { width:100%; min-width:0; }
+            #stdDoc .std-corrective-stack { height:100%; }
+            #stdDoc .std-corrective-body textarea { width:100%; height:100%; box-sizing:border-box; }
             </style>`;
 
         // 날인: 편집은 이름만 — 저장 시 매칭
@@ -643,14 +864,16 @@ var InjIncomingStdModule = (function () {
         <input type="hidden" id="stdItemType"    value="${fv('itemType')}">
 
         <!-- ③ 이미지 + 주요검사 Point -->
-        <table style="margin-top:0;">
+        <table class="std-split" id="stdSplitTable" style="margin-top:0;table-layout:fixed;width:100%;${_splitHeightStyle}">
+            <colgroup><col id="stdSplitLeftCol" style="width:${_esc(_splitLeftWidth)}"><col></colgroup>
             <tr>
-                <!-- 이미지 영역 -->
-                <td style="width:50%;border:1px solid #888;padding:0;height:1px;">
+                <td class="std-split-left" style="width:${_esc(_splitLeftWidth)};border:1px solid #888;padding:0;height:1px;vertical-align:top;position:relative;">
+                    <div class="std-split-handle" title="드래그해서 표 간격 조절"
+                        onmousedown="InjIncomingStdModule._stdStartSplitResize(event)"
+                        style="position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
-                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer;
-                                      font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
+                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
                             <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
                             <input type="file" accept="image/*" multiple style="display:none;"
                                 onchange="InjIncomingStdModule._addImages(this)">
@@ -661,41 +884,51 @@ var InjIncomingStdModule = (function () {
                         onfocus="this.style.outline='2px dashed #2563eb';this.style.outlineOffset='-3px'"
                         onblur="this.style.outline='none'"
                         onclick="this.focus()"
-                        style="outline:none;padding:6px;cursor:pointer;
-                               display:flex;flex-direction:column;height:calc(100% - 28px);">
-                        <!-- 이미지 그리드: flex-grow로 남은 공간 채움 -->
+                        style="outline:none;padding:6px;cursor:pointer;display:flex;flex-direction:column;height:calc(100% - 28px);">
                         <div id="stdImgGrid"
                             style="display:grid;grid-template-columns:1fr 1fr;gap:4px;flex:1;align-content:start;">
                             ${_renderImgGrid(_formImages)}
                         </div>
                     </div>
                 </td>
-                <!-- 주요검사 Point -->
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;height:100%;">
+                <td class="std-split-right" style="vertical-align:top;border:1px solid #888;padding:0;height:100%;">
                     <div class="doc-sec">주요검사 Point</div>
-                    <table style="font-size:10px;">
+                    <div>
+                    <table class="std-pt-table" id="stdPtTable" style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
+                        <colgroup>
+                            ${_ptColWidths.map((w, i) => `<col id="stdPtCol${i}" style="width:${_esc(w)}">`).join('')}
+                        </colgroup>
                         <thead><tr>
-                            <td class="doc-th" style="width:24px;">No</td>
-                            <td class="doc-th" style="width:65px;">항 목</td>
-                            <td class="doc-th">기 준</td>
-                            <td class="doc-th" style="width:50px;">확인방법</td>
-                            <td class="doc-th" style="width:65px;">시 료</td>
-                            <td class="doc-th" style="width:70px;">관리방안</td>
-                            <td class="doc-th" style="width:44px;text-align:right;">
+                            ${['No','항 목','기 준','확인방법','시 료','관리방안'].map((label, ci) => `
+                            <td class="doc-th" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;position:relative;">
+                                ${label}
+                                <div class="std-pt-col-handle" title="드래그해서 열 폭 조절"
+                                    onmousedown="InjIncomingStdModule._stdStartPtColResize(event,${ci})"
+                                    style="position:absolute;top:0;bottom:0;right:0;width:7px;cursor:col-resize;z-index:5;"></div>
+                            </td>`).join('')}
+                            <td class="doc-th" style="text-align:right;">
                                 <button type="button" onclick="InjIncomingStdModule._addCheckRow()"
                                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="행 추가">+</button>
                             </td>
                         </tr></thead>
                         <tbody id="stdCheckBody">${ptRows}</tbody>
                     </table>
+                    </div>
                 </td>
             </tr>
         </table>
+        <div class="std-split-vresize" title="드래그해서 표 높이 조절"
+            onmousedown="InjIncomingStdModule._stdStartSplitVResize(event)"
+            style="height:7px;margin:-1px 0;cursor:row-resize;position:relative;z-index:4;"></div>
 
         <!-- ④ 검사순서 / 조치사항 -->
-        <table style="margin-top:0;">
+        <table class="std-bottom" id="stdBottomTable" style="margin-top:0;table-layout:fixed;width:100%;">
+            <colgroup><col id="stdBottomLeftCol" style="width:${_esc(_bottomLeftWidth)}"><col></colgroup>
             <tr>
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;">
+                <td style="vertical-align:top;border:1px solid #888;padding:0;position:relative;">
+                    <div class="std-split-handle" title="드래그해서 표 간격 조절"
+                        onmousedown="InjIncomingStdModule._stdStartBottomResize(event)"
+                        style="position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:5;"></div>
                     <div class="doc-sec">검 사 순 서</div>
                     <div style="padding:6px;">
                         <textarea id="stdProcedure"
@@ -704,30 +937,24 @@ var InjIncomingStdModule = (function () {
                             >${std?_esc(std.procedure||''):'1. 소재의 표면상태를 검사한다.\n 1-1. 전면 → 후면 순으로 검사한다.\n2. 소재불량은 해당부위 마킹 후 별도의 불량 박스에 보관한다.\n3. 사출품의 표면 장력 Test를 실시한다.\n4. BOX내부에 이물질 유무검사를 실시한다.\n5. 내 포장 상태를 확인한다. (찢어짐등이 없을 것)\n6. 명세표 대비 수량을 확인한다.'}</textarea>
                     </div>
                 </td>
-                <td style="width:50%;vertical-align:top;border:1px solid #888;padding:0;height:1px;">
-                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                        <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"><col style="width:44px"></colgroup>
-                        <tbody>
-                        <tr>
-                            <td colspan="6" style="padding:0;border:none;">
-                                <div class="doc-sec">조 치 사 항</div>
-                                <div style="padding:6px;">
+                <td style="vertical-align:top;border:1px solid #888;padding:0;height:1px;">
+                    ${_stdRightStackHtml('doc-sec', `
                                     <textarea id="stdCorrective"
-                                        oninput="this.style.height='auto';this.style.height=this.scrollHeight+'px'"
-                                        style="width:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:hidden;outline:none;display:block;"
-                                        >${std?_esc(std.corrective||''):'1. 무결함을 원칙으로 한다.\n2. 불량 발생 시 반품, 선별, 폐기, 특채 의 조치를 취할 수 있다.'}</textarea>
-                                </div>
-                            </td>
-                        </tr>
-                        </tbody>
-                        <!-- 개정내용 -->
+                                        style="width:100%;height:100%;border:none;background:transparent;font-family:'Malgun Gothic',sans-serif;font-size:11px;line-height:1.8;resize:none;overflow:auto;outline:none;display:block;box-sizing:border-box;">${std?_esc(std.corrective||''):'1. 무결함을 원칙으로 한다.\n2. 불량 발생 시 반품, 선별, 폐기, 특채 의 조치를 취할 수 있다.'}</textarea>
+                    `, `
+                    <table id="stdRevTable" style="font-size:10px;width:100%;border-collapse:collapse;table-layout:fixed;flex:0 0 auto;">
+                        ${_stdRevColgroupHtml(_revDateWidth, true)}
                         <tbody id="stdRevBody">
                         <tr style="height:24px;">
                             <td class="doc-label" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;font-size:10px;">개정내용</td>
-                            <td class="doc-th">NO</td>
-                            <td class="doc-th">개정일자</td>
+                            <td class="doc-th" style="white-space:nowrap;">NO</td>
+                            <td class="doc-th" style="white-space:nowrap;position:relative;">개정일자
+                                <div class="std-pt-col-handle" title="드래그해서 열 폭 조절"
+                                    onmousedown="InjIncomingStdModule._stdStartRevDateResize(event)"
+                                    style="position:absolute;top:0;bottom:0;right:0;width:7px;cursor:col-resize;z-index:5;"></div>
+                            </td>
                             <td class="doc-th">개정사유</td>
-                            <td class="doc-th">확 인</td>
+                            <td class="doc-th" style="white-space:nowrap;">확 인</td>
                             <td class="doc-th" style="text-align:right;">
                                 <button type="button" onclick="InjIncomingStdModule._addRevRow()"
                                     style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="행 추가">+</button>
@@ -735,7 +962,7 @@ var InjIncomingStdModule = (function () {
                         </tr>
                         ${revRows}
                         </tbody>
-                    </table>
+                    </table>`)}
                 </td>
             </tr>
             <tr>
@@ -743,7 +970,8 @@ var InjIncomingStdModule = (function () {
                     <div style="display:flex;justify-content:space-between;align-items:center;">
                         <div style="font-size:9px;color:#555;">
                             문서번호 : <input class="doc-input" id="stdDocNo" value="${fv('docNo')}" placeholder="KC-IT-000"
-                                style="font-size:9px;font-weight:700;width:80px;display:inline-block;">
+                                title="문서번호 수정"
+                                style="font-size:9px;font-weight:700;width:auto;min-width:9em;max-width:14em;display:inline-block;border-bottom:1px solid #94a3b8;padding:0 2px;">
                         </div>
                         <div style="font-size:9px;color:#888;">(주)케이씨케미칼&nbsp;&nbsp;&nbsp;A4(297×210)</div>
                     </div>
@@ -761,7 +989,7 @@ var InjIncomingStdModule = (function () {
 
         // 모달 렌더 후 초기화
         setTimeout(() => {
-            ['stdProcedure','stdCorrective'].forEach(id => {
+            ['stdProcedure'].forEach(id => {
                 const el = document.getElementById(id);
                 if (el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; }
             });
@@ -959,11 +1187,14 @@ var InjIncomingStdModule = (function () {
         const sel = document.getElementById('stdProductId');
         if (!sel) return;
         const allMats = (Storage.getAll(PROD_ST)||[]).filter(p=>p.carModel&&p.injPartName);
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productsById = {};
+        products.forEach(p => { if (p && p.id) productsById[p.id] = p; });
         const filtered = car ? allMats.filter(p=>p.carModel===car) : [];
         sel.innerHTML = `<option value="">${car ? '-- 사출품명 선택 --' : '← 차종을 먼저 선택하세요'}</option>`
             + filtered.map(p=>`<option value="${p.id}"
                 data-car="${_esc(p.carModel)}" data-part="${_esc(p.injPartName)}"
-                data-color="${_esc(p.injColor||'')}" data-type="${_esc(p.itemType||'')}">
+                data-color="${_esc(p.injColor||'')}" data-type="${_esc(_stdEffectiveItemType(p, productsById, products))}">
                 ${_esc(p.injPartName)}${p.injColor?' / '+_esc(p.injColor):''}
             </option>`).join('');
     }
@@ -987,56 +1218,37 @@ var InjIncomingStdModule = (function () {
     function _addCheckRow() {
         const tb=document.getElementById('stdCheckBody');
         if(!tb) return;
-        const i=tb.rows.length+1;
-        const tr=document.createElement('tr');
-        tr.innerHTML=`
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">${i}</td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
-            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;"></div></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-method" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:center;"><input class="std-pt-sample" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
-                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
-                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
-                <button type="button" onclick="this.closest('tr').remove()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
-            </td>`;
-        tb.appendChild(tr);
+        const n = tb.querySelectorAll('tr.std-pt-row').length;
+        const wrap=document.createElement('tbody');
+        wrap.innerHTML=_stdCheckRowHtml({}, n);
+        while (wrap.firstChild) tb.appendChild(wrap.firstChild);
     }
 
     function _insertCheckRowAfter(btn) {
         let el = btn;
         while (el && el.tagName !== 'TR') el = el.parentNode;
-        if (!el) return;
-        const tbody = el.parentNode;
-        const newTr = document.createElement('tr');
-        newTr.innerHTML = `
-            <td style="text-align:center;padding:3px;border:1px solid #bbb;font-size:.8rem;">-</td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-item" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.8rem;padding:2px;"></td>
-            <td style="padding:4px 2px;border:1px solid #bbb;"><div class="std-pt-std" contenteditable="true"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;line-height:1.5;outline:none;white-space:pre-wrap;min-height:1.5em;"></div></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-method" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-sample" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;"><input class="std-pt-mgmt" type="text"
-                style="width:100%;border:none;background:transparent;font-size:.78rem;padding:2px;"></td>
-            <td style="padding:2px;border:1px solid #bbb;text-align:right;white-space:nowrap;">
-                <button type="button" onclick="InjIncomingStdModule._insertCheckRowAfter(this)"
-                    style="background:none;border:none;color:#2563eb;cursor:pointer;font-size:14px;line-height:1;" title="아래 행 추가">+</button>
-                <button type="button" onclick="this.closest('tr').remove()"
-                    style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:14px;line-height:1;" title="행 삭제">×</button>
-            </td>`;
+        if (!el || !el.parentNode) return;
+        if (el.classList.contains('std-pt-row') && el.nextElementSibling &&
+            el.nextElementSibling.classList.contains('std-pt-row-sizer')) {
+            el = el.nextElementSibling;
+        }
+        const wrap=document.createElement('tbody');
+        wrap.innerHTML=_stdCheckRowHtml({}, null);
+        const frag = document.createDocumentFragment();
+        while (wrap.firstChild) frag.appendChild(wrap.firstChild);
+        const parent = el.parentNode;
         const next = el.nextElementSibling;
-        if (next) tbody.insertBefore(newTr, next);
-        else tbody.appendChild(newTr);
+        if (next) parent.insertBefore(frag, next);
+        else parent.appendChild(frag);
+    }
+
+    function _removeCheckRow(btn) {
+        let el = btn;
+        while (el && el.tagName !== 'TR') el = el.parentNode;
+        if (!el) return;
+        const sizer = el.nextElementSibling;
+        el.remove();
+        if (sizer && sizer.classList.contains('std-pt-row-sizer')) sizer.remove();
     }
 
     const _DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
@@ -1095,17 +1307,21 @@ var InjIncomingStdModule = (function () {
     ═══════════════════════════════════════════════════════════════ */
     async function saveForm(editId) {
         const g=id=>(document.getElementById(id)||{}).value||'';
-        const partName=g('stdPartName');
+        const productId=g('stdProductId').trim();
+        const partName=g('stdPartName').trim();
+        if(!productId){UIUtils.toast('제품 연결에서 차종과 품명을 선택하세요.','warning');return;}
         if(!partName){UIUtils.toast('품명을 입력하세요.','warning');return;}
 
         const checkPoints=[];
-        document.querySelectorAll('#stdCheckBody tr').forEach(tr=>{
+        document.querySelectorAll('#stdCheckBody tr.std-pt-row').forEach(tr=>{
+            const no=(tr.querySelector('.std-pt-no')||{}).value||'';
             const item=(tr.querySelector('.std-pt-item')||{}).value||'';
             const stdEl=tr.querySelector('.std-pt-std'); const std=stdEl?(stdEl.value!==undefined?stdEl.value:stdEl.innerText||stdEl.textContent||''):'';
             const method=(tr.querySelector('.std-pt-method')||{}).value||'';
             const sample=(tr.querySelector('.std-pt-sample')||{}).value||'';
             const mgmt=(tr.querySelector('.std-pt-mgmt')||{}).value||'';
-            if(item||std) checkPoints.push({item,standard:std,method,sample,management:mgmt});
+            const rowHeight=(tr.style.height||'').trim();
+            if(item||std) checkPoints.push({no,item,standard:std,method,sample,management:mgmt,rowHeight});
         });
 
         const revisions=[];
@@ -1118,14 +1334,14 @@ var InjIncomingStdModule = (function () {
         });
 
         const data={
-            productId:   g('stdProductId'),
+            productId,
             docNo:       g('stdDocNo'),
             revNo:       g('stdRevNo'),
             processName: g('stdProcessName')||'수입검사',
             equipment:   g('stdEquipment'),
             carModel:    g('stdCarModel'),
             partName,
-            itemType:    g('stdItemType'),
+            itemType:    _stdNormItemType(g('stdItemType')),
             createdDate: g('stdCreatedDate'),
             revisedDate: g('stdRevisedDate'),
             author:      g('stdAuthor').trim(),
@@ -1138,7 +1354,14 @@ var InjIncomingStdModule = (function () {
             corrective:  g('stdCorrective'),
             images:      _formImages.map(_normImg),
             checkPoints,
-            revisions
+            revisions,
+            layout: {
+                splitLeftWidth: (document.getElementById('stdSplitLeftCol') || {}).style.width || '',
+                splitHeight: (document.getElementById('stdSplitTable') || {}).style.height || '',
+                ptColWidths: [0, 1, 2, 3, 4, 5, 6].map(i => (document.getElementById('stdPtCol' + i) || {}).style.width || ''),
+                bottomLeftWidth: (document.getElementById('stdBottomLeftCol') || {}).style.width || '',
+                revDateWidth: (document.getElementById('stdRevDateCol') || {}).style.width || ''
+            }
         };
 
         const missingSeal = [
@@ -1150,8 +1373,13 @@ var InjIncomingStdModule = (function () {
         // confirmer 중복 제거
         const missingUnique = [...new Set(missingSeal)];
 
-        if(editId){await Storage.update(STORE,editId,data);}
-        else{await Storage.add(STORE,data);}
+        try {
+            if(editId){await Storage.update(STORE,editId,data);}
+            else{await Storage.add(STORE,data);}
+        } catch (err) {
+            UIUtils.toast('저장에 실패했습니다. ' + (err && err.message ? err.message : '다시 시도하세요.'), 'error');
+            return;
+        }
         if (missingUnique.length) {
             UIUtils.toast(`저장됨. 날인 미등록: ${missingUnique.join(', ')} (설정>사용자에서 날인 등록)`, 'warning');
         } else {
@@ -1173,13 +1401,13 @@ var InjIncomingStdModule = (function () {
         // 화면 px → mm 변환 (96dpi 기준: 1px = 0.2646mm)
         const px2mm = px => (Number(px) * 0.2646).toFixed(1);
 
-        const ptRows=(std.checkPoints||[]).map((pt,i)=>`<tr>
-            <td style="text-align:center;">${i+1}</td>
-            <td>${_esc(pt.item||'')}</td>
-            <td style="white-space:pre-wrap;">${_esc(pt.standard||'')}</td>
-            <td style="text-align:center;">${_esc(pt.method||'')}</td>
-            <td style="text-align:center;">${_esc(pt.sample||'')}</td>
-            <td>${_esc(pt.management||'')}</td></tr>`).join('');
+        const ptRows=(std.checkPoints||[]).map((pt,i)=>`<tr style="${_stdPtRowHeightStyle(pt)}">
+            <td style="text-align:center;vertical-align:top;">${_esc(_stdPtNoDisplay(pt,i))}</td>
+            <td style="vertical-align:top;white-space:nowrap;">${_esc(pt.item||'')}</td>
+            <td style="white-space:pre-wrap;vertical-align:top;">${_esc(pt.standard||'')}</td>
+            <td style="text-align:center;vertical-align:top;">${_esc(pt.method||'')}</td>
+            <td style="text-align:center;vertical-align:top;">${_esc(pt.sample||'')}</td>
+            <td style="vertical-align:top;">${_esc(pt.management||'')}</td></tr>`).join('');
 
         const imgHtml=(std.images||[]).map(v=>{
             const o=typeof v==='string'?{src:v,h:100,label:''}:{src:v.src||'',h:v.h||100,label:v.label||''};
@@ -1201,6 +1429,12 @@ var InjIncomingStdModule = (function () {
             <td style="text-align:center;">${_esc(r.reason||'')}</td>
             <td style="padding:${cf?'2px':'0'};text-align:center;vertical-align:middle;${diagBg}">${cf ? _confirmerView(cf) : ''}</td></tr>`;}).join('');
 
+        const _pLayout = _stdReadLayout(std);
+        const _pPtCols = _stdScale6ColWidths(_pLayout.ptColWidths);
+        const _pSplitLeft = _pLayout.splitLeftWidth;
+        const _pBottomLeft = _pLayout.bottomLeftWidth;
+        const _pRevDate = _pLayout.revDateWidth;
+
         const win=window.open('','_blank','width=960,height=720');
         win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
         <title>수입검사 기준서 — ${_esc(std.partName||'')}</title>
@@ -1216,6 +1450,8 @@ var InjIncomingStdModule = (function () {
             .doc-title{font-size:18px;font-weight:900;text-align:center;letter-spacing:2px;}
             img{display:block;width:100%;object-fit:contain;background:#fff;}
             img.std-seal{width:auto;display:inline-block;background:transparent;}
+            .std-corrective-stack{height:100%;}
+            .std-corrective-body{white-space:pre-wrap;}
             @media print{html,body{width:281mm;}}
         </style></head><body>
         <!-- 헤더 -->
@@ -1254,24 +1490,25 @@ var InjIncomingStdModule = (function () {
         </table>
         <!-- 이미지 + 주요검사 -->
         <table style="margin-top:0;table-layout:fixed;">
-            <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+            <colgroup><col style="width:${_esc(_pSplitLeft)}"><col></colgroup>
             <tr>
-                <td style="vertical-align:top;padding:0;">
+                <td style="width:${_esc(_pSplitLeft)};vertical-align:top;padding:0;">
                     <div class="doc-sec">외관 / 치수포인트</div>
                     <div style="padding:4px;display:grid;grid-template-columns:${(std.images||[]).length>1?'1fr 1fr':'1fr'};gap:4px;align-items:start;">
                         ${imgHtml||'<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}
                     </div>
                 </td>
-                <td style="width:50%;vertical-align:top;padding:0;">
+                <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">주요검사 Point</div>
-                    <table style="font-size:10px;">
+                    <table style="font-size:10px;width:100%;table-layout:fixed;">
+                        <colgroup>${_pPtCols.map(w => `<col style="width:${_esc(w)}">`).join('')}</colgroup>
                         <thead><tr>
-                            <th class="doc-th" style="width:22px;">No</th>
-                            <th class="doc-th" style="width:62px;">항 목</th>
+                            <th class="doc-th" style="white-space:nowrap;">No</th>
+                            <th class="doc-th" style="white-space:nowrap;">항 목</th>
                             <th class="doc-th">기 준</th>
-                            <th class="doc-th" style="width:48px;">확인방법</th>
-                            <th class="doc-th" style="width:65px;">시 료</th>
-                            <th class="doc-th" style="width:70px;">관리방안</th>
+                            <th class="doc-th" style="white-space:nowrap;">확인방법</th>
+                            <th class="doc-th" style="white-space:nowrap;">시 료</th>
+                            <th class="doc-th" style="white-space:nowrap;">관리방안</th>
                         </tr></thead>
                         <tbody>${ptRows}</tbody>
                     </table>
@@ -1280,30 +1517,25 @@ var InjIncomingStdModule = (function () {
         </table>
         <!-- 검사순서 / 조치사항 -->
         <table style="margin-top:0;table-layout:fixed;">
-            <colgroup><col style="width:50%"><col style="width:50%"></colgroup>
+            <colgroup><col style="width:${_esc(_pBottomLeft)}"><col></colgroup>
             <tr>
                 <td style="vertical-align:top;padding:0;">
                     <div class="doc-sec">검 사 순 서</div>
-                    <div style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.procedure||'')}</div>
+                    <div style="padding:6px;white-space:pre-wrap;line-height:1.8;font-size:11px;">${_esc(std.procedure||'')}</div>
                 </td>
                 <td style="vertical-align:top;padding:0;height:1px;">
-                    <table style="font-size:10px;width:100%;border-collapse:collapse;height:100%;">
-                                    <colgroup><col style="width:20px"><col style="width:28px"><col style="width:72px"><col><col style="width:72px"></colgroup>
-                        <tr>
-                            <td colspan="5" class="doc-sec">조 치 사 항</td>
-                        </tr>
-                        <tr>
-                            <td colspan="5" style="padding:8px;white-space:pre-wrap;line-height:1.8;font-size:11px;vertical-align:top;">${_esc(std.corrective||'')}</td>
-                        </tr>
+                    ${_stdRightStackHtml('doc-sec', _esc(std.corrective||''), `
+                    <table style="font-size:10px;width:100%;border-collapse:collapse;table-layout:fixed;flex:0 0 auto;">
+                        ${_stdRevColgroupHtml(_pRevDate, false)}
                         <tr style="height:24px;">
                             <td class="doc-label" rowspan="99" style="writing-mode:vertical-rl;text-align:center;vertical-align:middle;padding:2px;">개정내용</td>
-                            <th class="doc-th">NO</th>
-                            <th class="doc-th">개정일자</th>
+                            <th class="doc-th" style="white-space:nowrap;">NO</th>
+                            <th class="doc-th" style="white-space:nowrap;">개정일자</th>
                             <th class="doc-th">개정사유</th>
-                            <th class="doc-th">확 인</th>
+                            <th class="doc-th" style="white-space:nowrap;">확 인</th>
                         </tr>
                         ${revRows}
-                    </table>
+                    </table>`)}
                 </td>
             </tr>
             <tr>
@@ -1320,17 +1552,196 @@ var InjIncomingStdModule = (function () {
         win.document.close();
     }
 
+    function _stdCanWrite() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.canWritePage !== 'function') return true;
+        return AuthModule.canWritePage('inj-incoming-std');
+    }
+
+    function _stdDocNoEditHtml(std) {
+        const id = std && std.id ? String(std.id) : '';
+        if (id && _stdCanWrite()) {
+            return `문서번호 : <input class="doc-input" value="${_esc(std.docNo||'')}" placeholder="KC-IT-000"
+                title="문서번호 수정 후 Enter 또는 다른 곳 클릭 시 저장"
+                style="font-size:9px;font-weight:700;width:auto;min-width:9em;max-width:14em;display:inline-block;border-bottom:1px solid #94a3b8;padding:0 2px;background:transparent;"
+                onblur="InjIncomingStdModule.updateDocNo('${_esc(id)}', this.value)"
+                onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}">`;
+        }
+        return `문서번호 : <strong>${_esc((std && std.docNo) || '')}</strong>`;
+    }
+
+    async function updateDocNo(id, value) {
+        if (!_stdCanWrite()) {
+            UIUtils.toast('문서번호를 수정할 권한이 없습니다.', 'warning');
+            renderList();
+            return;
+        }
+        const std = Storage.getById(STORE, id);
+        if (!std) return;
+        const docNo = String(value == null ? '' : value).trim();
+        if (docNo === String(std.docNo || '').trim()) return;
+        try {
+            await Storage.update(STORE, id, { docNo });
+            UIUtils.toast('문서번호가 저장되었습니다.', 'success');
+            renderList();
+        } catch (err) {
+            UIUtils.toast('저장에 실패했습니다. ' + (err && err.message ? err.message : '다시 시도하세요.'), 'error');
+            renderList();
+        }
+    }
+
+    async function deleteStd(id) {
+        if (!_stdCanWrite()) {
+            UIUtils.toast('기준서를 삭제할 권한이 없습니다.', 'warning');
+            return;
+        }
+        const std = Storage.getById(STORE, id);
+        if (!std) {
+            UIUtils.toast('기준서를 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const label = [std.carModel, std.partName, std.docNo].filter(Boolean).join(' | ') || id;
+        UIUtils.confirm(
+            `'${label}' 수입검사 기준서를 삭제하시겠습니까? 삭제하면 미등록 상태가 됩니다.`,
+            async () => {
+                try {
+                    await Storage.remove(STORE, id);
+                    const ov = document.getElementById('_injStdViewOv');
+                    if (ov) ov.remove();
+                    UIUtils.closeModal();
+                    UIUtils.toast('기준서가 삭제되었습니다.', 'success');
+                    renderList();
+                } catch (err) {
+                    UIUtils.toast('삭제에 실패했습니다. ' + (err && err.message ? err.message : '다시 시도하세요.'), 'error');
+                }
+            }
+        );
+    }
+
+    // 외관/치수포인트(좌) ↔ 주요검사 Point(우) 표 사이 간격을 마우스 드래그로 조절
+    function _stdStartSplitResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const col = document.getElementById('stdSplitLeftCol');
+        const td = document.querySelector('#stdDoc .std-split-left');
+        const table = document.getElementById('stdSplitTable');
+        if (!col || !table) return;
+        const startX = e.clientX;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        const startW = _stdStartWidthPx(col, tableWidth, tableWidth * 0.5);
+        _stdBindDocDrag(ev => {
+            const dx = ev.clientX - startX;
+            const newW = Math.max(180, Math.min(tableWidth - 180, startW + dx));
+            col.style.width = newW + 'px';
+            if (td) td.style.width = newW + 'px';
+        });
+    }
+
+    // 외관/치수포인트·주요검사 Point 표 블록 전체의 높이를 아래로 드래그해 조절
+    function _stdStartSplitVResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const table = document.getElementById('stdSplitTable');
+        if (!table) return;
+        const startY = e.clientY;
+        const startH = table.getBoundingClientRect().height;
+        _stdBindDocDrag(ev => {
+            const dy = ev.clientY - startY;
+            const newH = Math.max(120, Math.min(1200, startH + dy));
+            table.style.height = newH + 'px';
+        });
+    }
+
+    // 검사순서 ↔ 조치사항/개정이력 표 사이 경계를 마우스로 조절
+    function _stdStartBottomResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const col = document.getElementById('stdBottomLeftCol');
+        const table = document.getElementById('stdBottomTable');
+        if (!col || !table) return;
+        const startX = e.clientX;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        const startW = _stdStartWidthPx(col, tableWidth, tableWidth * 0.5);
+        _stdBindDocDrag(ev => {
+            const dx = ev.clientX - startX;
+            const newW = Math.max(80, Math.min(tableWidth - 80, startW + dx));
+            col.style.width = newW + 'px';
+        });
+    }
+
+    // 주요검사 Point 표 열 경계를 마우스로 조절. 이 열만 늘리면 표 폭이 커지므로
+    // 옆 열에서 같은 비율을 빼 합 100%를 유지한다.
+    function _stdStartPtColResize(e, colIndex) {
+        e.preventDefault();
+        e.stopPropagation();
+        const col = document.getElementById('stdPtCol' + colIndex);
+        const nextCol = document.getElementById('stdPtCol' + (colIndex + 1));
+        const table = document.getElementById('stdPtTable');
+        if (!col || !nextCol || !table) return;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        const startX = e.clientX;
+        const startColPct = parseFloat(col.style.width) || 10;
+        const startNextPct = parseFloat(nextCol.style.width) || 10;
+        const minPct = 3;
+        _stdBindDocDrag(ev => {
+            let dPct = ((ev.clientX - startX) / tableWidth) * 100;
+            dPct = Math.max(minPct - startColPct, Math.min(startNextPct - minPct, dPct));
+            col.style.width = (startColPct + dPct) + '%';
+            nextCol.style.width = (startNextPct - dPct) + '%';
+        });
+    }
+
+    // 개정내용 표의 개정일자 열 폭을 마우스로 조절 (개정사유 열이 나머지를 차지)
+    function _stdStartRevDateResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const col = document.getElementById('stdRevDateCol');
+        if (!col) return;
+        const startX = e.clientX;
+        const startW = parseInt(col.style.width, 10) || parseInt(_STD_REV_DATE_W, 10) || 88;
+        _stdBindDocDrag(ev => {
+            const dx = ev.clientX - startX;
+            const newW = Math.max(72, Math.min(180, startW + dx));
+            col.style.width = newW + 'px';
+        });
+    }
+
+    // 주요검사 Point 행 높이를 아래 경계 드래그로 조절
+    function _stdStartPtRowResize(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        let sizer = e.currentTarget;
+        while (sizer && sizer.tagName !== 'TR') sizer = sizer.parentNode;
+        if (!sizer) return;
+        let tr = sizer.previousElementSibling;
+        while (tr && !tr.classList.contains('std-pt-row')) tr = tr.previousElementSibling;
+        if (!tr) return;
+        const startY = e.clientY;
+        const startH = tr.getBoundingClientRect().height;
+        const stdEl = tr.querySelector('.std-pt-std');
+        _stdBindDocDrag(ev => {
+            const newH = Math.max(22, Math.min(420, startH + (ev.clientY - startY)));
+            tr.style.height = newH + 'px';
+            if (stdEl) {
+                const inner = Math.max(16, newH - 10);
+                stdEl.style.minHeight = inner + 'px';
+                stdEl.style.maxHeight = inner + 'px';
+            }
+        });
+    }
+
     /* ═══════════════════════════════════════════════════════════════
        PUBLIC
     ═══════════════════════════════════════════════════════════════ */
     return {
         init, render, renderList,
         openNewForm, openNewFormForProduct, openViewForm, openViewFormOverlay, openEditForm,
-        saveForm, printStd,
+        saveForm, printStd, updateDocNo, deleteStd,
+        _stdStartSplitResize, _stdStartSplitVResize, _stdStartPtColResize, _stdStartBottomResize,
+        _stdStartRevDateResize, _stdStartPtRowResize,
         _onCarFilterChange, _onProductChange, _onPaste,
         _dragStart, _dragOver, _dragEnd, _dragDrop,
         _startResize, _resizeImg, _updateImgLabel,
-        _addCheckRow, _insertCheckRowAfter, _addRevRow, _insertRevRowAfter,
+        _addCheckRow, _insertCheckRowAfter, _removeCheckRow, _addRevRow, _insertRevRowAfter,
         _addImages, _removeImage, _closeEditModal, _onCfInput
     };
 })();

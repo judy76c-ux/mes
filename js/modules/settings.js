@@ -124,7 +124,7 @@ const SettingsModule = (function() {
                 break;
             }
             case 'injectMat': {
-                const saved = _saveFilters(['injectMatCarModelFilter', 'injectMatSupplierFilter']);
+                const saved = _saveFilters(['injectMatCarModelFilter', 'injectMatSupplierFilter', 'injectMatItemTypeFilter']);
                 renderInjectMatTab(el);
                 _restoreFilters(saved, filterInjectMatList);
                 break;
@@ -3605,13 +3605,63 @@ const SettingsModule = (function() {
         { key: 'rawMatColor',     label: '원재료 컬러' }
     ];
 
+    /** 사출자재 품목구분: 양산 / A/S / 개발 (양산품·A/S품 등 저장값 정규화) */
+    function _normInjMatItemType(t) {
+        const s = String(t || '').trim();
+        if (!s) return '';
+        const n = s.replace(/품$/u, '').replace(/용$/u, '').trim();
+        if (n === '양산') return '양산';
+        if (n === 'A/S' || n === 'AS' || /^A\/?S$/i.test(n)) return 'A/S';
+        if (n === '개발') return '개발';
+        if (/양산/.test(s)) return '양산';
+        if (/A\/?S/i.test(s)) return 'A/S';
+        if (/개발/.test(s)) return '개발';
+        return '';
+    }
+
+    function _injMatItemTypeRank(t) {
+        const n = _normInjMatItemType(t);
+        if (n === '양산') return 0;
+        if (n === 'A/S') return 1;
+        if (n === '개발') return 2;
+        return 3;
+    }
+
+    function _injMatItemTypeBadge(t) {
+        const n = _normInjMatItemType(t);
+        if (n === '양산') {
+            return '<span class="badge" style="background:rgba(52,211,153,0.15);color:var(--accent-green);border:1px solid var(--accent-green);font-size:.68rem;">양산</span>';
+        }
+        if (n === 'A/S') {
+            return '<span class="badge" style="background:rgba(245,158,11,0.15);color:#d97706;border:1px solid #d97706;font-size:.68rem;">A/S</span>';
+        }
+        if (n === '개발') {
+            return '<span class="badge" style="background:rgba(59,130,246,0.15);color:var(--accent-blue);border:1px solid var(--accent-blue);font-size:.68rem;">개발</span>';
+        }
+        return '<span style="color:var(--text-muted);font-size:0.75rem;">-</span>';
+    }
+
+    function _injMatEffectiveItemType(m, productsById) {
+        const own = _normInjMatItemType(m && m.itemType);
+        if (own) return own;
+        const ids = (m && Array.isArray(m.productIds)) ? m.productIds : [];
+        for (let i = 0; i < ids.length; i++) {
+            const p = productsById && productsById[ids[i]];
+            const fromProd = _normInjMatItemType(p && p.itemType);
+            if (fromProd) return fromProd;
+        }
+        return '';
+    }
+
     function filterInjectMatList() {
         const supplierEl  = document.getElementById('injectMatSupplierFilter');
         const carModelEl  = document.getElementById('injectMatCarModelFilter');
+        const itemTypeEl  = document.getElementById('injectMatItemTypeFilter');
         if (!supplierEl) return;
 
         const selectedSupplier = supplierEl.value;
         const selectedCarModel = carModelEl ? carModelEl.value : '';
+        const selectedItemType = itemTypeEl ? itemTypeEl.value : '';
 
         const tbody = document.querySelector('#settingsContent .data-table tbody');
         if (!tbody) return;
@@ -3625,10 +3675,13 @@ const SettingsModule = (function() {
         rows.forEach(row => {
             const rowSupplier  = (row.dataset.supplier  || '');
             const rowCarModel  = (row.dataset.carModel  || '');
+            const rowItemType  = (row.dataset.itemType  || '');
             const matchSupplier = selectedSupplier === '' || rowSupplier === selectedSupplier;
             const matchCarModel = selectedCarModel === '' || rowCarModel === selectedCarModel;
+            const matchItemType = selectedItemType === ''
+                || (selectedItemType === '__unset__' ? !rowItemType : rowItemType === selectedItemType);
 
-            if (matchSupplier && matchCarModel) {
+            if (matchSupplier && matchCarModel && matchItemType) {
                 row.style.display = '';
                 visibleCount++;
             } else {
@@ -3678,8 +3731,14 @@ const SettingsModule = (function() {
             if (cleaned) renderInjectMatTab(el);
         }).catch(() => {});
 
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productsById = {};
+        products.forEach(p => { if (p && p.id) productsById[p.id] = p; });
+
         const items = Storage.getAll(INJECT_MAT_STORE).sort((a, b) =>
-            (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.injPartName || '').localeCompare(b.injPartName || '', 'ko')
+            _injMatItemTypeRank(_injMatEffectiveItemType(a, productsById)) - _injMatItemTypeRank(_injMatEffectiveItemType(b, productsById)) ||
+            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+            (a.injPartName || '').localeCompare(b.injPartName || '', 'ko')
         );
         const uniqueSuppliers  = [...new Set(items.map(m => m.supplier).filter(Boolean))].sort();
         const uniqueCarModels  = UIUtils.sortCarModels(items.map(m => m.carModel), items);
@@ -3715,6 +3774,13 @@ const SettingsModule = (function() {
                             <option value="">전체 생산처</option>
                             ${uniqueSuppliers.map(s => `<option value="${s}">${s}</option>`).join('')}
                         </select>
+                        <select id="injectMatItemTypeFilter" class="form-input" style="width: 110px; padding: 4px 8px;" onchange="SettingsModule.filterInjectMatList()">
+                            <option value="">전체 구분</option>
+                            <option value="양산">양산</option>
+                            <option value="A/S">A/S</option>
+                            <option value="개발">개발</option>
+                            <option value="__unset__">미지정</option>
+                        </select>
                     </div>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;">
                         <button class="btn btn-outline" onclick="SettingsModule.downloadInjectMatCSV()">
@@ -3738,6 +3804,7 @@ const SettingsModule = (function() {
                                 <tr>
                                     <th>No</th>
                                     <th>차종</th>
+                                    <th style="white-space:nowrap;">품목구분</th>
                                     <th>생산처</th>
                                     <th>사출품명</th>
                                     <th>컬러</th>
@@ -3752,7 +3819,7 @@ const SettingsModule = (function() {
                             </thead>
                             <tbody>
                                 ${items.length === 0 ?
-                `<tr><td colspan="12" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 사출품이 없습니다.</td></tr>` :
+                `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">등록된 사출품이 없습니다.</td></tr>` :
                 items.map((m, i) => {
                     // rawMatId가 직접 지정된 경우 그것을 우선 표시; 없으면 usedFor 자동매칭
                     let rawMatName, rawMatColor, matchedCount = 0;
@@ -3766,13 +3833,15 @@ const SettingsModule = (function() {
                         rawMatName  = matched.length > 0 ? matched.map(r => r.matName).filter(Boolean).join(', ') : (m.rawMatName || '-');
                         rawMatColor = matched.length > 0 ? matched.map(r => r.color).filter(Boolean).join(', ') : (m.rawMatColor || '-');
                     }
+                    const itemType = _injMatEffectiveItemType(m, productsById);
                     return `
-                                        <tr data-supplier="${m.supplier || ''}" data-car-model="${m.carModel || ''}">
+                                        <tr data-supplier="${m.supplier || ''}" data-car-model="${m.carModel || ''}" data-item-type="${itemType}">
                                             <td>${i + 1}</td>
-                                            <td>${m.carModel || '-'}</td>
-                                            <td>${m.supplier || '-'}</td>
-                                            <td><strong>${m.injPartName || '-'}</strong></td>
-                                            <td>${m.injColor || '-'}</td>
+                                            <td style="white-space:nowrap;">${m.carModel || '-'}</td>
+                                            <td style="text-align:center;white-space:nowrap;">${_injMatItemTypeBadge(itemType)}</td>
+                                            <td style="white-space:nowrap;">${m.supplier || '-'}</td>
+                                            <td style="white-space:nowrap;"><strong>${m.injPartName || '-'}</strong></td>
+                                            <td style="white-space:nowrap;">${m.injColor || '-'}</td>
                                             <td style="text-align:right;">${m.unitPrice ? Number(m.unitPrice).toLocaleString() : '-'}</td>
                                             <td>${m.mfgProductName || '-'}</td>
                                             <td>${m.mfgProductName2 || '-'}</td>
@@ -3909,10 +3978,10 @@ const SettingsModule = (function() {
                 <div class="form-group">
                     <label class="form-label">품목구분</label>
                     <select class="form-select" id="imItemType">
-                        <option value="" ${!v('itemType') ? 'selected' : ''}>-- 선택 --</option>
-                        <option value="양산" ${v('itemType') === '양산' ? 'selected' : ''}>양산</option>
-                        <option value="A/S" ${v('itemType') === 'A/S' ? 'selected' : ''}>A/S</option>
-                        <option value="개발" ${v('itemType') === '개발' ? 'selected' : ''}>개발</option>
+                        <option value="" ${!_normInjMatItemType(v('itemType')) ? 'selected' : ''}>-- 선택 --</option>
+                        <option value="양산" ${_normInjMatItemType(v('itemType')) === '양산' ? 'selected' : ''}>양산</option>
+                        <option value="A/S" ${_normInjMatItemType(v('itemType')) === 'A/S' ? 'selected' : ''}>A/S</option>
+                        <option value="개발" ${_normInjMatItemType(v('itemType')) === '개발' ? 'selected' : ''}>개발</option>
                     </select>
                 </div>
                 <div class="form-group" style="visibility:hidden;"></div>
@@ -4060,7 +4129,7 @@ const SettingsModule = (function() {
             injPartName:     g('imInjPartName').trim(),
             injColor:        g('imInjColor').trim(),
             unitPrice:       g('imUnitPrice').trim(),
-            itemType:        g('imItemType').trim(),
+            itemType:        _normInjMatItemType(g('imItemType').trim()),
             productIds,          // v19: ID 배열
             mfgProductName,      // 하위 호환 텍스트
             mfgProductName2,     // 하위 호환 텍스트
@@ -4225,6 +4294,8 @@ const SettingsModule = (function() {
 
         const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const productsById = {};
+        products.forEach(p => { if (p && p.id) productsById[p.id] = p; });
         const rawMats = Storage.getAll(DB.STORES.RAW_MATERIALS) || [];
         const field = (label, valueHtml) => `
             <div style="display:flex;gap:12px;padding:8px 0;border-bottom:1px solid var(--border-color);align-items:flex-start;">
@@ -4255,7 +4326,7 @@ const SettingsModule = (function() {
                 ${field('사출품명', `<strong>${esc(m.injPartName)}</strong>`)}
                 ${field('컬러', esc(m.injColor))}
                 ${field('단가', m.unitPrice ? Number(m.unitPrice).toLocaleString() + ' 원' : '-')}
-                ${field('품목구분', esc(m.itemType))}
+                ${field('품목구분', _injMatItemTypeBadge(_injMatEffectiveItemType(m, productsById)))}
                 ${field('제작품목1', esc(m.mfgProductName))}
                 ${field('제작품목2', esc(m.mfgProductName2))}
                 ${field('연결 제품', linkedProducts)}
@@ -4429,7 +4500,7 @@ const SettingsModule = (function() {
                 injPartName:     row[2] || '',
                 injColor:        row[3] || '',
                 unitPrice:       row[4] || '',
-                itemType:        row[5] || '',
+                itemType:        _normInjMatItemType(row[5] || ''),
                 mfgProductName:  row[6] || '',
                 mfgProductName2: row[7] || '',
                 weight:          row[8] || '',

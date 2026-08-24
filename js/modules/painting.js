@@ -3118,7 +3118,8 @@ const PaintingWorkModule = (function() {
             lotNo: d.lotNo,
             injPartName: d.injPartName,
             workId: d.id,
-            planId: d.planId
+            planId: d.planId,
+            inputQty: _inQ
         };
         // 반납분은 유실이 아니다 — 사출창고로 되돌린 수량을 빼야 실제 미정산분만 남는다.
         // 행 하나에서 예외가 나도 목록 전체 렌더가 멈추지 않도록 반드시 감싼다.
@@ -3135,17 +3136,11 @@ const PaintingWorkModule = (function() {
                 _issued = Number(PaintingInputModule.getIssuedQtyForWork(d.line || _currentLine, _issuedOpts)) || 0;
             }
             _issuedLotCount = (d.lots && d.lots.length) ? d.lots.length : (d.lotNo ? 1 : 0);
-            // 현장입고사출은 최소한 "이 실적이 실제로 투입 + 반납한 양"만큼은 되어야 한다 —
-            // 그보다 작으면 "반납(11,960) > 입고(5,000)"처럼 앞뒤가 안 맞는 표시가 된다.
-            // 예전엔 이 하한을 맞추려고 _effectiveIssuedForWork(이 실적이 닿은 LOT들의 "그날
-            // 전체 입고량"을 합산)로 덮어썼는데, 그 LOT들이 다른 작업(다른 실적)과 나눠 쓰는
-            // 경우 그 LOT의 하루 전체 입고량이 이 실적 하나에 통째로 잡혀, 이미 투입·반납으로
-            // 완전히 정산된 실적(상세보기엔 "미반영 없음")인데도 목록에서 허수 "유실"이 뜨는
-            // 사고가 있었다. 반납은 refWorkId로 이 실적 몫만 정확히 잡히므로(getReturnedQtyForWork),
-            // 하한을 "투입+반납"으로 직접 보장하면 다른 실적의 몫을 끌어오지 않고도 같은 목적을
-            // 달성한다 — 실제로 부족분이 있으면(getIssuedQtyForWork가 그 이상을 반환하면) 그대로 보인다.
-            var _floorIssued = _inQ + _returned;
-            if (_floorIssued > _issued) { _issued = _floorIssued; }
+            // 현장입고사출은 현장 입고 원장 합계만 표시한다. 투입+반납으로 하한을 올리면
+            // 반납이 과다 기록된 경우(또는 중복 입고 정리 전 잔량으로 반납한 경우) 창고 출고
+            // 20,400인데 목록만 22,800처럼 "없는 입고 수량"이 새로 생긴다. 상세보기의
+            // _actualInputMaterialQty와 어긋난다. 반납이 입고보다 많으면 과잉/유실·반납 열에서
+            // 드러나게 두고, 입고 숫자는 원장을 따른다.
         } catch (e) { console.warn('[PaintingWorkModule] getIssuedQtyForWork 실패:', d.id, e); }
         const _xl = _issued - _inQ - _returned;
         const _miss = _inQ - _prodQ;
@@ -3261,6 +3256,9 @@ const PaintingWorkModule = (function() {
         // "레이져대기입고" 배지 판정에 필요한 확인 캐시를 먼저 채워둔다(없으면 항상 미확인으로 보임).
         if (typeof LaserStandbyModule !== 'undefined' && typeof LaserStandbyModule.ensureInboundConfirmLoaded === 'function') {
             try { await LaserStandbyModule.ensureInboundConfirmLoaded(); } catch (e) { console.warn('[PaintingWorkModule] laser inbound confirm preload failed:', e); }
+        }
+        if (typeof PaintingInputModule !== 'undefined' && typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
+            try { await PaintingInputModule.alignInflatedSiteReturns(); } catch (eRet) { console.warn('[PaintingWorkModule] 반납수량 정리 실패:', eRet); }
         }
 
         let data = _getWorkListBaseData();
@@ -5903,7 +5901,8 @@ const PaintingWorkModule = (function() {
                     color: ctx.data.injColor || ctx.data.color,
                     lots: ctx.remainLots.map(function (l) { return { lotNo: l.lotNo, qty: l.balance }; }),
                     reason: reason,
-                    returnedBy: (user && (user.displayName || user.username)) || ''
+                    returnedBy: (user && (user.displayName || user.username)) || '',
+                    workId: ctx.data && ctx.data.id
                 });
                 UIUtils.toast('반납 대기로 등록했습니다. 사출창고에서 입고 처리하면 재고에 반영됩니다.', 'success');
             } catch (e) {
@@ -6089,7 +6088,11 @@ const PaintingWorkModule = (function() {
                 color: injColorForReturn,
                 lots: lots,
                 reason: reason + ' · ' + reasonDetail,
-                returnedBy: (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}).displayName || '' : ''
+                returnedBy: (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}).displayName || '' : '',
+                // _workViewId — 이 반납 섹션이 열려 있는 실적(수정/보기 화면)의 id. 이걸 안 넘기면
+                // 반납이 어느 실적 몫인지 refWorkId로 확정되지 않아, 투입 LOT과 다른 LOT을 반납했을 때
+                // 유실/반납 열 계산이 LOT 매칭에만 의존하게 되고 어긋나면 '유실'로 잘못 잡힌다.
+                workId: _workViewId || undefined
             });
             setStatus('✓ 반납 처리 완료 (' + UIUtils.formatNumber(totalQty) + ' EA) — 사출창고 물류담당자 확인 대기 중', '#16a34a');
             UIUtils.toast('반납 처리되었습니다. 사출창고 물류담당자 확인을 기다려 주세요.', 'success');
@@ -7396,6 +7399,7 @@ const PaintingWorkModule = (function() {
         var workPartName = String((d && d.partName) || '').trim();
         var lineKey = _resolvePaintLine(d && d.line);
         var rows = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || [];
+        var seenOut = {};
         return rows.reduce(function (sum, r) {
             if (String(r.type || '') !== '입고') return sum;
             if (_inboundLineOf(r) !== lineKey) return sum;
@@ -7403,6 +7407,11 @@ const PaintingWorkModule = (function() {
             if ((injPartName || workPartName)
                 && !_inboundInjPartMatches(r.partName, injPartName, workPartName, carModel)) return sum;
             if (!_inboundDayHits(r, day)) return sum;
+            var outKey = r.refReworkOutId
+                ? ('rw:' + String(r.refReworkOutId))
+                : (r.refOutId ? ('inj:' + String(r.refOutId)) : ('id:' + String(r.id || '')));
+            if (seenOut[outKey]) return sum;
+            seenOut[outKey] = true;
             return sum + _inboundRecordLots(r).reduce(function (s, l) { return s + l.qty; }, 0);
         }, 0);
     }
@@ -7656,6 +7665,53 @@ const PaintingWorkModule = (function() {
      * 대신 "얼마가 입고됐고 얼마가 실제 작업 실적(work.lots)에 쓰였는지"를 원장에서 직접
      * 합산한다 — 실적 레코드 자체가 실제 투입의 1차 근거라 매칭 오류에 흔들리지 않는다.
      */
+    function _scaleWorkLotsToQty(lots, target) {
+        var list = (lots || []).map(function (l) {
+            return { lotNo: String((l && l.lotNo) || '').trim(), qty: Math.max(0, Number(l && l.qty) || 0) };
+        }).filter(function (l) { return l.lotNo && l.qty > 0; });
+        var t = Math.max(0, Math.floor(Number(target) || 0));
+        if (!list.length || t <= 0) return [];
+        if (list.length === 1) return [{ lotNo: list[0].lotNo, qty: t }];
+        var old = list.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (old <= 0) return [{ lotNo: list[0].lotNo, qty: t }];
+        var allocated = 0;
+        return list.map(function (l, i) {
+            if (i === list.length - 1) return { lotNo: l.lotNo, qty: Math.max(0, t - allocated) };
+            var q = Math.floor(l.qty * t / old);
+            allocated += q;
+            return { lotNo: l.lotNo, qty: q };
+        }).filter(function (l) { return l.qty > 0; });
+    }
+
+    /** 실적의 LOT 사용량을 맵에 더한다. LOT 합 < 도장투입수이면 투입수량으로 올린다. */
+    function _applyWorkUsageToLotMap(usedByLot, w, lotOk) {
+        if (!usedByLot || !w) return;
+        var raw = [];
+        (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
+            if (!l || !l.lotNo) return;
+            if (lotOk && !lotOk(l, w)) return;
+            raw.push({ lotNo: String(l.lotNo).trim(), qty: Number(l.qty) || 0 });
+        });
+        var inputQty = Number(w.inputQty) || 0;
+        try {
+            if (typeof _workQtys === 'function') inputQty = Number(_workQtys(w).inputQty) || inputQty;
+        } catch (e) { /* ignore */ }
+        var lotSum = raw.reduce(function (s, l) { return s + l.qty; }, 0);
+        var lots = raw;
+        if (inputQty > lotSum && lotSum > 0) lots = _scaleWorkLotsToQty(raw, inputQty);
+        else if ((!raw.length || lotSum <= 0) && inputQty > 0) {
+            var solo = String(w.lotNo || '').trim();
+            if (solo && (!lotOk || lotOk({ lotNo: solo, partName: w.injPartName || w.partName }, w))) {
+                usedByLot[solo] = (usedByLot[solo] || 0) + inputQty;
+            }
+            return;
+        }
+        lots.forEach(function (l) {
+            if (!l.lotNo) return;
+            usedByLot[l.lotNo] = (usedByLot[l.lotNo] || 0) + l.qty;
+        });
+    }
+
     function _lotReturnBreakdown(d) {
         var res = { issued: 0, used: 0, returned: 0, returnable: 0, lots: [] };
         try {
@@ -7693,8 +7749,8 @@ const PaintingWorkModule = (function() {
                 });
             });
 
-            // ② 같은 날 같은 조건의 "모든" 실적이 실제로 투입한 LOT별 수량 — 실적의 lots[]가
-            //    그 자체로 투입 사실의 1차 근거다(원장 매칭에 기대지 않는다).
+            // ② 같은 날 같은 조건의 실적 투입. lots[] 합이 도장투입수(inputQty)보다 작으면
+            // 투입수량으로 맞춘다 — LOT 합만 빼면 잔량이 부풀어 반납이 입고−투입보다 커진다.
             var usedByLot = {};
             (Storage.getAll(STORE) || []).forEach(function (w) {
                 if (!w || String(w.date || '').slice(0, 10) !== day) return;
@@ -7702,11 +7758,7 @@ const PaintingWorkModule = (function() {
                 if (carModel && String(w.carModel || '') !== carModel) return;
                 var wInjPart = _resolveInjPartNameForWork(w.carModel, w.partName, w.color) || w.injPartName;
                 if (injPart && wInjPart && wInjPart !== injPart) return;
-                (w.lots || []).forEach(function (l) {
-                    var n = String((l && l.lotNo) || '').trim();
-                    if (!n) return;
-                    usedByLot[n] = (usedByLot[n] || 0) + (Number(l.qty) || 0);
-                });
+                _applyWorkUsageToLotMap(usedByLot, w);
             });
 
             // ③ 이미 반납된 LOT별 수량 — 반납은 실적 작성일보다 늦게(다음날 등) 처리되는 게
@@ -7735,6 +7787,10 @@ const PaintingWorkModule = (function() {
                 var usedQty = usedByLot[lotNo] || 0;
                 var returnedQty = returnedByLot[lotNo] || 0;
                 var remaining = Math.max(0, inQty - usedQty - returnedQty);
+                if (returnedQty > Math.max(0, inQty - usedQty)) {
+                    returnedQty = Math.max(0, inQty - usedQty);
+                    remaining = 0;
+                }
                 res.issued += inQty;
                 res.used += usedQty;
                 res.returned += returnedQty;
@@ -8705,28 +8761,13 @@ const PaintingWorkModule = (function() {
             if (String(w.date || '').slice(0, 10) !== day) return;
             if (_resolvePaintLine(w.line) !== line) return;
             if (String(w.carModel || '') !== carModel) return;
-            (w.lots || []).forEach(function (l) {
-                if (!l || !l.lotNo) return;
-                if (!_lotUsageBelongsToWork(l.partName, w)) return;
-                var lotNo = String(l.lotNo).trim();
-                usedQtyByLot[lotNo] = (usedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
+            _applyWorkUsageToLotMap(usedQtyByLot, w, function (l, ww) {
+                return _lotUsageBelongsToWork(l.partName, ww);
             });
-            if (w.lotNo && !(w.lots && w.lots.length)) {
-                if (!_lotUsageBelongsToWork(w.injPartName || w.partName, w)) return;
-                var soloLot = String(w.lotNo).trim();
-                usedQtyByLot[soloLot] = (usedQtyByLot[soloLot] || 0) + (Number(w.inputQty) || 0);
-            }
         });
-        if (Array.isArray(d.lots) && d.lots.length) {
-            d.lots.forEach(function (l) {
-                if (!l || !l.lotNo) return;
-                var lotNo = String(l.lotNo).trim();
-                usedQtyByLot[lotNo] = (usedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
-            });
-        } else if (d.lotNo && d.inputQty) {
-            var soloSelfLot = String(d.lotNo).trim();
-            usedQtyByLot[soloSelfLot] = (usedQtyByLot[soloSelfLot] || 0) + (Number(d.inputQty) || 0);
-        }
+        _applyWorkUsageToLotMap(usedQtyByLot, d, function (l) {
+            return !!(l && l.lotNo);
+        });
 
         var receivedQtyByLot = {};
         var receivedPartByLot = {};
@@ -8796,6 +8837,10 @@ const PaintingWorkModule = (function() {
                 if (!lotNo || !receivedQtyByLot[lotNo]) return;   // 이 입고분 LOT이 아니면 제외
                 returnedQtyByLot[lotNo] = (returnedQtyByLot[lotNo] || 0) + (Number(l.qty) || 0);
             });
+        });
+        Object.keys(returnedQtyByLot).forEach(function (lotNo) {
+            var cap = Math.max(0, (receivedQtyByLot[lotNo] || 0) - (usedQtyByLot[lotNo] || 0));
+            if ((returnedQtyByLot[lotNo] || 0) > cap) returnedQtyByLot[lotNo] = cap;
         });
 
         return { ok: true, receivedQtyByLot: receivedQtyByLot, usedQtyByLot: usedQtyByLot, returnedQtyByLot: returnedQtyByLot,

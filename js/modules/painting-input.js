@@ -1717,6 +1717,350 @@ var PaintingInputModule = (function () {
         return removed;
     }
 
+    let _returnAlignDone = false;
+
+    function _injNamesFromWorkOpts(opts) {
+        const injNames = {};
+        opts = opts || {};
+        if (opts.injPartName) injNames[String(opts.injPartName).trim()] = true;
+        if (opts.partName) injNames[String(opts.partName).trim()] = true;
+        try {
+            const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+            mats.forEach(function (m) {
+                if (!m || !m.injPartName) return;
+                if (opts.carModel && m.carModel && m.carModel !== opts.carModel) return;
+                const mfg1 = String(m.mfgProductName || '').trim();
+                const mfg2 = String(m.mfgProductName2 || '').trim();
+                if (opts.partName && (mfg1 === opts.partName || mfg2 === opts.partName)) {
+                    injNames[String(m.injPartName).trim()] = true;
+                }
+            });
+        } catch (e) { /* ignore */ }
+        Object.keys(injNames).forEach(function (k) { if (!k) delete injNames[k]; });
+        return injNames;
+    }
+
+    function _addWorkUsageToLotMap(usedByLot, w) {
+        if (!usedByLot || !w) return;
+        const raw = [];
+        (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
+            if (!l || !l.lotNo) return;
+            raw.push({ lotNo: String(l.lotNo).trim(), qty: Number(l.qty) || 0 });
+        });
+        const inputQty = Number(w.inputQty) || 0;
+        const lotSum = raw.reduce(function (s, l) { return s + l.qty; }, 0);
+        let lots = raw;
+        if (inputQty > lotSum && lotSum > 0) lots = _scaleLotsToQty(raw, inputQty);
+        else if ((!raw.length || lotSum <= 0) && inputQty > 0) {
+            const solo = String(w.lotNo || '').trim();
+            if (solo) usedByLot[solo] = (usedByLot[solo] || 0) + inputQty;
+            return;
+        }
+        lots.forEach(function (l) {
+            if (!l.lotNo) return;
+            usedByLot[l.lotNo] = (usedByLot[l.lotNo] || 0) + l.qty;
+        });
+    }
+
+    /** 이 실적 몫의 LOT별 잔량 = 당일 현장입고 − 투입. 반납 원장을 다시 쓸 때 기준. */
+    function _leftoverLotsForWork(work, returnRec) {
+        const empty = { lots: [], qty: 0, issued: 0, used: 0 };
+        if (!work) return empty;
+        const want = _normLine((returnRec && (returnRec.line || returnRec.paintLine)) || work.line);
+        const day = String(work.date || '').slice(0, 10);
+        if (!day) return empty;
+        const opts = { carModel: work.carModel, partName: work.partName, injPartName: work.injPartName };
+        const injNames = _injNamesFromWorkOpts(opts);
+        if (returnRec && returnRec.partName) injNames[String(returnRec.partName).trim()] = true;
+        const requirePartMatch = Object.keys(injNames).length > 0;
+        const inbound = {};
+        const seenOut = {};
+        (_recordsForLine(want) || []).forEach(function (r) {
+            if (!r || String(r.type || '') !== '입고') return;
+            if (_inboundIssuedDay(r) !== day) return;
+            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
+            if (requirePartMatch) {
+                const rPart = String(r.partName || '').trim();
+                if (!rPart || !injNames[rPart]) return;
+            }
+            const outKey = _inboundOutDedupeKey(r);
+            if (seenOut[outKey]) return;
+            seenOut[outKey] = true;
+            _issuedLotsOfRecord(r).forEach(function (l) {
+                const n = String(l.lotNo || '').trim();
+                if (!n) return;
+                inbound[n] = (inbound[n] || 0) + (Number(l.qty) || 0);
+            });
+        });
+        const usedByLot = {};
+        _addWorkUsageToLotMap(usedByLot, work);
+        if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
+            (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+                if (!w || String(w.id) === String(work.id)) return;
+                if (String(w.date || '').slice(0, 10) !== day) return;
+                if (_normLine(w.line || '') !== want) return;
+                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return;
+                const wantPart = String(work.partName || '').trim();
+                if (wantPart) {
+                    if (String(w.partName || '').trim() !== wantPart) return;
+                } else {
+                    const wPart = String(w.injPartName || w.partName || '').trim();
+                    if (requirePartMatch && wPart && !injNames[wPart]) return;
+                }
+                _addWorkUsageToLotMap(usedByLot, w);
+            });
+        }
+        const lots = [];
+        let issued = 0;
+        Object.keys(inbound).forEach(function (lotNo) {
+            const inQty = inbound[lotNo] || 0;
+            issued += inQty;
+            const rem = Math.max(0, Math.floor(inQty - (usedByLot[lotNo] || 0)));
+            if (rem > 0) lots.push({ lotNo: lotNo, qty: rem });
+        });
+        lots.sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
+        const qty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        return { lots: lots, qty: qty, issued: issued, used: issued - qty };
+    }
+
+    /**
+     * refWorkId가 없는 대기 반납용. 반납 LOT과 겹치는 당일(반납일 이전) 현장입고를 잡고,
+     * 같은 라인·차종·사출명의 실적 투입을 빼 LOT별 잔량을 구한다.
+     */
+    function _leftoverFromReturnRecord(rec) {
+        const empty = { lots: [], qty: 0, issued: 0, used: 0 };
+        if (!rec) return empty;
+        const want = _normLine(rec.line || rec.paintLine);
+        const car = String(rec.carModel || '').trim();
+        const part = String(rec.partName || '').trim();
+        const returnDay = String(rec.date || '').slice(0, 10);
+        if (!want || !car || !part) return empty;
+        const retLotSet = {};
+        const recLots = (Array.isArray(rec.lots) && rec.lots.length)
+            ? rec.lots
+            : (rec.lotNo ? [{ lotNo: rec.lotNo, qty: rec.quantity }] : []);
+        recLots.forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) retLotSet[n] = true;
+        });
+
+        const inbound = {};
+        const seenOut = {};
+        (_recordsForLine(want) || []).forEach(function (r) {
+            if (!r || String(r.type || '') !== '입고') return;
+            if (String(r.carModel || '').trim() !== car) return;
+            if (String(r.partName || '').trim() !== part) return;
+            const inDay = _inboundIssuedDay(r);
+            if (returnDay && inDay && inDay > returnDay) return;
+            const rLots = _issuedLotsOfRecord(r);
+            const overlap = !Object.keys(retLotSet).length || rLots.some(function (l) {
+                return !!retLotSet[String((l && l.lotNo) || '').trim()];
+            });
+            if (!overlap) return;
+            const outKey = _inboundOutDedupeKey(r);
+            if (seenOut[outKey]) return;
+            seenOut[outKey] = true;
+            rLots.forEach(function (l) {
+                const n = String((l && l.lotNo) || '').trim();
+                if (!n) return;
+                inbound[n] = (inbound[n] || 0) + (Number(l.qty) || 0);
+            });
+        });
+
+        const usedByLot = {};
+        if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
+            (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+                if (!w) return;
+                if (_normLine(w.line || '') !== want) return;
+                if (String(w.carModel || '').trim() !== car) return;
+                const wDay = String(w.date || '').slice(0, 10);
+                if (returnDay && wDay && wDay > returnDay) return;
+                const injNames = _injNamesFromWorkOpts({
+                    carModel: w.carModel,
+                    partName: w.partName,
+                    injPartName: w.injPartName
+                });
+                const wHasLot = (Array.isArray(w.lots) ? w.lots : []).some(function (l) {
+                    return !!retLotSet[String((l && l.lotNo) || '').trim()];
+                });
+                if (!wHasLot && part && !injNames[part]
+                    && String(w.injPartName || '').trim() !== part
+                    && String(w.partName || '').trim() !== part) return;
+                _addWorkUsageToLotMap(usedByLot, w);
+            });
+        }
+
+        const lots = [];
+        let issued = 0;
+        Object.keys(inbound).forEach(function (lotNo) {
+            const inQty = inbound[lotNo] || 0;
+            issued += inQty;
+            const rem = Math.max(0, Math.floor(inQty - (usedByLot[lotNo] || 0)));
+            if (rem > 0) lots.push({ lotNo: lotNo, qty: rem });
+        });
+        lots.sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
+        const qty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        return { lots: lots, qty: qty, issued: issued, used: issued - qty };
+    }
+
+    function _resolveLeftoverForReturn(rec, works) {
+        works = works || {};
+        let leftover = { lots: [], qty: 0, issued: 0, used: 0 };
+        const work = rec && rec.refWorkId ? works[String(rec.refWorkId)] : null;
+        if (work) leftover = _leftoverLotsForWork(work, rec);
+        if (!(leftover.issued > 0)) leftover = _leftoverFromReturnRecord(rec);
+        return leftover;
+    }
+
+    function _sameLotQtyList(a, b) {
+        const ma = {};
+        (a || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (!n) return;
+            ma[n] = (ma[n] || 0) + (Number(l.qty) || 0);
+        });
+        const mb = {};
+        (b || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (!n) return;
+            mb[n] = (mb[n] || 0) + (Number(l.qty) || 0);
+        });
+        const keys = Object.keys(ma);
+        if (keys.length !== Object.keys(mb).length) return false;
+        return keys.every(function (k) { return ma[k] === mb[k]; });
+    }
+
+    async function _warehouseRowsForReturn(returnId) {
+        if (!returnId || typeof DB === 'undefined' || !DB.STORES || !DB.STORES.INJECTION_INVENTORY) return [];
+        return (Storage.getAll(DB.STORES.INJECTION_INVENTORY) || []).filter(function (d) {
+            return d && String(d.refReturnId || '') === String(returnId);
+        });
+    }
+
+    async function _syncWarehouseForReturn(rec, qty, lots) {
+        const rows = await _warehouseRowsForReturn(rec && rec.id);
+        for (let i = 0; i < rows.length; i++) {
+            const wh = rows[i];
+            if (!wh || !wh.id) continue;
+            if (!(qty > 0)) {
+                await Storage.remove(DB.STORES.INJECTION_INVENTORY, wh.id);
+                continue;
+            }
+            if (i === 0) {
+                await Storage.update(DB.STORES.INJECTION_INVENTORY, wh.id, {
+                    quantity: qty,
+                    lots: lots,
+                    lotNo: (lots[0] && lots[0].lotNo) || rec.lotNo
+                });
+            } else {
+                await Storage.remove(DB.STORES.INJECTION_INVENTORY, wh.id);
+            }
+        }
+    }
+
+    async function _removeReturnAndWarehouse(rec) {
+        if (!rec || !rec.id) return;
+        const rows = await _warehouseRowsForReturn(rec.id);
+        for (let i = 0; i < rows.length; i++) {
+            if (rows[i] && rows[i].id) await Storage.remove(DB.STORES.INJECTION_INVENTORY, rows[i].id);
+        }
+        await Storage.remove(STORE, rec.id);
+    }
+
+    /**
+     * 「이 실적 몫 반납」을 당일 현장입고 − 도장투입(LOT별 잔량)으로 다시 쓴다.
+     * 입고 LOT 일부만 실적에 적혀 현장입고가 작게 잡히면, 그 작은 값으로 반납을 깎거나
+     * 입고분 전체가 반납에 한 번 더 붙는 사고가 난다(20,400 입고인데 반납 31,200).
+     * 사출창고 반납입고(refReturnId)도 같은 수량·LOT으로 맞춘다.
+     */
+    async function _alignInflatedSiteReturns(opts) {
+        opts = opts || {};
+        if (_returnAlignDone && !opts.force) return 0;
+        _returnAlignDone = true;
+        const works = {};
+        (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+            if (w && w.id) works[String(w.id)] = w;
+        });
+        // 창고확정(confirmed)된 반납은 이미 사출창고에 실물 입고 처리까지 끝난 완결 거래다.
+        // 같은 실적/품목으로 시점이 다른 별개의 반납이 여러 건 쌓이는 건 정상인데(예: 08-14에
+        // 한 번, 08-21에 또 한 번), 예전엔 이 함수가 그런 확정 건들까지 "같은 실적/품목 = 중복"으로
+        // 보고 최신 1건만 남기고 나머지를 지운 뒤 남은 1건의 수량을 전체 이력 재계산값으로
+        // 덮어썼다 — 그 결과 서로 다른 두 반납(2,400·6,120)이 하나로 뭉개지거나, 재계산값이
+        // 실제와 달라져(6,400 등) 창고 재고가 틀어지는 사고가 났다. 확정 건은 여기서 절대
+        // 건드리지 않는다 — 확정 건의 수량을 고쳐야 하면 관리자 전용 수정 기능을 쓴다.
+        const byWork = {};
+        (Storage.getAll(STORE) || []).forEach(function (r) {
+            if (!r || !r.isSiteReturn) return;
+            if (String(r.returnStatus || '') !== 'pending') return;
+            const k = r.refWorkId
+                ? ('w:' + String(r.refWorkId))
+                : ('p:' + _normLine(r.line || r.paintLine) + '|' + String(r.carModel || '') + '|' + String(r.partName || ''));
+            if (!byWork[k]) byWork[k] = [];
+            byWork[k].push(r);
+        });
+        let fixed = 0;
+        const workIds = Object.keys(byWork);
+        for (let wi = 0; wi < workIds.length; wi++) {
+            const recs = byWork[workIds[wi]].slice().sort(function (a, b) {
+                const ac = String(a.returnStatus || '') === 'confirmed' ? 0 : 1;
+                const bc = String(b.returnStatus || '') === 'confirmed' ? 0 : 1;
+                if (ac !== bc) return ac - bc;
+                return String(b.date || '').localeCompare(String(a.date || ''));
+            });
+            const keeper = recs[0];
+            const leftover = _resolveLeftoverForReturn(keeper, works);
+            const targetQty = leftover.qty;
+            const targetLots = leftover.lots;
+            for (let ei = 1; ei < recs.length; ei++) {
+                try {
+                    await _removeReturnAndWarehouse(recs[ei]);
+                    fixed++;
+                } catch (e) {
+                    console.warn('[PaintingInput] 중복 반납 삭제 실패:', e);
+                }
+            }
+            const have = Number(keeper.quantity) || 0;
+            const haveLots = Array.isArray(keeper.lots) ? keeper.lots : [];
+            if (have === targetQty && _sameLotQtyList(haveLots, targetLots)) continue;
+            const remainMap = {};
+            targetLots.forEach(function (l) { remainMap[l.lotNo] = l.qty; });
+            let overRemain = false;
+            let returnedConsumedLot = false;
+            haveLots.forEach(function (l) {
+                const n = String((l && l.lotNo) || '').trim();
+                const q = Number(l && l.qty) || 0;
+                if (!n || q <= 0) return;
+                const cap = remainMap[n] || 0;
+                if (q > cap) {
+                    if (cap <= 0) returnedConsumedLot = true;
+                    else overRemain = true;
+                }
+            });
+            const inflated = have > targetQty;
+            if (!inflated && !overRemain && !returnedConsumedLot && targetQty > 0) continue;
+            try {
+                if (targetQty <= 0) {
+                    // 입고 처리 전 건은 잔량을 못 구했다고 지우지 않는다.
+                    // (현장입고 매칭 실패로 issued=0이면 대기 반납이 사라지는 사고)
+                    if (!(leftover.issued > 0) || String(keeper.returnStatus || '') === 'pending') continue;
+                    await _removeReturnAndWarehouse(keeper);
+                    fixed++;
+                    continue;
+                }
+                await Storage.update(STORE, keeper.id, {
+                    quantity: targetQty,
+                    lots: targetLots,
+                    lotNo: (targetLots[0] && targetLots[0].lotNo) || keeper.lotNo
+                });
+                await _syncWarehouseForReturn(keeper, targetQty, targetLots);
+                fixed++;
+            } catch (e) {
+                console.warn('[PaintingInput] 반납수량 정리 실패:', e);
+            }
+        }
+        return fixed;
+    }
+
     /** 창고 출고수량보다 작게 저장된 미사용 현장입고를 출고수량에 맞춘다. */
     async function _alignInboundQtyToWarehouseOut(line) {
         const want = _normLine(line);
@@ -1761,6 +2105,7 @@ var PaintingInputModule = (function () {
         try {
             try { deduped = await _dedupeSiteInboundByOutRef() || 0; } catch (eDup) { deduped = 0; }
             try { aligned = await _alignInboundQtyToWarehouseOut(want) || 0; } catch (eAlign) { aligned = 0; }
+            try { await _alignInflatedSiteReturns(); } catch (eRet) { /* ignore */ }
             const today = UIUtils.today ? UIUtils.today() : '';
             const nowHm = _nowHm();
             const pending = listTodayWarehouseShipments(want, today).filter(function (r) { return !r.received; });
@@ -2324,12 +2669,16 @@ var PaintingInputModule = (function () {
                 const requirePartMatch = Object.keys(injNames).length > 0;
                 const contributions = [];
                 let sum = 0;
+                const seenOut = {};
                 sameDayCarLine.forEach(function (r) {
+                    const outKey = _inboundOutDedupeKey(r);
+                    if (seenOut[outKey]) return;
                     if (requirePartMatch) {
                         const rPart = String(r.partName || '').trim();
                         if (!rPart || !injNames[rPart]) return;
                     }
-                    const rLots = Array.isArray(r.lots) && r.lots.length ? r.lots : [{ lotNo: r.lotNo, qty: r.quantity }];
+                    seenOut[outKey] = true;
+                    const rLots = _issuedLotsOfRecord(r);
                     rLots.forEach(function (l) {
                         const n = String((l && l.lotNo) || '').trim();
                         if (!n || workLots.indexOf(n) < 0) return;
@@ -2349,6 +2698,57 @@ var PaintingInputModule = (function () {
         } catch (e) {
             return '진단 오류: ' + (e && e.message ? e.message : e);
         }
+    }
+
+    function _inboundOutDedupeKey(r) {
+        if (!r) return '';
+        if (r.refReworkOutId) return 'rw:' + String(r.refReworkOutId);
+        if (r.refOutId) return 'inj:' + String(r.refOutId);
+        return 'id:' + String(r.id || '');
+    }
+
+    /** 입고 레코드의 LOT 수량. 같은 LOT 중복은 합치고, lots 합이 quantity와 다르면 quantity에 맞춘다. */
+    function _issuedLotsOfRecord(r) {
+        const recQty = Number((r && r.quantity) || 0);
+        let lots = (Array.isArray(r && r.lots) && r.lots.length)
+            ? r.lots.map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: Number(l && l.qty) || 0 };
+            }).filter(function (l) { return l.lotNo; })
+            : [];
+        if (!lots.length && r && r.lotNo) {
+            lots = [{ lotNo: String(r.lotNo).trim(), qty: recQty }];
+        }
+        const merged = [];
+        const idx = {};
+        lots.forEach(function (l) {
+            const i = idx[l.lotNo];
+            if (i == null) {
+                idx[l.lotNo] = merged.length;
+                merged.push({ lotNo: l.lotNo, qty: l.qty });
+            } else {
+                merged[i].qty += l.qty;
+            }
+        });
+        lots = merged;
+        const sum = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        if (recQty > 0 && sum > 0 && sum !== recQty) {
+            let allocated = 0;
+            lots = lots.map(function (l, i) {
+                if (i === lots.length - 1) return { lotNo: l.lotNo, qty: Math.max(0, recQty - allocated) };
+                const q = Math.floor(l.qty * recQty / sum);
+                allocated += q;
+                return { lotNo: l.lotNo, qty: q };
+            }).filter(function (l) { return l.qty > 0; });
+        } else if (sum <= 0 && recQty > 0 && lots.length) {
+            if (lots.length === 1) lots[0].qty = recQty;
+            else {
+                const each = Math.floor(recQty / lots.length);
+                lots.forEach(function (l, i) {
+                    l.qty = (i === lots.length - 1) ? (recQty - each * (lots.length - 1)) : each;
+                });
+            }
+        }
+        return lots.filter(function (l) { return l.qty > 0; });
     }
 
     /**
@@ -2375,6 +2775,25 @@ var PaintingInputModule = (function () {
         const hasLots = Object.keys(lotSet).length > 0;
         const injPart = String(opts.injPartName || opts.partName || '').trim();
 
+        // 이 날짜·차종·품목으로 실적이 이 건 하나뿐이면(형제 실적 없음), 반납은 이 실적이
+        // 쓴 LOT 번호와 겹치지 않아도(=투입하지 않고 남겨서 그대로 반납한 LOT) 전부 이 실적
+        // 몫이다. LOT 매칭만 쓰면 "투입 LOT(예:260807)과 다른 LOT(260808·260809)을 반납"한
+        // 정상 케이스가 0으로 잡혀 반납분이 통째로 '유실'로 오표시된다.
+        const injNamesForSibling = _injNamesFromWorkOpts(opts);
+        const siblingCount = (opts.workId && typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK)
+            ? (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(function (w) {
+                if (!w || String(w.id) === String(opts.workId)) return false;
+                if (String(w.date || '').slice(0, 10) !== day) return false;
+                if (_normLine(w.line || '') !== want) return false;
+                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return false;
+                const wantPart = String(opts.partName || '').trim();
+                if (wantPart) return String(w.partName || '').trim() === wantPart;
+                const wPart = String(w.injPartName || w.partName || '').trim();
+                return wPart && injNamesForSibling[wPart];
+            }).length
+            : 0;
+        const useLotMatch = hasLots && siblingCount > 0;
+
         let total = 0;
         (_recordsForLine(want) || []).forEach(function (r) {
             if (!r || String(r.type || '') === '입고') return;
@@ -2395,15 +2814,17 @@ var PaintingInputModule = (function () {
             // 먼저 있을 수 없다) 하한으로 제외한다 — 없으면 "이 실적은 반납한 적 없는데 LOT번호만
             // 같은 몇 주 전 반납량이 자재 반납 열에 그대로 붙어 보이는" 사고가 난다.
             if (String(r.date || '').slice(0, 10) < day) return;
-            // LOT 정보가 있으면 LOT 번호로만 매칭(날짜 상한 무관, 반납은 다음날 등 처리될 수 있음).
-            // LOT 정보가 없는 구 데이터일 때만 당일 일치를 폴백 기준으로 쓴다.
+            // LOT 정보가 있고 형제 실적이 있으면 LOT 번호로만 매칭(날짜 상한 무관, 반납은
+            // 다음날 등 처리될 수 있음). LOT 정보가 전혀 없는 구 데이터일 때만 당일 일치를
+            // 폴백 기준으로 쓴다 — hasLots인데 형제가 없는 경우(투입 LOT과 다른 LOT을 반납한
+            // 케이스)까지 당일로 묶으면, 반납이 다음날 처리될 때 다시 0으로 빠진다.
             if (!hasLots && String(r.date || '').slice(0, 10) !== day) return;
             if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
 
             const rLots = Array.isArray(r.lots) && r.lots.length
                 ? r.lots
                 : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
-            if (hasLots) {
+            if (useLotMatch) {
                 // LOT번호는 여러 제품이 같은 원료 배치를 나눠 쓰면 재사용될 수 있다 — partName까지
                 // 맞아야 이 실적과 무관한 다른 제품의 같은 LOT번호 반납이 섞이지 않는다.
                 if (injPart && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPart) return;
@@ -2417,6 +2838,17 @@ var PaintingInputModule = (function () {
             if (injPart && String(r.partName || '').trim() && String(r.partName || '').trim() !== injPart) return;
             total += Number(r.quantity) || 0;
         });
+        const work = (opts.workId && typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK)
+            ? Storage.getById(DB.STORES.PAINTING_WORK, opts.workId)
+            : null;
+        const inputQty = Number(opts.inputQty != null ? opts.inputQty : (work && work.inputQty)) || 0;
+        if (inputQty > 0) {
+            const issued = getIssuedQtyForWork(line, opts);
+            if (issued > 0) {
+                const maxRet = Math.max(0, Math.floor(issued - inputQty));
+                if (total > maxRet) total = maxRet;
+            }
+        }
         return total;
     }
 
@@ -2434,22 +2866,7 @@ var PaintingInputModule = (function () {
         if (opts.lotNo) lotSet[String(opts.lotNo).trim()] = true;
         const hasLots = Object.keys(lotSet).length > 0;
 
-        const injNames = {};
-        if (opts.injPartName) injNames[String(opts.injPartName).trim()] = true;
-        if (opts.partName) injNames[String(opts.partName).trim()] = true;
-        // 제품명 → 사출자재 매핑
-        try {
-            const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-            mats.forEach(function (m) {
-                if (!m || !m.injPartName) return;
-                if (opts.carModel && m.carModel && m.carModel !== opts.carModel) return;
-                const mfg1 = String(m.mfgProductName || '').trim();
-                const mfg2 = String(m.mfgProductName2 || '').trim();
-                if (opts.partName && (mfg1 === opts.partName || mfg2 === opts.partName)) {
-                    injNames[String(m.injPartName).trim()] = true;
-                }
-            });
-        } catch (e) { /* ignore */ }
+        const injNames = _injNamesFromWorkOpts(opts);
 
         const dayRecords = (_recordsForLine(want) || []).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
@@ -2467,8 +2884,12 @@ var PaintingInputModule = (function () {
         if (opts.planId) {
             let planTotal = 0;
             let planMatched = false;
+            const seenPlan = {};
             dayRecords.forEach(function (r) {
+                const outKey = _inboundOutDedupeKey(r);
+                if (seenPlan[outKey]) return;
                 if (r.matchedPlanId && String(r.matchedPlanId) === String(opts.planId)) {
+                    seenPlan[outKey] = true;
                     planMatched = true;
                     planTotal += Number(r.quantity) || 0;
                     return;
@@ -2476,6 +2897,7 @@ var PaintingInputModule = (function () {
                 if (!r.refOutId || typeof DB === 'undefined' || !DB.STORES || !DB.STORES.INJECTION_INVENTORY) return;
                 const outRec = Storage.getById(DB.STORES.INJECTION_INVENTORY, r.refOutId);
                 if (outRec && outRec.planId && String(outRec.planId) === String(opts.planId)) {
+                    seenPlan[outKey] = true;
                     planMatched = true;
                     planTotal += Number(r.quantity) || 0;
                 }
@@ -2483,55 +2905,56 @@ var PaintingInputModule = (function () {
             if (planMatched) return planTotal;
         }
 
-        // LOT번호(YYMMDD)는 하나의 원료 배치가 여러 제품(사출명)에 걸쳐 재사용될 수 있다
-        // (예: 같은 사출 원료 LOT이 HIGH ROOM KNOB과 HIGH DOOR KNOB에 나눠 입고). 아래 injNames
-        // 필터 없이 LOT번호만으로 dayRecords를 훑으면, 이 실적과 무관한 다른 제품의 같은 LOT번호
-        // 입고분까지 합산되어 실제 이 실적이 받은 양보다 훨씬 큰 수치가 나온다(자재과잉/유실
-        // 오탐의 원인). 아래 사출명(품명) 폴백과 동일한 기준으로 좁힌다.
-        let total = 0;
-        if (hasLots) {
+        // 실적.lots는 "투입에 쓴 LOT"이지 "현장에 들어온 LOT"이 아니다.
+        // 같은 출고의 나머지 LOT(반납 대상)을 빼면 현장입고가 창고 출고보다 작게 보인다
+        // (예: 입고 20,400인데 투입 LOT만 합쳐 11,400). 같은 날 같은 품목 실적이 이 건뿐이면
+        // 당일 해당 사출명 입고 원장 전체를 쓴다. 실적이 여러 건일 때만 LOT 겹치는 몫으로 나눈다.
+        const siblingCount = (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK)
+            ? (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(function (w) {
+                if (!w || (opts.workId && String(w.id) === String(opts.workId))) return false;
+                if (String(w.date || '').slice(0, 10) !== day) return false;
+                if (_normLine(w.line || '') !== want) return false;
+                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return false;
+                const wantPart = String(opts.partName || '').trim();
+                if (wantPart) return String(w.partName || '').trim() === wantPart;
+                const wPart = String(w.injPartName || w.partName || '').trim();
+                return wPart && injNames[wPart];
+            }).length
+            : 0;
+
+        if (hasLots && siblingCount > 0) {
             const requirePartMatch = Object.keys(injNames).length > 0;
+            let total = 0;
+            const seenLot = {};
             dayRecords.forEach(function (r) {
+                const outKey = _inboundOutDedupeKey(r);
+                if (seenLot[outKey]) return;
                 if (requirePartMatch) {
                     const rPart = String(r.partName || '').trim();
                     if (!rPart || !injNames[rPart]) return;
                 }
-                const rLots = Array.isArray(r.lots) && r.lots.length
-                    ? r.lots
-                    : [{ lotNo: r.lotNo, qty: Number(r.quantity) || 0 }];
-                rLots.forEach(function (l) {
+                seenLot[outKey] = true;
+                _issuedLotsOfRecord(r).forEach(function (l) {
                     const n = String(l.lotNo || '').trim();
                     if (n && lotSet[n]) total += Number(l.qty) || 0;
                 });
             });
+            return total;
         }
-        // LOT번호로 못 찾았으면(또는 이 실적에 LOT이 아예 없으면) 사출명(품명) 기준으로도
-        // 다시 시도한다 — 실적에 적힌 LOT번호 표기가 실제 입고 LOT과 달라도(과거 데이터,
-        // 수기입력 오차 등) 실제로 입고된 자재를 "-"로 놓치지 않기 위한 안전망이다.
-        if (total <= 0) {
-            let fallbackTotal = 0;
-            dayRecords.forEach(function (r) {
-                const rPart = String(r.partName || '').trim();
-                if (rPart && injNames[rPart]) fallbackTotal += Number(r.quantity) || 0;
-            });
-            // 같은 날짜·차종·사출명으로 등록된 작업실적이 이 건 말고 더 있으면, LOT 매칭
-            // 실패한 이 fallback 총량은 "그날 입고된 전체"일 뿐 이 실적 몫이 얼마인지 알 수
-            // 없다 — 그 전체 값을 모든 실적에 똑같이 찍으면(예: 16,920을 두 실적 다 표시)
-            // 자재과잉/유실이 서로 뒤바뀐 것처럼 잘못 계산된다. 이 경우 안전하게 "-"로 남긴다.
-            if (fallbackTotal > 0 && typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
-                const siblingCount = (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(function (w) {
-                    if (!w || w.id === opts.workId) return false;
-                    if (String(w.date || '').slice(0, 10) !== day) return false;
-                    if (_normLine(w.line || '') !== want) return false;
-                    if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return false;
-                    const wPart = String(w.injPartName || w.partName || '').trim();
-                    return wPart && injNames[wPart];
-                }).length;
-                if (siblingCount > 0) return 0;
+
+        let fallbackTotal = 0;
+        const seenFb = {};
+        dayRecords.forEach(function (r) {
+            const rPart = String(r.partName || '').trim();
+            if (rPart && injNames[rPart]) {
+                const outKey = _inboundOutDedupeKey(r);
+                if (seenFb[outKey]) return;
+                seenFb[outKey] = true;
+                fallbackTotal += _issuedLotsOfRecord(r).reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
             }
-            total = fallbackTotal;
-        }
-        return total;
+        });
+        if (fallbackTotal > 0 && siblingCount > 0) return 0;
+        return fallbackTotal;
     }
 
     function _findInboundRecord(refId) {
@@ -3364,6 +3787,7 @@ var PaintingInputModule = (function () {
         autoReceiveFromWarehouseOut: autoReceiveFromWarehouseOut,
         runAutoSiteInbound: runAutoSiteInbound,
         dedupeDuplicateSiteInbounds: _dedupeSiteInboundByOutRef,
+        alignInflatedSiteReturns: _alignInflatedSiteReturns,
         findPlansForShipment: findPlansForShipment,
         getPlanQtyForShipment: getPlanQtyForShipment,
         getPlanEndTimeForShipment: getPlanEndTimeForShipment,

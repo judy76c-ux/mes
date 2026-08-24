@@ -5000,7 +5000,7 @@ var InjectionWarehouseModule = (function() {
     // PAINTING_INPUT_INVENTORY에 반납 대기(pending) 기록이 생긴다. 여기서는 그 기록을 눈으로
     // 확인하고, 물류담당자가 실물을 확인한 뒤 「입고 처리」를 눌러야 비로소 이 창고 재고로
     // 정식 편입된다 — 도장현장 처리만으로 자동 재입고되지 않는다("반납"과 "재입고"의 구분).
-    function renderSiteReturns() {
+    async function renderSiteReturns() {
         const card = document.getElementById('injSiteReturnCard');
         const body = document.getElementById('injSiteReturnBody');
         const badge = document.getElementById('injSiteReturnBadge');
@@ -5008,6 +5008,12 @@ var InjectionWarehouseModule = (function() {
         if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.listPendingReturns) {
             card.style.display = 'none';
             return;
+        }
+        card.style.display = '';
+        if (typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
+            body.innerHTML = '<tr><td colspan="9" style="padding:18px;text-align:center;color:var(--text-muted);font-size:0.85rem;">반납 수량 확인 중…</td></tr>';
+            try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
+            catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
         }
         const list = PaintingInputModule.listPendingReturns();
         const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
@@ -5067,10 +5073,19 @@ var InjectionWarehouseModule = (function() {
         return Object.keys(seen).sort();
     }
 
-    function openConfirmSiteReturnModal(id) {
+    async function openConfirmSiteReturnModal(id) {
         if (typeof PaintingInputModule === 'undefined') return;
+        if (typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
+            try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
+            catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
+        }
+        const rec = (typeof Storage !== 'undefined' && Storage.getById)
+            ? Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id)
+            : null;
         const list = PaintingInputModule.listPendingReturns();
-        const r = list.find(function (x) { return String(x.id) === String(id); });
+        const r = rec && rec.isSiteReturn && rec.returnStatus === 'pending'
+            ? rec
+            : list.find(function (x) { return String(x.id) === String(id); });
         if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
         const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
             ? r.lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(l.qty) + ' EA)'; }).join(', ')
@@ -5113,8 +5128,17 @@ var InjectionWarehouseModule = (function() {
 
     async function confirmSiteReturn(id) {
         if (typeof PaintingInputModule === 'undefined') return;
+        if (typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
+            try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
+            catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
+        }
+        const rec = (typeof Storage !== 'undefined' && Storage.getById)
+            ? Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id)
+            : null;
         const list = PaintingInputModule.listPendingReturns();
-        const r = list.find(function (x) { return String(x.id) === String(id); });
+        const r = rec && rec.isSiteReturn && rec.returnStatus === 'pending'
+            ? rec
+            : list.find(function (x) { return String(x.id) === String(id); });
         if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
         const actor = _getResetActorFields();
         const colorInput = document.getElementById('injSiteReturnColorInput');
