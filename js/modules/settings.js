@@ -11135,6 +11135,14 @@ const SettingsModule = (function() {
                 ? `<span style="font-size:.66rem;color:var(--text-muted);">기본</span>`
                 : `<button class="btn btn-sm" style="font-size:.7rem;padding:2px 7px;border:1px solid rgba(239,68,68,.45);color:#dc2626;background:#fff;border-radius:5px;cursor:pointer;"
                         onclick="SettingsModule.removePhotoDir('${_jsEscape(p.subdir)}')">삭제</button>`;
+            const browseUrl = ((typeof ApiClient !== 'undefined' && ApiClient.getBase && ApiClient.getBase()) || '')
+                + '/api/photos/browse?subdir=' + encodeURIComponent(p.subdir);
+            const openLink = exists
+                ? `<a href="${_esc(browseUrl)}" target="_blank" rel="noopener" title="NAS 폴더 바로가기"
+                        style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:5px;color:var(--accent-blue);text-decoration:none;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">folder_open</span></a>`
+                : `<span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;color:var(--text-muted);opacity:.4;" title="폴더 없음">
+                        <span class="material-symbols-outlined" style="font-size:16px;">folder_open</span></span>`;
             return `<div style="display:grid;grid-template-columns:${cols};gap:0;border-bottom:1px solid var(--border-color);">
                 <div style="padding:7px 10px;font-size:.78rem;font-weight:600;color:var(--text-primary);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.name)}${p.builtin?'':'<span style=\"font-size:.6rem;color:#2563eb;margin-left:4px;\">추가</span>'}</div>
                 <div style="padding:7px 10px;font-size:.76rem;font-family:monospace;color:var(--accent-blue);background:${p.builtin?'var(--bg-secondary)':'rgba(59,130,246,0.04)'};border-right:1px solid var(--border-color);">${_esc(p.subdir)}</div>
@@ -11143,7 +11151,7 @@ const SettingsModule = (function() {
                 <div style="padding:7px 6px;text-align:center;border-right:1px solid var(--border-color);">${statusBadge}</div>
                 <div style="padding:7px 6px;text-align:right;font-size:.76rem;font-family:monospace;border-right:1px solid var(--border-color);">${fileCount}</div>
                 <div style="padding:7px 10px;text-align:right;font-size:.74rem;font-family:monospace;color:var(--text-secondary);border-right:1px solid var(--border-color);">${sizeText}</div>
-                <div style="padding:7px 6px;text-align:center;">${actionBtn}</div>
+                <div style="padding:7px 6px;display:flex;align-items:center;justify-content:center;gap:6px;">${openLink}${actionBtn}</div>
             </div>`;
         }).join('');
 

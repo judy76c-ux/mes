@@ -972,7 +972,51 @@ app.post('/api/photos/stats', async (req, res) => {
   res.json({ baseDir, results });
 });
 
-// ?? ?ъ쭊 ??젣 ??
+function _escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// 폴더 내용을 클릭 가능한 목록으로 보여주는 간이 브라우저 (NAS 바로가기용)
+app.get('/api/photos/browse', async (req, res) => {
+  const subdirRaw = String(req.query.subdir || '');
+  const safeSub = subdirRaw.split('/').map(s => s.replace(/[^a-zA-Z0-9_\-]/g, '').slice(0, 40)).filter(Boolean).join('/');
+  const baseDir = getPhotoDir();
+  const dir = safeSub ? path.join(baseDir, safeSub) : baseDir;
+
+  let entries;
+  try {
+    entries = await fs.readdir(dir, { withFileTypes: true });
+  } catch (err) {
+    res.status(404).send(`<!doctype html><meta charset="utf-8"><body style="font-family:sans-serif;padding:20px;">
+      <p>폴더를 찾을 수 없습니다: <code>${_escapeHtml(safeSub || '/')}</code></p></body>`);
+    return;
+  }
+
+  entries.sort((a, b) => {
+    if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const rows = entries.map(e => {
+    const childSub = safeSub ? `${safeSub}/${e.name}` : e.name;
+    if (e.isDirectory()) {
+      return `<li>📁 <a href="/api/photos/browse?subdir=${encodeURIComponent(childSub)}">${_escapeHtml(e.name)}</a></li>`;
+    }
+    const encPath = childSub.split('/').map(encodeURIComponent).join('/');
+    return `<li>📄 <a href="/uploads/${encPath}" target="_blank" rel="noopener">${_escapeHtml(e.name)}</a></li>`;
+  }).join('');
+
+  const parentSub = safeSub.split('/').slice(0, -1).join('/');
+  const parentLink = safeSub ? `<p><a href="/api/photos/browse?subdir=${encodeURIComponent(parentSub)}">⬅ 상위 폴더</a></p>` : '';
+
+  res.send(`<!doctype html><html><head><meta charset="utf-8"><title>${_escapeHtml('/' + safeSub)}</title>
+    <style>body{font-family:sans-serif;padding:20px;color:#1e293b;} li{margin:5px 0;font-size:14px;} a{text-decoration:none;color:#2563eb;} a:hover{text-decoration:underline;}</style>
+    </head><body><h3 style="font-size:15px;">${_escapeHtml('/' + safeSub)}</h3>${parentLink}
+    <ul style="list-style:none;padding-left:4px;">${rows || '<li style="color:#94a3b8;">(빈 폴더)</li>'}</ul></body></html>`);
+});
+
 app.delete('/api/photos', async (req, res) => {
   const { url } = req.body || {};
   if (!url || !url.startsWith('/uploads/')) return res.status(400).json({ error: '?섎せ??寃쎈줈' });

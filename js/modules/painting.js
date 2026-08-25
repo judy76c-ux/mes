@@ -1091,6 +1091,113 @@ const PaintingWorkModule = (function() {
             && AuthModule.isAdminUser();
     }
 
+    const UNENTERED_NOTIFY_SENT_KEY = 'unentered_work_notify_sent_v1';
+    let _unenteredNotifySent = null;
+    let _unenteredNotifySentLoading = null;
+
+    function _unenteredNotifyKind() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.unenteredWorkNotifyKindForLine === 'function') {
+            return AuthModule.unenteredWorkNotifyKindForLine(_currentLine);
+        }
+        return _currentLine === '도장-B' ? 'unentered_work_b' : 'unentered_work_a';
+    }
+
+    function _loadUnenteredNotifySent() {
+        if (_unenteredNotifySent) return Promise.resolve(_unenteredNotifySent);
+        if (_unenteredNotifySentLoading) return _unenteredNotifySentLoading;
+        if (typeof Storage === 'undefined' || !Storage.getConfigValue) {
+            _unenteredNotifySent = {};
+            return Promise.resolve(_unenteredNotifySent);
+        }
+        _unenteredNotifySentLoading = Promise.resolve(Storage.getConfigValue(UNENTERED_NOTIFY_SENT_KEY))
+            .then(function (raw) {
+                _unenteredNotifySent = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+                return _unenteredNotifySent;
+            })
+            .catch(function () {
+                _unenteredNotifySent = {};
+                return _unenteredNotifySent;
+            })
+            .then(function (map) {
+                _unenteredNotifySentLoading = null;
+                return map;
+            });
+        return _unenteredNotifySentLoading;
+    }
+
+    function _notifyUnenteredPlans(unentered) {
+        const list = Array.isArray(unentered) ? unentered.filter(Boolean) : [];
+        if (!list.length) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        const kind = _unenteredNotifyKind();
+        if (!kind) return;
+        const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
+            : [];
+        if (!recipients.length) return;
+        const today = UIUtils.today();
+        _loadUnenteredNotifySent().then(function () {
+            const sentMap = _unenteredNotifySent && typeof _unenteredNotifySent === 'object' ? _unenteredNotifySent : {};
+            const byKind = (sentMap[kind] && typeof sentMap[kind] === 'object') ? sentMap[kind] : {};
+            const fresh = list.filter(function (p) {
+                const id = String((p && p.id) || '').trim();
+                if (!id) return false;
+                return String(byKind[id] || '') !== today;
+            });
+            if (!fresh.length) return;
+            const next = sentMap;
+            const nextKind = Object.assign({}, byKind);
+            const liveIds = {};
+            list.forEach(function (p) {
+                const id = String((p && p.id) || '').trim();
+                if (id) liveIds[id] = true;
+            });
+            Object.keys(nextKind).forEach(function (id) {
+                if (!liveIds[id] && String(nextKind[id] || '') !== today) delete nextKind[id];
+            });
+            fresh.forEach(function (p) {
+                const id = String((p && p.id) || '').trim();
+                if (id) nextKind[id] = today;
+            });
+            next[kind] = nextKind;
+            _unenteredNotifySent = next;
+            const lines = fresh.map(function (p) {
+                const day = _planDayKey(p);
+                const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
+                const hasInbound = _hasConfirmedSiteInboundForPlan(p, day);
+                return '- ' + day + ' ' + timeStr +
+                    ' · ' + (p.carModel || '-') + ' / ' + (p.partName || '-') +
+                    (p.color ? ' / ' + p.color : '') +
+                    ' · ' + (hasInbound ? '미입력 실적' : '소재 입고 필요') +
+                    ' · 계획 ' + UIUtils.formatNumber(p.planQty || 0);
+            });
+            try {
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetIds: recipients,
+                    title: _currentLine + ' 실적 미입력 계획',
+                    body: [
+                        '하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. ' + _currentLine + ' 작업에서 확인해 주세요.',
+                        '',
+                        lines.join('\n')
+                    ].join('\n'),
+                    category: kind,
+                    priority: 'high'
+                });
+            } catch (e) {
+                console.warn('[PaintingWork] 실적 미입력 통보 실패:', e);
+                return;
+            }
+            if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+                Storage.setConfigValue(UNENTERED_NOTIFY_SENT_KEY, next).catch(function (e) {
+                    console.warn('[PaintingWork] 실적 미입력 통보 기록 저장 실패:', e);
+                });
+            }
+        }).catch(function (e) {
+            console.warn('[PaintingWork] 실적 미입력 통보 실패:', e);
+        });
+    }
+
     /** 이미 현장에 확인된(사용일만 잘못 잡힌) 입고를 지난 계획일로 재연결하는 권한.
      *  관리자보다 낮은 문턱 — 실물이 이미 도착·확인된 재고의 사용일 메타데이터만 바꾸는
      *  것이라(새 재고를 만드는 "관리자 수기 입고"와 달리) 도장 실적을 입력할 수 있는
@@ -1379,6 +1486,14 @@ const PaintingWorkModule = (function() {
                             <span id="pwPlanDateLabel" style="color:var(--text-muted);font-size:0.88rem;margin-left:8px;font-weight:400;"></span>
                         </h4>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml(
+                                    (typeof AuthModule.missingInboundNotifyKindForLine === 'function'
+                                        ? AuthModule.missingInboundNotifyKindForLine(_currentLine)
+                                        : (_currentLine === '도장-B' ? 'missing_inbound_b' : 'missing_inbound_a')),
+                                    { small: true, label: '사출 입고 필요 알림 수신자' }
+                                  )
+                                : ''}
                             <span style="font-size:0.78rem;color:var(--text-muted);">계획 행의 [실적입력]을 클릭하면 해당 계획이 자동 반영됩니다.</span>
                             <button class="btn btn-outline btn-sm" style="font-size:0.78rem;padding:4px 10px;"
                                 onclick="PaintingWorkModule.openQuickAddPlanModal('${_currentLine}')">
@@ -1494,13 +1609,23 @@ const PaintingWorkModule = (function() {
                 <!-- 섹션 2: 실적 미입력 계획 -->
                 <div id="pwUnenteredSection" class="card" style="margin-bottom:1rem; border-top:3px solid var(--accent-orange); display:none;">
                     <div class="card-header" style="padding:8px 16px; background:rgba(255,152,0,0.05);
-                        border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between;">
+                        border-bottom:1px solid var(--border); display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;">
                         <h4 style="margin:0; color:#e65100;">
                             <span class="material-symbols-outlined" style="vertical-align:middle;margin-right:4px;font-size:18px;">warning</span>
                             실적 미입력 계획
                             <span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:${accent};">${_currentLine}</span>
                         </h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. (당일 미입력은 표시하지 않음 · 계획「완료」≠ 실적 입력)</span>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml(
+                                    (typeof AuthModule.unenteredWorkNotifyKindForLine === 'function'
+                                        ? AuthModule.unenteredWorkNotifyKindForLine(_currentLine)
+                                        : (_currentLine === '도장-B' ? 'unentered_work_b' : 'unentered_work_a')),
+                                    { small: true, label: '실적 미입력 알림' }
+                                  )
+                                : ''}
+                            <span style="font-size:0.75rem;color:var(--text-muted);">하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. (당일 미입력은 표시하지 않음 · 계획「완료」≠ 실적 입력)</span>
+                        </div>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border); border-radius:4px; max-height:280px; overflow-y:auto;">
@@ -1943,8 +2068,13 @@ const PaintingWorkModule = (function() {
         });
 
         if (unentered.length === 0) {
-            section.style.display = 'none';
-            body.innerHTML = '';
+            if (_isPaintAdmin()) {
+                section.style.display = 'block';
+                body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">하루 이상 지난 미입력 계획이 없습니다.</td></tr>';
+            } else {
+                section.style.display = 'none';
+                body.innerHTML = '';
+            }
             return;
         }
 
@@ -1992,6 +2122,7 @@ const PaintingWorkModule = (function() {
 
         section.style.display = 'block';
         body.innerHTML = unentered.map(makeRow).join('');
+        _notifyUnenteredPlans(unentered);
     }
 
     function _partMatchesPlanInbound(plan, rPart) {

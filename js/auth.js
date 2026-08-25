@@ -29,6 +29,7 @@ const AuthModule = (function () {
         'injection', 'paint', 'site_return',
         'site_inbound_a', 'site_inbound_b', 'paint_insp',
         'missing_inbound_a', 'missing_inbound_b',
+        'unentered_work_a', 'unentered_work_b',
         'laser_inbound', 'paint_out',
         'paint_mix_a', 'paint_mix_b'
     ];
@@ -1437,6 +1438,8 @@ const AuthModule = (function () {
         if (kind === 'paint_insp') return 'paint_insp';
         if (kind === 'missing_inbound_b') return 'missing_inbound_b';
         if (kind === 'missing_inbound_a') return 'missing_inbound_a';
+        if (kind === 'unentered_work_b') return 'unentered_work_b';
+        if (kind === 'unentered_work_a' || kind === 'unentered_work') return 'unentered_work_a';
         if (kind === 'laser_inbound') return 'laser_inbound';
         if (kind === 'paint_out') return 'paint_out';
         if (kind === 'paint_mix_b') return 'paint_mix_b';
@@ -1453,6 +1456,8 @@ const AuthModule = (function () {
         if (key === 'paint_insp') return '외관 검사 완료';
         if (key === 'missing_inbound_b') return '소재 입고 필요 (도장-B)';
         if (key === 'missing_inbound_a') return '소재 입고 필요 (도장-A)';
+        if (key === 'unentered_work_b') return '실적 미입력 계획 (도장-B)';
+        if (key === 'unentered_work_a') return '실적 미입력 계획 (도장-A)';
         if (key === 'laser_inbound') return '레이져 입고 확인 대기';
         if (key === 'paint_out') return '도료 창고 출고';
         if (key === 'paint_mix_b') return '도료 사용 미등록 (도장-B)';
@@ -1475,6 +1480,10 @@ const AuthModule = (function () {
         if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
             const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
             return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'unentered_work_a' || key === 'unentered_work_b') {
+            const line = key === 'unentered_work_b' ? '도장-B' : '도장-A';
+            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 쪽지가 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'laser_inbound') {
             return '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
@@ -1507,6 +1516,13 @@ const AuthModule = (function () {
         const s = String(line || '').trim();
         if (s === '도장-B' || s === '도장(B)') return 'paint_mix_b';
         if (s === '도장-A' || s === '도장(A)') return 'paint_mix_a';
+        return '';
+    }
+
+    function unenteredWorkNotifyKindForLine(line) {
+        const s = String(line || '').trim();
+        if (s === '도장-B' || s === '도장(B)') return 'unentered_work_b';
+        if (s === '도장-A' || s === '도장(A)') return 'unentered_work_a';
         return '';
     }
 
@@ -1609,10 +1625,11 @@ const AuthModule = (function () {
         if (!isAdminUser()) return '';
         opts = opts || {};
         const safe = _incomingInspKind(kind);
-        const sm = opts.small ? ' btn-sm' : '';
-        const btnLabel = String(opts.label || '알림 수신자');
-        return '<button type="button" class="btn btn-outline' + sm + '" onclick="AuthModule.openIncomingInspNotifyModal(\'' + safe + '\')">' +
-            '<span class="material-symbols-outlined"' + (opts.small ? ' style="font-size:16px;"' : '') + '>notifications</span> ' + _esc(btnLabel) + '</button>';
+        const btnLabel = String(opts.label || '알림 수신자') + ' 지정';
+        return '<button type="button" class="btn btn-outline" title="' + _esc(btnLabel) + '"' +
+            ' style="width:26px;height:26px;padding:0;display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;"' +
+            ' onclick="AuthModule.openIncomingInspNotifyModal(\'' + safe + '\')">' +
+            '<span class="material-symbols-outlined" style="font-size:15px;">notifications</span></button>';
     }
 
     function buildIncomingInspNotifyAdminHtml(kind, checkboxClass, opts) {
@@ -2018,6 +2035,7 @@ const AuthModule = (function () {
         siteInboundNotifyKindForLine,
         missingInboundNotifyKindForLine,
         paintMixNotifyKindForLine,
+        unenteredWorkNotifyKindForLine,
     };
 })();
 
