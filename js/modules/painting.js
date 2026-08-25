@@ -3958,11 +3958,11 @@ const PaintingWorkModule = (function() {
                 if (injPartName && !_inboundInjPartMatches(r.partName, injPartName, injPartName, carModel)) return false;
                 var recLots = _inboundRecordLots(r);
                 if (!recLots.some(function (x) { return String(x.lotNo || '').trim() === lotNo; })) return false;
-                return _inboundDayHits(r, targetDay);
+                return _inboundArrivedOnDay(r, targetDay);
             });
             if (hit) return true;
-            var stamp = _findSiteInboundDateForLotScoped(l.lotNo, carModel, injPartName);
-            return !!stamp && String(stamp).replace('T', ' ').slice(0, 10) === targetDay;
+            var stamp = _findSiteInboundDateForLotScoped(l.lotNo, carModel, injPartName, targetDay);
+            return !!stamp;
         });
     }
 
@@ -4368,7 +4368,7 @@ const PaintingWorkModule = (function() {
                 ' data-balance="' + l.balance + '"' +
                 ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                 ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                _lotOptionLabel(l, injPartName || l.partName) + '</option>';
+                _lotOptionLabel(l, injPartName || l.partName, { workDate: planDate }) + '</option>';
         }).join('');
     }
 
@@ -4385,16 +4385,16 @@ const PaintingWorkModule = (function() {
                 ' data-balance="' + l.balance + '"' +
                 ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                 ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                _lotOptionLabel(l, injPartName) + '</option>';
+                _lotOptionLabel(l, injPartName, { workDate: planDate, carModel: carModel }) + '</option>';
         }).join('');
     }
 
     // 사출명 드롭다운 변경 → 모든 LOT 행 드롭다운 갱신 + LOT 추가 버튼 활성화 제어
     function onInjPartSelect(sel) {
         var injPartName = sel ? sel.value : '';
-        var planColor   = (document.getElementById('addPwColorHidden') || {}).value || '';
+        var planColor   = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
         var cmForLot = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
-        var dateForLot = (document.getElementById('addPwDateHidden') || {}).value || '';
+        var dateForLot = _workFormDate();
         var lotsHtml;
         var lotCount;
         if (injPartName) {
@@ -4409,7 +4409,7 @@ const PaintingWorkModule = (function() {
                         ' data-balance="' + l.balance + '"' +
                         ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                         ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                        _lotOptionLabel(l, injPartName) + '</option>';
+                        _lotOptionLabel(l, injPartName, { workDate: dateForLot, carModel: cmForLot }) + '</option>';
                 }).join('');
         } else {
             var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
@@ -4466,8 +4466,8 @@ const PaintingWorkModule = (function() {
     // ★ 사출명 미지정 시: carModel 전체 창고 재고 표시
     // ★ 레이져→도장-B 제품: 재공품 LOT 표시
     function _buildFilteredLotOptions(injPartName, carModel, partName, excludeLotNos) {
-        var planColor = (document.getElementById('addPwColorHidden') || {}).value || '';
-        var planDate = (document.getElementById('addPwDateHidden') || {}).value || '';
+        var planColor = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
+        var planDate = _workFormDate();
 
         // 레이져→도장-B 제품: 사출 창고 대신 재공품 LOT 사용
         var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
@@ -4532,7 +4532,7 @@ const PaintingWorkModule = (function() {
                 ' data-balance="' + l.balance + '"' +
                 ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
                 ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-                _lotOptionLabel(l, injPartName) + '</option>';
+                _lotOptionLabel(l, injPartName, { workDate: planDate, carModel: carModel }) + '</option>';
         }
 
         var html = '<option value="" data-balance="">-- LOT 선택 --</option>';
@@ -5782,7 +5782,7 @@ const PaintingWorkModule = (function() {
         return '<span style="color:#16a34a;">✓ 선택됨</span>';
     }
 
-    function _buildLotRow(lotsHtml, lotNo, qty) {
+    function _buildLotRow(lotsHtml, lotNo, qty, ctx) {
         // 선입선출: lotNo 미지정 시 첫 번째 유효 LOT 자동 사용
         var autoLotNo = lotNo ? String(lotNo) : '';
         if (!autoLotNo) {
@@ -5821,8 +5821,18 @@ const PaintingWorkModule = (function() {
         // 도장 현장 입고 일시(사출창고→도장라인 이동 시점) — 수입검사 입고일(사출창고에 외부
         // 입고·검사받은 시점, 별개 개념)과 헷갈리지 않도록 라벨을 명시하고 툴팁으로도 구분한다.
         // 같은 LOT번호가 다른 시각에 나눠 입고될 수 있어 날짜 + 시간을 같이 보여준다.
-        const inboundStamp = actualLotNo ? _findSiteInboundDateForLot(actualLotNo) : '';
-        const inspStamp = actualLotNo ? _findIncomingInspectionDateForLot('', actualLotNo) : '';
+        var _lotCtx = ctx || {};
+        var _lotWorkDate = _lotCtx.workDate || _workFormDate();
+        var _lotCar = String(_lotCtx.carModel != null && _lotCtx.carModel !== ''
+            ? _lotCtx.carModel
+            : ((document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '')).trim();
+        var _lotInj = String(_lotCtx.injPartName != null && _lotCtx.injPartName !== ''
+            ? _lotCtx.injPartName
+            : ((document.getElementById('pwInjPartSelect') || {}).value || '')).trim();
+        const inboundStamp = actualLotNo ? _findSiteInboundDateForLot(actualLotNo, {
+            workDate: _lotWorkDate, carModel: _lotCar, injPartName: _lotInj
+        }) : '';
+        const inspStamp = actualLotNo ? _findIncomingInspectionDateForLot(_lotInj, actualLotNo) : '';
         const inboundDateHtml = (function() {
             const title = '현장입고(사출→도장 이동): ' + (inboundStamp || '기록 없음') +
                 (inspStamp ? ' / 수입검사입고(사출창고 입고): ' + inspStamp : '');
@@ -5909,7 +5919,7 @@ const PaintingWorkModule = (function() {
         var cm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
         var pn = (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
         var planColor = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
-        var planDate = (document.getElementById('addPwDateHidden') || {}).value || '';
+        var planDate = _workFormDate();
         var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
         var useRework = _reworkUseOn();
         // 사출명 미선택이면 ①번과 동일하게 느슨 매칭으로 복구 — 없으면 당일 필터만 적용
@@ -6575,7 +6585,7 @@ const PaintingWorkModule = (function() {
         // 그대로 빼면 지난 도장일 LOT까지 반납 가능 수량으로 잡힌다.
         var productPart = ((document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '').trim();
         var workColor = ((document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '').trim();
-        var workDate = (document.getElementById('addPwDateHidden') || {}).value || '';
+        var workDate = _workFormDate();
         if (!workDate && _workViewId) {
             var savedWork = Storage.getById(STORE, _workViewId);
             if (savedWork) workDate = savedWork.date || '';
@@ -6951,7 +6961,9 @@ const PaintingWorkModule = (function() {
                 : _lotsForPlanPart(carModel, partName, color, _lotPlanDate).length);
         // 선택 가능한 LOT가 하나도 없으면 "선택 불가" 행을 기본으로 깔지 않는다 — 위 ①단계
         // "미반영 +N EA" 버튼으로 추가하거나 사출명을 다시 선택하면 그때 실제 옵션으로 채워진다.
-        var initialLotRow = initialLotCount > 0 ? _buildLotRow(lotsHtml, '', '') : '';
+        var initialLotRow = initialLotCount > 0 ? _buildLotRow(lotsHtml, '', '', {
+            workDate: _lotPlanDate, carModel: carModel, injPartName: autoInjPartName
+        }) : '';
 
         var planQtyFmt = UIUtils.formatNumber(planQty);
         var achFmt = UIUtils.formatNumber(achievedQty);
@@ -8024,7 +8036,7 @@ const PaintingWorkModule = (function() {
             if (String(r.carModel || '').trim() !== carModel) return sum;
             if ((injPartName || workPartName)
                 && !_inboundInjPartMatches(r.partName, injPartName, workPartName, carModel)) return sum;
-            if (!_inboundDayHits(r, day)) return sum;
+            if (!_inboundArrivedOnDay(r, day)) return sum;
             var outKey = r.refReworkOutId
                 ? ('rw:' + String(r.refReworkOutId))
                 : (r.refOutId ? ('inj:' + String(r.refOutId)) : ('id:' + String(r.id || '')));
@@ -9262,27 +9274,46 @@ const PaintingWorkModule = (function() {
 
     function _buildEditLotOptionsHtml(d) {
         var injPartName = _resolveInjPartNameForWork(d.carModel, d.partName, d.color);
-        if (injPartName && typeof buildLotOptionsHtmlByInjPart === 'function') {
-            return buildLotOptionsHtmlByInjPart(injPartName, d.color, d.carModel);
-        }
-        return buildLotOptionsHtml(d.carModel, d.partName);
+        var planDate = String((d && d.date) || '').slice(0, 10);
+        var html = (injPartName && typeof buildLotOptionsHtmlByInjPart === 'function')
+            ? buildLotOptionsHtmlByInjPart(injPartName, d.color, d.carModel, planDate)
+            : buildLotOptionsHtml(d.carModel, d.partName, planDate);
+        (d.lots || []).forEach(function (l) {
+            var no = String((l && l.lotNo) || '').trim();
+            if (!no) return;
+            if (html.indexOf('value="' + no + '"') >= 0) return;
+            html += '<option value="' + _pwEsc(no) + '" data-balance="0"' +
+                ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
+                ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
+                _lotOptionLabel({ lotNo: no, partName: l.partName, color: l.color }, injPartName || l.partName, {
+                    workDate: planDate, carModel: d.carModel
+                }) + ' (당일 입고 아님)</option>';
+        });
+        return html;
     }
 
     // LOT번호로 실제 "도장 현장 입고 일시"(날짜+시간)를 찾는다 — 사출 LOT 행 왼쪽 표시용.
     // 같은 LOT번호가 같은 날 여러 시각에 나눠 입고될 수 있어(예: 13:36 + 19:59), 시간까지
     // 보여줘야 서로 다른 입고 건인지 구분할 수 있다. 여러 건이면 가장 이른 시각을 보여준다.
-    function _findSiteInboundDateForLot(lotNo) {
+    function _findSiteInboundDateForLot(lotNo, opts) {
+        opts = opts || {};
         var want = String(lotNo || '').trim();
         if (!want || typeof Storage === 'undefined' || typeof DB === 'undefined' || !DB.STORES || !DB.STORES.PAINTING_INPUT_INVENTORY) return '';
+        var workDay = String(opts.workDate || '').slice(0, 10);
+        var carModel = String(opts.carModel || '').trim();
+        var injPartName = String(opts.injPartName || '').trim();
         var rows = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || [];
         var best = '';
         rows.forEach(function (r) {
             if (String(r.type || '') !== '입고') return;
+            if (carModel && String(r.carModel || '').trim() !== carModel) return;
+            if (injPartName && !_inboundInjPartMatches(r.partName, injPartName, injPartName, carModel)) return;
             var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
             var hit = lots.some(function (l) { return String((l && l.lotNo) || '').trim() === want; });
             if (!hit) return;
             var stamp = _resolveInboundStamp(r).trim();
             if (!stamp) return;
+            if (workDay && String(stamp).replace('T', ' ').trim().slice(0, 10) !== workDay) return;
             if (!best || stamp < best) best = stamp;
         });
         return best;
@@ -9292,23 +9323,12 @@ const PaintingWorkModule = (function() {
     // 전역 검색한다(입고 라벨 표시용으로는 충분). 하지만 반납 후보의 "같은 배치" 판정처럼
     // 다른 차종·부품이 우연히 같은 LOT번호(예: 제조일자 기반 번호라 겹칠 수 있음)를 쓸 때
     // 엉뚱한 날짜를 집어오면 안 되는 곳에서는 이 스코프 버전을 쓴다.
-    function _findSiteInboundDateForLotScoped(lotNo, carModel, injPartName) {
-        var want = String(lotNo || '').trim();
-        if (!want || typeof Storage === 'undefined' || typeof DB === 'undefined' || !DB.STORES || !DB.STORES.PAINTING_INPUT_INVENTORY) return '';
-        var rows = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || [];
-        var best = '';
-        rows.forEach(function (r) {
-            if (String(r.type || '') !== '입고') return;
-            if (carModel && String(r.carModel || '') !== String(carModel)) return;
-            if (injPartName && !_inboundInjPartMatches(r.partName, injPartName, injPartName, carModel)) return;
-            var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
-            var hit = lots.some(function (l) { return String((l && l.lotNo) || '').trim() === want; });
-            if (!hit) return;
-            var stamp = _resolveInboundStamp(r).trim();
-            if (!stamp) return;
-            if (!best || stamp < best) best = stamp;
+    function _findSiteInboundDateForLotScoped(lotNo, carModel, injPartName, workDate) {
+        return _findSiteInboundDateForLot(lotNo, {
+            carModel: carModel,
+            injPartName: injPartName,
+            workDate: workDate
         });
-        return best;
     }
 
     // LOT번호로 "사출 수입검사 입고 일시"를 찾는다 — 사출 창고에 외부에서 들어와 수입검사를
@@ -9345,9 +9365,14 @@ const PaintingWorkModule = (function() {
     // LOT 옵션 라벨에 붙일 "수입검사 입고"와 "현장 입고"를 서로 구분해서 만든다 — 같은 "입고"란
     // 단어라도 사출창고 수입검사 시점과 도장 현장 도착 시점은 완전히 다른 날짜/시간이라
     // 한 줄에 뭉뚱그리면 혼동을 준다.
-    function _lotStampTags(injPartName, lotNo) {
+    function _lotStampTags(injPartName, lotNo, opts) {
+        opts = opts || {};
         var inspStamp = _findIncomingInspectionDateForLot(injPartName, lotNo);
-        var siteStamp = _findSiteInboundDateForLot(lotNo);
+        var siteStamp = _findSiteInboundDateForLot(lotNo, {
+            workDate: opts.workDate,
+            carModel: opts.carModel,
+            injPartName: injPartName
+        });
         var inspTag = inspStamp ? ' │ 수입검사입고 ' + inspStamp.slice(5, 10) : '';
         var siteTag = siteStamp
             ? ' │ 현장입고 ' + siteStamp.slice(5, 10) + (siteStamp.length > 11 ? ' ' + siteStamp.slice(11, 16) : '')
@@ -9367,7 +9392,7 @@ const PaintingWorkModule = (function() {
         var colorTag = (opts.withColor !== false && l && l.color) ? ' │ ' + l.color : '';
         var lotNo = String((l && l.lotNo) || '').trim();
         var lotTag = lotNo ? ' │ 사출 LOT ' + lotNo : '';
-        return _pwEsc(name + colorTag + lotTag + _lotStampTags(injPartName, l && l.lotNo));
+        return _pwEsc(name + colorTag + lotTag + _lotStampTags(injPartName, l && l.lotNo, opts));
     }
 
     // 이 작업일지의 도장작업일(d.date)에 현장 입고됐지만, 현재 이 작업일지의 LOT 목록에는
@@ -9439,7 +9464,7 @@ const PaintingWorkModule = (function() {
             if (_inboundLineOf(r) !== line) return;
             if (String(r.carModel || '').trim() !== carModel) return;
             if (!_rowPartOk(r.partName)) return;
-            if (!_inboundDayHits(r, day)) return;
+            if (!_inboundArrivedOnDay(r, day)) return;
             var outKey = r.refReworkOutId
                 ? ('rw:' + String(r.refReworkOutId))
                 : (r.refOutId ? ('inj:' + String(r.refOutId)) : ('id:' + String(r.id || '')));
@@ -9684,7 +9709,7 @@ const PaintingWorkModule = (function() {
             } else {
                 return;
             }
-            if (!_inboundDayHits(r, maps.day)) return;
+            if (!_inboundArrivedOnDay(r, maps.day)) return;
             var stamp = _resolveInboundStamp(r);
             var dt = _inboundDateTimeParts(stamp);
             var lots = _inboundRecordLots(r);
@@ -9730,26 +9755,29 @@ const PaintingWorkModule = (function() {
 
         function _rowWhen(lotNo, detail) {
             if (detail && (detail.date || detail.time)) {
-                return { date: detail.date || '-', time: detail.time || '-' };
+                return { date: detail.date || '-', time: detail.time || '-', onDay: true };
             }
-            var stamp = _findSiteInboundDateForLotScoped(lotNo, d.carModel, maps.injPartName || maps.workPartName || '')
-                || _findSiteInboundDateForLot(lotNo);
+            var stamp = _findSiteInboundDateForLotScoped(
+                lotNo, d.carModel, maps.injPartName || maps.workPartName || '', maps.day
+            );
+            if (!stamp) return { date: '-', time: '-', onDay: false };
             var p = _inboundDateTimeParts(stamp);
-            return { date: p.date || '-', time: p.time || '-' };
+            return { date: p.date || '-', time: p.time || '-', onDay: true };
         }
 
         workLots.forEach(function (l) {
             if (!l || !l.lotNo) return;
             var lotNo = String(l.lotNo).trim();
             if (!lotNo) return;
-            seen[lotNo] = true;
             var detail = detailMap[lotNo] || {};
+            var when = _rowWhen(lotNo, detail);
+            if (!detail.stamp && !when.onDay) return;
+            seen[lotNo] = true;
             var usedQty = Number(l.qty) || 0;
             var missQty = unmatchedByLot[lotNo] || 0;
             var partName = String(l.partName || detail.partName || maps.injPartName || lotMeta.partNameText || '-').trim() || '-';
             var color = String(l.color || detail.color || lotMeta.colorText || '-').trim() || '-';
             var statusKind = missQty > 0.001 ? 'partial' : 'reflected';
-            var when = _rowWhen(lotNo, detail);
             rows.push({
                 date: when.date,
                 time: when.time,
@@ -10241,7 +10269,12 @@ const PaintingWorkModule = (function() {
         var _hasValidLotOpt = /<option value="[^"]/.test(lotsHtml);
         var existLots = (d.lots && d.lots.length > 0) ? d.lots
             : (d.lotNo ? [{ lotNo: d.lotNo, qty: 0 }] : (_hasValidLotOpt ? [{ lotNo: '', qty: 0 }] : []));
-        var initialLotRows = existLots.map(function(l) { return _buildLotRow(lotsHtml, l.lotNo, l.qty); }).join('');
+        var initialLotRows = existLots.map(function(l) {
+            return _buildLotRow(lotsHtml, l.lotNo, l.qty, {
+                workDate: d.date, carModel: d.carModel,
+                injPartName: _resolveInjPartNameForWork(d.carModel, d.partName, d.color)
+            });
+        }).join('');
 
         var editPlanReasonHtml = editPlanQty > 0
             ? '<div id="pwPlanQtyReasonSection" data-plan-qty="' + editPlanQty + '"' +
@@ -10338,6 +10371,7 @@ const PaintingWorkModule = (function() {
 
             '<div class="form-group" style="margin-bottom:14px;">' +
             '<label class="form-label">사출LOT</label>' +
+            _workEditContextHiddenHtml(d) +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
             _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
@@ -10437,7 +10471,10 @@ const PaintingWorkModule = (function() {
                 qty: 0
             }] : []));
         const initialLotRows = existLots.map(function(l) {
-            return _buildLotRow(lotsHtml, l.lotNo, l.qty);
+            return _buildLotRow(lotsHtml, l.lotNo, l.qty, {
+                workDate: d.date, carModel: d.carModel,
+                injPartName: _resolveInjPartNameForWork(d.carModel, d.partName, d.color)
+            });
         }).join('');
         const editPlanReasonHtml = editPlanQty > 0
             ? '<div id="pwPlanQtyReasonSection" data-plan-qty="' + editPlanQty + '"' +
@@ -10537,6 +10574,7 @@ const PaintingWorkModule = (function() {
 
             '<div class="form-group" style="margin-bottom:14px;">' +
             '<label class="form-label" style="font-size:0.84rem;">사출LOT</label>' +
+            _workEditContextHiddenHtml(d) +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
             _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +

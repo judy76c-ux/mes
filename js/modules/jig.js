@@ -61,7 +61,10 @@ var JigModule = (function () {
         }
         const film1 = Math.round((p1 - p0) * 1000) / 1000;
         const film2 = Math.round((p2 - p1) * 1000) / 1000;
-        const avg = Math.round(((film1 + film2) / 2) * 1000) / 1000;
+        // 평균은 표시(_fmtMm)에서 3자리로 반올림하지만, 저장값 자체는 정밀도를 더 살려둔다.
+        // 3자리로 미리 반올림해 버리면(예: 0.092) 제한두께÷평균 계산에서 오차가 누적돼
+        // "도달 횟수"가 실제보다 낮게 나온다(예: 43.6이 43으로 깎여 관리횟수가 39→38로 밀림).
+        const avg = Math.round(((film1 + film2) / 2) * 100000) / 100000;
         return { avg: avg, film1: film1, film2: film2 };
     }
 
@@ -78,7 +81,7 @@ var JigModule = (function () {
             if (one.avg > 0) avgs.push(one.avg);
         }
         if (!avgs.length) return 0;
-        return Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 1000) / 1000;
+        return Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 100000) / 100000;
     }
 
     function _calcFilmThicknessDetail(pointMms) {
@@ -97,7 +100,7 @@ var JigModule = (function () {
                 text: '지그별로 초기·1회·2회 두께를 입력하면 1회 평균 도막두께가 자동 계산됩니다.'
             };
         }
-        const avg = Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 1000) / 1000;
+        const avg = Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 100000) / 100000;
         return {
             avg: avg,
             text: parts.join(' · ') + ' → 평균 ' + _fmtMm(avg) + ' mm'
@@ -126,7 +129,9 @@ var JigModule = (function () {
         const limit = _numMm(limitMm);
         const film = _numMm(filmMm);
         if (!limit || !film) return { limitCoatCount: 0, manageCount: 0 };
-        const limitCoatCount = Math.floor(limit / film);
+        // 도달 횟수를 정수로 먼저 내려버리면(예: 43.6→43) 관리횟수 계산에도 오차가 누적된다.
+        // 소수 1자리까지 남겨 표시하고, 관리횟수(90%)는 그 값 기준으로 내림한다.
+        const limitCoatCount = Math.round((limit / film) * 10) / 10;
         const manageCount = Math.floor(limitCoatCount * 0.9);
         return { limitCoatCount: limitCoatCount, manageCount: manageCount };
     }
@@ -2442,7 +2447,13 @@ var JigModule = (function () {
         el.innerHTML = `
             <div class="card">
                 <div class="card-body">
-                    <h4 style="margin:0 0 12px;">도장 지그 대장</h4>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
+                        <h4 style="margin:0;">도장 지그 대장</h4>
+                        ${_isAdminUser() ? `<button type="button" class="btn btn-outline btn-sm" onclick="JigModule.recalcAllJigMasterLife()"
+                            title="측정 포인트가 등록된 모든 차종의 지그를 소수 정밀도 유지 방식으로 다시 계산합니다.">
+                            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">sync</span> 전체 지그 수명 재계산
+                        </button>` : ''}
+                    </div>
                     <div style="margin-bottom:10px;padding:8px 12px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:8px;font-size:0.78rem;color:var(--text-secondary);line-height:1.45;">
                         수명 근거: <strong>제한 두께 도달 도장횟수 = JIG 제한 두께 ÷ 1회 도막형성 두께</strong>
                         · <strong>수명 관리 설정 횟수 = 도달 횟수 × 90%</strong> (내림)
@@ -2490,6 +2501,47 @@ var JigModule = (function () {
 
     function onMasterCarFilterChange() {
         filterMasterCar(document.getElementById('jigMasterCarFilter')?.value || _masterCarFilter);
+    }
+
+    /** 관리자 전용 — 전체 차종 지그를 새 정밀도 방식(도막두께 5자리 유지, 도달횟수 소수 1자리)으로
+     *  일괄 재계산한다. 기존에 저장된 값은 두께를 3자리로 먼저 반올림해 나눗셈한 탓에
+     *  도달·관리 횟수가 실제보다 낮게 저장돼 있었다 — 측정 포인트(thicknessPointMm)가 남아있는
+     *  지그만 대상으로 필름두께부터 다시 계산해 덮어쓴다. */
+    async function recalcAllJigMasterLife() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 실행할 수 있습니다.', 'warning');
+            return;
+        }
+        const all = Storage.getAll(STORE) || [];
+        const targets = all.filter(function (j) {
+            return j && Array.isArray(j.thicknessPointMm) && j.thicknessPointMm.some(function (v) { return _numMm(v) > 0; })
+                && _numMm(j.limitThicknessMm) > 0;
+        });
+        if (!targets.length) {
+            UIUtils.toast('측정 포인트가 등록된 지그가 없습니다.', 'info');
+            return;
+        }
+        UIUtils.confirm(
+            targets.length + '건의 지그를 새 계산 방식으로 다시 계산해 저장하시겠습니까?\n' +
+            '(도막두께 정밀도를 살려 도달·관리 횟수를 다시 산출합니다. 수동으로 직접 입력해 둔 값도 함께 갱신됩니다.)',
+            async function () {
+                let updated = 0;
+                for (const j of targets) {
+                    const filmThicknessMm = _calcAvgFilmThickness(j.thicknessPointMm);
+                    if (!filmThicknessMm) continue;
+                    const calc = _calcLifeFromThickness(j.limitThicknessMm, filmThicknessMm);
+                    if (!calc.limitCoatCount) continue;
+                    await Storage.update(STORE, j.id, {
+                        filmThicknessMm: filmThicknessMm,
+                        limitCoatCount: calc.limitCoatCount,
+                        maxCount: calc.manageCount
+                    });
+                    updated++;
+                }
+                UIUtils.toast(updated + '건 재계산 완료.', 'success');
+                renderJigMaster();
+            }
+        );
     }
 
     function renderMasterPage(container) {
@@ -3034,7 +3086,8 @@ var JigModule = (function () {
             return _getThicknessPointMm(d, i);
         });
         const filmDetail = _calcFilmThicknessDetail(pointMms);
-        const displayFilmMm = filmDetail.avg > 0 ? filmDetail.avg : (d.filmThicknessMm || '');
+        // 입력칸 표시는 3자리로 반올림(계산엔 filmDetail.avg의 더 높은 정밀도를 그대로 쓴다)
+        const displayFilmMm = filmDetail.avg > 0 ? _fmtMm(filmDetail.avg) : (d.filmThicknessMm || '');
         const infoText = readOnly
             ? '등록된 지그 정보를 확인합니다. 수정이 필요하면 하단의 수정 버튼을 누르세요.'
             : '도장 공정에 연결된 제품만 선택할 수 있으며, 대장 수정 시 기존 사진도 함께 유지됩니다.';
@@ -3171,7 +3224,7 @@ var JigModule = (function () {
         const limitEl = document.getElementById('jigMasterLimitCoatCount');
         const maxEl = document.getElementById('jigMasterMaxCount');
         const hintEl = document.getElementById('jigMasterManageCountHint');
-        if (filmEl) filmEl.value = film > 0 ? film : '';
+        if (filmEl) filmEl.value = film > 0 ? _fmtMm(film) : '';
         if (filmHintEl) filmHintEl.textContent = filmDetail.text;
         if (limitEl) limitEl.value = calc.limitCoatCount > 0 ? calc.limitCoatCount : '';
         if (maxEl && !maxEl.disabled && calc.manageCount > 0) {
@@ -4050,6 +4103,7 @@ var JigModule = (function () {
         onMasterCarModelChange,
         onMasterCarFilterChange,
         filterMasterCar,
+        recalcAllJigMasterLife,
         toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,
