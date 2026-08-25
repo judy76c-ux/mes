@@ -756,28 +756,38 @@ var PaintIncomingInspectionModule = (function() {
     }
 
     function _sendPaintInspRegisteredNotify(data) {
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return false;
+        if (typeof AuthModule === 'undefined') return false;
+        const body = [
+            '도료 수입검사가 등록되었습니다.',
+            '',
+            '검사일: ' + (data.date || '-'),
+            '구매처: ' + (data.supplier || '-'),
+            '원료명: ' + (data.paintName || '-'),
+            '제조일자: ' + (data.mfgDate || '-'),
+            '제조사 LOT: ' + (data.lotNo || '-'),
+            '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
+            '용기 상태: ' + (data.containerStatus || '-'),
+            '유효기간 확인: ' + (data.expDateCheck || '-'),
+            '최종 판정: ' + (data.verdict || '-'),
+            '검사자: ' + (data.inspector || '-'),
+            data.note ? ('비고: ' + data.note) : ''
+        ].filter(Boolean).join('\n');
+        if (typeof AuthModule.sendKindNotify === 'function') {
+            AuthModule.sendKindNotify('paint', [data], {
+                logLabel: '도료 수입검사',
+                title: '도료 수입검사 등록',
+                priority: data.verdict === '불합격' ? 'high' : 'normal',
+                buildBody: function () { return body; }
+            });
+            return true;
+        }
         const recipients = _resolvePaintInspNotifyRecipients();
         if (!recipients.length) return false;
         return AuthModule.sendInternalMessage({
             targetType: 'user',
             targetIds: recipients,
             title: '도료 수입검사 등록',
-            body: [
-                '도료 수입검사가 등록되었습니다.',
-                '',
-                '검사일: ' + (data.date || '-'),
-                '구매처: ' + (data.supplier || '-'),
-                '원료명: ' + (data.paintName || '-'),
-                '제조일자: ' + (data.mfgDate || '-'),
-                '제조사 LOT: ' + (data.lotNo || '-'),
-                '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
-                '용기 상태: ' + (data.containerStatus || '-'),
-                '유효기간 확인: ' + (data.expDateCheck || '-'),
-                '최종 판정: ' + (data.verdict || '-'),
-                '검사자: ' + (data.inspector || '-'),
-                data.note ? ('비고: ' + data.note) : ''
-            ].filter(Boolean).join('\n'),
+            body: body,
             category: 'paint_incoming_insp',
             priority: data.verdict === '불합격' ? 'high' : 'normal'
         });

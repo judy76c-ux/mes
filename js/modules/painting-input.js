@@ -577,40 +577,44 @@ var PaintingInputModule = (function () {
     function _sendTodaySiteInboundNotify(line, rows) {
         if (!rows || !rows.length) return;
         try {
-            const kind = (typeof AuthModule.siteInboundNotifyKindForLine === 'function')
+            const kind = (typeof AuthModule !== 'undefined' && typeof AuthModule.siteInboundNotifyKindForLine === 'function')
                 ? AuthModule.siteInboundNotifyKindForLine(line)
                 : (line === '도장-B' ? 'site_inbound_b' : 'site_inbound_a');
             if (!kind) return;
-            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            const actor = rows.map(function (r) { return r.outgoingBy || r.returnedBy || ''; })
+                .filter(Boolean)[0] || '';
+            const opts = {
+                logLabel: '금일 현장 입고',
+                title: line + ' 금일 현장 사출 입고',
+                intro: '사출품이 ' + line + ' 현장으로 출고되었습니다. 현장에서 입고 처리해 주세요.' +
+                    (actor ? '\n출고자: ' + actor : ''),
+                formatLine: function (r) {
+                    const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                        ? r.lots.map(function (l) {
+                            return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                        }).join(', ')
+                        : ((r.lotNo || '-') + (r.quantity != null || r.qty != null
+                            ? (' ' + UIUtils.formatNumber(r.quantity != null ? r.quantity : r.qty) + ' EA')
+                            : ''));
+                    return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                        (r.color ? ' / ' + r.color : '') +
+                        ' · ' + (lotsTxt || UIUtils.formatNumber(r.quantity || r.qty) + ' EA');
+                }
+            };
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.sendKindNotify === 'function') {
+                AuthModule.sendKindNotify(kind, rows, opts);
+                return;
+            }
+            const recipients = (typeof AuthModule !== 'undefined' && typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
                 ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
                 : [];
             if (!recipients.length) return;
-            const lines = rows.map(function (r) {
-                const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
-                    ? r.lots.map(function (l) {
-                        return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
-                    }).join(', ')
-                    : ((r.lotNo || '-') + (r.quantity != null || r.qty != null
-                        ? (' ' + UIUtils.formatNumber(r.quantity != null ? r.quantity : r.qty) + ' EA')
-                        : ''));
-                return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
-                    (r.color ? ' / ' + r.color : '') +
-                    ' · ' + (lotsTxt || UIUtils.formatNumber(r.quantity || r.qty) + ' EA');
-            });
-            const actor = rows.map(function (r) { return r.outgoingBy || r.returnedBy || ''; })
-                .filter(Boolean)[0] || '';
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
-                title: line + ' 금일 현장 사출 입고',
-                body: [
-                    '사출품이 ' + line + ' 현장으로 출고되었습니다. 현장에서 입고 처리해 주세요.',
-                    '',
-                    lines.join('\n'),
-                    '',
-                    actor ? ('출고자: ' + actor) : ''
-                ].filter(Boolean).join('\n'),
-                category: 'site_inbound_' + (line === '도장-B' ? 'b' : 'a'),
+                title: opts.title,
+                body: [opts.intro, '', rows.map(opts.formatLine).filter(Boolean).join('\n')].join('\n'),
+                category: kind,
                 priority: 'high'
             });
         } catch (e) {
@@ -3443,35 +3447,44 @@ var PaintingInputModule = (function () {
 
     function _notifySiteReturnPending(rec) {
         if (!rec) return;
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         try {
-            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
-                ? AuthModule.getIncomingInspNotifyRecipientIds('site_return')
-                : [];
-            if (!recipients.length) return;
             const lotsTxt = (Array.isArray(rec.lots) && rec.lots.length)
                 ? rec.lots.map(function (l) {
                     return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
                 }).join(', ')
                 : ((rec.lotNo || '-') + (rec.quantity != null ? (' ' + UIUtils.formatNumber(rec.quantity) + ' EA') : ''));
+            const body = [
+                '도장현장에서 사출 소재가 반납되어 사출창고 입고 확인이 필요합니다.',
+                '',
+                '반납일시: ' + (rec.date || '-'),
+                '라인: ' + (rec.line || rec.paintLine || '-'),
+                '차종: ' + (rec.carModel || '-'),
+                '사출명: ' + (rec.partName || '-'),
+                '컬러: ' + (rec.color || '-'),
+                'LOT: ' + (lotsTxt || '-'),
+                '합계수량: ' + UIUtils.formatNumber(rec.quantity) + ' EA',
+                rec.isReworkReturn ? '구분: 재사용 자재' : '',
+                '반납 사유: ' + (rec.returnReason || '-'),
+                '반납자: ' + (rec.returnedBy || '-')
+            ].filter(Boolean).join('\n');
+            if (typeof AuthModule.sendKindNotify === 'function') {
+                AuthModule.sendKindNotify('site_return', [rec], {
+                    logLabel: '현장 반납',
+                    title: '도장현장 반납 입고 확인 대기',
+                    buildBody: function () { return body; }
+                });
+                return;
+            }
+            const recipients = AuthModule.getIncomingInspNotifyRecipientIds
+                ? AuthModule.getIncomingInspNotifyRecipientIds('site_return')
+                : [];
+            if (!recipients.length) return;
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
                 title: '도장현장 반납 입고 확인 대기',
-                body: [
-                    '도장현장에서 사출 소재가 반납되어 사출창고 입고 확인이 필요합니다.',
-                    '',
-                    '반납일시: ' + (rec.date || '-'),
-                    '라인: ' + (rec.line || rec.paintLine || '-'),
-                    '차종: ' + (rec.carModel || '-'),
-                    '사출명: ' + (rec.partName || '-'),
-                    '컬러: ' + (rec.color || '-'),
-                    'LOT: ' + (lotsTxt || '-'),
-                    '합계수량: ' + UIUtils.formatNumber(rec.quantity) + ' EA',
-                    rec.isReworkReturn ? '구분: 재사용 자재' : '',
-                    '반납 사유: ' + (rec.returnReason || '-'),
-                    '반납자: ' + (rec.returnedBy || '-')
-                ].filter(Boolean).join('\n'),
+                body: body,
                 category: 'site_return_pending',
                 priority: 'high'
             });
@@ -3734,6 +3747,57 @@ var PaintingInputModule = (function () {
         await Storage.update(STORE, id, next);
         _refreshInboundViews();
         return Storage.getById(STORE, id);
+    }
+
+    if (typeof AuthModule !== 'undefined' && typeof AuthModule.registerNotifyCollector === 'function') {
+        ['도장-A', '도장-B'].forEach(function (line) {
+            const kind = (typeof AuthModule.siteInboundNotifyKindForLine === 'function')
+                ? AuthModule.siteInboundNotifyKindForLine(line)
+                : (line === '도장-B' ? 'site_inbound_b' : 'site_inbound_a');
+            AuthModule.registerNotifyCollector(kind, function () {
+                const today = UIUtils.today ? UIUtils.today() : '';
+                const list = (listPendingWarehouseShipments(line, { days: 2 }) || []).filter(function (r) {
+                    return String(r.date || '').slice(0, 10) === today;
+                });
+                return {
+                    list: list,
+                    opts: {
+                        logLabel: '금일 현장 입고',
+                        title: line + ' 금일 현장 사출 입고',
+                        intro: '사출품이 ' + line + ' 현장으로 출고되었는데 아직 입고 확인이 없습니다. 현장에서 입고 처리해 주세요.',
+                        formatLine: function (r) {
+                            const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                                ? r.lots.map(function (l) { return l.lotNo || ''; }).filter(Boolean).join(', ')
+                                : String(r.lotNo || '').trim();
+                            return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                                (r.color ? ' / ' + r.color : '') +
+                                (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                                ' · ' + UIUtils.formatNumber(r.quantity || r.qty || 0) + ' EA';
+                        }
+                    }
+                };
+            });
+        });
+        AuthModule.registerNotifyCollector('site_return', function () {
+            const list = (Storage.getAll(STORE) || []).filter(function (r) {
+                return r && r.isSiteReturn && String(r.returnStatus || '') === 'pending';
+            });
+            return {
+                list: list,
+                opts: {
+                    logLabel: '현장 반납',
+                    title: '도장현장 반납 입고 확인 대기',
+                    intro: '도장현장에서 사출 소재가 반납되어 사출창고 입고 확인이 필요합니다.',
+                    formatLine: function (r) {
+                        return '- ' + String(r.date || '').slice(0, 16) +
+                            ' · ' + (r.line || r.paintLine || '-') +
+                            ' · ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                            (r.color ? ' / ' + r.color : '') +
+                            ' · ' + UIUtils.formatNumber(r.quantity || 0) + ' EA';
+                    }
+                }
+            };
+        });
     }
 
     return {

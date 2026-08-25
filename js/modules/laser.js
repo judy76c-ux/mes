@@ -7520,29 +7520,35 @@ var LaserStandbyModule = (function() {
                     return _isConfirmGated(stamp);
                 });
                 if (!pending.length) return;
-                const lines = pending.map(function (r) {
-                    const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
-                        ? r.lots.map(function (l) {
-                            return (l.lotNo || l.injectionLot || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
-                        }).join(', ')
-                        : String(r.lotNo || r.injLot || '').trim();
-                    const qty = r.qty != null ? r.qty : r.paintQty;
-                    return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
-                        (r.color && r.color !== '-' ? ' / ' + r.color : '') +
-                        ' · ' + UIUtils.formatNumber(qty) + ' EA' +
-                        (r.line ? ' (' + r.line + ')' : '') +
-                        (lotsTxt ? ' · LOT ' + lotsTxt : '');
-                });
+                const opts = {
+                    logLabel: '레이져 입고 대기',
+                    title: '레이져 입고 확인 대기 ' + pending.length + '건',
+                    intro: '레이져 대기품에 입고 확인이 필요한 건이 등록되었습니다.\n레이져 대기품 현황에서 「입고처리 · 수량보정」으로 확인해 주세요.',
+                    idOf: function (r) { return String((r && (r.sourceId || r.id || r.key)) || ''); },
+                    formatLine: function (r) {
+                        const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                            ? r.lots.map(function (l) {
+                                return (l.lotNo || l.injectionLot || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                            }).join(', ')
+                            : String(r.lotNo || r.injLot || '').trim();
+                        const qty = r.qty != null ? r.qty : r.paintQty;
+                        return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                            (r.color && r.color !== '-' ? ' / ' + r.color : '') +
+                            ' · ' + UIUtils.formatNumber(qty) + ' EA' +
+                            (r.line ? ' (' + r.line + ')' : '') +
+                            (lotsTxt ? ' · LOT ' + lotsTxt : '');
+                    }
+                };
+                if (typeof AuthModule.sendKindNotify === 'function') {
+                    AuthModule.sendKindNotify('laser_inbound', pending, opts);
+                    return;
+                }
+                const lines = pending.map(opts.formatLine).filter(Boolean);
                 AuthModule.sendInternalMessage({
                     targetType: 'user',
                     targetIds: recipients,
-                    title: '레이져 입고 확인 대기 ' + pending.length + '건',
-                    body: [
-                        '레이져 대기품에 입고 확인이 필요한 건이 등록되었습니다.',
-                        '레이져 대기품 현황에서 「입고처리 · 수량보정」으로 확인해 주세요.',
-                        '',
-                        lines.join('\n')
-                    ].join('\n'),
+                    title: opts.title,
+                    body: [opts.intro, '', lines.join('\n')].join('\n'),
                     category: 'laser_inbound',
                     priority: 'high'
                 });
@@ -10610,6 +10616,33 @@ var LaserStandbyModule = (function() {
                 }
             }
         );
+    }
+
+    if (typeof AuthModule !== 'undefined' && typeof AuthModule.registerNotifyCollector === 'function') {
+        AuthModule.registerNotifyCollector('laser_inbound', function () {
+            return {
+                list: _collectPendingInbound(),
+                opts: {
+                    logLabel: '레이져 입고 대기',
+                    title: '레이져 입고 확인 대기',
+                    intro: '레이져 대기품에 입고 확인이 필요한 건이 있습니다. 레이져 대기품 현황에서 「입고처리 · 수량보정」으로 확인해 주세요.',
+                    idOf: function (r) { return String((r && (r.sourceId || r.id || r.key)) || ''); },
+                    formatLine: function (r) {
+                        const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                            ? r.lots.map(function (l) {
+                                return (l.lotNo || l.injectionLot || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
+                            }).join(', ')
+                            : String(r.lotNo || r.injLot || '').trim();
+                        const qty = r.qty != null ? r.qty : r.paintQty;
+                        return '- ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                            (r.color && r.color !== '-' ? ' / ' + r.color : '') +
+                            ' · ' + UIUtils.formatNumber(qty) + ' EA' +
+                            (r.line ? ' (' + r.line + ')' : '') +
+                            (lotsTxt ? ' · LOT ' + lotsTxt : '');
+                    }
+                }
+            };
+        });
     }
 
     return {

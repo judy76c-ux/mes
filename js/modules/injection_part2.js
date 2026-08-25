@@ -7509,19 +7509,13 @@ var InjectionWarehouseModule = (function() {
 
         UIUtils.showModal(`<span class="material-symbols-outlined" style="vertical-align:middle;color:${colorClass};">${titleIcon}</span> 사출 ${type} 등록`, `
             ${type === '입고' ? `
-            <div style="margin-bottom:14px;padding:10px 14px;background:rgba(220,38,38,0.06);
-                border:1px solid rgba(220,38,38,0.35);border-radius:8px;line-height:1.55;">
+            <div id="addInvInspWarn" data-warn-state="idle" style="margin-bottom:14px;padding:10px 14px;background:rgba(37,99,235,0.05);
+                border:1px solid rgba(37,99,235,0.25);border-radius:8px;line-height:1.55;">
                 <div style="display:flex;align-items:flex-start;gap:8px;">
-                    <span class="material-symbols-outlined" style="color:#dc2626;font-size:20px;flex-shrink:0;margin-top:1px;">warning</span>
-                    <div style="min-width:0;">
-                        <div style="font-size:0.84rem;font-weight:700;color:#dc2626;margin-bottom:4px;">
-                            정상 절차는 수입검사 통과 후 입고입니다. 수입검사 없이 입고하면 품질관리자·물류담당자에게 자동으로 통보됩니다.
-                        </div>
-                        <div style="font-size:0.78rem;color:#991b1b;font-weight:600;">
-                            주말 등 수입검사가 아직 안 됐는데 당일 생산 때문에 입고가 먼저 필요하다면, 지금 이 화면에서 입고를 진행해도 됩니다.
-                            수입검사를 나중에 등록하면 <strong>같은 사출명·LOT번호 기준으로 자동 연결</strong>되며,
-                            LOT 표기가 달라 자동 연결이 안 되면 입고 이력 수정 화면의 <strong>「수입검사 연결」</strong> 버튼으로 직접 연결할 수 있습니다.
-                        </div>
+                    <span class="material-symbols-outlined" id="addInvInspWarnIcon" style="color:#2563eb;font-size:20px;flex-shrink:0;margin-top:1px;">info</span>
+                    <div id="addInvInspWarnBody" style="min-width:0;font-size:0.82rem;color:var(--text-secondary);line-height:1.55;">
+                        <strong style="color:var(--text-primary);">사내 생산 입고는 정상 경로입니다.</strong>
+                        외부 주처 사출품만 수입검사 후 창고 입고가 정상입니다. 사출처가 정해지면 안내가 바뀝니다.
                     </div>
                 </div>
             </div>` : ''}
@@ -7863,12 +7857,9 @@ var InjectionWarehouseModule = (function() {
     function onModalCarModelChange() {
         const carModel = document.getElementById('addInvCarModel').value;
         const partSelect = document.getElementById('addInvPart');
-        const supplierDisplay = document.getElementById('addInvSupplierDisplay');
-        const supplierHidden  = document.getElementById('addInvSupplier');
 
         partSelect.innerHTML = '<option value="">-- 사출명 선택 --</option>';
-        if (supplierDisplay) supplierDisplay.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">사출명 선택 시 자동 표시</span>';
-        if (supplierHidden)  supplierHidden.value = '';
+        _syncAddInvSupplierFromMaster();
 
         _updateColorOptions(carModel, '');   // 차종 전체 스캔 (사출명 미선택)
         const _typeForHide = document.getElementById('addInvType')?.value || '입고';
@@ -7903,26 +7894,17 @@ var InjectionWarehouseModule = (function() {
     function onModalPartChange() {
         const carModel = document.getElementById('addInvCarModel').value;
         const partName = document.getElementById('addInvPart').value;
-        const supplierDisplay = document.getElementById('addInvSupplierDisplay');
-        const supplierHidden  = document.getElementById('addInvSupplier');
         const stockArea = document.getElementById('addInvStockArea');
 
         const _type2 = document.getElementById('addInvType')?.value || '입고';
         if (!carModel || !partName) {
-            if (supplierDisplay) supplierDisplay.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">사출명 선택 시 자동 표시</span>';
-            if (supplierHidden)  supplierHidden.value = '';
-            if (_type2 !== '출고') stockArea.style.display = 'none';
+            _syncAddInvSupplierFromMaster();
+            if (_type2 !== '출고' && stockArea) stockArea.style.display = 'none';
             return;
         }
 
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
         const material = materials.find(m => m.carModel === carModel && m.injPartName === partName);
-
-        const supplierText = (material && material.supplier) ? material.supplier : '-';
-        if (supplierDisplay) {
-            supplierDisplay.innerHTML = `<strong style="color:var(--text-primary);">${supplierText}</strong>`;
-        }
-        if (supplierHidden) supplierHidden.value = supplierText;
 
         // 단위 갱신
         const unitEl = document.getElementById('addInvUnit');
@@ -7930,6 +7912,8 @@ var InjectionWarehouseModule = (function() {
 
         // 사출자재 마스터 injColor 기준으로 컬러 옵션 갱신 (사출명 확정 후)
         _updateColorOptions(carModel, partName);
+
+        _syncAddInvSupplierFromMaster();
 
         // 재고 계산 및 표시 (컬러 자동선택·수동선택 후)
         onModalColorChange();
@@ -7995,6 +7979,7 @@ var InjectionWarehouseModule = (function() {
         const carModel = (document.getElementById('addInvCarModel') || {}).value || '';
         const partName = (document.getElementById('addInvPart') || {}).value || '';
         if (carModel && partName) updateLotStockList(carModel, partName);
+        _syncAddInvSupplierFromMaster();
         _syncAddInvPaintLineFromMaster();
     }
 
@@ -8569,14 +8554,92 @@ var InjectionWarehouseModule = (function() {
         ) || null;
     }
 
-    /** 외부 공급 사출자재만 수입검사 대상 (사내 사출품 제외) */
+    /** 사내 생산(사내·사내생산 등) 사출처인가 — 이 경우는 창고 직접 입고가 정상 경로 */
+    function _isInternalSupplier(raw) {
+        const s = String(raw || '').replace(/\s+/g, '').trim();
+        if (!s || s === '-') return false;
+        return s === '사내' || s.indexOf('사내') === 0;
+    }
+
+    function _updateInboundInspWarn() {
+        const box = document.getElementById('addInvInspWarn');
+        if (!box) return;
+        const icon = document.getElementById('addInvInspWarnIcon');
+        const body = document.getElementById('addInvInspWarnBody');
+        const type = (document.getElementById('addInvType') || {}).value || '';
+        if (type !== '입고') return;
+        const car = (document.getElementById('addInvCarModel') || {}).value || '';
+        const part = (document.getElementById('addInvPart') || {}).value || '';
+        const color = (document.getElementById('addInvColor') || {}).value || '';
+        const supplier = (document.getElementById('addInvSupplier') || {}).value || '';
+        const needsInsp = !!(car && part && _requiresIncomingInspection(car, part, color, supplier));
+        const isInternal = !!(car && part && !needsInsp && (_isInternalSupplier(supplier)
+            || (function () {
+                const mat = _findInjectionMaterial(car, part, color);
+                return mat && _isInternalSupplier(mat.supplier);
+            }())));
+        if (needsInsp) {
+            box.style.background = 'rgba(220,38,38,0.06)';
+            box.style.borderColor = 'rgba(220,38,38,0.35)';
+            if (icon) { icon.textContent = 'warning'; icon.style.color = '#dc2626'; }
+            if (body) {
+                body.innerHTML =
+                    '<div style="font-size:0.84rem;font-weight:700;color:#dc2626;margin-bottom:4px;">외부 주처 사출품은 수입검사 후 입고가 정상입니다.</div>' +
+                    '<div style="font-size:0.78rem;color:#991b1b;font-weight:600;">수입검사 없이 창고로 바로 입고하면 정상 절차가 아니며, 품질관리자·물류담당자에게 알림이 갑니다. ' +
+                    '주말 등 검사가 늦어 입고를 먼저 해야 하면 진행할 수 있습니다. 이후 같은 사출명·LOT으로 검사가 등록되면 자동 연결되고, ' +
+                    '안 되면 입고 이력의 「수입검사 연결」로 맞출 수 있습니다.</div>';
+            }
+            return;
+        }
+        box.style.background = isInternal ? 'rgba(22,163,74,0.06)' : 'rgba(37,99,235,0.05)';
+        box.style.borderColor = isInternal ? 'rgba(22,163,74,0.28)' : 'rgba(37,99,235,0.25)';
+        if (icon) {
+            icon.textContent = isInternal ? 'check_circle' : 'info';
+            icon.style.color = isInternal ? '#16a34a' : '#2563eb';
+        }
+        if (body) {
+            body.innerHTML = isInternal
+                ? '<strong style="color:#15803d;">사내 생산 입고는 정상 경로입니다.</strong> 수입검사 없이 창고에 입고해도 됩니다.'
+                : '<strong style="color:var(--text-primary);">사내 생산 입고는 정상 경로입니다.</strong> 외부 주처 사출품만 수입검사 후 창고 입고가 정상입니다. 사출처가 정해지면 안내가 바뀝니다.';
+        }
+    }
+
+    function _syncAddInvSupplierFromMaster() {
+        const carModel = (document.getElementById('addInvCarModel') || {}).value || '';
+        const partName = (document.getElementById('addInvPart') || {}).value || '';
+        const color = (document.getElementById('addInvColor') || {}).value || '';
+        const supplierDisplay = document.getElementById('addInvSupplierDisplay');
+        const supplierHidden = document.getElementById('addInvSupplier');
+        if (!carModel || !partName) {
+            if (supplierDisplay) supplierDisplay.innerHTML = '<span style="color:var(--text-muted);font-size:0.85rem;">사출명 선택 시 자동 표시</span>';
+            if (supplierHidden) supplierHidden.value = '';
+            _updateInboundInspWarn();
+            return;
+        }
+        const material = _findInjectionMaterial(carModel, partName, color)
+            || (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).find(function (m) {
+                return m.carModel === carModel && m.injPartName === partName;
+            });
+        const supplierText = (material && material.supplier) ? material.supplier : '-';
+        if (supplierDisplay) {
+            supplierDisplay.innerHTML = '<strong style="color:var(--text-primary);">' + supplierText + '</strong>';
+        }
+        if (supplierHidden) supplierHidden.value = supplierText;
+        _updateInboundInspWarn();
+    }
+
+    /** 외부 주처 사출자재만 수입검사 대상 (사내 생산 입고는 정상 경로) */
     function _requiresIncomingInspection(carModel, partName, color, recordSupplier) {
-        const supplier = String(recordSupplier || '').trim();
-        if (supplier === '사내') return false;
+        if (_isInternalSupplier(recordSupplier)) return false;
         const car = String(carModel || '').trim();
         const part = String(partName || '').trim();
         const col = String(color || '').trim();
-        if (!car || !part) return true;
+        if (!car || !part) return false;
+        const mat = _findInjectionMaterial(car, part, col);
+        if (mat) {
+            if (_isInternalSupplier(mat.supplier)) return false;
+            if (String(mat.supplier || '').trim() && String(mat.supplier || '').trim() !== '-') return true;
+        }
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         let candidates = materials.filter(function (m) {
             return String(m.carModel || '').trim() === car
@@ -8590,11 +8653,15 @@ var InjectionWarehouseModule = (function() {
             if (byColor.length) candidates = byColor;
         }
         if (!candidates.length) {
-            return supplier !== '' && supplier !== '사내';
+            const supplier = String(recordSupplier || '').trim();
+            return supplier !== '' && supplier !== '-' && !_isInternalSupplier(supplier);
         }
-        return candidates.some(function (m) {
-            return String(m.supplier || '').trim() !== '사내';
-        });
+        if (candidates.every(function (m) { return _isInternalSupplier(m.supplier); })) return false;
+        if (candidates.every(function (m) {
+            const s = String(m.supplier || '').trim();
+            return s && s !== '-' && !_isInternalSupplier(s);
+        })) return true;
+        return false;
     }
 
     function _isProductMasterName(carModel, partName) {
@@ -10644,7 +10711,9 @@ var InjectionWarehouseModule = (function() {
             _notifyInspectorsOfDirectInbound(data);
         }
         // 대기 항목을 연결 없이 수동 입고한 경우 — 이중 입고 위험이 남으므로 반드시 통보
-        if (data.pendingInspBypass) {
+        // (사내 생산 입고는 수입검사 대상이 아니므로 제외)
+        if (data.pendingInspBypass
+            && _requiresIncomingInspection(data.carModel, data.partName, data.color, data.supplier)) {
             _notifyPendingInspectionBypass(data);
         }
 

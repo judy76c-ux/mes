@@ -1208,12 +1208,8 @@ var InjectionIncomingModule = (function() {
     }
 
     function _notifyIncomingInspectionRegistered(data) {
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         try {
-            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
-                ? AuthModule.getIncomingInspNotifyRecipientIds('injection')
-                : [];
-            if (!recipients.length) return;
             const lotText = Array.isArray(data.lots) && data.lots.length
                 ? data.lots.map(function (l) {
                     return (l.lotNo || '-') + ' ' + UIUtils.formatNumber(l.qty) + ' EA';
@@ -1223,27 +1219,41 @@ var InjectionIncomingModule = (function() {
                 .filter(function (row) { return Number(row[1]) > 0; })
                 .map(function (row) { return row[0] + '(' + row[1] + ')'; })
                 .join(', ');
+            const body = [
+                '사출 수입검사가 등록되었습니다.',
+                '',
+                '검사일: ' + (data.date || '-'),
+                '차종: ' + (data.carModel || '-'),
+                '품명: ' + (data.partName || '-'),
+                '컬러: ' + (data.color || '-'),
+                '사출처: ' + (data.supplierName || '-'),
+                'LOT: ' + (lotText || '-'),
+                '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
+                '검사수량: ' + UIUtils.formatNumber(data.inspectionQty),
+                '합격: ' + UIUtils.formatNumber(data.passQty) + ' / 불합격: ' + UIUtils.formatNumber(data.failQty),
+                '판정: ' + (data.verdict || '-'),
+                defects ? ('불량: ' + defects) : '',
+                '검사자: ' + (data.inspector || '-'),
+                data.note ? ('비고: ' + data.note) : ''
+            ].filter(Boolean).join('\n');
+            if (typeof AuthModule.sendKindNotify === 'function') {
+                AuthModule.sendKindNotify('injection', [data], {
+                    logLabel: '사출 수입검사',
+                    title: '사출 수입검사 등록',
+                    priority: data.verdict === '불합격' ? 'high' : 'normal',
+                    buildBody: function () { return body; }
+                });
+                return;
+            }
+            const recipients = AuthModule.getIncomingInspNotifyRecipientIds
+                ? AuthModule.getIncomingInspNotifyRecipientIds('injection')
+                : [];
+            if (!recipients.length) return;
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
                 title: '사출 수입검사 등록',
-                body: [
-                    '사출 수입검사가 등록되었습니다.',
-                    '',
-                    '검사일: ' + (data.date || '-'),
-                    '차종: ' + (data.carModel || '-'),
-                    '품명: ' + (data.partName || '-'),
-                    '컬러: ' + (data.color || '-'),
-                    '사출처: ' + (data.supplierName || '-'),
-                    'LOT: ' + (lotText || '-'),
-                    '입고수량: ' + UIUtils.formatNumber(data.incomingQty),
-                    '검사수량: ' + UIUtils.formatNumber(data.inspectionQty),
-                    '합격: ' + UIUtils.formatNumber(data.passQty) + ' / 불합격: ' + UIUtils.formatNumber(data.failQty),
-                    '판정: ' + (data.verdict || '-'),
-                    defects ? ('불량: ' + defects) : '',
-                    '검사자: ' + (data.inspector || '-'),
-                    data.note ? ('비고: ' + data.note) : ''
-                ].filter(Boolean).join('\n'),
+                body: body,
                 category: 'injection_incoming_insp',
                 priority: data.verdict === '불합격' ? 'high' : 'normal'
             });

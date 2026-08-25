@@ -223,16 +223,18 @@ var IncomingOverviewModule = (function () {
             || /재고 오류 초기화/.test(String(d.source || ''))));
     }
 
-    /** 사출자재 마스터·입고 기록 기준 수입검사 대상 여부 (injection_part1: 외부 공급처만) */
+    /** 사출자재 마스터·입고 기록 기준 수입검사 대상 여부 (외부 주처만, 사내 생산은 제외) */
     function _isIncomingInspectionTarget(d, ctx) {
         if (!d) return false;
-        const recordSupplier = String(d.supplier || '').trim();
-        if (recordSupplier === '사내') return false;
+        const recordSupplier = String(d.supplier || '').replace(/\s+/g, '').trim();
+        if (recordSupplier && recordSupplier !== '-' && (recordSupplier === '사내' || recordSupplier.indexOf('사내') === 0)) {
+            return false;
+        }
 
         const car = String(d.carModel || '').trim();
         const part = String(d.partName || '').trim();
         const color = String(d.color || '').trim();
-        if (!car || !part) return true;
+        if (!car || !part) return false;
 
         const materials = (ctx && ctx.materials) || Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         let candidates = materials.filter(function (m) {
@@ -246,12 +248,19 @@ var IncomingOverviewModule = (function () {
             });
             if (byColor.length) candidates = byColor;
         }
-        if (!candidates.length) {
-            return recordSupplier !== '' && recordSupplier !== '사내';
+        function isInternal(raw) {
+            const s = String(raw || '').replace(/\s+/g, '').trim();
+            return !!s && s !== '-' && (s === '사내' || s.indexOf('사내') === 0);
         }
-        return candidates.some(function (m) {
-            return String(m.supplier || '').trim() !== '사내';
-        });
+        if (!candidates.length) {
+            return recordSupplier !== '' && recordSupplier !== '-' && !isInternal(d.supplier);
+        }
+        if (candidates.every(function (m) { return isInternal(m.supplier); })) return false;
+        if (candidates.every(function (m) {
+            const s = String(m.supplier || '').trim();
+            return s && s !== '-' && !isInternal(s);
+        })) return true;
+        return false;
     }
 
     /** 사출 창고 입고 ↔ 수입검사 연동 여부 (창고 상세·수입검사일 표시와 동일 기준) */

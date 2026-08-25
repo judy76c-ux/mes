@@ -21509,6 +21509,20 @@ var ProdQualityModule = (function() {
     function notifyOverdueQuality() {
         const list = _collectOverdueQuality();
         if (!list.length) return;
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.sendKindNotify === 'function') {
+            AuthModule.sendKindNotify('quality_cs', list, {
+                title: '초중종물 DATA 미입력',
+                intro: '어제 이전 작업 중 초중종물 DATA가 입력되지 않은 건입니다.',
+                logLabel: '초중종물 미입력',
+                idOf: function (r) { return String((r && r.id) || ''); },
+                formatLine: function (r) {
+                    const when = [r.date || '', (r.startTime || '').slice(0, 5)].filter(Boolean).join(' ');
+                    return '[' + (r.line || '-') + '] ' + when + '  ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                        (r.color ? ' (' + r.color + ')' : '');
+                }
+            });
+            return;
+        }
         if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.sendPeriodicNotify === 'function') {
             PaintingWorkModule.sendPeriodicNotify('quality_cs', list, {
                 title: '초중종물 DATA 미입력',
@@ -21544,6 +21558,25 @@ var ProdQualityModule = (function() {
         } catch (eN) {
             console.warn('[ProdQuality] 초중종물 미입력 통보 실패:', eN);
         }
+    }
+
+    if (typeof AuthModule !== 'undefined' && typeof AuthModule.registerNotifyCollector === 'function') {
+        AuthModule.registerNotifyCollector('quality_cs', function () {
+            return {
+                list: _collectOverdueQuality(),
+                opts: {
+                    title: '초중종물 DATA 미입력',
+                    intro: '어제 이전 작업 중 초중종물 DATA가 입력되지 않은 건입니다.',
+                    logLabel: '초중종물 미입력',
+                    idOf: function (r) { return String((r && r.id) || ''); },
+                    formatLine: function (r) {
+                        const when = [r.date || '', (r.startTime || '').slice(0, 5)].filter(Boolean).join(' ');
+                        return '[' + (r.line || '-') + '] ' + when + '  ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                            (r.color ? ' (' + r.color + ')' : '');
+                    }
+                }
+            };
+        });
     }
 
     async function syncFromStartedPlans() {
@@ -23439,6 +23472,17 @@ var ProdQualityModule = (function() {
     function openWriteFromWork(workId) {
         const work = _resolveQualitySource(workId);
         if (!work) return;
+        // 목록 뒤에 깔린 기준 화면도 해당 기준일자가 보이도록 날짜 필터를 확장 (기본 최근 7일이라 오래된 미발행 건이 목록에서 안 보이는 문제 방지)
+        if (work.date) {
+            const startEl = document.getElementById('pqFilterStart');
+            const endEl = document.getElementById('pqFilterEnd');
+            if (startEl && endEl) {
+                let changed = false;
+                if (!startEl.value || startEl.value > work.date) { startEl.value = work.date; changed = true; }
+                if (!endEl.value || endEl.value < work.date) { endEl.value = work.date; changed = true; }
+                if (changed && typeof search === 'function') search();
+            }
+        }
         const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
         const base = existing || _buildIssueFromSource(work);
         if (!base.items.length) {

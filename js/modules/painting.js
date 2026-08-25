@@ -1144,6 +1144,10 @@ const PaintingWorkModule = (function() {
     }
 
     function _sendPeriodicNotify(kind, list, opts) {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.sendKindNotify === 'function') {
+            AuthModule.sendKindNotify(kind, list, opts);
+            return;
+        }
         opts = opts || {};
         const rows = Array.isArray(list) ? list.filter(Boolean) : [];
         if (!rows.length) return;
@@ -1523,34 +1527,43 @@ const PaintingWorkModule = (function() {
     /** 도장 실적 신규 등록 → 해당 라인 도료사용 미등록 수신자에게 쪽지 */
     function _notifyPaintMixUnregistered(work) {
         if (!work) return;
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         const kind = (typeof AuthModule.paintMixNotifyKindForLine === 'function')
             ? AuthModule.paintMixNotifyKindForLine(work.line)
             : '';
         if (!kind) return;
-        const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
-            ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
-            : [];
-        if (!recipients.length) return;
         const line = String(work.line || '-');
         const lotsTxt = (Array.isArray(work.lots) && work.lots.length)
             ? work.lots.map(function (l) { return String((l && l.lotNo) || '').trim(); }).filter(Boolean).join(', ')
             : String(work.lotNo || '').trim();
+        const body = [
+            '도장 작업 실적이 등록되어 도료사용등록이 필요합니다.',
+            '배합작업 → 도료사용등록에서 확인해 주세요.',
+            '',
+            '- ' + line + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
+                (work.color ? ' / ' + work.color : '') +
+                ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
+                (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
+        ].join('\n');
+        if (typeof AuthModule.sendKindNotify === 'function') {
+            AuthModule.sendKindNotify(kind, [work], {
+                logLabel: '도료 사용 미등록',
+                title: '도료 사용 미등록 (' + line + ')',
+                buildBody: function () { return body; }
+            });
+            return;
+        }
+        const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
+            : [];
+        if (!recipients.length) return;
         try {
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
                 title: '도료 사용 미등록 (' + line + ')',
-                body: [
-                    '도장 작업 실적이 등록되어 도료사용등록이 필요합니다.',
-                    '배합작업 → 도료사용등록에서 확인해 주세요.',
-                    '',
-                    '- ' + line + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
-                        (work.color ? ' / ' + work.color : '') +
-                        ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
-                        (lotsTxt ? ' · LOT ' + lotsTxt : '') +
-                        (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
-                ].join('\n'),
+                body: body,
                 category: kind,
                 priority: 'high'
             });
@@ -1589,28 +1602,37 @@ const PaintingWorkModule = (function() {
     /** 도장 실적 신규 등록 → 외관 검사 대기품 수신자에게 쪽지 */
     function _notifyInspectionWaiting(work) {
         if (!_workGoesToInspectionWaiting(work)) return;
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
+        const lotsTxt = (Array.isArray(work.lots) && work.lots.length)
+            ? work.lots.map(function (l) { return String((l && l.lotNo) || '').trim(); }).filter(Boolean).join(', ')
+            : String(work.lotNo || '').trim();
+        const body = [
+            '도장 작업 실적이 등록되어 외관 검사 대기품에 올랐습니다. 도장 검사에서 확인해 주세요.',
+            '',
+            '- ' + (work.line || '-') + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
+                (work.color ? ' / ' + work.color : '') +
+                ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
+                (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
+        ].join('\n');
+        if (typeof AuthModule.sendKindNotify === 'function') {
+            AuthModule.sendKindNotify('insp_waiting', [work], {
+                logLabel: '외관 검사 대기품',
+                title: '외관 검사 대기품 등록',
+                buildBody: function () { return body; }
+            });
+            return;
+        }
         const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
             ? AuthModule.getIncomingInspNotifyRecipientIds('insp_waiting')
             : [];
         if (!recipients.length) return;
-        const lotsTxt = (Array.isArray(work.lots) && work.lots.length)
-            ? work.lots.map(function (l) { return String((l && l.lotNo) || '').trim(); }).filter(Boolean).join(', ')
-            : String(work.lotNo || '').trim();
         try {
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
                 title: '외관 검사 대기품 등록',
-                body: [
-                    '도장 작업 실적이 등록되어 외관 검사 대기품에 올랐습니다. 도장 검사에서 확인해 주세요.',
-                    '',
-                    '- ' + (work.line || '-') + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
-                        (work.color ? ' / ' + work.color : '') +
-                        ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
-                        (lotsTxt ? ' · LOT ' + lotsTxt : '') +
-                        (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
-                ].join('\n'),
+                body: body,
                 category: 'insp_waiting',
                 priority: 'high'
             });
@@ -10947,6 +10969,92 @@ const PaintingWorkModule = (function() {
         await _commitQuickAdd(false);
     }
 
+    function _withPaintLine(line, fn) {
+        const prev = _currentLine;
+        _currentLine = _resolvePaintLine(line) || line;
+        try { return fn(); }
+        finally { _currentLine = prev; }
+    }
+
+    function _registerPaintNotifyCollectors() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.registerNotifyCollector !== 'function') return;
+        ['도장-A', '도장-B'].forEach(function (line) {
+            const uKind = (typeof AuthModule.unenteredWorkNotifyKindForLine === 'function')
+                ? AuthModule.unenteredWorkNotifyKindForLine(line)
+                : (line === '도장-B' ? 'unentered_work_b' : 'unentered_work_a');
+            AuthModule.registerNotifyCollector(uKind, function () {
+                return _withPaintLine(line, function () {
+                    return {
+                        list: _collectUnenteredPlans(),
+                        opts: {
+                            logLabel: '실적 미입력',
+                            title: line + ' 실적 미입력 계획',
+                            intro: '하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. ' + line + ' 작업에서 확인해 주세요.',
+                            formatLine: function (p) {
+                                const day = _planDayKey(p);
+                                const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
+                                const hasInbound = _hasConfirmedSiteInboundForPlan(p, day);
+                                return '- ' + day + ' ' + timeStr +
+                                    ' · ' + (p.carModel || '-') + ' / ' + (p.partName || '-') +
+                                    (p.color ? ' / ' + p.color : '') +
+                                    ' · ' + (hasInbound ? '미입력 실적' : '소재 입고 필요') +
+                                    ' · 계획 ' + UIUtils.formatNumber(p.planQty || 0);
+                            }
+                        }
+                    };
+                });
+            });
+            const oKind = (typeof AuthModule.overdueInboundNotifyKindForLine === 'function')
+                ? AuthModule.overdueInboundNotifyKindForLine(line)
+                : (line === '도장-B' ? 'overdue_inbound_b' : 'overdue_inbound_a');
+            AuthModule.registerNotifyCollector(oKind, function () {
+                return _withPaintLine(line, function () {
+                    return {
+                        list: _collectOverdueInbound(),
+                        opts: {
+                            logLabel: '이전 날짜 미입고',
+                            title: line + ' 이전 날짜 미입고 대기',
+                            intro: '이전에 출고됐지만 아직 현장 입고 확인이 안 된 건입니다. ' + line + ' 작업에서 「입고 처리」해 주세요.',
+                            formatLine: function (r) {
+                                const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                                    ? r.lots.map(function (l) { return l.lotNo || ''; }).filter(Boolean).join(', ')
+                                    : String(r.lotNo || '').trim();
+                                return '- ' + String(r.date || '').slice(0, 10) +
+                                    ' · ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                                    (r.color ? ' / ' + r.color : '') +
+                                    (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                                    ' · ' + UIUtils.formatNumber(r.quantity || r.qty || 0) + ' EA';
+                            }
+                        }
+                    };
+                });
+            });
+            const mKind = (typeof AuthModule.missingInboundNotifyKindForLine === 'function')
+                ? AuthModule.missingInboundNotifyKindForLine(line)
+                : (line === '도장-B' ? 'missing_inbound_b' : 'missing_inbound_a');
+            AuthModule.registerNotifyCollector(mKind, function () {
+                return _withPaintLine(line, function () {
+                    return {
+                        list: _collectMissingInboundPlans(),
+                        opts: {
+                            logLabel: '소재 입고 필요',
+                            title: line + ' 소재 입고 필요',
+                            intro: line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없습니다. 생산계획 현황에서 「소재입고 필요」를 처리해 주세요.',
+                            formatLine: function (p) {
+                                const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
+                                return '- ' + String(p.date || '').slice(0, 10) + ' ' + timeStr +
+                                    ' · ' + (p.carModel || '-') + ' / ' + (p.partName || '-') +
+                                    (p.color ? ' / ' + p.color : '') +
+                                    ' · 계획 ' + UIUtils.formatNumber(p.planQty || 0);
+                            }
+                        }
+                    };
+                });
+            });
+        });
+    }
+    _registerPaintNotifyCollectors();
+
     return {
         renderForLine,
         search,
@@ -14297,12 +14405,8 @@ const PaintingInspectionModule = (function() {
 
     function _notifyPaintInspectionRegistered(rec, work, opts) {
         opts = opts || {};
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         try {
-            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
-                ? AuthModule.getIncomingInspNotifyRecipientIds('paint_insp')
-                : [];
-            if (!recipients.length) return;
             const isPartial = !!(opts.isPartial || (rec && rec.isPartial));
             const remainingQty = Number(opts.remainingQty);
             const defects = Array.isArray(rec && rec.defects) ? rec.defects : [];
@@ -14314,31 +14418,46 @@ const PaintingInspectionModule = (function() {
             const title = isPartial
                 ? (remainingQty > 0 ? '외관 검사 등록 (부분검사)' : '외관 검사 완료 (부분검사 전량 소진)')
                 : '외관 검사 완료';
+            const body = [
+                isPartial && remainingQty > 0
+                    ? '외관 부분검사가 등록되었습니다. 남은 수량은 대기 목록에 유지됩니다.'
+                    : '외관 검사가 등록되었습니다.',
+                '',
+                '라인: ' + ((work && work.line) || rec.line || '-'),
+                '검사일: ' + (rec.date || '-'),
+                '차종: ' + (rec.carModel || (work && work.carModel) || '-'),
+                '품명: ' + (rec.partName || (work && work.partName) || '-'),
+                '컬러: ' + (rec.color || (work && work.color) || '-'),
+                'LOT: ' + (rec.lotNo || '-'),
+                '검사수량: ' + UIUtils.formatNumber(rec.inspectionQty) + ' EA',
+                '양품: ' + UIUtils.formatNumber(rec.goodQty) + ' EA',
+                '불량: ' + UIUtils.formatNumber(rec.defectQty) + ' EA',
+                rec.reworkQty ? ('리워크: ' + UIUtils.formatNumber(rec.reworkQty) + ' EA') : '',
+                defectTxt ? ('불량내역: ' + defectTxt) : '',
+                isPartial ? ('남은 수량: ' + UIUtils.formatNumber(remainingQty) + ' EA') : '',
+                inspectors ? ('검사자: ' + inspectors) : ''
+            ].filter(Boolean).join('\n');
+            const priority = isPartial && remainingQty > 0 ? 'normal' : 'high';
+            if (typeof AuthModule.sendKindNotify === 'function') {
+                AuthModule.sendKindNotify('paint_insp', [rec], {
+                    logLabel: '외관 검사',
+                    title: title,
+                    priority: priority,
+                    buildBody: function () { return body; }
+                });
+                return;
+            }
+            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+                ? AuthModule.getIncomingInspNotifyRecipientIds('paint_insp')
+                : [];
+            if (!recipients.length) return;
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
                 title: title,
-                body: [
-                    isPartial && remainingQty > 0
-                        ? '외관 부분검사가 등록되었습니다. 남은 수량은 대기 목록에 유지됩니다.'
-                        : '외관 검사가 등록되었습니다.',
-                    '',
-                    '라인: ' + ((work && work.line) || rec.line || '-'),
-                    '검사일: ' + (rec.date || '-'),
-                    '차종: ' + (rec.carModel || (work && work.carModel) || '-'),
-                    '품명: ' + (rec.partName || (work && work.partName) || '-'),
-                    '컬러: ' + (rec.color || (work && work.color) || '-'),
-                    'LOT: ' + (rec.lotNo || '-'),
-                    '검사수량: ' + UIUtils.formatNumber(rec.inspectionQty) + ' EA',
-                    '양품: ' + UIUtils.formatNumber(rec.goodQty) + ' EA',
-                    '불량: ' + UIUtils.formatNumber(rec.defectQty) + ' EA',
-                    rec.reworkQty ? ('리워크: ' + UIUtils.formatNumber(rec.reworkQty) + ' EA') : '',
-                    defectTxt ? ('불량내역: ' + defectTxt) : '',
-                    isPartial ? ('남은 수량: ' + UIUtils.formatNumber(remainingQty) + ' EA') : '',
-                    inspectors ? ('검사자: ' + inspectors) : ''
-                ].filter(Boolean).join('\n'),
+                body: body,
                 category: 'paint_insp',
-                priority: isPartial && remainingQty > 0 ? 'normal' : 'high'
+                priority: priority
             });
         } catch (e) {
             console.warn('[PaintingInspectionModule] 외관 검사 등록 통보 실패:', e);

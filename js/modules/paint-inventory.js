@@ -2178,32 +2178,38 @@ const PaintInventoryModule = (function() {
 
     function _notifyPaintOutgoing(items, issuer) {
         if (!items || !items.length) return;
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         try {
-            const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            const materials = Storage.getAll(MATERIALS_STORE) || [];
+            const opts = {
+                logLabel: '도료 출고',
+                title: '도료 창고 출고 ' + items.length + '건',
+                intro: '도료 창고에서 출고가 완료되었습니다.' + (issuer ? '\n출고자: ' + issuer : ''),
+                idOf: function (item) {
+                    return String((item && (item.id || item.key || item.prodLot || item.materialId)) || '');
+                },
+                formatLine: function (item) {
+                    const mat = materials.find(function (m) { return m.id === item.materialId; }) || {};
+                    const name = mat.name || item.paintName || '-';
+                    return '- ' + name +
+                        (mat.supplier ? ' (' + mat.supplier + ')' : '') +
+                        ' · LOT ' + (item.prodLot || '-') +
+                        ' · ' + UIUtils.formatNumber(item.qty) + '캔';
+                }
+            };
+            if (typeof AuthModule.sendKindNotify === 'function') {
+                AuthModule.sendKindNotify('paint_out', items, opts);
+                return;
+            }
+            const recipients = AuthModule.getIncomingInspNotifyRecipientIds
                 ? AuthModule.getIncomingInspNotifyRecipientIds('paint_out')
                 : [];
             if (!recipients.length) return;
-            const materials = Storage.getAll(MATERIALS_STORE) || [];
-            const lines = items.map(function (item) {
-                const mat = materials.find(function (m) { return m.id === item.materialId; }) || {};
-                const name = mat.name || item.paintName || '-';
-                return '- ' + name +
-                    (mat.supplier ? ' (' + mat.supplier + ')' : '') +
-                    ' · LOT ' + (item.prodLot || '-') +
-                    ' · ' + UIUtils.formatNumber(item.qty) + '캔';
-            });
             AuthModule.sendInternalMessage({
                 targetType: 'user',
                 targetIds: recipients,
-                title: '도료 창고 출고 ' + items.length + '건',
-                body: [
-                    '도료 창고에서 출고가 완료되었습니다.',
-                    '',
-                    lines.join('\n'),
-                    '',
-                    issuer ? ('출고자: ' + issuer) : ''
-                ].filter(Boolean).join('\n'),
+                title: opts.title,
+                body: [opts.intro, '', items.map(opts.formatLine).join('\n')].join('\n'),
                 category: 'paint_out',
                 priority: 'high'
             });

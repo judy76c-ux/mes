@@ -15,11 +15,14 @@ var JigModule = (function () {
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
     const LINE_ORDER_RATE = 1.01; // 101%
+    const THICKNESS_JIG_COUNT = 3;
+    const THICKNESS_STAGE_COUNT = 3;
     const THICKNESS_POINT_PHOTO_COUNT = 3;
-    const THICKNESS_POINT_META = [
-        { label: '1. 초기 지그 두께', desc: '도장 전 지그 두께 측정' },
-        { label: '2. 1회 도장 후 두께', desc: '스프레이 1회 후 측정' },
-        { label: '3. 2회 도장 후 두께', desc: '스프레이 2회 후 측정' }
+    const THICKNESS_MM_COUNT = THICKNESS_JIG_COUNT * THICKNESS_STAGE_COUNT;
+    const THICKNESS_STAGE_META = [
+        { label: '초기', desc: '도장 전 지그 두께 측정' },
+        { label: '1회 도장', desc: '스프레이 1회 후 측정' },
+        { label: '2회 도장', desc: '스프레이 2회 후 측정' }
     ];
     const STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
 
@@ -28,6 +31,7 @@ var JigModule = (function () {
     let _batchMergeRows = [];
     let _activeView = 'life';
     let _masterCarFilter = '';
+    let _showAsItems = false;
     let _jigPasteTargetId = '';
     let _jigPasteListenerReady = false;
     let _lifeStandardPasteArmed = false;
@@ -46,32 +50,55 @@ var JigModule = (function () {
     const _esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
 
-    function _calcAvgFilmThickness(pointMms) {
-        const p0 = _numMm(pointMms[0]);
-        const p1 = _numMm(pointMms[1]);
-        const p2 = _numMm(pointMms[2]);
-        if (!p0 || !p1 || !p2 || p1 <= p0 || p2 <= p1) return 0;
-        const film1 = p1 - p0;
-        const film2 = p2 - p1;
-        return Math.round(((film1 + film2) / 2) * 1000) / 1000;
-    }
-
-    function _calcFilmThicknessDetail(pointMms) {
+    function _calcOneJigFilm(pointMms) {
         const p0 = _numMm(pointMms[0]);
         const p1 = _numMm(pointMms[1]);
         const p2 = _numMm(pointMms[2]);
         if (!p0 || !p1 || !p2 || p1 <= p0 || p2 <= p1) {
-            return {
-                avg: 0,
-                text: '3개 측정값을 입력하면 1회 평균 도막두께가 자동 계산됩니다.'
-            };
+            return { avg: 0, film1: 0, film2: 0 };
         }
         const film1 = Math.round((p1 - p0) * 1000) / 1000;
         const film2 = Math.round((p2 - p1) * 1000) / 1000;
         const avg = Math.round(((film1 + film2) / 2) * 1000) / 1000;
+        return { avg: avg, film1: film1, film2: film2 };
+    }
+
+    function _jigThicknessSlice(pointMms, jigIndex) {
+        const base = jigIndex * THICKNESS_STAGE_COUNT;
+        const arr = Array.isArray(pointMms) ? pointMms : [];
+        return [arr[base], arr[base + 1], arr[base + 2]];
+    }
+
+    function _calcAvgFilmThickness(pointMms) {
+        const avgs = [];
+        for (let j = 0; j < THICKNESS_JIG_COUNT; j++) {
+            const one = _calcOneJigFilm(_jigThicknessSlice(pointMms, j));
+            if (one.avg > 0) avgs.push(one.avg);
+        }
+        if (!avgs.length) return 0;
+        return Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 1000) / 1000;
+    }
+
+    function _calcFilmThicknessDetail(pointMms) {
+        const parts = [];
+        const avgs = [];
+        for (let j = 0; j < THICKNESS_JIG_COUNT; j++) {
+            const one = _calcOneJigFilm(_jigThicknessSlice(pointMms, j));
+            if (one.avg > 0) {
+                avgs.push(one.avg);
+                parts.push('지그 ' + (j + 1) + ' ' + _fmtMm(one.avg) + ' mm');
+            }
+        }
+        if (!avgs.length) {
+            return {
+                avg: 0,
+                text: '지그별로 초기·1회·2회 두께를 입력하면 1회 평균 도막두께가 자동 계산됩니다.'
+            };
+        }
+        const avg = Math.round((avgs.reduce(function (s, n) { return s + n; }, 0) / avgs.length) * 1000) / 1000;
         return {
             avg: avg,
-            text: '1회 도막 ' + _fmtMm(film1) + ' mm + 2회 도막 ' + _fmtMm(film2) + ' mm → 평균 ' + _fmtMm(avg) + ' mm'
+            text: parts.join(' · ') + ' → 평균 ' + _fmtMm(avg) + ' mm'
         };
     }
 
@@ -83,7 +110,7 @@ var JigModule = (function () {
     }
 
     function _readThicknessPointsFromForm() {
-        return Array.from({ length: THICKNESS_POINT_PHOTO_COUNT }, function (_, i) {
+        return Array.from({ length: THICKNESS_MM_COUNT }, function (_, i) {
             return document.getElementById('thicknessPointMm' + i)?.value || '';
         });
     }
@@ -134,13 +161,13 @@ var JigModule = (function () {
     const JIG_MENUS = [
         { id: 'painting-jig', label: '메인', icon: 'dashboard' },
         { id: 'jig-management', label: '수명관리', icon: 'monitor_heart' },
-        { id: 'jig-life-standard', label: '지그수명기준서', icon: 'description' },
         { id: 'jig-master', label: '도장 지그대장', icon: 'fact_check' },
         { id: 'jig-layout', label: '지그창고 레이아웃', icon: 'map' },
         { id: 'jig-disposal', label: '지그 폐기 대장', icon: 'delete_sweep' },
         { id: 'jig-ordering', label: '지그 발주 관리', icon: 'shopping_cart' },
         { id: 'jig-change-history', label: '조치 이력', icon: 'sync_alt' },
-        { id: 'jig-repair-history', label: '지그수리 개선 이력', icon: 'build_circle' }
+        { id: 'jig-repair-history', label: '지그수리 개선 이력', icon: 'build_circle' },
+        { id: 'jig-life-standard', label: '지그수명기준서', icon: 'description' }
     ];
 
     function renderMenu(activePage) {
@@ -325,6 +352,7 @@ var JigModule = (function () {
                     <button id="jigFilterAll" class="btn btn-primary btn-sm" onclick="JigModule.filterLine('')">전체</button>
                     <button id="jigFilterA" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('A라인')">A라인</button>
                     <button id="jigFilterB" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('B라인')">B라인</button>
+                    ${_asShowCheckboxHtml()}
                     ${_isAdminUser() ? `
                         <button class="btn btn-outline btn-sm" onclick="JigModule.syncFromPaintingWork()"
                             title="자동 생성된 JIG 사용 이력을 삭제 후 도장 작업 실적 기준으로 다시 계산합니다.">
@@ -825,7 +853,9 @@ var JigModule = (function () {
     }
 
     function _applyJigFilters(jigs) {
+        const itemTypeMap = _productItemTypeMap();
         return (jigs || []).filter(j => {
+            if (!_showAsItems && _isAsItemType(_jigItemType(j, itemTypeMap))) return false;
             if (_currentLine && j.line !== _currentLine) return false;
             if (_currentStatus === 'warning') return _lifePct(j) >= 80 && _lifePct(j) < 100;
             if (_currentStatus === 'exceeded') return _lifePct(j) >= 100;
@@ -968,6 +998,7 @@ var JigModule = (function () {
         </div>`;
         _bindJigLifeFit();
         _scheduleFitJigLifePartNames();
+        _refreshAsShowCount();
     }
 
     function _fitJigLifePartNames() {
@@ -1622,6 +1653,36 @@ var JigModule = (function () {
 
     const CAR_ORDER = ['GOLF7','GOLF-7','A3','A3(PA)','Q2','A3 PA','A8','XFD','J34A','T1XX','DECO','EMBLEM','C223','FORD','P702','C300','리비안'];
 
+    function _jigCarKey(j) {
+        return String((j && j.carModel) || '').trim();
+    }
+
+    function _sortedUniqueCars(jigs) {
+        const cars = [...new Set((jigs || []).map(_jigCarKey).filter(Boolean))];
+        cars.sort(function (a, b) {
+            const ai = CAR_ORDER.indexOf(a);
+            const bi = CAR_ORDER.indexOf(b);
+            if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+            return a.localeCompare(b, 'ko');
+        });
+        return cars;
+    }
+
+    function _masterCarFilterBar(cars, countByCar, total) {
+        function btn(value, label, count) {
+            const active = (_masterCarFilter || '') === (value || '');
+            return '<button type="button" class="btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline') + '"' +
+                ' onclick="JigModule.filterMasterCar(\'' + _js(value) + '\')" style="white-space:nowrap;">' +
+                _esc(label) + (count != null ? ' <span style="font-weight:600;opacity:.85;">' + count + '</span>' : '') +
+                '</button>';
+        }
+        return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--bg-secondary);border-radius:8px;">' +
+            '<span style="font-size:0.72rem;font-weight:700;color:var(--text-muted);margin-right:2px;white-space:nowrap;">차종</span>' +
+            btn('', '전체', total) +
+            (cars || []).map(function (car) { return btn(car, car, countByCar[car] || 0); }).join('') +
+            '</div>';
+    }
+
     /* 제품 구분(양산/개발/A·S) 배지 색상 — 안전관리 MSDS 화면과 동일 컨벤션 */
     const PROD_COLORS = { '양산': '#059669', 'A/S': '#2563eb', '개발': '#7c3aed' };
 
@@ -1629,6 +1690,36 @@ var JigModule = (function () {
     function _normItemType(raw) {
         if (!raw) return '';
         return String(raw).replace(/품$/, '').trim();
+    }
+
+    function _isAsItemType(pt) {
+        const t = _normItemType(pt).toUpperCase().replace(/\s+/g, '');
+        return t === 'A/S' || t === 'AS' || t.indexOf('A/S') >= 0;
+    }
+
+    function _asShowCheckboxHtml() {
+        return '<label style="display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 10px;border:1px solid var(--border-color);border-radius:8px;background:#fff;font-size:0.78rem;font-weight:700;white-space:nowrap;cursor:pointer;user-select:none;">' +
+            '<input type="checkbox" id="jigShowAsItems"' + (_showAsItems ? ' checked' : '') +
+            ' onchange="JigModule.toggleShowAsItems(this.checked)" style="width:15px;height:15px;accent-color:#2563eb;">' +
+            'A/S 품목 보기<span id="jigShowAsCount" style="color:var(--text-muted);font-weight:500;"></span></label>';
+    }
+
+    function _refreshAsShowCount() {
+        const el = document.getElementById('jigShowAsCount');
+        if (!el) return;
+        const itemTypeMap = _productItemTypeMap();
+        const n = (Storage.getAll(STORE) || []).filter(function (j) {
+            return _isAsItemType(_jigItemType(j, itemTypeMap));
+        }).length;
+        el.textContent = n ? ' (' + n + '건)' : '';
+    }
+
+    function toggleShowAsItems(checked) {
+        _showAsItems = !!checked;
+        const box = document.getElementById('jigShowAsItems');
+        if (box) box.checked = _showAsItems;
+        if (document.getElementById('jigBlocks')) loadAll();
+        if (document.getElementById('jigMasterView')) renderJigMaster();
     }
 
     /* 차종+품명 → 제품 itemType 조회맵 (도장 지그는 제품을 직접 참조하지 않고 텍스트로 저장되어 있어 매칭) */
@@ -1672,10 +1763,67 @@ var JigModule = (function () {
         const el = document.getElementById('jigMasterView');
         if (!el) return;
         const itemTypeMap = _productItemTypeMap();
+        const visible = (Storage.getAll(STORE) || []).filter(function (j) {
+            return _showAsItems || !_isAsItemType(_jigItemType(j, itemTypeMap));
+        });
+        const cars = _sortedUniqueCars(visible);
+        const countByCar = {};
+        visible.forEach(function (j) {
+            const car = _jigCarKey(j);
+            if (!car) return;
+            countByCar[car] = (countByCar[car] || 0) + 1;
+        });
+        if (_masterCarFilter && cars.indexOf(_masterCarFilter) < 0) {
+            cars.push(_masterCarFilter);
+            if (countByCar[_masterCarFilter] == null) countByCar[_masterCarFilter] = 0;
+        }
         const jigs = _sortJigMasterList(
-            (Storage.getAll(STORE) || []).filter(j => !_masterCarFilter || j.carModel === _masterCarFilter),
+            visible.filter(function (j) {
+                return !_masterCarFilter || _jigCarKey(j) === _masterCarFilter;
+            }),
             itemTypeMap
         );
+        const emptyText = _masterCarFilter
+            ? '선택한 차종의 도장 지그가 없습니다.'
+            : '등록된 도장 지그가 없습니다.';
+        let prevCar = null;
+        const rows = jigs.map(function (j, idx) {
+            const calc = _calcLifeFromThickness(j.limitThicknessMm, j.filmThicknessMm);
+            const limitCoat = Number(j.limitCoatCount) > 0 ? Number(j.limitCoatCount) : calc.limitCoatCount;
+            const manage = Number(j.maxCount) > 0 ? Number(j.maxCount) : calc.manageCount;
+            const allParts = _masterSelectedPartNames(j);
+            const aliases = allParts.filter(function (p) { return p !== j.partName; });
+            const car = _jigCarKey(j) || '차종 미지정';
+            const isNewCar = car !== prevCar;
+            prevCar = car;
+            const carCell = isNewCar
+                ? '<td style="white-space:nowrap;font-weight:700;color:var(--accent-blue);">' + _esc(car) + '</td>'
+                : '<td style="white-space:nowrap;color:var(--text-muted);"></td>';
+            return '<tr' + (isNewCar && idx > 0 ? ' style="border-top:2px solid var(--border-color);"' : '') + '>' +
+                carCell +
+                '<td style="white-space:nowrap;">' + _itemTypeBadge(_jigItemType(j, itemTypeMap)) + '</td>' +
+                '<td style="white-space:nowrap;" title="' + _esc(allParts.join(', ')) + '">' +
+                    '<span style="font-weight:600;">' + _esc(j.partName || '-') + '</span>' +
+                    (aliases.length ? '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">+' + aliases.length + '</span>' : '') +
+                '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.initialThicknessMm) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.filmThicknessMm) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.limitThicknessMm) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;font-weight:600;">' + _fmtCountOrDash(limitCoat) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;font-weight:800;color:var(--accent-blue);">' + _fmtCountOrDash(manage) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + (j.orderQty ? _fmt(j.orderQty) : '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + _appliedLineBadges(j.appliedLines) + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(j.material || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(j.supplier || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(j.madeDate || j.registDate || '-') + '</td>' +
+                '<td>' + _photoThumbs(j, 'jigPhotos') + '</td>' +
+                '<td>' + _photoThumbs(j, 'productFitPhotos') + '</td>' +
+                '<td>' + _photoThumbs(j, 'thicknessPointPhotos') + '</td>' +
+                '<td style="white-space:nowrap;">' +
+                    '<button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal(\'' + _js(j.id) + '\')">보기</button>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
         el.innerHTML = `
             <div class="card">
                 <div class="card-body">
@@ -1684,84 +1832,52 @@ var JigModule = (function () {
                         수명 근거: <strong>제한 두께 도달 도장횟수 = JIG 제한 두께 ÷ 1회 도막형성 두께</strong>
                         · <strong>수명 관리 설정 횟수 = 도달 횟수 × 90%</strong> (내림)
                     </div>
+                    ${_masterCarFilterBar(cars, countByCar, visible.length)}
                     <div class="data-table-wrapper" style="overflow-x:auto;">
-                        <table class="data-table data-table--content">
+                        <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                             <thead>
                                 <tr>
-                                    <th>차종</th>
-                                    <th>구분</th>
-                                    <th>품명</th>
-                                    <th style="text-align:right;">초기두께<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;">1회도막<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;">제한두께<br><small style="font-weight:400;">(mm)</small></th>
-                                    <th style="text-align:right;">도달횟수<br><small style="font-weight:400;">(회)</small></th>
-                                    <th style="text-align:right;">관리횟수<br><small style="font-weight:400;">(회)</small></th>
-                                    <th style="text-align:right;">발주</th>
-                                    <th>적용라인</th>
-                                    <th>재질</th>
-                                    <th>구매처</th>
-                                    <th>제작일</th>
-                                    <th>지그사진</th>
-                                    <th>결합사진</th>
-                                    <th>측정포인트</th>
-                                    <th>작업</th>
+                                    <th style="white-space:nowrap;">차종</th>
+                                    <th style="white-space:nowrap;">구분</th>
+                                    <th style="white-space:nowrap;">품명</th>
+                                    <th style="text-align:right;white-space:nowrap;">초기두께<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;white-space:nowrap;">1회도막<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;white-space:nowrap;">제한두께<br><small style="font-weight:400;">(mm)</small></th>
+                                    <th style="text-align:right;white-space:nowrap;">도달횟수<br><small style="font-weight:400;">(회)</small></th>
+                                    <th style="text-align:right;white-space:nowrap;">관리횟수<br><small style="font-weight:400;">(회)</small></th>
+                                    <th style="text-align:right;white-space:nowrap;">발주</th>
+                                    <th style="white-space:nowrap;">적용라인</th>
+                                    <th style="white-space:nowrap;">재질</th>
+                                    <th style="white-space:nowrap;">구매처</th>
+                                    <th style="white-space:nowrap;">제작일</th>
+                                    <th style="white-space:nowrap;">지그사진</th>
+                                    <th style="white-space:nowrap;">결합사진</th>
+                                    <th style="white-space:nowrap;">측정포인트</th>
+                                    <th style="white-space:nowrap;">작업</th>
                                 </tr>
                             </thead>
                             <tbody>
-                                ${jigs.length ? jigs.map(j => {
-                                    const calc = _calcLifeFromThickness(j.limitThicknessMm, j.filmThicknessMm);
-                                    const limitCoat = Number(j.limitCoatCount) > 0 ? Number(j.limitCoatCount) : calc.limitCoatCount;
-                                    const manage = Number(j.maxCount) > 0 ? Number(j.maxCount) : calc.manageCount;
-                                    const allParts = _masterSelectedPartNames(j);
-                                    const aliases = allParts.filter(p => p !== j.partName);
-                                    return `
-                                    <tr>
-                                        <td><strong>${_esc(j.carModel || '-')}</strong></td>
-                                        <td>${_itemTypeBadge(itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`])}</td>
-                                        <td title="${_esc(allParts.join(', '))}">
-                                            <span style="font-weight:600;">${_esc(j.partName || '-')}</span>
-                                            ${aliases.length ? `<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">+${aliases.length}</span>` : ''}
-                                        </td>
-                                        <td style="text-align:right;">${_fmtMm(j.initialThicknessMm)}</td>
-                                        <td style="text-align:right;">${_fmtMm(j.filmThicknessMm)}</td>
-                                        <td style="text-align:right;">${_fmtMm(j.limitThicknessMm)}</td>
-                                        <td style="text-align:right;font-weight:600;">${_fmtCountOrDash(limitCoat)}</td>
-                                        <td style="text-align:right;font-weight:800;color:var(--accent-blue);">${_fmtCountOrDash(manage)}</td>
-                                        <td style="text-align:right;">${j.orderQty ? _fmt(j.orderQty) : '-'}</td>
-                                        <td>${_appliedLineBadges(j.appliedLines)}</td>
-                                        <td>${_esc(j.material || '-')}</td>
-                                        <td>${_esc(j.supplier || '-')}</td>
-                                        <td>${_esc(j.madeDate || j.registDate || '-')}</td>
-                                        <td>${_photoThumbs(j, 'jigPhotos')}</td>
-                                        <td>${_photoThumbs(j, 'productFitPhotos')}</td>
-                                        <td>${_photoThumbs(j, 'thicknessPointPhotos')}</td>
-                                        <td>
-                                            <button class="btn btn-outline btn-sm" onclick="JigModule.openJigMasterModal('${_js(j.id)}')">보기</button>
-                                        </td>
-                                    </tr>`;
-                                }).join('') : `
-                                    <tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);white-space:normal;">등록된 도장 지그가 없습니다.</td></tr>
+                                ${jigs.length ? rows : `
+                                    <tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);white-space:normal;">${emptyText}</td></tr>
                                 `}
                             </tbody>
                         </table>
                     </div>
                 </div>
             </div>`;
+        _refreshAsShowCount();
     }
 
-    function onMasterCarFilterChange() {
-        _masterCarFilter = document.getElementById('jigMasterCarFilter')?.value || '';
+    function filterMasterCar(car) {
+        _masterCarFilter = String(car || '').trim();
         renderJigMaster();
     }
 
+    function onMasterCarFilterChange() {
+        filterMasterCar(document.getElementById('jigMasterCarFilter')?.value || _masterCarFilter);
+    }
+
     function renderMasterPage(container) {
-        const cars = [...new Set((Storage.getAll(STORE) || []).map(j => j.carModel).filter(Boolean))]
-            .sort((a, b) => {
-                const ai = CAR_ORDER.indexOf(a);
-                const bi = CAR_ORDER.indexOf(b);
-                if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
-                return a.localeCompare(b, 'ko');
-            });
         container.innerHTML = `
         <div class="fade-in-up jig-page">
             ${renderMenu('jig-master', '도장 지그대장', '도장 지그의 기본 정보와 사진 자료를 관리합니다.')}
@@ -1770,10 +1886,7 @@ var JigModule = (function () {
                     <button class="btn btn-primary btn-sm" onclick="JigModule.openJigMasterModal()">
                         <span class="material-symbols-outlined">add</span> 지그 등록
                     </button>
-                    <select id="jigMasterCarFilter" class="form-select" style="width:220px;height:34px;font-size:0.78rem;padding:5px 28px 5px 10px;" onchange="JigModule.onMasterCarFilterChange()">
-                        <option value="">전체 차종</option>
-                        ${cars.map(car => `<option value="${_esc(car)}" ${car === _masterCarFilter ? 'selected' : ''}>${_esc(car)}</option>`).join('')}
-                    </select>
+                    ${_asShowCheckboxHtml()}
                 </div>
             </div>
             <div id="jigMasterView"></div>
@@ -2154,27 +2267,18 @@ var JigModule = (function () {
     const MASTER_PHOTO_THUMB_CSS = 'width:100%;max-width:' + MASTER_PHOTO_THUMB_W + 'px;height:' + MASTER_PHOTO_THUMB_H + 'px;object-fit:contain;background:#fff;border:1px solid var(--border-color);border-radius:6px;cursor:zoom-in;display:block;margin:0 auto;';
     const MASTER_PHOTO_EMPTY_CSS = 'width:100%;max-width:' + MASTER_PHOTO_THUMB_W + 'px;height:' + MASTER_PHOTO_THUMB_H + 'px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:6px;font-size:0.68rem;text-align:center;margin:0 auto;padding:4px;';
 
-    function _isJigNativePhotoTarget(targetId) {
-        if (!targetId) return false;
-        const id = String(targetId).replace(/Preview$/, '');
-        return /^(jigPhoto|productFitPhoto)\d+$/.test(id)
-            || /^view_지그_사진_|^view_제품_결합_사진_/.test(id);
-    }
-
     function _masterPhotoThumbHtml(photoSrc, targetId, emptyLabel) {
         const url = _jigPhotoSrc(photoSrc);
-        const nativeView = _isJigNativePhotoTarget(targetId);
         if (!photoSrc) {
             return '<div id="' + targetId + 'Preview" style="' + MASTER_PHOTO_EMPTY_CSS + '">' + (emptyLabel || '사진 없음') + '</div>';
         }
-        return '<img id="' + targetId + 'Preview" src="' + _esc(url) + '" alt="" style="' + MASTER_PHOTO_THUMB_CSS + '" title="클릭하여 확대"' +
-            ' onclick="JigModule.viewJigMasterPhoto(\'' + _js(url) + '\', ' + nativeView + ')">';
+        return '<img id="' + targetId + 'Preview" src="' + _esc(url) + '" alt="" style="' + MASTER_PHOTO_THUMB_CSS + '" title="클릭하여 새 창에서 보기"' +
+            ' onclick="JigModule.viewJigMasterPhoto(\'' + _js(url) + '\')">';
     }
 
     function _bindMasterPhotoPreview(preview, src) {
         if (!preview) return;
         const url = _jigPhotoSrc(src);
-        const nativeView = _isJigNativePhotoTarget(preview.id);
         if (preview.tagName === 'IMG') {
             if (!src) {
                 const empty = document.createElement('div');
@@ -2186,8 +2290,8 @@ var JigModule = (function () {
             }
             preview.src = url;
             preview.style.cssText = MASTER_PHOTO_THUMB_CSS;
-            preview.title = '클릭하여 확대';
-            preview.onclick = function () { viewJigMasterPhoto(url, nativeView); };
+            preview.title = '클릭하여 새 창에서 보기';
+            preview.onclick = function () { viewJigMasterPhoto(url); };
             preview.style.display = 'block';
             return;
         }
@@ -2197,8 +2301,8 @@ var JigModule = (function () {
             img.alt = '';
             img.src = url;
             img.style.cssText = MASTER_PHOTO_THUMB_CSS;
-            img.title = '클릭하여 확대';
-            img.onclick = function () { viewJigMasterPhoto(url, nativeView); };
+            img.title = '클릭하여 새 창에서 보기';
+            img.onclick = function () { viewJigMasterPhoto(url); };
             preview.replaceWith(img);
         } else {
             preview.style.cssText = MASTER_PHOTO_EMPTY_CSS;
@@ -2235,11 +2339,12 @@ var JigModule = (function () {
             </div>`;
     }
 
-    function _thicknessMeasurePointCard(index, mm, photoSrc, readOnly) {
-        const meta = THICKNESS_POINT_META[index] || { label: '측정 포인트 ' + (index + 1), desc: '' };
+    function _thicknessMeasurePointCard(index, mm, photoSrc, readOnly, withPhoto) {
+        const stage = index % THICKNESS_STAGE_COUNT;
+        const meta = THICKNESS_STAGE_META[stage] || { label: '측정', desc: '' };
         const targetId = 'thicknessPointPhoto' + index;
         const roAttr = readOnly ? ' disabled' : '';
-        const photoControls = readOnly ? '' : `
+        const photoControls = (withPhoto && !readOnly) ? `
             <div style="display:flex;gap:6px;flex-wrap:wrap;flex-shrink:0;">
                 <label class="btn btn-sm btn-outline" style="cursor:pointer;">
                     파일 선택
@@ -2247,8 +2352,16 @@ var JigModule = (function () {
                 </label>
                 <button type="button" class="btn btn-sm btn-outline" onclick="JigModule.pasteJigMasterPhoto('${targetId}')">붙여넣기</button>
                 <button type="button" class="btn btn-sm btn-danger" onclick="JigModule.clearJigMasterPhoto('${targetId}')">삭제</button>
-            </div>`;
-        const photoBlock = _masterPhotoThumbHtml(photoSrc, targetId, '측정 위치 사진');
+            </div>` : '';
+        const photoBlock = withPhoto
+            ? (_masterPhotoThumbHtml(photoSrc, targetId, '측정 위치 사진') +
+                (readOnly
+                    ? '<div style="font-size:0.66rem;color:var(--text-muted);margin-top:4px;text-align:center;">썸네일 클릭 시 확대</div>'
+                    : '<div style="font-size:0.66rem;color:var(--text-muted);margin-top:4px;text-align:center;">썸네일 클릭 시 확대 · Ctrl+V 붙여넣기</div>'))
+            : '';
+        const photoHidden = withPhoto
+            ? `<input type="hidden" id="${targetId}Data" value="${_esc(photoSrc || '')}">`
+            : '';
         return `
             <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px;background:var(--bg-secondary);">
                 <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:6px;margin-bottom:6px;">
@@ -2258,22 +2371,36 @@ var JigModule = (function () {
                     </div>
                     ${photoControls}
                 </div>
-                <div class="form-group" style="margin:0 0 6px;">
+                <div class="form-group" style="margin:0 0 ${withPhoto ? '6px' : '0'};">
                     <label class="form-label" style="font-size:0.78rem;">측정 두께 (mm) <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="thicknessPointMm${index}" value="${mm || ''}" min="0" step="0.001" placeholder="예: 16.520"${roAttr}
                         oninput="JigModule.recalcMasterLifeFromThickness()">
                 </div>
-                <input type="hidden" id="${targetId}Data" value="${_esc(photoSrc || '')}">
+                ${photoHidden}
                 ${photoBlock}
-                ${readOnly ? '<div style="font-size:0.66rem;color:var(--text-muted);margin-top:4px;text-align:center;">썸네일 클릭 시 확대</div>'
-                    : '<div style="font-size:0.66rem;color:var(--text-muted);margin-top:4px;text-align:center;">썸네일 클릭 시 확대 · Ctrl+V 붙여넣기</div>'}
             </div>`;
     }
 
     function _thicknessMeasurePointCards(d, readOnly) {
         const thicknessPhotos = Array.isArray(d.thicknessPointPhotos) ? d.thicknessPointPhotos : [];
-        return Array.from({ length: THICKNESS_POINT_PHOTO_COUNT }, function (_, i) {
-            return _thicknessMeasurePointCard(i, _getThicknessPointMm(d, i), thicknessPhotos[i] || '', readOnly);
+        return Array.from({ length: THICKNESS_JIG_COUNT }, function (_, jigIndex) {
+            const withPhoto = jigIndex === 0;
+            const cards = Array.from({ length: THICKNESS_STAGE_COUNT }, function (__, stage) {
+                const index = jigIndex * THICKNESS_STAGE_COUNT + stage;
+                return _thicknessMeasurePointCard(
+                    index,
+                    _getThicknessPointMm(d, index),
+                    withPhoto ? (thicknessPhotos[stage] || '') : '',
+                    readOnly,
+                    withPhoto
+                );
+            }).join('');
+            return '<div style="margin-bottom:' + (jigIndex < THICKNESS_JIG_COUNT - 1 ? '12px' : '0') + ';">' +
+                '<div style="font-size:0.8rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">지그 ' + (jigIndex + 1) +
+                '<span style="font-weight:500;color:var(--text-muted);font-size:0.72rem;margin-left:8px;">' +
+                (withPhoto ? '측정값 + 사진 등록' : '측정값만 입력') +
+                '</span></div>' +
+                '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">' + cards + '</div></div>';
         }).join('');
     }
 
@@ -2282,7 +2409,7 @@ var JigModule = (function () {
         const roAttr = readOnly ? ' disabled' : '';
         const jigPhotos = Array.isArray(d.jigPhotos) ? d.jigPhotos : [];
         const fitPhotos = Array.isArray(d.productFitPhotos) ? d.productFitPhotos : [];
-        const pointMms = Array.from({ length: THICKNESS_POINT_PHOTO_COUNT }, function (_, i) {
+        const pointMms = Array.from({ length: THICKNESS_MM_COUNT }, function (_, i) {
             return _getThicknessPointMm(d, i);
         });
         const filmDetail = _calcFilmThicknessDetail(pointMms);
@@ -2315,8 +2442,8 @@ var JigModule = (function () {
             </div>
             <div style="margin:4px 0 10px;padding:10px 12px;border:1px solid rgba(37,99,235,0.2);border-radius:8px;background:rgba(37,99,235,0.04);">
                 <div style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);margin-bottom:4px;">수명 근거 (두께)</div>
-                <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:10px;">지그 스프레이 1회 도막두께 측정 기록 — 초기·1회·2회 도장 후 두께로 1회 평균 도막두께를 자동 계산합니다.</div>
-                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:12px;">
+                <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:10px;">지그 1·2·3 각각 초기·1회 도장·2회 도장 두께를 입력합니다. 사진은 지그 1만 등록하고, 1회 평균 도막두께는 입력된 지그 평균으로 계산합니다.</div>
+                <div style="margin-bottom:12px;">
                     ${_thicknessMeasurePointCards(d, readOnly)}
                 </div>
                 <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -2459,7 +2586,7 @@ var JigModule = (function () {
         if (!filmThicknessMm || !limitThicknessMm) {
             // 기존 대장(두께 미입력)은 수명 횟수만으로 저장 허용
             if (!maxCount) {
-                UIUtils.toast('초기·1회·2회 도장 후 두께 3개와 JIG 제한 두께를 입력하거나, 수명 관리 설정 횟수를 직접 입력하세요.', 'warning');
+                UIUtils.toast('지그별 초기·1회·2회 도장 두께와 JIG 제한 두께를 입력하거나, 수명 관리 설정 횟수를 직접 입력하세요.', 'warning');
                 return null;
             }
         } else if (!maxCount) {
@@ -2564,11 +2691,70 @@ var JigModule = (function () {
         return ApiClient.uploadPhoto(file, 'paint_jig', JIG_PHOTO_UPLOAD_OPTS);
     }
 
-    function viewJigMasterPhoto(src, nativeView) {
+    function _openJigPhotoWindow(src, title) {
+        const url = String(src || '').trim();
+        if (!url) return;
+        const label = String(title || '지그 사진');
+        const w = 866;
+        const h = 710;
+        const left = Math.max(0, Math.round(((screen.availWidth || screen.width || w) - w) / 2));
+        const top = Math.max(0, Math.round(((screen.availHeight || screen.height || h) - h) / 2));
+        const features = 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+            ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no';
+        const win = window.open('', 'jigPhotoViewer', features);
+        if (!win) {
+            UIUtils.showModal('사진 보기', _masterPhotoViewBody(url, true),
+                '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'xl');
+            UIUtils.toast('팝업이 차단되어 화면 안에서 열었습니다. 새 창 크기 조절을 쓰려면 팝업을 허용해 주세요.', 'warning');
+            return;
+        }
+        try { win.opener = null; } catch (eOp) {}
+        const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8">' +
+            '<title>' + _esc(label) + '</title>' +
+            '<style>' +
+            'html,body{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:"Malgun Gothic",sans-serif;}' +
+            '.wrap{display:flex;flex-direction:column;height:100%;}' +
+            '.stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px;}' +
+            '.stage img{display:block;max-width:92%;max-height:92%;object-fit:contain;transform-origin:center center;transition:transform .12s ease;background:#0b1220;}' +
+            '.bar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px 16px;background:#1f2937;border-top:1px solid #374151;}' +
+            '.bar .size{font-size:13px;font-weight:700;color:#d1d5db;min-width:110px;font-variant-numeric:tabular-nums;}' +
+            '.bar .actions{display:flex;align-items:center;justify-content:center;gap:10px;flex:1;}' +
+            '.bar button{appearance:none;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}' +
+            '.bar .rot{background:#2563eb;color:#fff;}' +
+            '.bar .rot:hover{background:#1d4ed8;}' +
+            '.hint{font-size:12px;color:#9ca3af;min-width:40px;text-align:right;}' +
+            '</style></head><body>' +
+            '<div class="wrap"><div class="stage"><img id="photo" alt="' + _esc(label) + '" src="' + _esc(url) + '"></div>' +
+            '<div class="bar">' +
+            '<span class="size" id="winSize">-</span>' +
+            '<div class="actions">' +
+            '<button type="button" class="rot" id="rotL">↺ 왼쪽 회전</button>' +
+            '<button type="button" class="rot" id="rotR">↻ 오른쪽 회전</button>' +
+            '</div>' +
+            '<span class="hint" id="degLabel">0°</span>' +
+            '</div></div>' +
+            '<script>(function(){' +
+            'var deg=0,img=document.getElementById("photo"),stage=document.querySelector(".stage"),lab=document.getElementById("degLabel"),sizeEl=document.getElementById("winSize");' +
+            'function winSizeText(){return Math.round(window.innerWidth||0)+" × "+Math.round(window.innerHeight||0);}' +
+            'function fit(){if(sizeEl)sizeEl.textContent=winSizeText();if(!img||!stage)return;var r=((deg%360)+360)%360;var swap=r===90||r===270;var sw=stage.clientWidth,sh=stage.clientHeight;' +
+            'img.style.maxWidth=(swap?Math.max(80,sh-24):Math.max(80,sw-24))+"px";' +
+            'img.style.maxHeight=(swap?Math.max(80,sw-24):Math.max(80,sh-24))+"px";' +
+            'img.style.transform="rotate("+deg+"deg)";if(lab)lab.textContent=r+"°";}' +
+            'function turn(d){deg+=d;fit();}' +
+            'document.getElementById("rotL").onclick=function(){turn(-90);};' +
+            'document.getElementById("rotR").onclick=function(){turn(90);};' +
+            'window.addEventListener("resize",fit);' +
+            'if(img.complete)fit();else img.onload=fit;fit();' +
+            '})();</script></body></html>';
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        try { win.focus(); } catch (eF) {}
+    }
+
+    function viewJigMasterPhoto(src) {
         if (!src) return;
-        UIUtils.showModal('사진 보기', _masterPhotoViewBody(src, !!nativeView),
-            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
-            'xl');
+        _openJigPhotoWindow(_jigPhotoSrc(src), '지그 대장 사진');
     }
 
     async function saveJigMaster(id = '') {
@@ -2741,13 +2927,15 @@ var JigModule = (function () {
         const jig = Storage.getById(STORE, id);
         const src = jig && Array.isArray(jig[key]) ? jig[key][idx] : '';
         if (!src) return;
-        UIUtils.showModal('사진 보기', _masterPhotoViewBody(_jigPhotoSrc(src), true), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+        _openJigPhotoWindow(_jigPhotoSrc(src), '지그 대장 사진');
     }
 
     function viewResetPhoto(photoUrl) {
         if (!photoUrl) return;
-        const src = ApiClient.photoUrl(photoUrl);
-        UIUtils.showModal('교체일 작성 사진', _masterPhotoViewBody(src, true), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+        const src = (typeof ApiClient !== 'undefined' && ApiClient.photoUrl)
+            ? ApiClient.photoUrl(photoUrl)
+            : photoUrl;
+        _openJigPhotoWindow(src, '교체일 작성 사진');
     }
 
     function _historyMeta(type) {
@@ -3238,6 +3426,8 @@ var JigModule = (function () {
         onCarModelChange,
         onMasterCarModelChange,
         onMasterCarFilterChange,
+        filterMasterCar,
+        toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,
         openJigMasterModal,

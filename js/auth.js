@@ -20,12 +20,7 @@ const AuthModule = (function () {
     const PROD_NOTIFY_RECIPIENTS_KEY = 'prod_notify_recipients_v1';
     const INCOMING_INSP_NOTIFY_KEY = 'incoming_insp_notify_recipients_v1';
     const INCOMING_INSP_NOTIFY_INTERVAL_KEY = 'incoming_insp_notify_interval_v1';
-    const INCOMING_INSP_INTERVAL_KINDS = [
-        'unentered_work_a', 'unentered_work_b',
-        'overdue_inbound_a', 'overdue_inbound_b',
-        'missing_inbound_a', 'missing_inbound_b',
-        'quality_cs'
-    ];
+    const KIND_NOTIFY_SENT_KEY = 'unentered_work_notify_sent_v1';
     let _usersCache = null;
     let _permissionsCache = null;
     let _messagesCache = null;
@@ -51,6 +46,10 @@ const AuthModule = (function () {
     let _incomingInspNotifyLoaded = false;
     let _incomingInspNotifyInterval = {};
     let _incomingInspNotifyIntervalLoaded = false;
+    let _kindNotifySent = null;
+    let _kindNotifySentLoading = null;
+    let _notifyCollectors = {};
+    let _notifyWatchTimer = null;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -1404,6 +1403,7 @@ const AuthModule = (function () {
         _applyWriteMode();
         _updateTopbar();
         showUnreadInboxPopup();
+        startIncomingInspNotifyWatch();
     }
 
     /** 생산 관련 통보자(계획 미달·수량 보정·특채 등). 한 번 저장하면 다음에도 미리 선택. */
@@ -1487,45 +1487,38 @@ const AuthModule = (function () {
 
     function _incomingInspKindHint(kind) {
         const key = _incomingInspKind(kind);
+        let text = '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다.';
         if (key === 'site_return') {
-            return '도장현장에서 사출 소재를 반납하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'site_inbound_a' || key === 'site_inbound_b') {
+            text = '도장현장에서 사출 소재를 반납하면 지정한 사용자에게 알림이 갑니다.';
+        } else if (key === 'site_inbound_a' || key === 'site_inbound_b') {
             const line = key === 'site_inbound_b' ? '도장-B' : '도장-A';
-            return '사출 창고에서 ' + line + ' 현장으로 생산출고되면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'paint_insp') {
-            return '외관 검사(부분검사 포함)를 등록하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'insp_waiting') {
-            return '도장 작업 실적이 등록되어 외관 검사 대기품에 오르면 지정한 사용자에게 쪽지가 갑니다. 레이저 대기로 바로 넘어가는 품목은 제외됩니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
+            text = '사출 창고에서 ' + line + ' 현장으로 생산출고되면 지정한 사용자에게 알림이 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
+        } else if (key === 'paint_insp') {
+            text = '외관 검사(부분검사 포함)를 등록하면 지정한 사용자에게 알림이 갑니다.';
+        } else if (key === 'insp_waiting') {
+            text = '도장 작업 실적이 등록되어 외관 검사 대기품에 오르면 지정한 사용자에게 알림이 갑니다. 레이저 대기로 바로 넘어가는 품목은 제외됩니다.';
+        } else if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
             const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
-            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'unentered_work_a' || key === 'unentered_work_b') {
+            text = line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 알림이 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
+        } else if (key === 'unentered_work_a' || key === 'unentered_work_b') {
             const line = key === 'unentered_work_b' ? '도장-B' : '도장-A';
-            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'overdue_inbound_a' || key === 'overdue_inbound_b') {
+            text = '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 알림이 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
+        } else if (key === 'overdue_inbound_a' || key === 'overdue_inbound_b') {
             const line = key === 'overdue_inbound_b' ? '도장-B' : '도장-A';
-            return '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'laser_inbound') {
-            return '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'paint_out') {
-            return '도료 창고에서 출고 완료하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        if (key === 'paint_mix_a' || key === 'paint_mix_b') {
+            text = '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 알림이 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
+        } else if (key === 'laser_inbound') {
+            text = '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 알림이 갑니다.';
+        } else if (key === 'paint_out') {
+            text = '도료 창고에서 출고 완료하면 지정한 사용자에게 알림이 갑니다.';
+        } else if (key === 'paint_mix_a' || key === 'paint_mix_b') {
             const line = key === 'paint_mix_b' ? '도장-B' : '도장-A';
-            return line + ' 도장 작업 실적이 등록되면 도료사용등록이 필요한 건으로 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            text = line + ' 도장 작업 실적이 등록되면 도료사용등록이 필요한 건으로 지정한 사용자에게 알림이 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
+        } else if (key === 'quality_cs') {
+            text = '어제 이전 작업 중 초중종물 DATA가 없으면 지정한 사용자에게 알림이 갑니다. 당일 건은 알림하지 않습니다.';
+        } else if (key === 'paint') {
+            text = '도료 수입검사 등록 시 쪽지를 받을 사용자를 지정합니다.';
         }
-        if (key === 'quality_cs') {
-            return '어제 이전 작업 중 초중종물 DATA가 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 당일 건은 알림하지 않습니다. 알림 주기는 이 화면에서 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
-        }
-        return '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        return text + ' 알림 주기는 이 화면에서 지정합니다. 첫 알림은 쪽지이고, 같은 건의 반복은 텔레그램만 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
     }
 
     function missingInboundNotifyKindForLine(line) {
@@ -1632,7 +1625,7 @@ const AuthModule = (function () {
     }
 
     function _incomingInspKindSupportsInterval(kind) {
-        return INCOMING_INSP_INTERVAL_KINDS.indexOf(_incomingInspKind(kind)) >= 0;
+        return INCOMING_INSP_NOTIFY_KEYS.indexOf(_incomingInspKind(kind)) >= 0;
     }
 
     function _clampNotifyMinutes(rawMinutes, rawHours) {
@@ -1659,7 +1652,7 @@ const AuthModule = (function () {
 
     function _emptyIncomingInspInterval() {
         const o = {};
-        INCOMING_INSP_INTERVAL_KINDS.forEach(function (k) {
+        INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
             o[k] = _normalizeIncomingInspInterval(null);
         });
         return o;
@@ -1668,7 +1661,7 @@ const AuthModule = (function () {
     function _normalizeIncomingInspIntervalMap(raw) {
         const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
         const o = _emptyIncomingInspInterval();
-        INCOMING_INSP_INTERVAL_KINDS.forEach(function (k) {
+        INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
             o[k] = _normalizeIncomingInspInterval(src[k]);
         });
         return o;
@@ -1790,7 +1783,7 @@ const AuthModule = (function () {
             '<span style="font-size:0.78rem;color:var(--text-muted);">분 (5~60) 간격 발송</span></span>';
         return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
-            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. 화면이 열려 있을 때 주기를 검사합니다.</div>' +
+            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. MES가 열려 있으면 약 1분마다 주기를 검사합니다.</div>' +
             radio('interval', '해소될 때까지', minutesExtra) +
             radio('once', '알림 발생 시 1회') +
             '</div>';
@@ -1959,6 +1952,143 @@ const AuthModule = (function () {
         const checks = document.querySelectorAll('.' + checkboxClass);
         if (!checks.length) return;
         saveIncomingInspNotifyRecipients(kind, collectIncomingInspNotifySelection(checkboxClass));
+    }
+
+    function _loadKindNotifySent() {
+        if (_kindNotifySent) return Promise.resolve(_kindNotifySent);
+        if (_kindNotifySentLoading) return _kindNotifySentLoading;
+        if (typeof Storage === 'undefined' || !Storage.getConfigValue) {
+            _kindNotifySent = {};
+            return Promise.resolve(_kindNotifySent);
+        }
+        _kindNotifySentLoading = Promise.resolve(Storage.getConfigValue(KIND_NOTIFY_SENT_KEY))
+            .then(function (raw) {
+                _kindNotifySent = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+                return _kindNotifySent;
+            })
+            .catch(function () {
+                _kindNotifySent = {};
+                return _kindNotifySent;
+            })
+            .then(function (map) {
+                _kindNotifySentLoading = null;
+                return map;
+            });
+        return _kindNotifySentLoading;
+    }
+
+    function sendKindNotify(kind, list, opts) {
+        opts = opts || {};
+        const key = _incomingInspKind(kind);
+        const rows = Array.isArray(list) ? list.filter(Boolean) : [];
+        if (!rows.length || !key) return;
+        const recipients = getIncomingInspNotifyRecipientIds(key);
+        if (!recipients.length) return;
+        const interval = getIncomingInspNotifyInterval(key) || _normalizeIncomingInspInterval(null);
+        const mode = interval && interval.mode ? interval.mode : 'interval';
+        const idOf = typeof opts.idOf === 'function'
+            ? opts.idOf
+            : function (r) {
+                return String((r && (r.id || r.sourceId || r.key)) || '').trim();
+            };
+        const logLabel = opts.logLabel || _incomingInspKindLabel(key);
+        _loadKindNotifySent().then(function () {
+            const sentMap = _kindNotifySent && typeof _kindNotifySent === 'object' ? _kindNotifySent : {};
+            const byKind = (sentMap[key] && typeof sentMap[key] === 'object') ? sentMap[key] : {};
+            const due = function (id) {
+                return shouldRepeatIncomingInspNotify(key, byKind[id]);
+            };
+            const fresh = rows.filter(function (r) {
+                const id = idOf(r);
+                if (!id) return false;
+                return due(id);
+            });
+            if (!fresh.length) return;
+            const first = [];
+            const repeats = [];
+            fresh.forEach(function (r) {
+                if (!byKind[idOf(r)]) first.push(r);
+                else repeats.push(r);
+            });
+            const buildBody = function (part) {
+                if (typeof opts.buildBody === 'function') return opts.buildBody(part);
+                const lines = part.map(opts.formatLine || function () { return ''; }).filter(Boolean);
+                return [opts.intro, '', lines.join('\n')].filter(Boolean).join('\n');
+            };
+            const payloadBase = {
+                targetType: 'user',
+                targetIds: recipients,
+                title: opts.title || _incomingInspKindLabel(key),
+                category: key,
+                priority: opts.priority || 'high',
+                senderName: '시스템'
+            };
+            const sentIds = [];
+            try {
+                if (first.length) {
+                    const ok = sendInternalMessage(Object.assign({}, payloadBase, { body: buildBody(first) }));
+                    if (ok) first.forEach(function (r) { sentIds.push(idOf(r)); });
+                }
+                if (repeats.length) {
+                    const ok = sendTelegramNotify(Object.assign({}, payloadBase, { body: buildBody(repeats) }));
+                    if (ok) repeats.forEach(function (r) { sentIds.push(idOf(r)); });
+                }
+            } catch (e) {
+                console.warn('[AuthModule] ' + logLabel + ' 통보 실패:', e);
+                return;
+            }
+            if (!sentIds.length) return;
+            const next = sentMap;
+            const nextKind = Object.assign({}, byKind);
+            const liveIds = {};
+            rows.forEach(function (r) {
+                const id = idOf(r);
+                if (id) liveIds[id] = true;
+            });
+            Object.keys(nextKind).forEach(function (id) {
+                if (liveIds[id]) return;
+                const ts = Date.parse(nextKind[id]);
+                if (!isFinite(ts) || (Date.now() - ts) > 48 * 3600000) delete nextKind[id];
+            });
+            const sentAt = new Date().toISOString();
+            sentIds.forEach(function (id) {
+                if (id) nextKind[id] = sentAt;
+            });
+            next[key] = nextKind;
+            _kindNotifySent = next;
+            if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+                Storage.setConfigValue(KIND_NOTIFY_SENT_KEY, next).catch(function (e) {
+                    console.warn('[AuthModule] ' + logLabel + ' 통보 기록 저장 실패:', e);
+                });
+            }
+        }).catch(function (e) {
+            console.warn('[AuthModule] ' + logLabel + ' 통보 실패:', e);
+        });
+    }
+
+    function registerNotifyCollector(kind, collectFn) {
+        const key = _incomingInspKind(kind);
+        if (!key || typeof collectFn !== 'function') return;
+        _notifyCollectors[key] = collectFn;
+    }
+
+    function _runNotifyCollectors() {
+        Object.keys(_notifyCollectors).forEach(function (kind) {
+            try {
+                if (!getIncomingInspNotifyRecipientIds(kind).length) return;
+                const pack = _notifyCollectors[kind]();
+                if (!pack || !pack.list || !pack.list.length) return;
+                sendKindNotify(kind, pack.list, pack.opts || {});
+            } catch (e) {
+                console.warn('[AuthModule] 알림 주기 검사 실패:', kind, e);
+            }
+        });
+    }
+
+    function startIncomingInspNotifyWatch() {
+        if (_notifyWatchTimer) return;
+        _notifyWatchTimer = setInterval(_runNotifyCollectors, 60000);
+        setTimeout(_runNotifyCollectors, 8000);
     }
 
     function shouldPrecheckProdNotify(userId, opts) {
@@ -2239,6 +2369,9 @@ const AuthModule = (function () {
         getUnreadInboxCount,
         sendInternalMessage,
         sendTelegramNotify,
+        sendKindNotify,
+        registerNotifyCollector,
+        startIncomingInspNotifyWatch,
         sendSystemMessage,
         openInboxModal,
         openComposeMessageModal,
