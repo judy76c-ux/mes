@@ -1766,6 +1766,29 @@ var PaintingInputModule = (function () {
         });
     }
 
+    /**
+     * LOT 번호가 입고분과 달라도 작업일지 inputQty는 반드시 차감한다.
+     * inbound[lotNo] = 입고 수량(숫자).
+     */
+    function _fillUnattributedWorkInput(inbound, usedByLot, workInputTotal) {
+        if (!inbound || !usedByLot) return;
+        var keys = Object.keys(inbound);
+        if (!keys.length) return;
+        var attributed = 0;
+        keys.forEach(function (k) { attributed += Number(usedByLot[k]) || 0; });
+        var gap = Math.max(0, Math.floor(Number(workInputTotal) || 0) - attributed);
+        if (!(gap > 0)) return;
+        keys.forEach(function (k) {
+            if (gap <= 0) return;
+            var inQty = Number(inbound[k]) || 0;
+            var room = Math.max(0, inQty - (Number(usedByLot[k]) || 0));
+            if (!(room > 0)) return;
+            var take = Math.min(room, gap);
+            usedByLot[k] = (Number(usedByLot[k]) || 0) + take;
+            gap -= take;
+        });
+    }
+
     /** 이 실적 몫의 LOT별 잔량 = 당일 현장입고 − 투입. 반납 원장을 다시 쓸 때 기준. */
     function _leftoverLotsForWork(work, returnRec) {
         const empty = { lots: [], qty: 0, issued: 0, used: 0 };
@@ -1797,6 +1820,7 @@ var PaintingInputModule = (function () {
             });
         });
         const usedByLot = {};
+        let workUsedTotal = Number(work.inputQty) || 0;
         _addWorkUsageToLotMap(usedByLot, work);
         if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
             (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
@@ -1811,9 +1835,11 @@ var PaintingInputModule = (function () {
                     const wPart = String(w.injPartName || w.partName || '').trim();
                     if (requirePartMatch && wPart && !injNames[wPart]) return;
                 }
+                workUsedTotal += Number(w.inputQty) || 0;
                 _addWorkUsageToLotMap(usedByLot, w);
             });
         }
+        _fillUnattributedWorkInput(inbound, usedByLot, workUsedTotal);
         const lots = [];
         let issued = 0;
         Object.keys(inbound).forEach(function (lotNo) {
@@ -1823,8 +1849,18 @@ var PaintingInputModule = (function () {
             if (rem > 0) lots.push({ lotNo: lotNo, qty: rem });
         });
         lots.sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
-        const qty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
-        return { lots: lots, qty: qty, issued: issued, used: issued - qty };
+        const targetRemain = Math.max(0, issued - workUsedTotal);
+        let overflow = lots.reduce(function (s, l) { return s + l.qty; }, 0) - targetRemain;
+        if (overflow > 0) {
+            for (let i = lots.length - 1; i >= 0 && overflow > 0; i--) {
+                const cut = Math.min(lots[i].qty, overflow);
+                lots[i].qty -= cut;
+                overflow -= cut;
+            }
+        }
+        const keptLots = lots.filter(function (l) { return l.qty > 0; });
+        const leftoverQty = keptLots.reduce(function (s, l) { return s + l.qty; }, 0);
+        return { lots: keptLots, qty: leftoverQty, issued: issued, used: workUsedTotal };
     }
 
     /**
@@ -1872,6 +1908,7 @@ var PaintingInputModule = (function () {
         });
 
         const usedByLot = {};
+        let workUsedTotal = 0;
         if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
             (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
                 if (!w) return;
@@ -1890,9 +1927,11 @@ var PaintingInputModule = (function () {
                 if (!wHasLot && part && !injNames[part]
                     && String(w.injPartName || '').trim() !== part
                     && String(w.partName || '').trim() !== part) return;
+                workUsedTotal += Number(w.inputQty) || 0;
                 _addWorkUsageToLotMap(usedByLot, w);
             });
         }
+        _fillUnattributedWorkInput(inbound, usedByLot, workUsedTotal);
 
         const lots = [];
         let issued = 0;
@@ -1903,8 +1942,18 @@ var PaintingInputModule = (function () {
             if (rem > 0) lots.push({ lotNo: lotNo, qty: rem });
         });
         lots.sort(function (a, b) { return String(a.lotNo).localeCompare(String(b.lotNo)); });
-        const qty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
-        return { lots: lots, qty: qty, issued: issued, used: issued - qty };
+        const target = Math.max(0, issued - workUsedTotal);
+        let extra = lots.reduce(function (s, l) { return s + l.qty; }, 0) - target;
+        if (extra > 0) {
+            for (let i = lots.length - 1; i >= 0 && extra > 0; i--) {
+                const cut = Math.min(lots[i].qty, extra);
+                lots[i].qty -= cut;
+                extra -= cut;
+            }
+        }
+        const kept = lots.filter(function (l) { return l.qty > 0; });
+        const qty = kept.reduce(function (s, l) { return s + l.qty; }, 0);
+        return { lots: kept, qty: qty, issued: issued, used: workUsedTotal };
     }
 
     function _resolveLeftoverForReturn(rec, works) {

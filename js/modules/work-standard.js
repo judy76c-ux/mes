@@ -412,7 +412,7 @@ const WorkStandardModule = (function () {
         const B  = 'border:1px solid #222;';
         const C  = B + 'padding:2px 4px;';
         const HB = B + 'padding:3px 5px;background:#bdd7ee;font-weight:700;text-align:center;font-size:8.5pt;';
-        const inp = (id,val,ph) => `<input id="${id}" value="${_esc(val||'')}" placeholder="${_esc(ph||'')}"
+        const inp = (id,val,ph,extra) => `<input id="${id}" value="${_esc(val||'')}" placeholder="${_esc(ph||'')}" ${extra||''}
             style="width:100%;border:none;background:transparent;font-size:8.5pt;padding:2px;font-family:inherit;">`;
         const dateInp = (id,val) => `<input type="date" id="${id}" value="${_esc(val||'')}"
             style="width:100%;border:none;background:transparent;font-size:7.5pt;padding:2px;text-align:center;font-family:inherit;">`;
@@ -432,7 +432,7 @@ const WorkStandardModule = (function () {
                 <tbody>
                     <tr>
                         <td style="${C}font-weight:700;white-space:nowrap;font-size:8.5pt;">공정 NO</td>
-                        <td style="${C}">${inp('wsProcessNo', p.processNo, '예) 60_1,2')}</td>
+                        <td style="${C}">${inp('wsProcessNo', p.processNo, '예) 60_1,2', 'oninput="WorkStandardModule._updateActiveTabLabel()"')}</td>
                         <td rowspan="5" style="${B}text-align:center;vertical-align:middle;
                             font-size:26pt;font-weight:900;letter-spacing:8px;padding:4px;">
                             작 업 표 준 서
@@ -444,7 +444,7 @@ const WorkStandardModule = (function () {
                     </tr>
                     <tr>
                         <td style="${C}font-weight:700;font-size:8.5pt;">공 정 명</td>
-                        <td style="${C}">${inp('wsProcessName', p.processName, '예) 도료 공급')}</td>
+                        <td style="${C}">${inp('wsProcessName', p.processName, '예) 도료 공급', 'oninput="WorkStandardModule._updateActiveTabLabel()"')}</td>
                         <td rowspan="3" style="${C}font-weight:700;text-align:center;vertical-align:middle;font-size:9pt;">결<br>재</td>
                         <td rowspan="3" style="${C}text-align:center;vertical-align:middle;height:48px;">${inp('wsAuthor', p.author)}</td>
                         <td rowspan="3" style="${C}text-align:center;vertical-align:middle;">${inp('wsReviewer', p.reviewer)}</td>
@@ -542,6 +542,12 @@ const WorkStandardModule = (function () {
         </div>`;
     }
 
+    function _pageTabLabel(pg, idx) {
+        return (pg.processNo && pg.processName)
+            ? `${pg.processNo}.${pg.processName}`
+            : `페이지 ${idx+1}`;
+    }
+
     function _renderPageTabs() {
         const el = document.getElementById('wsPageTabs');
         if (!el) return;
@@ -551,13 +557,24 @@ const WorkStandardModule = (function () {
                 <button type="button" onclick="WorkStandardModule._switchPage(${idx})"
                     style="padding:3px 10px;font-size:0.74rem;font-weight:700;border-radius:6px 6px 0 0;cursor:pointer;
                            border:1px solid var(--border-color);border-bottom:${idx===_activePageIdx?'2px solid var(--bg-primary)':'1px solid var(--border-color)'};
-                           background:${idx===_activePageIdx?'var(--accent-blue)':'var(--bg-secondary)'};color:${idx===_activePageIdx?'#fff':'var(--text-secondary)'};"
-                    title="${_esc(pg.processNo || pg.processName || '')}">
-                    ${idx+1} 페이지${pg.processNo ? ' · ' + _esc(pg.processNo) : ''}
+                           background:${idx===_activePageIdx?'var(--accent-blue)':'var(--bg-secondary)'};color:${idx===_activePageIdx?'#fff':'var(--text-secondary)'};
+                           white-space:nowrap;max-width:160px;overflow:hidden;text-overflow:ellipsis;"
+                    title="${_esc(_pageTabLabel(pg, idx))}">
+                    ${_esc(_pageTabLabel(pg, idx))}
                 </button>
                 ${n>1 ? `<button type="button" onclick="WorkStandardModule._removePage(${idx})" title="이 페이지 삭제"
                     style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:0.72rem;font-weight:700;padding:0 2px;">×</button>` : ''}
             </span>`).join('');
+    }
+
+    /* 공정NO/공정명 입력 중 탭 라벨만 즉시 갱신 (포커스 유지 위해 전체 재렌더 없이) */
+    function _updateActiveTabLabel() {
+        const p = _curPage();
+        const noEl = document.getElementById('wsProcessNo');
+        const nameEl = document.getElementById('wsProcessName');
+        if (noEl) p.processNo = noEl.value.trim();
+        if (nameEl) p.processName = nameEl.value.trim();
+        _renderPageTabs();
     }
 
     function _renderPageBody() {
@@ -1288,7 +1305,7 @@ const WorkStandardModule = (function () {
         _applyStepLayout,
         _addCondRow, _delCondRow, _addRevRow, _toggleCondSection,
         _startColDrag,
-        _switchPage, _addPage, _removePage,
+        _switchPage, _addPage, _removePage, _updateActiveTabLabel,
         _openProdStandardsDoc,
     };
 })();

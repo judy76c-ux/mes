@@ -5128,58 +5128,87 @@ var InjectionWarehouseModule = (function() {
 
     async function confirmSiteReturn(id) {
         if (typeof PaintingInputModule === 'undefined') return;
-        if (typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
-            try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
-            catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
+
+        // 중복 입고 방지 — 처리 중 버튼을 잠가 연타/재클릭으로 같은 반납이
+        // 두 번 입고 처리되는 것을 막는다 (사용자 보고: 동일 LOT 6,120 EA 중복 입고).
+        const confirmBtn = document.querySelector('#modal .modal-footer .btn-primary');
+        if (confirmBtn) {
+            if (confirmBtn.disabled) return;
+            confirmBtn.disabled = true;
+            confirmBtn.style.opacity = '0.6';
+            confirmBtn.style.pointerEvents = 'none';
         }
-        const rec = (typeof Storage !== 'undefined' && Storage.getById)
-            ? Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id)
-            : null;
-        const list = PaintingInputModule.listPendingReturns();
-        const r = rec && rec.isSiteReturn && rec.returnStatus === 'pending'
-            ? rec
-            : list.find(function (x) { return String(x.id) === String(id); });
-        if (!r) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'warning'); return; }
-        const actor = _getResetActorFields();
-        const colorInput = document.getElementById('injSiteReturnColorInput');
-        const confirmedColor = colorInput ? colorInput.value.trim() : (r.color || '');
-        // IL 등 리워크 투입품은 애초에 사출 창고 재고가 아니다 — 이 반납을
-        // INJECTION_INVENTORY로 입고시키면 사출 창고에 엉뚱한 품목이 쌓이고, 정작 도장현장
-        // 출고로 줄어든 재사용 자재 재고는 영영 복구되지 않는다(사용자 보고: "반납 시
-        // 수량이 증가되는 문제"). 리워크 대상은 재사용 자재 재고로 되돌린다.
-        const isRework = _isReworkSiteReturn(r);
 
         try {
-            if (isRework) {
-                if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
-                    throw new Error('재사용 자재 모듈을 사용할 수 없습니다.');
-                }
-                await ReworkWipModule.receiveSiteReturn({
-                    carModel: r.carModel || '',
-                    partName: r.partName || '',
-                    color: confirmedColor,
-                    lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
-                    quantity: Number(r.quantity) || 0,
-                    note: '도장현장 반납 입고',
-                    receivedBy: actor.receivedBy
-                });
-            } else {
-                await _addInventoryRecord({
-                    date: InvCalc.stampFor(UIUtils.today()),
-                    type: '입고',
-                    carModel: r.carModel || '',
-                    partName: r.partName || '',
-                    color: confirmedColor,
-                    lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
-                    lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
-                    quantity: Number(r.quantity) || 0,
-                    unit: 'EA',
-                    source: '도장현장 반납',
-                    receivedBy: actor.receivedBy,
-                    refReturnId: r.id
-                });
+            if (typeof PaintingInputModule.alignInflatedSiteReturns === 'function') {
+                try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
+                catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
             }
+            const rec = (typeof Storage !== 'undefined' && Storage.getById)
+                ? Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id)
+                : null;
+            const list = PaintingInputModule.listPendingReturns();
+            const r = rec && rec.isSiteReturn && rec.returnStatus === 'pending'
+                ? rec
+                : list.find(function (x) { return String(x.id) === String(id); });
+            if (!r) {
+                // 이미 다른 클릭/세션에서 입고 처리됐을 수 있음 — 조용히 안내만 하고 종료
+                UIUtils.toast('이미 입고 처리되었거나 반납 기록을 찾을 수 없습니다.', 'info');
+                UIUtils.closeModal();
+                renderSiteReturns();
+                return;
+            }
+            const actor = _getResetActorFields();
+            const colorInput = document.getElementById('injSiteReturnColorInput');
+            const confirmedColor = colorInput ? colorInput.value.trim() : (r.color || '');
+            // IL 등 리워크 투입품은 애초에 사출 창고 재고가 아니다 — 이 반납을
+            // INJECTION_INVENTORY로 입고시키면 사출 창고에 엉뚱한 품목이 쌓이고, 정작 도장현장
+            // 출고로 줄어든 재사용 자재 재고는 영영 복구되지 않는다(사용자 보고: "반납 시
+            // 수량이 증가되는 문제"). 리워크 대상은 재사용 자재 재고로 되돌린다.
+            const isRework = _isReworkSiteReturn(r);
+
+            // 재고 반영보다 먼저 상태를 「확정」으로 바꿔 잠근다 — confirmSiteReturn 내부에서
+            // returnStatus가 'pending'이 아니면 즉시 반환하므로, 뒤이은 동시 호출(재클릭 등)은
+            // 여기서 걸러지고 재고 입고 기록이 두 번 생성되지 않는다.
             await PaintingInputModule.confirmSiteReturn(r.id, { confirmedBy: actor.resetBy });
+
+            try {
+                if (isRework) {
+                    if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
+                        throw new Error('재사용 자재 모듈을 사용할 수 없습니다.');
+                    }
+                    await ReworkWipModule.receiveSiteReturn({
+                        carModel: r.carModel || '',
+                        partName: r.partName || '',
+                        color: confirmedColor,
+                        lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
+                        quantity: Number(r.quantity) || 0,
+                        note: '도장현장 반납 입고',
+                        receivedBy: actor.receivedBy
+                    });
+                } else {
+                    await _addInventoryRecord({
+                        date: InvCalc.stampFor(UIUtils.today()),
+                        type: '입고',
+                        carModel: r.carModel || '',
+                        partName: r.partName || '',
+                        color: confirmedColor,
+                        lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
+                        lotNo: r.lotNo || (r.lots && r.lots[0] && r.lots[0].lotNo) || '',
+                        quantity: Number(r.quantity) || 0,
+                        unit: 'EA',
+                        source: '도장현장 반납',
+                        receivedBy: actor.receivedBy,
+                        refReturnId: r.id
+                    });
+                }
+            } catch (invErr) {
+                // 재고 반영이 실패하면 확정 상태를 되돌려 「반납 대기」에서 다시 시도할 수 있게 한다.
+                if (typeof PaintingInputModule.revertSiteReturn === 'function') {
+                    try { await PaintingInputModule.revertSiteReturn(r.id); } catch (revertErr) { console.error(revertErr); }
+                }
+                throw invErr;
+            }
 
             UIUtils.closeModal();
             UIUtils.toast(
@@ -5190,6 +5219,12 @@ var InjectionWarehouseModule = (function() {
         } catch (e) {
             console.error('[InjectionWarehouseModule] 반납 입고 처리 실패:', e);
             UIUtils.toast('입고 처리 실패: ' + (e && e.message ? e.message : e), 'error');
+        } finally {
+            if (confirmBtn) {
+                confirmBtn.disabled = false;
+                confirmBtn.style.opacity = '';
+                confirmBtn.style.pointerEvents = '';
+            }
         }
     }
 

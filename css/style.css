@@ -2971,6 +2971,8 @@ td.pq-overdue-date-cell {
     border-radius: 8px;
     overflow: hidden;
     margin-bottom: 10px;
+    max-width: 100%;
+    box-sizing: border-box;
 }
 
 .jig-table-scroll,
@@ -2978,10 +2980,13 @@ td.pq-overdue-date-cell {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
 }
 
 .jig-life-table {
     width: 100%;
+    max-width: 100%;
     table-layout: auto;
     border-collapse: collapse;
     background: var(--bg-primary);
@@ -3004,6 +3009,7 @@ td.pq-overdue-date-cell {
     display: block;
     white-space: nowrap;
     overflow: hidden;
+    text-overflow: ellipsis;
     line-height: 1.25;
     font-weight: 600;
 }
@@ -3019,8 +3025,8 @@ td.pq-overdue-date-cell {
     word-break: break-word;
 }
 .jig-life-table .jig-col-progress {
-    width: 18%;
-    min-width: clamp(100px, 14vw, 260px);
+    width: auto;
+    min-width: 72px;
 }
 .jig-life-table .jig-life-bar-wrap {
     display: flex;
@@ -3033,12 +3039,17 @@ td.pq-overdue-date-cell {
     position: relative;
     flex: 1 1 auto;
     width: auto;
-    min-width: clamp(50px, 8vw, 140px);
-    max-width: none;
+    min-width: 40px;
+    max-width: 100%;
     height: 7px;
     background: var(--bg-secondary);
     border-radius: 4px;
     overflow: hidden;
+}
+.jig-life-table .jig-life-bar-wrap > span {
+    flex: 0 0 auto;
+    min-width: 2.4em;
+    text-align: right;
 }
 
 .pw-stock-card {
@@ -3149,7 +3160,9 @@ td.pq-overdue-date-cell {
 
 .jig-page {
     max-width: 100%;
+    min-width: 0;
     overflow-x: hidden;
+    box-sizing: border-box;
 }
 
 .jig-page .page-header {
