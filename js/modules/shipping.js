@@ -343,7 +343,7 @@ const ShippingStandbyModule = (function() {
             const badge = d.result === '합격' ? 'success' : d.result === '불합격' ? 'danger' : 'warning';
             const lots = _lotFields(d);
             return `
-            <tr style="cursor:pointer;" onclick="ShippingStandbyModule._showDetail('${d.id}', event)">
+            <tr style="cursor:pointer;" onclick="ShippingStandbyModule.openEditInspection('${d.id}')">
                 <td style="white-space:nowrap;">${_inspectionDateCell(d.date, d.startTime || d.endTime || '')}</td>
                 <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                 <td>${d.carModel || '-'}</td>
@@ -362,7 +362,11 @@ const ShippingStandbyModule = (function() {
                 </td>
                 <td style="text-align:center;">${UIUtils.badge(d.result || '-', badge)}</td>
                 <td style="font-size:0.85rem;">${d.inspector || '-'}</td>
-                <td></td>
+                <td onclick="event.stopPropagation()">
+                    <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.openEditInspection('${d.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span> 수정
+                    </button>
+                </td>
             </tr>`;
         }).join('');
     }
@@ -2515,10 +2519,110 @@ const ShippingStandbyModule = (function() {
         UIUtils.closeModal();
     }
 
+    // ── 검사 이력 수정 ────────────────────────────────────────────────
+    // 입력/수정 가능 여부는 관리자가 「역할별 접근 권한」에서 이 페이지(shipping-standby)에
+    // 부여한 입력 권한을 그대로 따른다 — 코드에 특정 역할을 하드코딩하지 않는다.
+    function _canEditHistory() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.canWritePage !== 'function') return true;
+        return AuthModule.canWritePage('shipping-standby');
+    }
+
+    function openEditInspection(id) {
+        const d = Storage.getById(SI_STORE, id);
+        if (!d) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+        const lots = _lotFields(d);
+        const canEdit = _canEditHistory();
+        const dis = canEdit ? '' : ' disabled';
+
+        const infoGrid = `
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px;font-size:0.82rem;margin-bottom:10px;">
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">차종</div><div style="font-weight:600;">${_esc(d.carModel || '-')}</div></div>
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">품명</div><div style="font-weight:600;">${_esc(d.partName || '-')}</div></div>
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">컬러</div><div style="font-weight:600;">${_esc(d.color || '-')}</div></div>
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">납품처</div><div style="font-weight:600;">${_esc(d.customer || '-')}</div></div>
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">도장LOT</div><div style="font-weight:600;font-family:monospace;">${_esc(lots.paintLot || '-')}</div></div>
+                <div><div style="font-size:0.68rem;color:var(--text-muted);">사출LOT</div><div style="font-weight:600;font-family:monospace;">${_esc(lots.injectionLot || '-')}</div></div>
+            </div>`;
+
+        const body = `
+            ${infoGrid}
+            ${!canEdit ? `<div style="margin-bottom:10px;padding:8px 12px;background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.25);border-radius:8px;font-size:0.8rem;color:var(--accent-red);">
+                이 화면의 입력 권한이 없어 조회만 가능합니다. 수정이 필요하면 관리자에게 요청하세요.</div>` : ''}
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+                <div class="form-group" style="margin:0;"><label class="form-label">검사일</label>
+                    <input type="date" class="form-input" id="siEditDate" value="${_esc(d.date || '')}"${dis}></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">시작 시간</label>
+                    <input type="time" class="form-input" id="siEditStart" value="${_esc(d.startTime || '')}"${dis}></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">완료 시간</label>
+                    <input type="time" class="form-input" id="siEditEnd" value="${_esc(d.endTime || '')}"${dis}></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
+                <div class="form-group" style="margin:0;"><label class="form-label">LOT 수량</label>
+                    <input type="number" class="form-input" id="siEditLotSize" value="${Number(d.lotSize) || 0}" min="0"${dis}></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">샘플 수</label>
+                    <input type="number" class="form-input" id="siEditSampleQty" value="${Number(d.sampleQty) || 0}" min="0"${dis}></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">불량 수</label>
+                    <input type="number" class="form-input" id="siEditDefectQty" value="${Number(d.defectQty) || 0}" min="0"${dis}></div>
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
+                <div class="form-group" style="margin:0;"><label class="form-label">판정</label>
+                    <select class="form-select" id="siEditResult"${dis}>
+                        <option value="합격"${d.result === '합격' ? ' selected' : ''}>합격</option>
+                        <option value="불합격"${d.result === '불합격' ? ' selected' : ''}>불합격</option>
+                    </select></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">검사자</label>
+                    <input type="text" class="form-input" id="siEditInspector" value="${_esc(d.inspector || '')}"${dis}></div>
+            </div>
+            <div class="form-group" style="margin:0;"><label class="form-label">비고</label>
+                <textarea class="form-input" id="siEditNote" rows="2"${dis}>${_esc(d.note || '')}</textarea></div>
+        `;
+
+        const footer = canEdit
+            ? `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+               <button class="btn btn-primary" onclick="ShippingStandbyModule.saveEditInspection('${id}')">저장</button>`
+            : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
+
+        UIUtils.showModal('출하검사 이력 수정', body, footer, 'min(620px, calc(100vw - 32px))');
+    }
+
+    async function saveEditInspection(id) {
+        if (!_canEditHistory()) {
+            UIUtils.toast('입력 권한이 없습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(SI_STORE, id);
+        if (!d) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+
+        const lotSize = Number((document.getElementById('siEditLotSize') || {}).value) || 0;
+        const sampleQty = Number((document.getElementById('siEditSampleQty') || {}).value) || 0;
+        const defectQty = Number((document.getElementById('siEditDefectQty') || {}).value) || 0;
+        const date = (document.getElementById('siEditDate') || {}).value || d.date;
+        const result = (document.getElementById('siEditResult') || {}).value || d.result;
+
+        await Storage.update(SI_STORE, id, {
+            date,
+            startTime: (document.getElementById('siEditStart') || {}).value || '',
+            endTime: (document.getElementById('siEditEnd') || {}).value || '',
+            lotSize,
+            sampleQty,
+            defectQty,
+            result,
+            inspector: ((document.getElementById('siEditInspector') || {}).value || '').trim(),
+            note: ((document.getElementById('siEditNote') || {}).value || '').trim(),
+            updatedAt: new Date().toISOString()
+        });
+
+        UIUtils.toast('수정되었습니다.', 'success');
+        UIUtils.closeModal();
+        loadData();
+        loadHistory();
+    }
+
     return {
         render, loadData, loadHistory,
         onHistoryCarChange,
         _showDetail,
+        openEditInspection, saveEditInspection,
         removeStandby, removeHistory, exportHistory,
         openShippingStandardList, openShippingStandardEditor,
         saveShippingStandard, deleteShippingStandard, viewShippingStandard, renderStandardListInto,
