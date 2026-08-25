@@ -631,13 +631,10 @@ const AuthModule = (function () {
        이후에도 관리/설정 화면에서 자유롭게 켜고 끌 수 있게 둔다. 한 번 실행되면 플래그를
        저장해 다시 실행하지 않는다(관리자가 이후 의도적으로 다시 켜도 되돌리지 않음). */
     const SHIP_WRITE_FIX_KEY = 'auth_ship_write_fix_v1';
-    async function _fixShippingWritePermsOnce() {
-        try {
-            if (typeof Storage === 'undefined' || !Storage.getConfigValue) return;
-            const done = await Storage.getConfigValue(SHIP_WRITE_FIX_KEY);
-            if (done) return;
-        } catch (e) { return; }
 
+    /* 실제 정리 로직 — 몇 건이 바뀌었는지, 정리 후에도 남아있는 역할이 있는지 반환한다.
+       (perms가 defaults-fallback일 가능성을 없애기 위해 저장된 값이 로드된 뒤에만 호출할 것) */
+    function _stripShippingWriteFromLaserRoles() {
         const shipPages = [
             'shipping-overview', 'shipping-standby', 'shipping-inspection',
             'shipping-reliability', 'shipping-periodic-reli', 'shipping-certificate',
@@ -645,23 +642,41 @@ const AuthModule = (function () {
         ];
         const rolesToStrip = ['laser_op', 'laser_inspector'];
         const perms = _getPermissions();
-        let changed = false;
+        let changedCount = 0;
+        const skippedNullRoles = [];
         rolesToStrip.forEach(roleKey => {
             const rp = perms[roleKey];
-            if (!rp || rp === null || Array.isArray(rp)) return;
+            if (rp === null) { skippedNullRoles.push(roleKey); return; } // null = 전체 접근+쓰기(admin급) — 이 함수로는 못 건드림
+            if (!rp || Array.isArray(rp)) return;
             shipPages.forEach(pageId => {
                 if (Array.isArray(rp.write) && rp.write.includes(pageId)) {
                     rp.write = rp.write.filter(id => id !== pageId);
-                    changed = true;
+                    changedCount++;
                 }
                 if (Array.isArray(rp.adjust) && rp.adjust.includes(pageId)) {
                     rp.adjust = rp.adjust.filter(id => id !== pageId);
-                    changed = true;
                 }
             });
         });
-        if (changed) _savePermissions(perms);
+        if (changedCount) _savePermissions(perms);
+        return { changedCount, skippedNullRoles };
+    }
+
+    async function _fixShippingWritePermsOnce() {
+        try {
+            if (typeof Storage === 'undefined' || !Storage.getConfigValue) return;
+            const done = await Storage.getConfigValue(SHIP_WRITE_FIX_KEY);
+            if (done) return;
+        } catch (e) { return; }
+        _stripShippingWriteFromLaserRoles();
         try { await Storage.setConfigValue(SHIP_WRITE_FIX_KEY, true); } catch (e) { /* ignore */ }
+    }
+
+    /** 관리/설정 화면에서 수동으로 다시 실행할 수 있는 진입점 — 자동 1회 실행이 이런저런
+     *  이유(배포 시점에 이미 로그인돼 있던 세션 등)로 아직 안 걸렸을 때 즉시 반영하기 위함. */
+    function fixShippingWritePermsNow() {
+        const result = _stripShippingWriteFromLaserRoles();
+        return result;
     }
 
     function _getMessages() {
@@ -2390,6 +2405,7 @@ const AuthModule = (function () {
         saveUsers:            _saveUsers,
         getPermissions:       _getPermissions,
         savePermissions:      _savePermissions,
+        fixShippingWritePermsNow,
         isPageAccessGranted,
         isPageWriteGranted,
         isPageAdjustGranted,

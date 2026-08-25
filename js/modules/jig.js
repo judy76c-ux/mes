@@ -56,15 +56,19 @@ var JigModule = (function () {
         const p0 = _numMm(pointMms[0]);
         const p1 = _numMm(pointMms[1]);
         const p2 = _numMm(pointMms[2]);
-        if (!p0 || !p1 || !p2 || p1 <= p0 || p2 <= p1) {
+        if (!p0 || !p1 || !p2) {
             return { avg: 0, film1: 0, film2: 0 };
         }
         const film1 = Math.round((p1 - p0) * 1000) / 1000;
         const film2 = Math.round((p2 - p1) * 1000) / 1000;
-        // 평균은 표시(_fmtMm)에서 3자리로 반올림하지만, 저장값 자체는 정밀도를 더 살려둔다.
-        // 3자리로 미리 반올림해 버리면(예: 0.092) 제한두께÷평균 계산에서 오차가 누적돼
-        // "도달 횟수"가 실제보다 낮게 나온다(예: 43.6이 43으로 깎여 관리횟수가 39→38로 밀림).
-        const avg = Math.round(((film1 + film2) / 2) * 100000) / 100000;
+        // 2회 측정이 1회보다 낮아도(캘리퍼스·도막 편차) 계산을 버리지 않는다.
+        // 수명용 평균은 늘어난 도막만 쓴다. 둘 다 증가하면 (1회+2회)/2, 2회가 감소면 1회만.
+        const pos = [];
+        if (film1 > 0) pos.push(film1);
+        if (film2 > 0) pos.push(film2);
+        const avg = pos.length
+            ? Math.round((pos.reduce(function (s, n) { return s + n; }, 0) / pos.length) * 100000) / 100000
+            : 0;
         return { avg: avg, film1: film1, film2: film2 };
     }
 
@@ -141,18 +145,25 @@ var JigModule = (function () {
         return (Math.round(n * 1000) / 1000).toString();
     }
     function _fmtMmDelta(v) {
-        return _fmtMm(v);
+        const n = Number(v);
+        if (!Number.isFinite(n)) return '—';
+        const abs = (Math.round(Math.abs(n) * 1000) / 1000).toString();
+        if (n > 0) return '+' + abs;
+        if (n < 0) return '−' + abs;
+        return '0';
     }
 
     function _jigAvgIncreaseInner(one) {
         const ok = !!(one && one.avg > 0);
+        const film2Down = ok && Number(one.film2) < 0;
         return '<div style="font-size:0.8rem;font-weight:800;color:var(--text-primary);white-space:nowrap;">평균 증가량</div>' +
             '<div style="font-size:0.68rem;color:var(--text-muted);margin:4px 0 10px;line-height:1.35;">1회·2회 도막 평균</div>' +
             '<div style="font-size:1.28rem;font-weight:800;color:' + (ok ? 'var(--accent-blue)' : 'var(--text-muted)') + ';white-space:nowrap;">' +
-                (ok ? _fmtMmDelta(one.avg) + ' <span style="font-size:0.78rem;font-weight:700;">mm</span>' : '—') +
+                (ok ? _fmtMm(one.avg) + ' <span style="font-size:0.78rem;font-weight:700;">mm</span>' : '—') +
             '</div>' +
             (ok
-                ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:8px;white-space:nowrap;">1회 +' + _fmtMmDelta(one.film1) + ' · 2회 +' + _fmtMmDelta(one.film2) + '</div>'
+                ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:8px;white-space:nowrap;">1회 ' + _fmtMmDelta(one.film1) + ' · 2회 ' + _fmtMmDelta(one.film2) + '</div>' +
+                  (film2Down ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:4px;line-height:1.35;">2회가 1회보다 낮아 1회 도막으로 평균</div>' : '')
                 : '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:8px;">초기·1회·2회 입력 시 표시</div>');
     }
 

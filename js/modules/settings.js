@@ -13283,8 +13283,13 @@ const SettingsModule = (function() {
 
             <!-- 하단: 역할별 접근 권한 (2-패널) -->
             <div class="card">
-                <div class="card-header">
-                    <h4><span class="material-symbols-outlined">security</span> 역할별 접근 권한</h4>
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                    <h4 style="margin:0;"><span class="material-symbols-outlined">security</span> 역할별 접근 권한</h4>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="SettingsModule.fixShippingWritePermsNow()"
+                        title="레이져운영자·레이져검사자에게 잘못 부여된 출하검사 그룹 입력 권한을 즉시 제거합니다.">
+                        <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">cleaning_services</span>
+                        출하검사 입력권한 정리
+                    </button>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div style="display:grid;grid-template-columns:190px 1fr;min-height:280px;">
@@ -13475,6 +13480,29 @@ const SettingsModule = (function() {
         });
         const panel = document.getElementById('umGroupPermsPanel');
         if (panel) panel.innerHTML = _renderGroupPermsPanel(roleKey);
+    }
+
+    /** 레이져운영자·레이져검사자에게 잘못 부여된 "출하검사" 그룹 입력 권한을 즉시 정리한다.
+     *  앱 로드 시 자동으로 한 번 실행되지만, 배포 시점에 이미 로그인돼 있던 세션에는 반영되지
+     *  않을 수 있어 관리자가 이 화면에서 바로 다시 실행할 수 있게 둔다. */
+    function fixShippingWritePermsNow() {
+        if (typeof AuthModule === 'undefined' || !AuthModule.fixShippingWritePermsNow) {
+            UIUtils.toast('정리 기능을 사용할 수 없습니다.', 'error');
+            return;
+        }
+        const result = AuthModule.fixShippingWritePermsNow();
+        if (result.skippedNullRoles && result.skippedNullRoles.length) {
+            UIUtils.toast(
+                result.skippedNullRoles.map(k => k === 'laser_op' ? '레이져운영자' : '레이져검사자').join(', ') +
+                '가 "전체 접근" 상태라 이 정리로는 못 건드립니다. 역할 화면에서 개별 권한으로 먼저 바꿔주세요.',
+                'warning'
+            );
+        } else if (result.changedCount > 0) {
+            UIUtils.toast(result.changedCount + '건 정리했습니다.', 'success');
+        } else {
+            UIUtils.toast('이미 정리되어 있습니다.', 'info');
+        }
+        onRolePermSelect(_selectedPermRole);
     }
 
     async function _saveAndRefreshRolePerms(roleKey, perms, toastMessage) {
@@ -13724,6 +13752,7 @@ const SettingsModule = (function() {
         saveTelegramConfig, testAlimtalk, saveSlackConfig, testSlackNotify,
         openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
         onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
+        fixShippingWritePermsNow,
         switchTab,
         openAddProductModal,
         loadProductTemplate,
