@@ -139,6 +139,49 @@ var JigModule = (function () {
         const manageCount = Math.floor(limitCoatCount * 0.9);
         return { limitCoatCount: limitCoatCount, manageCount: manageCount };
     }
+
+    /** 측정 포인트가 있으면 저장값(옛 도막·관리횟수)보다 지금 계산을 우선한다. */
+    function _derivedJigLife(j) {
+        const filmFromPts = _calcAvgFilmThickness(j && j.thicknessPointMm);
+        const film = filmFromPts || _numMm(j && j.filmThicknessMm);
+        const calc = _calcLifeFromThickness(j && j.limitThicknessMm, film);
+        return {
+            film: film,
+            limitCoat: calc.limitCoatCount || Number(j && j.limitCoatCount) || 0,
+            manage: calc.manageCount || Number(j && j.maxCount) || 0,
+            fromPoints: filmFromPts > 0
+        };
+    }
+
+    let _jigLifeHealBusy = false;
+    async function _healStaleJigLife() {
+        if (_jigLifeHealBusy) return 0;
+        const all = Storage.getAll(STORE) || [];
+        const stale = [];
+        all.forEach(function (j) {
+            const life = _derivedJigLife(j);
+            if (!life.fromPoints || !life.manage) return;
+            const filmDiff = Math.abs(_numMm(j.filmThicknessMm) - life.film) > 0.00051;
+            const coatDiff = Number(j.limitCoatCount) !== life.limitCoat;
+            const maxDiff = Number(j.maxCount) !== life.manage;
+            if (filmDiff || coatDiff || maxDiff) stale.push({ j: j, life: life });
+        });
+        if (!stale.length) return 0;
+        _jigLifeHealBusy = true;
+        try {
+            for (let i = 0; i < stale.length; i++) {
+                const item = stale[i];
+                await Storage.update(STORE, item.j.id, {
+                    filmThicknessMm: item.life.film,
+                    limitCoatCount: item.life.limitCoat,
+                    maxCount: item.life.manage
+                });
+            }
+            return stale.length;
+        } finally {
+            _jigLifeHealBusy = false;
+        }
+    }
     function _fmtMm(v) {
         const n = Number(v);
         if (!Number.isFinite(n) || n <= 0) return '—';
@@ -807,7 +850,7 @@ var JigModule = (function () {
     }
 
     function _lifePct(j) {
-        const max = Number(j.maxCount) || 0;
+        const max = _derivedJigLife(j).manage || Number(j.maxCount) || 0;
         return max ? ((Number(j.usedCount) || 0) / max) * 100 : 0;
     }
 
@@ -1326,6 +1369,9 @@ var JigModule = (function () {
         renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
         _populateLogFilter(Storage.getAll(STORE) || []);
         renderLog();
+        _healStaleJigLife().then(function (n) {
+            if (n) renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
+        }).catch(function () { /* ignore */ });
     }
 
     function _applyJigFilters(jigs, opts) {
@@ -1461,7 +1507,10 @@ var JigModule = (function () {
                     (aliases.length ? '<span class="jig-part-alias">병합: ' + aliases.map(_esc).join(', ') + '</span>' : '') +
                 '</td>' +
                 '<td class="jig-col-short" style="' + tdn + 'text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(j.line || '-') + '</span></td>' +
-                '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' + (j.maxCount ? _fmt(j.maxCount) : '-') + '</td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' + (function () {
+                    const m = _derivedJigLife(j).manage;
+                    return m ? _fmt(m) : '-';
+                })() + '</td>' +
                 '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' +
                     '<button type="button" class="btn btn-sm btn-outline"' +
                     ' title="' + (_isAdminUser() ? '이력 보기 · EMS 구축 전 횟수 입력' : '생산일보 이력 보기') + ((j.preMesUsedCount || 0) ? ' (구축 전 ' + _fmt(j.preMesUsedCount) + '회 포함)' : '') + '"' +
@@ -2419,9 +2468,9 @@ var JigModule = (function () {
             : '등록된 도장 지그가 없습니다.';
         let prevCar = null;
         const rows = jigs.map(function (j, idx) {
-            const calc = _calcLifeFromThickness(j.limitThicknessMm, j.filmThicknessMm);
-            const limitCoat = Number(j.limitCoatCount) > 0 ? Number(j.limitCoatCount) : calc.limitCoatCount;
-            const manage = Number(j.maxCount) > 0 ? Number(j.maxCount) : calc.manageCount;
+            const life = _derivedJigLife(j);
+            const limitCoat = life.limitCoat;
+            const manage = life.manage;
             const allParts = _masterSelectedPartNames(j);
             const aliases = allParts.filter(function (p) { return p !== j.partName; });
             const car = _jigCarKey(j) || '차종 미지정';
@@ -2438,7 +2487,7 @@ var JigModule = (function () {
                     (aliases.length ? '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">+' + aliases.length + '</span>' : '') +
                 '</td>' +
                 '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.initialThicknessMm) + '</td>' +
-                '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.filmThicknessMm) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(life.film) + '</td>' +
                 '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.limitThicknessMm) + '</td>' +
                 '<td style="text-align:right;white-space:nowrap;font-weight:600;">' + _fmtCountOrDash(limitCoat) + '</td>' +
                 '<td style="text-align:right;white-space:nowrap;font-weight:800;color:var(--accent-blue);">' + _fmtCountOrDash(manage) + '</td>' +
@@ -2570,6 +2619,9 @@ var JigModule = (function () {
             <div id="jigMasterView"></div>
         </div>`;
         renderJigMaster();
+        _healStaleJigLife().then(function (n) {
+            if (n) renderJigMaster();
+        }).catch(function () { /* ignore */ });
     }
 
     async function renderHub(container) {
@@ -3238,7 +3290,7 @@ var JigModule = (function () {
         if (filmEl) filmEl.value = film > 0 ? _fmtMm(film) : '';
         if (filmHintEl) filmHintEl.textContent = filmDetail.text;
         if (limitEl) limitEl.value = calc.limitCoatCount > 0 ? calc.limitCoatCount : '';
-        if (maxEl && !maxEl.disabled && calc.manageCount > 0) {
+        if (maxEl && calc.manageCount > 0) {
             maxEl.value = calc.manageCount;
         }
         if (hintEl) {
@@ -3266,7 +3318,7 @@ var JigModule = (function () {
         let limitCoatCount = parseInt(document.getElementById('jigMasterLimitCoatCount')?.value || 0, 10) || 0;
         let maxCount = parseInt(document.getElementById('jigMasterMaxCount')?.value || 0, 10) || 0;
         if (calc.limitCoatCount > 0) limitCoatCount = calc.limitCoatCount;
-        if (!maxCount && calc.manageCount > 0) maxCount = calc.manageCount;
+        if (calc.manageCount > 0) maxCount = calc.manageCount;
         if (!carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return null; }
         if (!partNames.length) { UIUtils.toast('품명을 1개 이상 선택하세요.', 'warning'); return null; }
         if (!filmThicknessMm || !limitThicknessMm) {

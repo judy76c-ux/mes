@@ -854,6 +854,17 @@ const AuthModule = (function () {
         if (permissionType === 'write' && PAGE_WRITE_POLICY[pageId]) {
             return _getDynamicRoles().filter(role => _rolePassesPageWritePolicy(role.key, pageId) === true);
         }
+        // "입력 가능"/"수정 가능" 요약은 이 페이지 자체의 권한만 정확히 봐야 한다.
+        // 예전엔 같은 메뉴 그룹(예: 출하검사 8개 페이지)의 다른 페이지에만 입력 권한이 있어도
+        // "이 페이지도 입력 가능"으로 잘못 표시됐다 — 관리/설정의 역할별 권한(페이지 단위)과
+        // 실제 실행 시 canWritePage()/canAdjustPage() 판정(둘 다 페이지 단위)에는 안 맞는 값이었다.
+        // "접근"만 메뉴 그룹 단위로 넓게 본다(사이드바 메뉴가 뜨는지와 자연스럽게 대응되므로 유지).
+        if (permissionType === 'write') {
+            return _getDynamicRoles().filter(role => isPageWriteGranted(role.key, pageId));
+        }
+        if (permissionType === 'adjust') {
+            return _getDynamicRoles().filter(role => isPageAdjustGranted(role.key, pageId));
+        }
         return _getDynamicRoles().filter(role => _hasScopedPermission(role.key, pageId, permissionType));
     }
     function _esc(value) {
