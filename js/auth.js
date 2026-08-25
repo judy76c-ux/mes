@@ -625,6 +625,45 @@ const AuthModule = (function () {
         return _persistAuthState(AUTH_PERMS_CONFIG_KEY, _permissionsCache, PERMS_KEY);
     }
 
+    /* 일회성 데이터 정리 — 출하검사(외관) 등 "출하검사" 그룹 8개 페이지의 입력(write) 권한이
+       관리/설정 화면에서 레이져운영자·레이져검사자에게까지 잘못 부여돼 있던 걸 되돌린다.
+       코드에 강제 정책(PAGE_WRITE_POLICY)으로 다시 고정하지 않고, 저장된 값만 한 번 바로잡아
+       이후에도 관리/설정 화면에서 자유롭게 켜고 끌 수 있게 둔다. 한 번 실행되면 플래그를
+       저장해 다시 실행하지 않는다(관리자가 이후 의도적으로 다시 켜도 되돌리지 않음). */
+    const SHIP_WRITE_FIX_KEY = 'auth_ship_write_fix_v1';
+    async function _fixShippingWritePermsOnce() {
+        try {
+            if (typeof Storage === 'undefined' || !Storage.getConfigValue) return;
+            const done = await Storage.getConfigValue(SHIP_WRITE_FIX_KEY);
+            if (done) return;
+        } catch (e) { return; }
+
+        const shipPages = [
+            'shipping-overview', 'shipping-standby', 'shipping-inspection',
+            'shipping-reliability', 'shipping-periodic-reli', 'shipping-certificate',
+            'shipping-standard', 'shipping-std-photo'
+        ];
+        const rolesToStrip = ['laser_op', 'laser_inspector'];
+        const perms = _getPermissions();
+        let changed = false;
+        rolesToStrip.forEach(roleKey => {
+            const rp = perms[roleKey];
+            if (!rp || rp === null || Array.isArray(rp)) return;
+            shipPages.forEach(pageId => {
+                if (Array.isArray(rp.write) && rp.write.includes(pageId)) {
+                    rp.write = rp.write.filter(id => id !== pageId);
+                    changed = true;
+                }
+                if (Array.isArray(rp.adjust) && rp.adjust.includes(pageId)) {
+                    rp.adjust = rp.adjust.filter(id => id !== pageId);
+                    changed = true;
+                }
+            });
+        });
+        if (changed) _savePermissions(perms);
+        try { await Storage.setConfigValue(SHIP_WRITE_FIX_KEY, true); } catch (e) { /* ignore */ }
+    }
+
     function _getMessages() {
         _primeLocalAuthCache();
         return Array.isArray(_messagesCache) ? _messagesCache : [];
@@ -1395,6 +1434,7 @@ const AuthModule = (function () {
 
     async function init() {
         await _loadAuthStateFromServer();
+        await _fixShippingWritePermsOnce();
         await ensureAdminUser();
         await ensureProdNotifyRecipients();
         await ensureIncomingInspNotifyRecipients();

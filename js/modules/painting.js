@@ -3107,6 +3107,12 @@ const PaintingWorkModule = (function() {
         var el = document.getElementById('addPwDateHidden') || document.getElementById('editPwDateHidden');
         var v = el && el.value ? String(el.value).slice(0, 10) : '';
         if (v) return v;
+        try {
+            if (typeof _workViewId !== 'undefined' && _workViewId && typeof Storage !== 'undefined' && Storage.getById) {
+                var saved = Storage.getById(STORE, _workViewId);
+                if (saved && saved.date) return String(saved.date).slice(0, 10);
+            }
+        } catch (eViewDate) { /* ignore */ }
         return String(fallback || (typeof _currentDate !== 'undefined' ? _currentDate : '') || '').slice(0, 10);
     }
 
@@ -3942,27 +3948,42 @@ const PaintingWorkModule = (function() {
         return _filterLotsToPlanDay(lots, planDate, carModel, partName);
     }
 
-    /** 계획일(=도장작업일)에 현장 입고된 LOT만 남긴다. planDate 없으면 그대로 반환. */
-    function _filterLotsToPlanDay(lots, planDate, carModel, injPartName) {
-        if (!planDate || !lots || !lots.length) return lots || [];
-        var targetDay = String(planDate).slice(0, 10);
+    /** 그날 현장 도착(stamp)한 LOT번호별 입고 수량. 잔량 원장(전 기간)과 별개다. */
+    function _lotQtyArrivedOnDay(planDate, carModel, injPartName) {
+        var targetDay = String(planDate || '').slice(0, 10);
+        var arrived = {};
+        if (!targetDay) return arrived;
         var rows = [];
         try { rows = Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []; }
         catch (e) { rows = []; }
+        rows.forEach(function (r) {
+            if (String(r.type || '') !== '입고') return;
+            if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
+            if (injPartName && !_inboundInjPartMatches(r.partName, injPartName, injPartName, carModel)) return;
+            if (!_inboundArrivedOnDay(r, targetDay)) return;
+            _inboundRecordLots(r).forEach(function (x) {
+                var no = String((x && x.lotNo) || '').trim();
+                if (!no) return;
+                arrived[no] = (arrived[no] || 0) + (Number(x.qty) || 0);
+            });
+        });
+        return arrived;
+    }
+
+    /** 계획일(=도장작업일)에 현장 도착한 LOT만 남긴다. planDate 없으면 그대로 반환(잔량조회용). */
+    function _filterLotsToPlanDay(lots, planDate, carModel, injPartName) {
+        if (!planDate || !lots || !lots.length) return lots || [];
+        var arrived = _lotQtyArrivedOnDay(planDate, carModel, injPartName);
         return lots.filter(function (l) {
             var lotNo = String((l && l.lotNo) || '').trim();
-            if (!lotNo) return false;
-            var hit = rows.some(function (r) {
-                if (String(r.type || '') !== '입고') return false;
-                if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return false;
-                if (injPartName && !_inboundInjPartMatches(r.partName, injPartName, injPartName, carModel)) return false;
-                var recLots = _inboundRecordLots(r);
-                if (!recLots.some(function (x) { return String(x.lotNo || '').trim() === lotNo; })) return false;
-                return _inboundArrivedOnDay(r, targetDay);
-            });
-            if (hit) return true;
-            var stamp = _findSiteInboundDateForLotScoped(l.lotNo, carModel, injPartName, targetDay);
-            return !!stamp;
+            return !!(lotNo && arrived[lotNo] > 0);
+        }).map(function (l) {
+            var cap = arrived[String(l.lotNo).trim()];
+            if (!(cap > 0) || !(Number(l.balance) > cap)) return l;
+            var copy = {};
+            Object.keys(l).forEach(function (k) { copy[k] = l[k]; });
+            copy.balance = cap;
+            return copy;
         });
     }
 
@@ -4558,7 +4579,7 @@ const PaintingWorkModule = (function() {
         if (!lotNo) { qtyInp.removeAttribute('max'); return; }
         var cm = (document.getElementById('addPwCarModelHidden') || {}).value || '';
         var pn = (document.getElementById('addPwPartNameHidden') || {}).value || '';
-        var planDate = (document.getElementById('addPwDateHidden') || {}).value || '';
+        var planDate = _workFormDate();
         var injPartSel = document.getElementById('pwInjPartSelect');
         var injPartName = injPartSel ? injPartSel.value : '';
         var planColor = (document.getElementById('addPwColorHidden') || {}).value || '';
@@ -5922,6 +5943,8 @@ const PaintingWorkModule = (function() {
         var planDate = _workFormDate();
         var isLaserWip = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
         var useRework = _reworkUseOn();
+        // 작업일이 없으면 전 기간 잔량을 FIFO로 넣지 않는다. (날짜 빈 값 = 옛 LOT 재발)
+        if (!isLaserWip && !planDate && !useRework) return [];
         // 사출명 미선택이면 ①번과 동일하게 느슨 매칭으로 복구 — 없으면 당일 필터만 적용
         if (!isLaserWip && !injPartName && pn) {
             injPartName = _resolveInjPartNameForWork(cm, pn, planColor) || '';
@@ -6027,6 +6050,7 @@ const PaintingWorkModule = (function() {
         var container = document.getElementById('pwLotRows');
         if (!container) return;
         if (needed <= 0) { _updateLotSummary(); return; }
+        if (!_reworkUseOn() && !_workFormDate()) { _updateLotSummary(); return; }
 
         var fifoLots = _getAvailableLotsFifo();
         var useRework = _reworkUseOn();
@@ -7987,15 +8011,18 @@ const PaintingWorkModule = (function() {
     // 과거 기록은 refOutId로 원본 창고 출고 기록을 찾아 그 일시로 대체한다.
     // openMaterialHistory·매칭 누락 LOT 조회 등 "실제 입고일"이 필요한 모든 곳에서 공용으로 쓴다.
     function _resolveInboundStamp(r) {
+        if (!r) return '';
         if (r.shipDate) return String(r.shipDate);
-        var outId = r.refOutId || '';
+        var outId = r.refOutId || r.refReworkOutId || '';
         if (outId && typeof Storage !== 'undefined' && Storage.getById) {
             try {
                 var out = Storage.getById(DB.STORES.INJECTION_INVENTORY, outId);
+                if (!out && DB.STORES && DB.STORES.REWORK_WIP) out = Storage.getById(DB.STORES.REWORK_WIP, outId);
                 if (out && out.date) return String(out.date);
             } catch (e) { /* 무시 */ }
         }
-        return String(r.useDate || r.date || '');
+        // useDate는 사용 예정일. 도착일로 쓰면 사용일 변경 시 07-29 LOT이 08-24로 둔갑한다.
+        return String(r.date || '');
     }
 
     function _inboundDateTimeParts(stamp) {
@@ -9754,15 +9781,16 @@ const PaintingWorkModule = (function() {
         var seen = {};
 
         function _rowWhen(lotNo, detail) {
-            if (detail && (detail.date || detail.time)) {
-                return { date: detail.date || '-', time: detail.time || '-', onDay: true };
-            }
-            var stamp = _findSiteInboundDateForLotScoped(
-                lotNo, d.carModel, maps.injPartName || maps.workPartName || '', maps.day
+            var day = String(maps.day || d.date || '').slice(0, 10);
+            var stamp = (detail && detail.stamp) || _findSiteInboundDateForLotScoped(
+                lotNo, d.carModel, maps.injPartName || maps.workPartName || '', day
             );
-            if (!stamp) return { date: '-', time: '-', onDay: false };
             var p = _inboundDateTimeParts(stamp);
-            return { date: p.date || '-', time: p.time || '-', onDay: true };
+            var stampDay = String(p.date || '').slice(0, 10);
+            if (!stampDay || (day && stampDay !== day)) {
+                return { date: '-', time: '-', onDay: false };
+            }
+            return { date: stampDay, time: (detail && detail.time) || p.time || '-', onDay: true };
         }
 
         workLots.forEach(function (l) {
@@ -9771,7 +9799,7 @@ const PaintingWorkModule = (function() {
             if (!lotNo) return;
             var detail = detailMap[lotNo] || {};
             var when = _rowWhen(lotNo, detail);
-            if (!detail.stamp && !when.onDay) return;
+            if (!when.onDay) return;
             seen[lotNo] = true;
             var usedQty = Number(l.qty) || 0;
             var missQty = unmatchedByLot[lotNo] || 0;

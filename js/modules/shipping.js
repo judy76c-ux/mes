@@ -343,7 +343,7 @@ const ShippingStandbyModule = (function() {
             const badge = d.result === '합격' ? 'success' : d.result === '불합격' ? 'danger' : 'warning';
             const lots = _lotFields(d);
             return `
-            <tr style="cursor:pointer;" onclick="ShippingStandbyModule.openEditInspection('${d.id}')">
+            <tr style="cursor:pointer;" onclick="ShippingInspectionModule.openHistoryView('${d.id}')">
                 <td style="white-space:nowrap;">${_inspectionDateCell(d.date, d.startTime || d.endTime || '')}</td>
                 <td style="font-size:0.85rem;">${d.customer || '-'}</td>
                 <td>${d.carModel || '-'}</td>
@@ -363,8 +363,8 @@ const ShippingStandbyModule = (function() {
                 <td style="text-align:center;">${UIUtils.badge(d.result || '-', badge)}</td>
                 <td style="font-size:0.85rem;">${d.inspector || '-'}</td>
                 <td onclick="event.stopPropagation()">
-                    <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.openEditInspection('${d.id}')">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">edit</span> 수정
+                    <button class="btn btn-sm btn-outline" onclick="ShippingInspectionModule.openHistoryView('${d.id}')">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">visibility</span> 보기
                     </button>
                 </td>
             </tr>`;
@@ -2519,110 +2519,18 @@ const ShippingStandbyModule = (function() {
         UIUtils.closeModal();
     }
 
-    // ── 검사 이력 수정 ────────────────────────────────────────────────
     // 입력/수정 가능 여부는 관리자가 「역할별 접근 권한」에서 이 페이지(shipping-standby)에
     // 부여한 입력 권한을 그대로 따른다 — 코드에 특정 역할을 하드코딩하지 않는다.
-    function _canEditHistory() {
+    // ShippingInspectionModule의 보기/수정 모달에서도 그대로 참조한다.
+    function canEditHistory() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.canWritePage !== 'function') return true;
         return AuthModule.canWritePage('shipping-standby');
-    }
-
-    function openEditInspection(id) {
-        const d = Storage.getById(SI_STORE, id);
-        if (!d) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
-        const lots = _lotFields(d);
-        const canEdit = _canEditHistory();
-        const dis = canEdit ? '' : ' disabled';
-
-        const infoGrid = `
-            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px 10px;font-size:0.82rem;margin-bottom:10px;">
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">차종</div><div style="font-weight:600;">${_esc(d.carModel || '-')}</div></div>
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">품명</div><div style="font-weight:600;">${_esc(d.partName || '-')}</div></div>
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">컬러</div><div style="font-weight:600;">${_esc(d.color || '-')}</div></div>
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">납품처</div><div style="font-weight:600;">${_esc(d.customer || '-')}</div></div>
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">도장LOT</div><div style="font-weight:600;font-family:monospace;">${_esc(lots.paintLot || '-')}</div></div>
-                <div><div style="font-size:0.68rem;color:var(--text-muted);">사출LOT</div><div style="font-weight:600;font-family:monospace;">${_esc(lots.injectionLot || '-')}</div></div>
-            </div>`;
-
-        const body = `
-            ${infoGrid}
-            ${!canEdit ? `<div style="margin-bottom:10px;padding:8px 12px;background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.25);border-radius:8px;font-size:0.8rem;color:var(--accent-red);">
-                이 화면의 입력 권한이 없어 조회만 가능합니다. 수정이 필요하면 관리자에게 요청하세요.</div>` : ''}
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
-                <div class="form-group" style="margin:0;"><label class="form-label">검사일</label>
-                    <input type="date" class="form-input" id="siEditDate" value="${_esc(d.date || '')}"${dis}></div>
-                <div class="form-group" style="margin:0;"><label class="form-label">시작 시간</label>
-                    <input type="time" class="form-input" id="siEditStart" value="${_esc(d.startTime || '')}"${dis}></div>
-                <div class="form-group" style="margin:0;"><label class="form-label">완료 시간</label>
-                    <input type="time" class="form-input" id="siEditEnd" value="${_esc(d.endTime || '')}"${dis}></div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px;">
-                <div class="form-group" style="margin:0;"><label class="form-label">LOT 수량</label>
-                    <input type="number" class="form-input" id="siEditLotSize" value="${Number(d.lotSize) || 0}" min="0"${dis}></div>
-                <div class="form-group" style="margin:0;"><label class="form-label">샘플 수</label>
-                    <input type="number" class="form-input" id="siEditSampleQty" value="${Number(d.sampleQty) || 0}" min="0"${dis}></div>
-                <div class="form-group" style="margin:0;"><label class="form-label">불량 수</label>
-                    <input type="number" class="form-input" id="siEditDefectQty" value="${Number(d.defectQty) || 0}" min="0"${dis}></div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
-                <div class="form-group" style="margin:0;"><label class="form-label">판정</label>
-                    <select class="form-select" id="siEditResult"${dis}>
-                        <option value="합격"${d.result === '합격' ? ' selected' : ''}>합격</option>
-                        <option value="불합격"${d.result === '불합격' ? ' selected' : ''}>불합격</option>
-                    </select></div>
-                <div class="form-group" style="margin:0;"><label class="form-label">검사자</label>
-                    <input type="text" class="form-input" id="siEditInspector" value="${_esc(d.inspector || '')}"${dis}></div>
-            </div>
-            <div class="form-group" style="margin:0;"><label class="form-label">비고</label>
-                <textarea class="form-input" id="siEditNote" rows="2"${dis}>${_esc(d.note || '')}</textarea></div>
-        `;
-
-        const footer = canEdit
-            ? `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-               <button class="btn btn-primary" onclick="ShippingStandbyModule.saveEditInspection('${id}')">저장</button>`
-            : `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`;
-
-        UIUtils.showModal('출하검사 이력 수정', body, footer, 'min(620px, calc(100vw - 32px))');
-    }
-
-    async function saveEditInspection(id) {
-        if (!_canEditHistory()) {
-            UIUtils.toast('입력 권한이 없습니다.', 'warning');
-            return;
-        }
-        const d = Storage.getById(SI_STORE, id);
-        if (!d) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
-
-        const lotSize = Number((document.getElementById('siEditLotSize') || {}).value) || 0;
-        const sampleQty = Number((document.getElementById('siEditSampleQty') || {}).value) || 0;
-        const defectQty = Number((document.getElementById('siEditDefectQty') || {}).value) || 0;
-        const date = (document.getElementById('siEditDate') || {}).value || d.date;
-        const result = (document.getElementById('siEditResult') || {}).value || d.result;
-
-        await Storage.update(SI_STORE, id, {
-            date,
-            startTime: (document.getElementById('siEditStart') || {}).value || '',
-            endTime: (document.getElementById('siEditEnd') || {}).value || '',
-            lotSize,
-            sampleQty,
-            defectQty,
-            result,
-            inspector: ((document.getElementById('siEditInspector') || {}).value || '').trim(),
-            note: ((document.getElementById('siEditNote') || {}).value || '').trim(),
-            updatedAt: new Date().toISOString()
-        });
-
-        UIUtils.toast('수정되었습니다.', 'success');
-        UIUtils.closeModal();
-        loadData();
-        loadHistory();
     }
 
     return {
         render, loadData, loadHistory,
         onHistoryCarChange,
-        _showDetail,
-        openEditInspection, saveEditInspection,
+        _showDetail, canEditHistory,
         removeStandby, removeHistory, exportHistory,
         openShippingStandardList, openShippingStandardEditor,
         saveShippingStandard, deleteShippingStandard, viewShippingStandard, renderStandardListInto,
@@ -2790,10 +2698,24 @@ const ShippingInspectionModule = (function() {
         return _siItemsBodyHtml([it || {}]);
     }
 
+    /** 검사자 선택 목록 — 품질(품질관리자/품질검사자) · 자주검사자 역할 사용자만 (요청: "품질 및 자주검사자만 해당") */
+    function _qualityInspectorOptions(selectedName) {
+        if (typeof AuthModule === 'undefined' || !AuthModule.getUsers) return '';
+        const roles = (AuthModule.getRoles ? AuthModule.getRoles() : []) || [];
+        const allowedKeys = new Set(
+            roles.filter(r => r && /품질|자주검사/.test(r.label || '')).map(r => r.key)
+        );
+        const users = (AuthModule.getUsers() || []).filter(u => {
+            if (!u || u.active === false) return false;
+            const keys = [u.role, ...(Array.isArray(u.roles) ? u.roles : [])].filter(Boolean);
+            return keys.some(k => allowedKeys.has(k));
+        });
+        const names = [...new Set(users.map(u => u.displayName || u.username).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
+        return names.map(n => `<option value="${_esc(n)}" ${n === selectedName ? 'selected' : ''}>${_esc(n)}</option>`).join('');
+    }
+
     function _buildForm(sb, checkItems, stdHint) {
-        const inspectors = Storage.getAll(DB.STORES.INSPECTORS) || [];
-        const inspectorOptions = inspectors.map(i =>
-            `<option value="${i.name || ''}">${i.name || ''}</option>`).join('');
+        const inspectorOptions = _qualityInspectorOptions('');
         const items = Array.isArray(checkItems) ? checkItems : [];
 
         return `
@@ -3214,6 +3136,277 @@ const ShippingInspectionModule = (function() {
         }).join('');
     }
 
+    // ── 검사 이력 보기 / 수정 — 최초 등록 화면(_buildForm)과 동일한 레이아웃을 재사용 ──
+    function _canEditHistoryPerm() {
+        if (typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule.canEditHistory) {
+            return ShippingStandbyModule.canEditHistory();
+        }
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.canWritePage !== 'function') return true;
+        return AuthModule.canWritePage('shipping-standby');
+    }
+
+    function _historyItemsBodyHtml(items, readOnly) {
+        const list = (items && items.length) ? items : [{}];
+        const method = _siSharedField(list, 'method', '육안');
+        const sample = _siSharedField(list, 'sample', '10EA/LOT');
+        const dis = readOnly ? ' disabled' : '';
+        return list.map((it, idx) => {
+            const opt = (v) => `<option value="${v}" ${it.judge === v ? 'selected' : ''}>${v || '—'}</option>`;
+            const msTds = idx === 0
+                ? `<td rowspan="${list.length}" style="padding:3px;text-align:center;vertical-align:middle;white-space:nowrap;">
+                    <input class="si-method form-input" value="${_esc(method)}" title="외관 전 항목 공통"${dis}
+                        style="font-size:0.82rem;padding:4px 6px;width:auto;min-width:3.5em;text-align:center;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:3px;line-height:1.2;">전 항목 공통</div>
+                   </td>
+                   <td rowspan="${list.length}" style="padding:3px;text-align:center;vertical-align:middle;white-space:nowrap;">
+                    <input class="si-sample form-input" value="${_esc(sample)}" title="이 수량으로 외관 모든 항목을 검사합니다"${dis}
+                        style="font-size:0.82rem;padding:4px 6px;width:auto;min-width:6em;text-align:center;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-top:3px;line-height:1.2;max-width:7.5em;white-space:normal;">전 항목 공통</div>
+                   </td>`
+                : '';
+            return `<tr>
+            <td style="padding:3px;white-space:nowrap;"><input class="si-item form-input" value="${_esc(it.item || '')}"${dis} style="font-size:0.82rem;padding:4px 6px;min-width:5em;"></td>
+            <td style="padding:3px;"><input class="si-std form-input" value="${_esc(it.standard || '')}"${dis} style="font-size:0.82rem;padding:4px 6px;width:auto;min-width:12em;"></td>
+            ${msTds}
+            <td style="padding:3px;text-align:center;">
+                <select class="si-judge form-select"${dis} style="font-size:0.82rem;padding:4px 6px;width:88px;">
+                    ${opt('')}${opt('합격')}${opt('불합격')}
+                </select>
+            </td>
+            ${readOnly ? '' : `<td style="padding:3px;text-align:center;">
+                <button type="button" class="btn btn-sm btn-danger" style="padding:2px 6px;" onclick="ShippingInspectionModule.removeHistoryItemRow(this)">×</button>
+            </td>`}
+        </tr>`;
+        }).join('');
+    }
+
+    function _siReadHistoryItems() {
+        const method = (document.querySelector('#siHistItemsBody .si-method') || {}).value || '';
+        const sample = (document.querySelector('#siHistItemsBody .si-sample') || {}).value || '10EA/LOT';
+        const items = [];
+        document.querySelectorAll('#siHistItemsBody tr').forEach(tr => {
+            items.push({
+                item: (tr.querySelector('.si-item') || {}).value || '',
+                standard: (tr.querySelector('.si-std') || {}).value || '',
+                method,
+                sample,
+                judge: (tr.querySelector('.si-judge') || {}).value || '',
+                group: 'appearance'
+            });
+        });
+        return items;
+    }
+
+    function addHistoryItemRow() {
+        const tb = document.getElementById('siHistItemsBody');
+        if (!tb) return;
+        const items = _siReadHistoryItems();
+        items.push({ group: 'appearance' });
+        tb.innerHTML = _historyItemsBodyHtml(items, false);
+    }
+
+    function removeHistoryItemRow(btn) {
+        const tb = document.getElementById('siHistItemsBody');
+        if (!tb) return;
+        const items = _siReadHistoryItems();
+        const rows = Array.from(tb.querySelectorAll('tr'));
+        const idx = rows.indexOf(btn && btn.closest ? btn.closest('tr') : null);
+        if (idx < 0) return;
+        items.splice(idx, 1);
+        tb.innerHTML = _historyItemsBodyHtml(items, false);
+    }
+
+    function _buildHistoryForm(rec, readOnly) {
+        const inspectorOptions = _qualityInspectorOptions(rec.inspector || '');
+        const items = Array.isArray(rec.items) ? rec.items : [];
+        const dis = readOnly ? ' disabled' : '';
+        const lots = _lotFields(rec);
+
+        return `
+        <div style="display:grid;gap:14px;">
+
+            <!-- 제품 정보 (읽기전용) -->
+            <div class="card"><div class="card-body">
+                <h4 style="margin:0 0 10px 0;color:var(--text-primary);">제품 정보</h4>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px 14px;background:var(--bg-secondary);border-radius:8px;padding:12px;">
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">납품처</div>
+                        <div style="font-weight:700;font-size:0.9rem;color:var(--accent-blue);">${_esc(rec.customer || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">차종</div>
+                        <div style="font-weight:600;font-size:0.9rem;">${_esc(rec.carModel || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">제품명</div>
+                        <div style="font-weight:600;font-size:0.9rem;">${_esc(rec.partName || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">컬러</div>
+                        <div style="font-size:0.9rem;">${_esc(rec.color || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">도장 LOT</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${_esc(lots.paintLot || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">사출 LOT</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${_esc(lots.injectionLot || '-')}</div>
+                    </div>
+                    <div>
+                        <div style="font-size:0.7rem;color:var(--text-muted);margin-bottom:2px;">레이져 LOT</div>
+                        <div style="font-family:monospace;font-size:0.82rem;">${_esc(lots.laserLot || '-')}</div>
+                    </div>
+                </div>
+            </div></div>
+
+            ${readOnly && !_canEditHistoryPerm() ? `
+            <div style="padding:8px 12px;background:rgba(220,38,38,.06);border:1px solid rgba(220,38,38,.25);border-radius:8px;font-size:0.8rem;color:var(--accent-red);">
+                이 화면의 입력 권한이 없어 조회만 가능합니다. 수정이 필요하면 관리자에게 요청하세요.
+            </div>` : ''}
+
+            <!-- 검사 정보 -->
+            <div class="card"><div class="card-body">
+                <h4 style="margin:0 0 12px 0;color:var(--text-primary);">검사 정보</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">검사일자</label>
+                        <input type="date" class="form-input" id="siHistDate" value="${_esc(rec.date || '')}"${dis}>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">시작 시간</label>
+                        <input type="time" class="form-input" id="siHistStart" value="${_esc(rec.startTime || '')}"${dis}>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">완료 시간</label>
+                        <input type="time" class="form-input" id="siHistEnd" value="${_esc(rec.endTime || '')}"${dis}>
+                    </div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">검사자</label>
+                        <select class="form-select" id="siHistInspector"${dis}>
+                            <option value="">-- 검사자 선택 --</option>
+                            ${inspectorOptions}
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">검사 수량</label>
+                        <input type="number" class="form-input" id="siHistLotSize" value="${Number(rec.lotSize) || 0}" min="1"${dis}>
+                    </div>
+                </div>
+            </div></div>
+
+            <!-- 외관 검사 항목 -->
+            <div class="card"><div class="card-body">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+                    <h4 style="margin:0;color:var(--text-primary);">외관 검사 항목
+                        <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:6px;">확인방법·시료는 전 항목 공통(이 수량으로 모든 항목 검사)</span>
+                    </h4>
+                    ${readOnly ? '' : `<button type="button" class="btn btn-sm btn-outline" onclick="ShippingInspectionModule.addHistoryItemRow()">
+                        <span class="material-symbols-outlined" style="font-size:14px;">add</span> 항목 추가
+                    </button>`}
+                </div>
+                <div style="border:1px solid var(--border-color);border-radius:8px;overflow-x:auto;">
+                    <table class="data-table" style="margin:0;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <thead><tr>
+                            <th style="white-space:nowrap;">항목</th><th>기준</th><th style="white-space:nowrap;">확인방법</th>
+                            <th style="white-space:nowrap;">시료</th>
+                            <th style="text-align:center;white-space:nowrap;">판정</th>${readOnly ? '' : '<th style="width:40px;"></th>'}
+                        </tr></thead>
+                        <tbody id="siHistItemsBody">${_historyItemsBodyHtml(items, readOnly)}</tbody>
+                    </table>
+                </div>
+            </div></div>
+
+            <!-- 샘플 검사 결과 -->
+            <div class="card"><div class="card-body">
+                <h4 style="margin:0 0 12px 0;color:var(--text-primary);">샘플 검사 결과</h4>
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:14px;">
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">샘플 검사 수량</label>
+                        <input type="number" class="form-input" id="siHistSampleQty" value="${Number(rec.sampleQty) || 0}" min="0"${dis}>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">불량 발견 수량</label>
+                        <input type="number" class="form-input" id="siHistDefectQty" value="${Number(rec.defectQty) || 0}" min="0"${dis}>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label">판정</label>
+                        <select class="form-select" id="siHistResult" style="font-weight:700;"${dis}>
+                            <option value="합격" ${rec.result === '합격' ? 'selected' : ''}>합격</option>
+                            <option value="불합격" ${rec.result === '불합격' ? 'selected' : ''}>불합격</option>
+                            <option value="보류" ${rec.result === '보류' ? 'selected' : ''}>보류</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="form-group" style="margin:0;">
+                    <label class="form-label">비고</label>
+                    <textarea class="form-textarea" id="siHistNote" placeholder="특이사항 입력" style="height:60px;"${dis}>${_esc(rec.note || '')}</textarea>
+                </div>
+            </div></div>
+
+            <!-- 버튼 -->
+            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:4px;">
+                ${readOnly
+                    ? (`<button class="btn btn-secondary" onclick="ShippingInspectionModule._closeModal()">닫기</button>`
+                        + (_canEditHistoryPerm()
+                            ? `<button class="btn btn-primary" onclick="ShippingInspectionModule.openHistoryEdit('${rec.id}')">
+                                <span class="material-symbols-outlined">edit</span> 수정</button>`
+                            : ''))
+                    : (`<button class="btn btn-secondary" onclick="ShippingInspectionModule.openHistoryView('${rec.id}')">취소</button>`
+                        + `<button class="btn btn-primary" onclick="ShippingInspectionModule.saveHistoryEdit('${rec.id}')">
+                                <span class="material-symbols-outlined">save</span> 저장</button>`)}
+            </div>
+        </div>`;
+    }
+
+    function openHistoryView(id) {
+        const rec = Storage.getById(STORE, id);
+        if (!rec) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+        _openModal(`출하검사(외관) 보기 — ${rec.partName || ''}`, _buildHistoryForm(rec, true));
+    }
+
+    function openHistoryEdit(id) {
+        if (!_canEditHistoryPerm()) { UIUtils.toast('입력 권한이 없습니다.', 'warning'); return; }
+        const rec = Storage.getById(STORE, id);
+        if (!rec) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+        _openModal(`출하검사(외관) 수정 — ${rec.partName || ''}`, _buildHistoryForm(rec, false));
+    }
+
+    async function saveHistoryEdit(id) {
+        if (!_canEditHistoryPerm()) { UIUtils.toast('입력 권한이 없습니다.', 'warning'); return; }
+        const rec = Storage.getById(STORE, id);
+        if (!rec) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+
+        const lotSize = parseInt(document.getElementById('siHistLotSize')?.value || 0, 10) || 0;
+        if (!lotSize) { UIUtils.toast('검사 수량을 입력하세요.', 'warning'); return; }
+
+        const items = _siReadHistoryItems().filter(it => it.item || it.standard || it.judge);
+
+        await Storage.update(STORE, id, {
+            date: document.getElementById('siHistDate')?.value || rec.date,
+            startTime: document.getElementById('siHistStart')?.value || '',
+            endTime: document.getElementById('siHistEnd')?.value || '',
+            inspector: document.getElementById('siHistInspector')?.value || '',
+            lotSize,
+            sampleQty: parseInt(document.getElementById('siHistSampleQty')?.value || 0, 10) || 0,
+            defectQty: parseInt(document.getElementById('siHistDefectQty')?.value || 0, 10) || 0,
+            result: document.getElementById('siHistResult')?.value || rec.result,
+            items,
+            note: (document.getElementById('siHistNote')?.value || '').trim(),
+            updatedAt: new Date().toISOString()
+        });
+
+        UIUtils.toast('수정되었습니다.', 'success');
+        _closeModal();
+        if (typeof ShippingStandbyModule !== 'undefined') {
+            ShippingStandbyModule.loadData();
+            ShippingStandbyModule.loadHistory();
+        }
+        search();
+    }
+
     function remove(id) {
         UIUtils.confirm('삭제하시겠습니까?', async () => {
             await Storage.remove(STORE, id);
@@ -3246,7 +3439,9 @@ const ShippingInspectionModule = (function() {
         _closeModal,
         _save,
         remove,
-        exportData
+        exportData,
+        openHistoryView, openHistoryEdit, saveHistoryEdit,
+        addHistoryItemRow, removeHistoryItemRow
     };
 })();
 

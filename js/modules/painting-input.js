@@ -3763,6 +3763,11 @@ var PaintingInputModule = (function () {
             const time = String(rec.date || '').slice(11, 16)
                 || (UIUtils.now ? UIUtils.now().slice(11, 16) : '');
             next.useDate = useDate;
+            // 사용일만 옮길 때 실제 도착일(shipDate)을 지우면, 옛 LOT이 새 도장일의
+            // FIFO·사출LOT 표에 다시 섞인다. 도착 시각이 없으면 지금 값으로 고정한다.
+            if (!rec.shipDate) {
+                next.shipDate = _resolveActualInboundStamp(rec) || rec.date || '';
+            }
             if (!patch.keepInboundDate) {
                 next.date = useDate + (time ? ' ' + time : '');
             }
