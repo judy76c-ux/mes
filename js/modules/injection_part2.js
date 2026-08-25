@@ -2289,14 +2289,16 @@ var InjectionWarehouseModule = (function() {
             inspLine = `<div style="font-size:0.68rem;color:#059669;font-weight:600;margin-top:2px;">출고분 재입고 (검사 입고 아님)</div>`;
         }
         // 현재고 확정(기준점)은 잘못 확정된 경우 되돌릴 방법이 없었다 — 관리자에 한해 수정/삭제 제공.
-        const actionsHtml = (isBaseline && showActions)
+        // 일반 입출고 행도 중복 등록(예: 반납 입고 이중 처리) 정리를 위해 관리자에게만 삭제를 열어둔다.
+        const actionsHtml = !showActions ? '' : (isBaseline
             ? `<div style="display:flex;gap:4px;flex-wrap:nowrap;">
                 <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;"
                     onclick="InjectionWarehouseModule.openEditBaselineModal('${d.id}')">수정</button>
                 <button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#dc2626;border-color:#fca5a5;"
                     onclick="InjectionWarehouseModule.deleteBaselineRecord('${d.id}')">삭제</button>
                </div>`
-            : '';
+            : `<button class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#dc2626;border-color:#fca5a5;"
+                    onclick="InjectionWarehouseModule.deleteInventoryRecord('${d.id}')">삭제</button>`);
         return `
             <tr${rowBg}>
                 <td style="white-space:nowrap;font-size:0.8rem;">
@@ -10008,6 +10010,36 @@ var InjectionWarehouseModule = (function() {
         );
     }
 
+    /** 일반 입출고 이력 행 삭제 — 중복 등록(예: 반납 입고 이중 처리) 등을 관리자가 직접 정리할 때 사용.
+     *  잔량은 남은 이력에서 다시 계산되므로 별도 보정 없이 기록만 지운다. */
+    async function deleteInventoryRecord(id) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d) {
+            UIUtils.toast('이력 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const carModel = d.carModel, partName = d.partName, color = d.color;
+        const lotTxt = (d.lots && d.lots.length)
+            ? d.lots.map(function (l) { return l.lotNo; }).filter(Boolean).join(', ')
+            : (d.lotNo || '-');
+        UIUtils.confirm(
+            (String(d.type || '') === '출고' ? '출고' : '입고') + ' 이력 ' + UIUtils.formatNumber(d.quantity || 0) +
+            ' EA(LOT ' + lotTxt + ')를 삭제하시겠습니까? 삭제 후 재고는 남은 이력 기준으로 다시 계산됩니다.',
+            async () => {
+                await Storage.remove(STORE, id);
+                UIUtils.toast('삭제되었습니다.', 'success');
+                loadData();
+                setTimeout(function () {
+                    showPartDetail(carModel, partName, color);
+                }, 80);
+            }
+        );
+    }
+
     function openResetStockErrorModal(carModelEnc, partNameEnc, colorEnc, currentStock) {
         if (!_isAdminUser()) {
             UIUtils.toast('관리자만 재고 오류를 초기화할 수 있습니다.', 'warning');
@@ -11794,6 +11826,7 @@ var InjectionWarehouseModule = (function() {
         calcEditBaselineTotal,
         saveEditBaseline,
         deleteBaselineRecord,
+        deleteInventoryRecord,
         openResetStockErrorModal,
         confirmResetStockError,
         openUnmatchedActionModal,
