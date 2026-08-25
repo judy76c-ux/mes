@@ -1113,6 +1113,13 @@ const PaintingWorkModule = (function() {
         return _currentLine === '도장-B' ? 'overdue_inbound_b' : 'overdue_inbound_a';
     }
 
+    function _missingInboundNotifyKind() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.missingInboundNotifyKindForLine === 'function') {
+            return AuthModule.missingInboundNotifyKindForLine(_currentLine);
+        }
+        return _currentLine === '도장-B' ? 'missing_inbound_b' : 'missing_inbound_a';
+    }
+
     function _loadUnenteredNotifySent() {
         if (_unenteredNotifySent) return Promise.resolve(_unenteredNotifySent);
         if (_unenteredNotifySentLoading) return _unenteredNotifySentLoading;
@@ -1250,6 +1257,21 @@ const PaintingWorkModule = (function() {
                     (r.color ? ' / ' + r.color : '') +
                     (lotsTxt ? ' · LOT ' + lotsTxt : '') +
                     ' · ' + UIUtils.formatNumber(r.quantity || r.qty || 0) + ' EA';
+            }
+        });
+    }
+
+    function _notifyMissingInbound(list) {
+        _sendPeriodicNotify(_missingInboundNotifyKind(), list, {
+            logLabel: '소재 입고 필요',
+            title: _currentLine + ' 소재 입고 필요',
+            intro: _currentLine + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없습니다. 생산계획 현황에서 「소재입고 필요」를 처리해 주세요.',
+            formatLine: function (p) {
+                const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
+                return '- ' + String(p.date || '').slice(0, 10) + ' ' + timeStr +
+                    ' · ' + (p.carModel || '-') + ' / ' + (p.partName || '-') +
+                    (p.color ? ' / ' + p.color : '') +
+                    ' · 계획 ' + UIUtils.formatNumber(p.planQty || 0);
             }
         });
     }
@@ -1916,6 +1938,10 @@ const PaintingWorkModule = (function() {
                 const overdue = _collectOverdueInbound();
                 if (overdue.length) _notifyOverdueInbound(overdue);
             }
+            if (!skipIfEveryOpen(_missingInboundNotifyKind())) {
+                const missing = _collectMissingInboundPlans();
+                if (missing.length) _notifyMissingInbound(missing);
+            }
         }, 60000);
     }
 
@@ -1977,19 +2003,30 @@ const PaintingWorkModule = (function() {
         return false;
     }
 
+    function _afterQualitySync() {
+        if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.notifyOverdueQuality === 'function') {
+            ProdQualityModule.notifyOverdueQuality();
+        }
+    }
+
     function _tickQualityIssueFromPlans() {
         if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.syncFromStartedPlans === 'function') {
-            ProdQualityModule.syncFromStartedPlans();
+            Promise.resolve(ProdQualityModule.syncFromStartedPlans()).then(_afterQualitySync).catch(_afterQualitySync);
             return;
         }
-        if (!_hasDueQualityPlansWithoutIssue()) return;
+        if (!_hasDueQualityPlansWithoutIssue()) {
+            _afterQualitySync();
+            return;
+        }
         if (_qualityIssueWatchLoading) return;
         if (typeof Router === 'undefined' || typeof Router.ensureLazyLoaded !== 'function') return;
         _qualityIssueWatchLoading = true;
         Router.ensureLazyLoaded('prod-quality').then(function () {
             _qualityIssueWatchLoading = false;
             if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.syncFromStartedPlans === 'function') {
-                ProdQualityModule.syncFromStartedPlans();
+                Promise.resolve(ProdQualityModule.syncFromStartedPlans()).then(_afterQualitySync).catch(_afterQualitySync);
+            } else {
+                _afterQualitySync();
             }
         }).catch(function (err) {
             _qualityIssueWatchLoading = false;
@@ -3142,6 +3179,32 @@ const PaintingWorkModule = (function() {
         return false;
     }
 
+    function _collectMissingInboundPlans() {
+        const today = UIUtils.today();
+        const allPlans = Storage.getAll(PLAN_STORE) || [];
+        const allWorks = Storage.getAll(STORE) || [];
+        const dayPlans = _dedupePlanDocs(allPlans.filter(function (p) {
+            return _planDayKey(p) === today
+                && _matchesCurrentLine(p.line)
+                && (p.carModel || p.partName);
+        }));
+        const now = new Date();
+        const nowHm = String(now.getHours()).padStart(2, '0') + ':' + String(now.getMinutes()).padStart(2, '0');
+        return dayPlans.filter(function (plan) {
+            const matchedWork = allWorks.find(function (w) {
+                return w && String(w.planId || '') === String(plan.id) && String(w.date || '').slice(0, 10) === today;
+            });
+            if (matchedWork) return false;
+            const start = plan.startTime || plan.slot || '';
+            const isFuture = !!start && start > nowHm;
+            const timeProgress = _estimateTimeProgress(plan, today);
+            const hasInbound = _hasConfirmedSiteInboundForPlan(plan, today);
+            return !hasInbound && (timeProgress == null ? !isFuture : timeProgress > 0);
+        }).sort(function (a, b) {
+            return String(a.startTime || a.slot || '').localeCompare(String(b.startTime || b.slot || ''));
+        });
+    }
+
     function renderPlanSummary() {
         const bodyA = document.getElementById('pwPlanBodyA');
         const bodyB = document.getElementById('pwPlanBodyB');
@@ -3157,6 +3220,9 @@ const PaintingWorkModule = (function() {
         // 현재 페이지에 있는 라인만 렌더
         if (bodyA) bodyA.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-A', todayDate);
         if (bodyB) bodyB.innerHTML = _renderLinePlanData(allPlans, allWorks, '도장-B', todayDate);
+
+        const missing = _collectMissingInboundPlans();
+        if (missing.length) _notifyMissingInbound(missing);
     }
 
     // 계획 시간대(startTime~endTime) 대비 "현재 시각이 몇 % 지점"인지 추정 — 실적과 무관한
@@ -10865,6 +10931,7 @@ const PaintingWorkModule = (function() {
         onDateChange,
         loadAll,
         startQualityIssueWatch,
+        sendPeriodicNotify: _sendPeriodicNotify,
         renderPlanSummary,
         renderUnenteredPlans,
         renderWorkList,

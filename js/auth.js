@@ -22,7 +22,9 @@ const AuthModule = (function () {
     const INCOMING_INSP_NOTIFY_INTERVAL_KEY = 'incoming_insp_notify_interval_v1';
     const INCOMING_INSP_INTERVAL_KINDS = [
         'unentered_work_a', 'unentered_work_b',
-        'overdue_inbound_a', 'overdue_inbound_b'
+        'overdue_inbound_a', 'overdue_inbound_b',
+        'missing_inbound_a', 'missing_inbound_b',
+        'quality_cs'
     ];
     let _usersCache = null;
     let _permissionsCache = null;
@@ -37,7 +39,8 @@ const AuthModule = (function () {
         'unentered_work_a', 'unentered_work_b',
         'overdue_inbound_a', 'overdue_inbound_b',
         'laser_inbound', 'paint_out',
-        'paint_mix_a', 'paint_mix_b'
+        'paint_mix_a', 'paint_mix_b',
+        'quality_cs'
     ];
     function _emptyIncomingInspNotify() {
         const o = {};
@@ -1456,6 +1459,7 @@ const AuthModule = (function () {
         if (kind === 'paint_out') return 'paint_out';
         if (kind === 'paint_mix_b') return 'paint_mix_b';
         if (kind === 'paint_mix_a' || kind === 'paint_mix' || kind === 'paint_mix_missing') return 'paint_mix_a';
+        if (kind === 'quality_cs' || kind === 'pq_data' || kind === 'prod_quality') return 'quality_cs';
         return 'injection';
     }
 
@@ -1477,6 +1481,7 @@ const AuthModule = (function () {
         if (key === 'paint_out') return '도료 창고 출고';
         if (key === 'paint_mix_b') return '도료 사용 미등록 (도장-B)';
         if (key === 'paint_mix_a') return '도료 사용 미등록 (도장-A)';
+        if (key === 'quality_cs') return '초중종물 DATA 미입력';
         return '사출 수입검사';
     }
 
@@ -1497,7 +1502,7 @@ const AuthModule = (function () {
         }
         if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
             const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
-            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'unentered_work_a' || key === 'unentered_work_b') {
             const line = key === 'unentered_work_b' ? '도장-B' : '도장-A';
@@ -1516,6 +1521,9 @@ const AuthModule = (function () {
         if (key === 'paint_mix_a' || key === 'paint_mix_b') {
             const line = key === 'paint_mix_b' ? '도장-B' : '도장-A';
             return line + ' 도장 작업 실적이 등록되면 도료사용등록이 필요한 건으로 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'quality_cs') {
+            return '어제 이전 작업 중 초중종물 DATA가 없으면 지정한 사용자에게 쪽지가 갑니다. 당일 건은 알림하지 않습니다. 알림 주기는 이 화면에서 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         return '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
     }

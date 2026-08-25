@@ -19976,7 +19976,12 @@ var ProdQualityModule = (function() {
                 <div class="card">
                     <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                         <h4 style="margin:0;"><span class="material-symbols-outlined">format_paint</span> 도장 작업일지 · 기준 양식 발행</h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">생산계획 현황 시작 ${QUALITY_CREATE_DELAY_MIN}분 후 자동 생성 · 미발행·DATA 미입력은 기간 밖이어도 유지됩니다.</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">생산계획 현황 시작 ${QUALITY_CREATE_DELAY_MIN}분 후 자동 생성 · 시작 시각이 지난 DATA 미입력은 작업일이 깜빡입니다.</span>
+                        <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml('quality_cs', { small: true, label: '초중종물 알림' })
+                                : ''}
+                        </div>
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper" style="overflow-x:auto;">
@@ -20012,7 +20017,11 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
         search();
-        syncFromStartedPlans();
+        Promise.resolve(syncFromStartedPlans()).then(function () {
+            notifyOverdueQuality();
+        }).catch(function () {
+            notifyOverdueQuality();
+        });
         _startQualityPlanTimer();
     }
 
@@ -21462,8 +21471,79 @@ var ProdQualityModule = (function() {
     function _startQualityPlanTimer() {
         if (_qualityPlanTimer) return;
         _qualityPlanTimer = setInterval(function() {
-            syncFromStartedPlans();
+            Promise.resolve(syncFromStartedPlans()).then(function () {
+                notifyOverdueQuality();
+            }).catch(function () {
+                notifyOverdueQuality();
+            });
         }, 30000);
+    }
+
+    function _collectOverdueQuality() {
+        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+        const maps = _buildIssueMaps();
+        const list = [];
+        const seen = {};
+        _qualityListSources().forEach(function (w) {
+            const issue = _issueForSource(w, maps.issueByWork, maps.issueByPlan);
+            const hasData = !!(issue && recordMap.get(issue.id));
+            if (!_isOverdueQualitySource(w, hasData)) return;
+            const date = String(w.date || '').slice(0, 10);
+            if (!date || date >= UIUtils.today()) return;
+            const id = w._fromPlan ? _planSourceId(w.planId) : String(w.id || (issue && issue.id) || '');
+            if (!id || seen[id]) return;
+            seen[id] = true;
+            list.push({
+                id: id,
+                date: w.date || '',
+                startTime: w.startTime || w.slot || '',
+                line: w.line || '',
+                carModel: w.carModel || '',
+                partName: w.partName || '',
+                color: w.color || ''
+            });
+        });
+        return list;
+    }
+
+    function notifyOverdueQuality() {
+        const list = _collectOverdueQuality();
+        if (!list.length) return;
+        if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.sendPeriodicNotify === 'function') {
+            PaintingWorkModule.sendPeriodicNotify('quality_cs', list, {
+                title: '초중종물 DATA 미입력',
+                intro: '어제 이전 작업 중 초중종물 DATA가 입력되지 않은 건입니다.',
+                logLabel: '초중종물 미입력',
+                idOf: function (r) { return String((r && r.id) || ''); },
+                formatLine: function (r) {
+                    const when = [r.date || '', (r.startTime || '').slice(0, 5)].filter(Boolean).join(' ');
+                    return '[' + (r.line || '-') + '] ' + when + '  ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                        (r.color ? ' (' + r.color + ')' : '');
+                }
+            });
+            return;
+        }
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        const recipients = AuthModule.getIncomingInspNotifyRecipientIds
+            ? AuthModule.getIncomingInspNotifyRecipientIds('quality_cs')
+            : [];
+        if (!recipients.length) return;
+        const lines = list.map(function (r) {
+            const when = [r.date || '', (r.startTime || '').slice(0, 5)].filter(Boolean).join(' ');
+            return '[' + (r.line || '-') + '] ' + when + '  ' + (r.carModel || '-') + ' / ' + (r.partName || '-');
+        });
+        try {
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '초중종물 DATA 미입력',
+                body: ['어제 이전 작업 중 초중종물 DATA가 입력되지 않은 건입니다.', '', lines.join('\n')].join('\n'),
+                category: 'quality_cs',
+                priority: 'high'
+            });
+        } catch (eN) {
+            console.warn('[ProdQuality] 초중종물 미입력 통보 실패:', eN);
+        }
     }
 
     async function syncFromStartedPlans() {
@@ -21594,6 +21674,30 @@ var ProdQualityModule = (function() {
         if (isNaN(d.getTime())) return String(iso).replace('T', ' ').slice(0, 16);
         const p = n => String(n).padStart(2, '0');
         return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    }
+
+    function _sourceStartMs(src) {
+        return _planStartMs({
+            date: src && src.date,
+            startTime: (src && (src.startTime || src.slot || src.workStartTime)) || ''
+        });
+    }
+
+    function _isOverdueQualitySource(src, hasData) {
+        if (hasData || !src) return false;
+        const ms = _sourceStartMs(src);
+        if (ms == null) {
+            const date = String(src.date || '').slice(0, 10);
+            return !!(date && date < UIUtils.today());
+        }
+        return Date.now() > ms;
+    }
+
+    function _pqDateTd(innerHtml, overdue) {
+        return '<td' + (overdue ? ' class="pq-overdue-date-cell"' : '') +
+            ' style="white-space:nowrap;padding:8px 10px;"' +
+            (overdue ? ' title="작업 시작 시각이 지났습니다. DATA를 입력하세요."' : '') +
+            '>' + innerHtml + '</td>';
     }
 
     function _fmtWorkDateCell(w) {
@@ -21785,11 +21889,12 @@ var ProdQualityModule = (function() {
             const waitingHint = w._fromPlan
                 ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">실적 대기</div>'
                 : '';
+            const overdue = _isOverdueQualitySource(w, !!record);
 
             rows.push({
                 sortKey,
                 html: `<tr>
-                    <td style="white-space:nowrap;padding:8px 10px;">${_fmtWorkDateCell(w)}</td>
+                    ${_pqDateTd(_fmtWorkDateCell(w), overdue)}
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.line || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(w.carModel || '-')}</strong></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.partName || '-')}</td>
@@ -21824,11 +21929,12 @@ var ProdQualityModule = (function() {
             const delBtn = canDelete
                 ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>`
                 : '';
+            const overdue = _isOverdueQualitySource(d, !!record);
 
             rows.push({
                 sortKey,
                 html: `<tr>
-                    <td style="white-space:nowrap;padding:8px 10px;">${_fmtIssueDateCell(d)}</td>
+                    ${_pqDateTd(_fmtIssueDateCell(d), overdue)}
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.line || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(d.carModel || '-')}</strong></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.partName || '-')}</td>
@@ -25053,6 +25159,7 @@ window.addEventListener('afterprint', () => {
         ,issueAndPrintFromWork
         ,syncFromStartedPlans
         ,attachWorkToPlanIssue
+        ,notifyOverdueQuality
         ,openView
         ,openItemListModal
         ,saveItemMaster

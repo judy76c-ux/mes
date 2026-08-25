@@ -214,21 +214,30 @@ const WorkStandardModule = (function () {
 
     function _editorHtml(title) {
         const d = _editData;
-        const v = k => _esc(d[k]||'');
+        const B  = 'border:1px solid #222;';
+        const C  = B+'padding:2px 4px;';
+        const HB = B+'padding:3px 5px;background:#bdd7ee;font-weight:700;text-align:center;font-size:8.5pt;';
+        const inp = (id,val,ph) => `<input id="${id}" value="${_esc(val||'')}" placeholder="${_esc(ph||'')}"
+            style="width:100%;border:none;background:transparent;font-size:8.5pt;padding:2px;font-family:inherit;">`;
+        const dateInp = (id,val) => `<input type="date" id="${id}" value="${_esc(val||'')}"
+            style="width:100%;border:none;background:transparent;font-size:7.5pt;padding:2px;text-align:center;font-family:inherit;">`;
+
         return `
-        <div class="fade-in-up" style="max-width:1200px;">
+        <div class="fade-in-up" style="max-width:1400px;">
             ${_renderTopMenu('work-standard')}
             <div style="display:flex;align-items:center;justify-content:space-between;
-                        margin-bottom:18px;padding-bottom:14px;border-bottom:2px solid var(--border-color);">
+                        margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--border-color);flex-wrap:wrap;gap:10px;">
                 <div style="display:flex;align-items:center;gap:12px;">
                     <button class="btn btn-outline btn-sm" onclick="WorkStandardModule.render()">
                         <span class="material-symbols-outlined">arrow_back</span> 목록
                     </button>
-                    <h3 style="font-size:1.1rem;font-weight:700;">작업 표준서 ${_esc(title)}</h3>
+                    <h3 style="font-size:1.05rem;font-weight:700;">작업 표준서 ${_esc(title)}
+                        <span style="font-weight:400;font-size:0.8rem;color:var(--text-muted);margin-left:6px;">실제 양식에 바로 입력합니다</span>
+                    </h3>
                 </div>
                 <div style="display:flex;gap:8px;">
                     <button class="btn btn-secondary" onclick="WorkStandardModule.preview(null,'edit')">
-                        <span class="material-symbols-outlined">preview</span> 미리보기/인쇄
+                        <span class="material-symbols-outlined">print</span> 인쇄용 미리보기
                     </button>
                     <button class="btn btn-primary" onclick="WorkStandardModule.save()">
                         <span class="material-symbols-outlined">save</span> 저장
@@ -236,113 +245,149 @@ const WorkStandardModule = (function () {
                 </div>
             </div>
 
-            <!-- 기본정보 + 결재 -->
-            <div class="card" style="margin-bottom:16px;">
-                <div class="card-header"><h4><span class="material-symbols-outlined">info</span> 기본 정보 및 결재</h4></div>
-                <div class="card-body">
-                    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:12px;">
-                        <div class="form-group"><label class="form-label">공정 NO</label>
-                            <input type="text" class="form-input" id="wsProcessNo" value="${v('processNo')}" placeholder="예) 60_1,2"></div>
-                        <div class="form-group"><label class="form-label">공정명 <span style="color:var(--accent-red)">*</span></label>
-                            <input type="text" class="form-input" id="wsProcessName" value="${v('processName')}" placeholder="예) 도료 공급"></div>
-                        <div class="form-group"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
-                            <input type="text" class="form-input" id="wsCarModel" value="${v('carModel')}" placeholder="예) 전차종"></div>
-                        <div class="form-group"><label class="form-label">품명</label>
-                            <input type="text" class="form-input" id="wsPartName" value="${v('partName')}" placeholder="예) ALL"></div>
-                        <div class="form-group"><label class="form-label">설비명</label>
-                            <input type="text" class="form-input" id="wsEquipName" value="${v('equipName')}" placeholder="예) B-LINE 도료탱크"></div>
+            <div style="overflow-x:auto;background:#cbd5e1;padding:12px;border-radius:8px;">
+            <div id="wsEditDocArea" style="background:#fff;margin:0 auto;width:277mm;min-height:190mm;padding:6mm 7mm;
+                font-family:'맑은 고딕','나눔고딕',Arial,sans-serif;color:#000;font-size:9.5pt;line-height:1.3;">
+
+                <!-- 헤더 -->
+                <table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-bottom:-1px;">
+                    <colgroup>
+                        <col style="width:8%"><col style="width:14%">
+                        <col style="width:32%">
+                        <col style="width:8%">
+                        <col style="width:12%"><col style="width:13%"><col style="width:13%">
+                    </colgroup>
+                    <tbody>
+                        <tr>
+                            <td style="${C}font-weight:700;white-space:nowrap;font-size:8.5pt;">공정 NO</td>
+                            <td style="${C}">${inp('wsProcessNo', d.processNo, '예) 60_1,2')}</td>
+                            <td rowspan="5" style="${B}text-align:center;vertical-align:middle;
+                                font-size:26pt;font-weight:900;letter-spacing:8px;padding:4px;">
+                                작 업 표 준 서
+                            </td>
+                            <td style="${HB}"></td>
+                            <td style="${HB}">작 성</td>
+                            <td style="${HB}">생 산</td>
+                            <td style="${HB}">품 질</td>
+                        </tr>
+                        <tr>
+                            <td style="${C}font-weight:700;font-size:8.5pt;">공 정 명</td>
+                            <td style="${C}">${inp('wsProcessName', d.processName, '예) 도료 공급')}</td>
+                            <td rowspan="3" style="${C}font-weight:700;text-align:center;vertical-align:middle;font-size:9pt;">결<br>재</td>
+                            <td rowspan="3" style="${C}text-align:center;vertical-align:middle;height:48px;">${inp('wsAuthor', d.author)}</td>
+                            <td rowspan="3" style="${C}text-align:center;vertical-align:middle;">${inp('wsReviewer', d.reviewer)}</td>
+                            <td rowspan="3" style="${C}text-align:center;vertical-align:middle;">${inp('wsApprover', d.approver)}</td>
+                        </tr>
+                        <tr>
+                            <td style="${C}font-weight:700;font-size:8.5pt;">설 비 명</td>
+                            <td style="${C}">${inp('wsEquipName', d.equipName, '예) B-LINE 도료탱크')}</td>
+                        </tr>
+                        <tr>
+                            <td style="${C}font-weight:700;font-size:8.5pt;">품&nbsp;&nbsp;&nbsp;명</td>
+                            <td style="${C}">${inp('wsPartName', d.partName, '예) ALL')}</td>
+                        </tr>
+                        <tr>
+                            <td style="${C}font-weight:700;font-size:8.5pt;">모&nbsp;&nbsp;&nbsp;델</td>
+                            <td style="${C}">${inp('wsCarModel', d.carModel, '예) 전차종')}</td>
+                            <td style="${C}font-size:7.5pt;text-align:center;">/</td>
+                            <td style="${C}">${dateInp('wsAuthorDate', d.authorDate||_today())}</td>
+                            <td style="${C}">${dateInp('wsReviewerDate', d.reviewerDate)}</td>
+                            <td style="${C}">${dateInp('wsApproverDate', d.approverDate)}</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- 본문 2단: 좌=작업순서, 우=조건표+안전관리+이상조치 -->
+                <table style="width:100%;border-collapse:collapse;table-layout:fixed;margin-top:-1px;">
+                    <colgroup><col style="width:54%"><col style="width:46%"></colgroup>
+                    <tbody>
+                        <tr>
+                            <td style="vertical-align:top;${B}padding:0;">
+                                <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:3px;display:flex;align-items:center;">
+                                    <span style="flex:1;">작 업 순 서</span>
+                                    <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.68rem;"
+                                        onclick="WorkStandardModule._addStep()">
+                                        <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">add</span> 단계 추가
+                                    </button>
+                                </div>
+                                <div id="wsStepsList" style="min-height:400px;padding:6px;display:flex;flex-direction:column;gap:10px;"></div>
+                            </td>
+                            <td style="vertical-align:top;border:1px solid #222;border-left:none;padding:0;">
+                                ${_condTblEditHtml('condManage','조건관리 표준 (만드는 조건)')}
+                                <div style="height:1px;background:#222;"></div>
+                                ${_condTblEditHtml('selfInspect','자주검사 표준 (만들어진 조건)')}
+                                <div style="height:1px;background:#222;"></div>
+                                ${_condTblEditHtml('abnormalCond','이상처리 기준')}
+                                <div style="height:1px;background:#222;"></div>
+                                <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:3px;">안 전 관 리</div>
+                                <textarea id="wsSafetyNotes" rows="4" placeholder="줄바꿈으로 항목을 구분해 입력하세요"
+                                    style="width:100%;border:none;resize:vertical;font-size:8.5pt;padding:4px 6px;font-family:inherit;">${_esc(d.safetyNotes||'')}</textarea>
+                                <div style="height:1px;background:#222;"></div>
+                                <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:2px;">이상 발생 시 조치사항</div>
+                                <textarea id="wsAbnormalActions" rows="4" placeholder="줄바꿈으로 항목을 구분해 입력하세요"
+                                    style="width:100%;border:none;resize:vertical;font-size:8.5pt;padding:4px 6px;font-family:inherit;">${_esc(d.abnormalActions||'')}</textarea>
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <!-- 개정 내용 -->
+                <div style="margin-top:-1px;">
+                    <div style="display:flex;align-items:center;background:#bdd7ee;${C}font-weight:700;font-size:9pt;letter-spacing:3px;">
+                        <span style="flex:1;text-align:center;">개 정 내 용</span>
+                        <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.68rem;"
+                            onclick="WorkStandardModule._addRevRow()">
+                            <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">add</span> 행 추가
+                        </button>
                     </div>
-                    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">
-                        <div class="form-group"><label class="form-label">작성자</label>
-                            <input type="text" class="form-input" id="wsAuthor" value="${v('author')}"></div>
-                        <div class="form-group"><label class="form-label">생산(검토)</label>
-                            <input type="text" class="form-input" id="wsReviewer" value="${v('reviewer')}"></div>
-                        <div class="form-group"><label class="form-label">품질(승인)</label>
-                            <input type="text" class="form-input" id="wsApprover" value="${v('approver')}"></div>
-                        <div class="form-group"><label class="form-label">작성일</label>
-                            <input type="date" class="form-input" id="wsAuthorDate" value="${v('authorDate')||_today()}"></div>
-                        <div class="form-group"><label class="form-label">검토일</label>
-                            <input type="date" class="form-input" id="wsReviewerDate" value="${v('reviewerDate')}"></div>
-                        <div class="form-group"><label class="form-label">승인일</label>
-                            <input type="date" class="form-input" id="wsApproverDate" value="${v('approverDate')}"></div>
-                    </div>
+                    <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+                        <colgroup>
+                            <col style="width:3%"><col style="width:9%"><col style="width:30%"><col style="width:8%">
+                            <col style="width:3%"><col style="width:9%"><col style="width:30%"><col style="width:8%">
+                        </colgroup>
+                        <thead><tr>
+                            <th style="${HB}">NO</th><th style="${HB}">개정일자</th>
+                            <th style="${HB}">개정사유</th><th style="${HB}">확인</th>
+                            <th style="${HB}border-left:none;">NO</th><th style="${HB}border-left:none;">개정일자</th>
+                            <th style="${HB}border-left:none;">개정사유</th><th style="${HB}border-left:none;">확인</th>
+                        </tr></thead>
+                        <tbody id="wsRevBody"></tbody>
+                    </table>
+                </div>
+
+                <div style="display:flex;justify-content:space-between;margin-top:4px;
+                            font-size:8pt;color:#555;border-top:1px solid #bbb;padding-top:3px;">
+                    <span>(주)케이씨케미칼</span>
+                    <span>A3 (420 × 297mm)</span>
                 </div>
             </div>
-
-            <!-- 작업 순서 (단계별 사진+설명) -->
-            <div class="card" style="margin-bottom:16px;">
-                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-                    <h4><span class="material-symbols-outlined">format_list_numbered</span> 작업 순서</h4>
-                    <button class="btn btn-sm btn-outline" onclick="WorkStandardModule._addStep()">
-                        <span class="material-symbols-outlined">add</span> 단계 추가
-                    </button>
-                </div>
-                <div class="card-body" id="wsStepsList" style="display:flex;flex-direction:column;gap:14px;"></div>
-            </div>
-
-            <!-- 조건관리 표준 -->
-            ${_condCardHtml('condManage','조건관리 표준 (만드는 조건)','table_chart')}
-            ${_condCardHtml('selfInspect','자주검사 표준 (만들어진 조건)','fact_check')}
-            ${_condCardHtml('abnormalCond','이상처리 기준','warning')}
-
-            <!-- 안전관리 / 이상조치 -->
-            <div class="card" style="margin-bottom:16px;">
-                <div class="card-header"><h4><span class="material-symbols-outlined">health_and_safety</span> 안전 관리 / 이상 조치</h4></div>
-                <div class="card-body">
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
-                        <div class="form-group"><label class="form-label">안전 관리</label>
-                            <textarea class="form-input" id="wsSafetyNotes" rows="4"
-                                style="resize:vertical;">${_esc(d.safetyNotes||'')}</textarea></div>
-                        <div class="form-group"><label class="form-label">이상 발생기 조치사항</label>
-                            <textarea class="form-input" id="wsAbnormalActions" rows="4"
-                                style="resize:vertical;">${_esc(d.abnormalActions||'')}</textarea></div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 개정 내용 -->
-            <div class="card" style="margin-bottom:16px;">
-                <div class="card-header"><h4><span class="material-symbols-outlined">history</span> 개정 내용</h4></div>
-                <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table" style="font-size:0.82rem;">
-                            <thead><tr>
-                                <th style="width:50px;text-align:center;">NO</th>
-                                <th style="width:130px;">개정일자</th>
-                                <th>개정사유</th>
-                                <th style="width:100px;">확인</th>
-                            </tr></thead>
-                            <tbody id="wsRevBody"></tbody>
-                        </table>
-                    </div>
-                </div>
             </div>
         </div>`;
     }
 
-    function _condCardHtml(key, title, icon) {
+    function _condTblEditHtml(key, label) {
+        const C  = 'border:1px solid #222;padding:2px 4px;';
+        const HB = 'border:1px solid #222;padding:3px 4px;background:#bdd7ee;font-weight:700;text-align:center;font-size:7.8pt;';
         return `
-        <div class="card" style="margin-bottom:16px;">
-            <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-                <h4><span class="material-symbols-outlined">${icon}</span> ${_esc(title)}</h4>
-                <button class="btn btn-sm btn-outline" onclick="WorkStandardModule._addCondRow('${key}')">
-                    <span class="material-symbols-outlined">add</span> 행 추가
-                </button>
-            </div>
-            <div class="card-body" style="padding:0;">
-                <div class="data-table-wrapper">
-                    <table class="data-table" style="font-size:0.81rem;">
-                        <thead><tr>
-                            <th style="width:36px;text-align:center;">순</th>
-                            <th>관리항목</th><th>관리기준</th>
-                            <th style="width:100px;">확인방법</th><th style="width:70px;">주기</th>
-                            <th>관리방안</th><th style="width:40px;"></th>
-                        </tr></thead>
-                        <tbody id="wsCondBody_${key}"></tbody>
-                    </table>
-                </div>
-            </div>
-        </div>`;
+        <div style="background:#bdd7ee;border:1px solid #222;padding:3px 5px;text-align:center;
+                    font-weight:700;font-size:9pt;letter-spacing:2px;display:flex;align-items:center;">
+            <span style="flex:1;">${_esc(label)}</span>
+            <button type="button" onclick="WorkStandardModule._addCondRow('${key}')"
+                style="border:1px solid #fff;background:rgba(255,255,255,.35);border-radius:4px;
+                       color:#1e3a5f;cursor:pointer;font-size:0.65rem;padding:0 6px;line-height:1.6;">+ 행</button>
+        </div>
+        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
+            <colgroup>
+                <col style="width:6%"><col style="width:15%"><col style="width:26%">
+                <col style="width:13%"><col style="width:9%"><col style="width:23%"><col style="width:8%">
+            </colgroup>
+            <thead><tr>
+                <th style="${HB}">순</th><th style="${HB}">관리항목</th>
+                <th style="${HB}">관리기준</th><th style="${HB}">확인방법</th>
+                <th style="${HB}">주기</th><th style="${HB}">관리방안</th><th style="${HB}"></th>
+            </tr></thead>
+            <tbody id="wsCondBody_${key}"></tbody>
+        </table>`;
     }
 
     /* ── 렌더 전체 ──────────────────────────────────────────── */
@@ -482,18 +527,18 @@ const WorkStandardModule = (function () {
     }
 
     function _condRowHtml(key, c, i) {
-        const inp = (id,val,ph='') => `<input class="form-input" id="${id}" value="${_esc(val||'')}"
-            placeholder="${ph}" style="width:100%;font-size:0.78rem;padding:3px 5px;">`;
+        const C = 'border:1px solid #222;padding:1px 2px;';
+        const cellInp = (id,val,ph='') => `<input id="${id}" value="${_esc(val||'')}" placeholder="${ph}"
+            style="width:100%;border:none;background:transparent;font-size:7.8pt;padding:2px 3px;font-family:inherit;">`;
         return `<tr>
-            <td style="text-align:center;color:var(--text-muted);">${i+1}</td>
-            <td>${inp(`wsCi_${key}_${i}`,c.item,'관리항목')}</td>
-            <td>${inp(`wsCs_${key}_${i}`,c.standard,'관리기준')}</td>
-            <td>${inp(`wsCm_${key}_${i}`,c.method,'확인방법')}</td>
-            <td>${inp(`wsCc_${key}_${i}`,c.cycle,'주기')}</td>
-            <td>${inp(`wsCr_${key}_${i}`,c.measure,'관리방안')}</td>
-            <td style="text-align:center;">
-                <button type="button" class="btn btn-sm btn-danger"
-                    style="padding:2px 7px;font-size:0.75rem;"
+            <td style="${C}text-align:center;font-size:7.8pt;color:#555;">${i+1}</td>
+            <td style="${C}">${cellInp(`wsCi_${key}_${i}`,c.item,'관리항목')}</td>
+            <td style="${C}">${cellInp(`wsCs_${key}_${i}`,c.standard,'관리기준')}</td>
+            <td style="${C}">${cellInp(`wsCm_${key}_${i}`,c.method,'확인방법')}</td>
+            <td style="${C}">${cellInp(`wsCc_${key}_${i}`,c.cycle,'주기')}</td>
+            <td style="${C}">${cellInp(`wsCr_${key}_${i}`,c.measure,'관리방안')}</td>
+            <td style="${C}text-align:center;">
+                <button type="button" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:0.75rem;font-weight:700;"
                     onclick="WorkStandardModule._delCondRow('${key}',${i})">×</button>
             </td>
         </tr>`;
@@ -517,19 +562,33 @@ const WorkStandardModule = (function () {
         _editData[key] = arr;
     }
 
-    /* ── 개정 내용 ──────────────────────────────────────────── */
+    /* ── 개정 내용 (좌/우 2열 대응 표시, id는 순차 인덱스 유지) ──── */
     function _renderRevTable() {
         const tb = document.getElementById('wsRevBody');
         if (!tb) return;
-        tb.innerHTML = (_editData.revisions||[]).map((r,i) => `<tr>
-            <td style="text-align:center;color:var(--text-muted);">${r.no}</td>
-            <td><input type="date" class="form-input" id="wsRd_${i}" value="${_esc(r.date||'')}"
-                style="width:100%;font-size:0.78rem;padding:3px 5px;"></td>
-            <td><input class="form-input" id="wsRr_${i}" value="${_esc(r.reason||'')}"
-                style="width:100%;font-size:0.78rem;padding:3px 5px;"></td>
-            <td><input class="form-input" id="wsRc_${i}" value="${_esc(r.confirm||'')}"
-                style="width:100%;font-size:0.78rem;padding:3px 5px;"></td>
-        </tr>`).join('');
+        const revs = _editData.revisions || [];
+        const C = 'border:1px solid #222;padding:1px 2px;';
+        const cellInp = (id,val,type) => `<input type="${type||'text'}" id="${id}" value="${_esc(val||'')}"
+            style="width:100%;border:none;background:transparent;font-size:7.6pt;padding:2px 3px;font-family:inherit;
+                   text-align:${type==='date'?'center':'left'};">`;
+        const half = Math.ceil(revs.length/2);
+        const L = revs.slice(0, half), R = revs.slice(half);
+        tb.innerHTML = L.map((l, i) => {
+            const leftIdx = i, rightIdx = half + i;
+            const r = R[i];
+            return `<tr style="height:20px;">
+                <td style="${C}text-align:center;font-size:7.6pt;color:#555;">${l.no}</td>
+                <td style="${C}">${cellInp('wsRd_'+leftIdx, l.date, 'date')}</td>
+                <td style="${C}">${cellInp('wsRr_'+leftIdx, l.reason)}</td>
+                <td style="${C}">${cellInp('wsRc_'+leftIdx, l.confirm)}</td>
+                ${r ? `
+                <td style="${C}border-left:none;text-align:center;font-size:7.6pt;color:#555;">${r.no}</td>
+                <td style="${C}border-left:none;">${cellInp('wsRd_'+rightIdx, r.date, 'date')}</td>
+                <td style="${C}border-left:none;">${cellInp('wsRr_'+rightIdx, r.reason)}</td>
+                <td style="${C}border-left:none;">${cellInp('wsRc_'+rightIdx, r.confirm)}</td>`
+                    : `<td colspan="4" style="${C}border-left:none;"></td>`}
+            </tr>`;
+        }).join('');
     }
 
     function _syncRevs() {
@@ -543,6 +602,12 @@ const WorkStandardModule = (function () {
             i++;
         }
         _editData.revisions = arr;
+    }
+
+    function _addRevRow() {
+        _syncRevs();
+        _editData.revisions.push({no:_editData.revisions.length, date:'', reason:'', confirm:''});
+        _renderRevTable();
     }
 
     /* ── 전체 수집 ──────────────────────────────────────────── */
@@ -871,7 +936,7 @@ const WorkStandardModule = (function () {
         init, render, search,
         openEditor, save, remove, preview, _doPrint,
         _addStep, _delStep, _addPhoto, _replacePhoto, _removePhoto,
-        _addCondRow, _delCondRow,
+        _addCondRow, _delCondRow, _addRevRow,
         _openProdStandardsDoc,
     };
 })();
