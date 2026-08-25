@@ -3093,6 +3093,37 @@ const PaintingWorkModule = (function() {
         return false;
     }
 
+    /** 창고→현장 실제 도착일(shipDate 우선). useDate·확인시각은 당일 입고가 아니다. */
+    function _inboundArrivedOnDay(r, day) {
+        var want = String(day || '').slice(0, 10);
+        if (!want || !r) return false;
+        var stamp = '';
+        try { stamp = _resolveInboundStamp(r); } catch (e) { stamp = (r && (r.shipDate || r.date)) || ''; }
+        return String(stamp).replace('T', ' ').trim().slice(0, 10) === want;
+    }
+
+    /** 실적 입력/수정 화면의 도장작업일. 없으면 수정 실적일·오늘. */
+    function _workFormDate(fallback) {
+        var el = document.getElementById('addPwDateHidden') || document.getElementById('editPwDateHidden');
+        var v = el && el.value ? String(el.value).slice(0, 10) : '';
+        if (v) return v;
+        return String(fallback || (typeof _currentDate !== 'undefined' ? _currentDate : '') || '').slice(0, 10);
+    }
+
+    /** 수정 화면에서도 신규 등록과 같은 hidden을 둬 FIFO·LOT 필터가 작업일을 알게 한다. */
+    function _workEditContextHiddenHtml(d) {
+        var isLaser = false;
+        try { isLaser = typeof _isLaserWipWork === 'function' && !!_isLaserWipWork(d); } catch (e) { isLaser = false; }
+        return '<input type="hidden" id="addPwDateHidden" value="' + _pwEsc(d && d.date || '') + '">' +
+            '<input type="hidden" id="editPwDateHidden" value="' + _pwEsc(d && d.date || '') + '">' +
+            '<input type="hidden" id="addPwCarModelHidden" value="' + _pwEsc(d && d.carModel || '') + '">' +
+            '<input type="hidden" id="addPwPartNameHidden" value="' + _pwEsc(d && d.partName || '') + '">' +
+            '<input type="hidden" id="addPwColorHidden" value="' + _pwEsc(d && d.color || '') + '">' +
+            '<input type="hidden" id="addPwLineHidden" value="' + _pwEsc(d && d.line || '') + '">' +
+            '<input type="hidden" id="editPwLineHidden" value="' + _pwEsc(d && d.line || '') + '">' +
+            '<input type="hidden" id="addPwIsLaserWip" value="' + (isLaser ? '1' : '0') + '">';
+    }
+
     /** 입고 기록의 LOT별 수량. lots[].qty가 비어 있으면 quantity로 되돌린다.
      *  같은 LOT이 배열에 두 번 있으면 합치고, lots 합이 헤더 quantity와 어긋나면 quantity에 맞춘다.
      *  (LOT 복제·중복 입고로 잔량이 부풀어 반납수량이 실제보다 커지는 사고를 막는다) */
@@ -3947,7 +3978,7 @@ const PaintingWorkModule = (function() {
             ' data-balance="' + l.balance + '"' +
             ' data-part-name="' + String(l.partName || '').replace(/"/g, '&quot;') + '"' +
             ' data-color="' + String(l.color || '').replace(/"/g, '&quot;') + '">' +
-            _lotOptionLabel(l, l.partName || '', { withColor: false }) + '</option>';
+            _lotOptionLabel(l, l.partName || '', { withColor: false, workDate: planDate, carModel: carModel }) + '</option>';
         }).join('');
     }
 

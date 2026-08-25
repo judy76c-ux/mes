@@ -1417,15 +1417,15 @@ var JigModule = (function () {
             const planNow = Number(j.todayPlanUseNow) || 0;
             const showTodayUse = !!(showTodayBadge || todayIdMap[j.id] || todayUsed > 0 || planDay > 0);
             const todayUsedColor = todayUsed > 0 ? '#ea580c' : 'var(--text-primary)';
-            const todayUseTitle = '실적 ' + _fmt(todayUsed) + '회'
-                + (planDay > 0 ? (' · 현재시각 예측 ' + _fmtJigUse(planNow) + '회 · 금일계획 ' + _fmtJigUse(planDay) + '회') : '')
+            const todayUseTitle = '실제 사용 실적 ' + _fmt(todayUsed) + '회'
+                + (planDay > 0 ? (' · 현재시각까지 계획대비 예상 사용횟수 ' + _fmtJigUse(planNow) + '회 · 금일 계획 총사용횟수 ' + _fmtJigUse(planDay) + '회') : '')
                 + (j.todayPlanHint ? (' / ' + j.todayPlanHint) : '');
             const todayUseCell = showTodayUse
                 ? ('<td class="jig-col-short" style="' + tdn + 'text-align:center;cursor:pointer;" title="' + _esc(todayUseTitle) + '"'
                     + ' onclick="JigModule.openTodayUseForecast(\'' + _js(j.id) + '\')">'
-                    + '<div style="font-weight:800;color:' + todayUsedColor + ';white-space:nowrap;">실적 ' + _fmt(todayUsed) + '</div>'
+                    + '<div style="font-weight:800;color:' + todayUsedColor + ';white-space:nowrap;">실적 ' + _fmt(todayUsed) + '회</div>'
                     + (planDay > 0
-                        ? '<div style="font-size:0.66rem;font-weight:700;color:#c2410c;line-height:1.25;white-space:nowrap;">현재 ' + _fmtJigUse(planNow) + ' · 계획 ' + _fmtJigUse(planDay) + '</div>'
+                        ? '<div style="font-size:0.66rem;font-weight:700;color:#c2410c;line-height:1.25;white-space:nowrap;">예상' + _fmtJigUse(planNow) + '/계획' + _fmtJigUse(planDay) + '회</div>'
                         : '')
                     + '</td>')
                 : ('<td class="jig-col-short" style="' + tdn + 'text-align:center;color:var(--text-muted);">-</td>');
@@ -1481,7 +1481,7 @@ var JigModule = (function () {
             '<th class="jig-col-short" style="' + thStyle + '">라인</th>' +
             '<th class="jig-col-short" style="' + thStyle + '">수명횟수</th>' +
             '<th class="jig-col-short" style="' + thStyle + '">누적횟수</th>' +
-            '<th class="jig-col-short" style="' + thStyle + '">금일사용</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">금일 사용 횟수</th>' +
             '<th class="jig-col-progress" style="' + thStyle + '">수명진행률</th>' +
             '<th class="jig-col-short" style="' + thStyle + '">이전교체일</th>' +
             '<th class="jig-col-short" style="' + thStyle + '">상태</th>' +
@@ -2284,7 +2284,7 @@ var JigModule = (function () {
             const active = (current || '') === (value || '');
             return '<button type="button" class="btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline') + '"' +
                 ' onclick="JigModule.' + handlerName + '(\'' + _js(value) + '\')" style="white-space:nowrap;">' +
-                _esc(label) + (count != null ? ' <span style="font-weight:600;opacity:.85;">' + count + '</span>' : '') +
+                _esc(label) + (count != null ? ' <span style="font-weight:600;opacity:.85;">' + count + '종</span>' : '') +
                 '</button>';
         }
         return '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 12px;padding:8px 10px;background:var(--bg-secondary);border-radius:8px;">' +
