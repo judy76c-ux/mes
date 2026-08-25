@@ -31,6 +31,8 @@ var JigModule = (function () {
     let _batchMergeRows = [];
     let _activeView = 'life';
     let _masterCarFilter = '';
+    let _lifeCarFilter = '';
+    let _preMesBulkCarFilter = '';
     let _showAsItems = false;
     let _jigPasteTargetId = '';
     let _jigPasteListenerReady = false;
@@ -132,6 +134,35 @@ var JigModule = (function () {
         const n = Number(v);
         if (!Number.isFinite(n) || n <= 0) return '—';
         return (Math.round(n * 1000) / 1000).toString();
+    }
+    function _fmtMmDelta(v) {
+        return _fmtMm(v);
+    }
+
+    function _jigAvgIncreaseInner(one) {
+        const ok = !!(one && one.avg > 0);
+        return '<div style="font-size:0.8rem;font-weight:800;color:var(--text-primary);white-space:nowrap;">평균 증가량</div>' +
+            '<div style="font-size:0.68rem;color:var(--text-muted);margin:4px 0 10px;line-height:1.35;">1회·2회 도막 평균</div>' +
+            '<div style="font-size:1.28rem;font-weight:800;color:' + (ok ? 'var(--accent-blue)' : 'var(--text-muted)') + ';white-space:nowrap;">' +
+                (ok ? _fmtMmDelta(one.avg) + ' <span style="font-size:0.78rem;font-weight:700;">mm</span>' : '—') +
+            '</div>' +
+            (ok
+                ? '<div style="font-size:0.72rem;color:var(--text-secondary);margin-top:8px;white-space:nowrap;">1회 +' + _fmtMmDelta(one.film1) + ' · 2회 +' + _fmtMmDelta(one.film2) + '</div>'
+                : '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:8px;">초기·1회·2회 입력 시 표시</div>');
+    }
+
+    function _jigAvgIncreaseCard(jigIndex, one) {
+        return '<div id="jigAvgIncrease' + jigIndex + '" style="border:1px solid rgba(37,99,235,0.28);border-radius:8px;padding:10px 12px;background:rgba(37,99,235,0.05);display:flex;flex-direction:column;justify-content:center;min-width:0;">' +
+            _jigAvgIncreaseInner(one) +
+            '</div>';
+    }
+
+    function _updateJigAvgIncreaseDisplays(pointMms) {
+        for (let j = 0; j < THICKNESS_JIG_COUNT; j++) {
+            const el = document.getElementById('jigAvgIncrease' + j);
+            if (!el) continue;
+            el.innerHTML = _jigAvgIncreaseInner(_calcOneJigFilm(_jigThicknessSlice(pointMms, j)));
+        }
     }
     function _fmtCountOrDash(v) {
         const n = Number(v);
@@ -459,6 +490,116 @@ var JigModule = (function () {
             .filter(Boolean);
     }
 
+    function _escRe(s) {
+        return String(s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    }
+
+    function _productColorMap() {
+        const map = {};
+        (Storage.getAll(DB.STORES.PRODUCTS) || []).forEach(function (p) {
+            const car = String(p.carModel || '').trim();
+            const part = String(p.partName || '').trim();
+            if (!car || !part) return;
+            map[car.toUpperCase() + '||' + part.toUpperCase()] = String(p.color || '').trim();
+        });
+        return map;
+    }
+
+    function _productColorsByCar() {
+        const map = {};
+        (Storage.getAll(DB.STORES.PRODUCTS) || []).forEach(function (p) {
+            const car = String(p.carModel || '').trim();
+            const c = String(p.color || '').trim();
+            if (!car || !c) return;
+            if (!map[car]) map[car] = {};
+            map[car][c] = true;
+        });
+        return map;
+    }
+
+    function _colorsOfCar(colorsByCar, carModel) {
+        const set = (colorsByCar && colorsByCar[String(carModel || '').trim()]) || {};
+        return Object.keys(set).sort(function (a, b) { return b.length - a.length; });
+    }
+
+    /** 품명에서 컬러(6PS, BC5 등)를 떼 같은 지그 묶음 기준명을 만든다. */
+    function _partFamilyName(carModel, partName, colorMap, colorsByCar) {
+        const part = String(partName || '').trim();
+        if (!part) return '';
+        const car = String(carModel || '').trim();
+        function truncateAt(color) {
+            if (!color) return '';
+            const re = new RegExp('\\b' + _escRe(color) + '\\b', 'i');
+            const m = re.exec(part);
+            if (!m) return '';
+            return part.slice(0, m.index)
+                .replace(/[\[\(]\s*$/, '')
+                .replace(/[-_/]\s*$/, '')
+                .trim();
+        }
+        const mapped = (colorMap && colorMap[car.toUpperCase() + '||' + part.toUpperCase()]) || '';
+        const fromMapped = truncateAt(mapped);
+        if (fromMapped) return fromMapped;
+        const colors = _colorsOfCar(colorsByCar, car);
+        for (let i = 0; i < colors.length; i++) {
+            const t = truncateAt(colors[i]);
+            if (t) return t;
+        }
+        return part.replace(/\s+/g, ' ');
+    }
+
+    function _jigFamilyKey(j, colorMap, colorsByCar) {
+        const names = _jigPartNames(j);
+        const family = _partFamilyName(j.carModel, names[0] || j.partName, colorMap, colorsByCar);
+        return [_jigCarKey(j), j.line || '', String(family || '').toUpperCase().replace(/\s+/g, ' ')].join('||');
+    }
+
+    /** 컬러만 다른 품목(HIGH B-CALL 6PS / BC5)을 한 지그로 묶는다. */
+    function _groupJigsByFamily(jigs) {
+        const colorMap = _productColorMap();
+        const colorsByCar = _productColorsByCar();
+        const map = {};
+        const order = [];
+        (jigs || []).forEach(function (j) {
+            const key = _jigFamilyKey(j, colorMap, colorsByCar);
+            if (!map[key]) {
+                map[key] = {
+                    key: key,
+                    members: [],
+                    carModel: j.carModel,
+                    line: j.line,
+                    familyName: _partFamilyName(j.carModel, j.partName, colorMap, colorsByCar)
+                };
+                order.push(key);
+            }
+            map[key].members.push(j);
+        });
+        return order.map(function (k) {
+            const g = map[k];
+            const names = [];
+            const nameSeen = {};
+            const colorLabels = [];
+            g.members.forEach(function (j) {
+                _jigPartNames(j).forEach(function (n) {
+                    if (nameSeen[n]) return;
+                    nameSeen[n] = true;
+                    names.push(n);
+                    const c = colorMap[(g.carModel || '').toUpperCase() + '||' + n.toUpperCase()];
+                    if (c && colorLabels.indexOf(c) < 0) colorLabels.push(c);
+                });
+            });
+            const preVals = g.members.map(function (j) { return Number(j.preMesUsedCount) || 0; }).filter(function (n) { return n > 0; });
+            const preSame = preVals.length <= 1 || preVals.every(function (n) { return n === preVals[0]; });
+            g.partNames = names;
+            g.colorLabels = colorLabels;
+            g.usedCount = g.members.reduce(function (s, j) { return s + (Number(j.usedCount) || 0); }, 0);
+            g.preMesUsedCount = preSame ? (preVals[0] || 0) : 0;
+            g.primaryId = g.members[0].id;
+            g.memberIds = g.members.map(function (j) { return j.id; });
+            return g;
+        });
+    }
+
     function _jigMatchesPart(jig, partName) {
         const target = String(partName || '').trim();
         return !!target && _jigPartNames(jig).includes(target);
@@ -468,6 +609,185 @@ var JigModule = (function () {
         return (jigs || []).find(j =>
             j.carModel === carModel && j.line === line && _jigMatchesPart(j, partName)
         );
+    }
+
+    function _jigMatchesWorkJob(jig, job) {
+        if (!jig || !job) return false;
+        if (_jigCarKey(jig) !== String(job.car || '').trim()) return false;
+        if (!_jigMatchesPart(jig, job.part)) return false;
+        if (!job.line) return true;
+        if ((jig.line || '') === job.line) return true;
+        const applied = Array.isArray(jig.appliedLines) ? jig.appliedLines : [];
+        return applied.some(function (line) { return _normalizeLine(line) === job.line; });
+    }
+
+    function _isPaintingLineValue(lineVal) {
+        const s = String(lineVal || '').replace(/\s+/g, '');
+        return /도장|PAINT/i.test(s);
+    }
+
+    function _todayPaintingJobs() {
+        const today = _today();
+        const jobs = [];
+        function pushJob(car, part, lineRaw) {
+            if (!car && !part) return;
+            jobs.push({
+                car: String(car || '').trim(),
+                part: String(part || '').trim(),
+                line: _normalizeLine(lineRaw)
+            });
+        }
+        (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).forEach(function (p) {
+            if (String(p.date || '').slice(0, 10) !== today) return;
+            if (!_isPaintingLineValue(p.line)) return;
+            pushJob(p.carModel, p.partName, p.line);
+        });
+        (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+            if (String(w.date || '').slice(0, 10) !== today) return;
+            pushJob(w.carModel, w.partName, w.line);
+        });
+        return jobs;
+    }
+
+    function _parseHmToMin(hm) {
+        const m = String(hm || '').match(/^(\d{1,2}):(\d{2})/);
+        if (!m) return -1;
+        return Number(m[1]) * 60 + Number(m[2]);
+    }
+
+    function _minToHm(min) {
+        const n = Math.max(0, Math.round(Number(min) || 0));
+        const h = Math.floor(n / 60);
+        const m = n % 60;
+        return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+    }
+
+    function _nowMin() {
+        const n = new Date();
+        return n.getHours() * 60 + n.getMinutes();
+    }
+
+    function _elapsedRatio(start, end, nowMin) {
+        if (!(start >= 0) || end <= start) return nowMin >= 0 ? 1 : 0;
+        if (nowMin <= start) return 0;
+        if (nowMin >= end) return 1;
+        return (nowMin - start) / (end - start);
+    }
+
+    function _planWindow(plan) {
+        const start = _parseHmToMin(plan && (plan.startTime || plan.slot));
+        let end = _parseHmToMin(plan && plan.endTime);
+        if (start < 0) return { start: -1, end: -1 };
+        if (end <= start) end = start + 30;
+        return { start: start, end: end };
+    }
+
+    function _sumHourlyPlanQty(plan) {
+        const hp = plan && plan.hourlyPlans;
+        if (!hp || typeof hp !== 'object') return 0;
+        return Object.keys(hp).reduce(function (s, k) { return s + (Number(hp[k]) || 0); }, 0);
+    }
+
+    function _cvtForPart(carModel, partName, jig) {
+        let cvt = _getProductCvt(carModel, partName);
+        if (cvt) return cvt;
+        const names = _jigPartNames(jig);
+        for (let i = 0; i < names.length; i++) {
+            cvt = _getProductCvt(carModel, names[i]);
+            if (cvt) return cvt;
+        }
+        return 0;
+    }
+
+    function _qtyToJigUse(qty, carModel, partName, line, jig) {
+        const q = Number(qty) || 0;
+        const cvt = _cvtForPart(carModel, partName, jig);
+        if (!line || !cvt || q <= 0) return 0;
+        return _calcUseCount(Math.ceil(q / cvt), line);
+    }
+
+    function _fmtJigUse(n) {
+        const x = Number(n) || 0;
+        if (x <= 0) return '0';
+        if (Math.abs(x - Math.round(x)) < 0.05) return _fmt(Math.round(x));
+        return String(Math.round(x * 10) / 10);
+    }
+
+    function _planHourSlices(plan, dayUse, nowMin) {
+        const qty = Number(plan.planQty) || _sumHourlyPlanQty(plan) || 0;
+        const hp = plan.hourlyPlans;
+        if (hp && typeof hp === 'object' && Object.keys(hp).length) {
+            const slots = Object.keys(hp).sort();
+            const totalQty = slots.reduce(function (s, k) { return s + (Number(hp[k]) || 0); }, 0) || 1;
+            return slots.map(function (slot) {
+                const q = Number(hp[slot]) || 0;
+                const start = _parseHmToMin(slot);
+                const end = start >= 0 ? start + 30 : -1;
+                const use = dayUse * (q / totalQty);
+                const ratio = start < 0 ? 1 : _elapsedRatio(start, end, nowMin);
+                return {
+                    slot: end >= 0 ? (slot + '~' + _minToHm(end)) : slot,
+                    qty: q,
+                    use: use,
+                    expected: use * ratio,
+                    reached: ratio >= 1
+                };
+            });
+        }
+        const w = _planWindow(plan);
+        if (w.start < 0) {
+            return [{ slot: '금일', qty: qty, use: dayUse, expected: dayUse, reached: true }];
+        }
+        const hours = [];
+        const span = w.end - w.start;
+        for (let t = w.start; t < w.end; t += 60) {
+            const end = Math.min(t + 60, w.end);
+            const share = (end - t) / span;
+            const ratio = _elapsedRatio(t, end, nowMin);
+            hours.push({
+                slot: _minToHm(t) + '~' + _minToHm(end),
+                qty: Math.round(qty * share),
+                use: dayUse * share,
+                expected: dayUse * share * ratio,
+                reached: ratio >= 1
+            });
+        }
+        return hours;
+    }
+
+    function _todayPlanForecastMap(jigs) {
+        const today = _today();
+        const nowMin = _nowMin();
+        const map = {};
+        function ensure(id) {
+            if (!map[id]) map[id] = { day: 0, now: 0, hours: [], hints: [] };
+            return map[id];
+        }
+        (Storage.getAll(DB.STORES.PRODUCTION_PLANS) || []).forEach(function (plan) {
+            if (String(plan.date || '').slice(0, 10) !== today) return;
+            if (!_isPaintingLineValue(plan.line)) return;
+            const line = _normalizeLine(plan.line);
+            const qty = Number(plan.planQty) || _sumHourlyPlanQty(plan);
+            if (!qty) return;
+            const jig = (jigs || []).find(function (j) {
+                return _jigMatchesWorkJob(j, { car: plan.carModel, part: plan.partName, line: line });
+            });
+            if (!jig) return;
+            const dayUse = _qtyToJigUse(qty, plan.carModel, plan.partName, line, jig);
+            if (!dayUse) return;
+            const hours = _planHourSlices(plan, dayUse, nowMin);
+            const w = _planWindow(plan);
+            const nowUse = w.start >= 0
+                ? dayUse * _elapsedRatio(w.start, w.end, nowMin)
+                : hours.reduce(function (s, h) { return s + (Number(h.expected) || 0); }, 0);
+            const rec = ensure(jig.id);
+            rec.day += dayUse;
+            rec.now += nowUse;
+            rec.hours = rec.hours.concat(hours);
+            const timeStr = w.start >= 0 ? (_minToHm(w.start) + '~' + _minToHm(w.end)) : '금일';
+            rec.hints.push(timeStr + ' 계획 ' + _fmt(qty) + 'EA → 지그 ' + _fmtJigUse(dayUse) + '회');
+        });
+        return map;
     }
 
     function _lifePct(j) {
@@ -522,9 +842,40 @@ var JigModule = (function () {
             if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
             preMesMap[log.jigId] = Number(log.useCount) || 0;
         });
+        const today = _today();
+        const todayMap = {};
+        const countedWorkIds = {};
+        logs.forEach(function (log) {
+            if (String(log.date || '').slice(0, 10) !== today) return;
+            if (_isResetWorkType(log.workType)) return;
+            if (log.source === 'pre_mes_baseline') return;
+            if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
+            todayMap[log.jigId] = (todayMap[log.jigId] || 0) + (Number(log.useCount) || 0);
+            if (log.paintingWorkId) countedWorkIds[log.paintingWorkId] = true;
+        });
+        (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+            if (String(w.date || '').slice(0, 10) !== today) return;
+            if (w.id && countedWorkIds[w.id]) return;
+            const line = _normalizeLine(w.line);
+            const jig = (jigs || []).find(function (j) {
+                return _jigMatchesWorkJob(j, { car: w.carModel, part: w.partName, line: line });
+            });
+            if (!jig) return;
+            const cvt = _getProductCvt(w.carModel, w.partName);
+            const inputQty = Number(w.inputQty) || 0;
+            if (!line || !cvt || !inputQty) return;
+            const spindle = Math.ceil(inputQty / cvt);
+            todayMap[jig.id] = (todayMap[jig.id] || 0) + _calcUseCount(spindle, line);
+        });
+        const planFc = _todayPlanForecastMap(jigs);
         return jigs.map(j => ({
             ...j,
             usedCount: countMap[j.id] || 0,
+            todayUsedCount: todayMap[j.id] || 0,
+            todayPlanUseDay: (planFc[j.id] && planFc[j.id].day) || 0,
+            todayPlanUseNow: (planFc[j.id] && planFc[j.id].now) || 0,
+            todayPlanHours: (planFc[j.id] && planFc[j.id].hours) || [],
+            todayPlanHint: (planFc[j.id] && planFc[j.id].hints && planFc[j.id].hints.join(' / ')) || '',
             preMesUsedCount: preMesMap[j.id] || 0,
             lastResetDate: lastResetMap[j.id] || null
         }));
@@ -573,6 +924,53 @@ var JigModule = (function () {
         return String(work.lotNo || '');
     }
 
+    function openTodayUseForecast(jigId) {
+        const jig = (_enrichedJigs() || []).find(function (j) { return j.id === jigId; });
+        if (!jig) {
+            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const actual = Number(jig.todayUsedCount) || 0;
+        const day = Number(jig.todayPlanUseDay) || 0;
+        const now = Number(jig.todayPlanUseNow) || 0;
+        const hours = Array.isArray(jig.todayPlanHours) ? jig.todayPlanHours : [];
+        const th = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;';
+        const td = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;white-space:nowrap;';
+        const rows = hours.length
+            ? hours.map(function (h) {
+                return '<tr>' +
+                    '<td style="' + td + '">' + _esc(h.slot || '-') + '</td>' +
+                    '<td style="' + td + 'text-align:right;">' + _fmt(h.qty || 0) + '</td>' +
+                    '<td style="' + td + 'text-align:right;font-weight:700;color:#c2410c;">' + _fmtJigUse(h.use) + '</td>' +
+                    '<td style="' + td + 'text-align:right;">' + _fmtJigUse(h.expected) + '</td>' +
+                    '<td style="' + td + 'text-align:center;">' + (h.reached ? '경과' : '대기') + '</td>' +
+                '</tr>';
+            }).join('')
+            : '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);">금일 도장 계획이 없거나 CVT가 없어 예측할 수 없습니다.</td></tr>';
+        const body =
+            '<div style="margin:0 0 12px;font-size:0.82rem;line-height:1.5;">' +
+                '<strong>' + _esc(jig.carModel || '-') + '</strong> · ' + _esc(jig.partName || '-') +
+                ' <span style="color:var(--text-muted);">(' + _esc(jig.line || '-') + ')</span>' +
+            '</div>' +
+            '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px;">' +
+                '<span style="padding:6px 10px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;font-size:0.78rem;font-weight:800;color:#c2410c;">실적 ' + _fmt(actual) + '회</span>' +
+                '<span style="padding:6px 10px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;font-size:0.78rem;font-weight:800;color:#9a3412;">현재예측 ' + _fmtJigUse(now) + '회</span>' +
+                '<span style="padding:6px 10px;border-radius:8px;background:#fff7ed;border:1px solid #fdba74;font-size:0.78rem;font-weight:800;color:#9a3412;">금일계획 ' + _fmtJigUse(day) + '회</span>' +
+            '</div>' +
+            (jig.todayPlanHint ? '<div style="font-size:0.74rem;color:var(--text-muted);margin:0 0 10px;">' + _esc(jig.todayPlanHint) + '</div>' : '') +
+            '<div style="font-size:0.72rem;color:var(--text-muted);margin:0 0 8px;">생산계획 수량 ÷ CVT → 스핀들, 라인 1CYCLE로 지그 횟수를 환산한 뒤 계획 시간에 비례해 나눕니다.</div>' +
+            '<div class="data-table-wrapper" style="overflow-x:auto;">' +
+            '<table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
+                '<thead><tr>' +
+                    '<th style="' + th + '">시간</th>' +
+                    '<th style="' + th + '">계획수량</th>' +
+                    '<th style="' + th + '">지그횟수</th>' +
+                    '<th style="' + th + '">현재까지</th>' +
+                    '<th style="' + th + '">상태</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table></div>';
+        UIUtils.showModal('금일 사용 예측', body, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
+    }
+
     function openUsageHistory(jigId) {
         const jig = Storage.getById(STORE, jigId);
         if (!jig) {
@@ -590,7 +988,7 @@ var JigModule = (function () {
                 '<div style="font-size:0.82rem;font-weight:700;color:#ea580c;margin-bottom:4px;">EMS 구축 전 누적횟수 (관리자)</div>' +
                 '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;">MES 구축 전에 사용한 횟수를 입력합니다. 구축 이후 도장 작업일보 횟수에 더해 현재 실적과 맞춥니다. 0이면 구축 전 분을 제거합니다.</div>' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                    '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + preMes + '" ' +
+                    '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + (preMes || '') + '" ' +
                         'style="width:auto;min-width:7em;text-align:right;">' +
                     '<span style="font-size:0.8rem;color:var(--text-secondary);">회</span>' +
                     '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.savePreMesUsedCount(\'' + _js(jigId) + '\')">저장</button>' +
@@ -686,9 +1084,10 @@ var JigModule = (function () {
             return;
         }
         const raw = document.getElementById('jigPreMesUsedCount');
-        const qty = parseInt(raw && raw.value, 10);
+        const rawVal = String((raw && raw.value) || '').trim();
+        const qty = rawVal === '' ? 0 : parseInt(rawVal, 10);
         if (!Number.isFinite(qty) || qty < 0) {
-            UIUtils.toast('누적횟수를 0 이상으로 입력하세요.', 'warning');
+            UIUtils.toast('누적횟수를 숫자로 입력하세요. 공란은 0으로 저장됩니다.', 'warning');
             return;
         }
         const logs = Storage.getAll(LOG_STORE) || [];
@@ -738,10 +1137,14 @@ var JigModule = (function () {
         const jigs = _enrichedJigs()
             .filter(function (j) { return !j.lastResetDate; })
             .sort(function (a, b) {
-                return (a.carModel || '').localeCompare(b.carModel || '', 'ko')
+                const ai = CAR_ORDER.indexOf(_jigCarKey(a));
+                const bi = CAR_ORDER.indexOf(_jigCarKey(b));
+                if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+                return (_jigCarKey(a) || '').localeCompare(_jigCarKey(b) || '', 'ko')
                     || (a.partName || '').localeCompare(b.partName || '', 'ko')
                     || (a.line || '').localeCompare(b.line || '');
             });
+        _preMesBulkCarFilter = '';
         UIUtils.showModal(
             '구축 전 누적 일괄입력',
             _renderPreMesBaselineBulkBody(jigs),
@@ -755,31 +1158,49 @@ var JigModule = (function () {
         const td = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;';
         const note = '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);font-size:0.78rem;color:var(--text-secondary);">' +
             'MES 구축 이전부터 사용해 온 품목의 누적횟수를 입력합니다. 입력한 값은 MES 이후 실적에 더해집니다.<br>' +
+            '컬러만 다른 품목(6PS · BC5 등)은 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0으로 저장됩니다.<br>' +
             '<strong style="color:#ea580c;">조치(교체/초기화) 이력이 있는 품목은 이미 초기화 시점 이후 실적만 반영되어 있어 아래 목록에서 자동 제외됩니다.</strong>' +
             '</div>';
         if (!jigs.length) {
             return note + '<div style="padding:24px;text-align:center;color:var(--text-muted);">입력이 필요한 품목이 없습니다. (전체 품목이 조치 이력을 보유 중)</div>';
         }
-        const rows = jigs.map(function (j) {
-            const rowId = 'bulkPreMes_' + j.id;
-            return '<tr>' +
-                '<td style="' + td + 'text-align:center;font-weight:700;color:var(--accent-blue);">' + _esc(j.carModel || '-') + '</td>' +
-                '<td style="' + td + '">' + _esc(j.partName || '-') + '</td>' +
-                '<td style="' + td + 'text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(j.line || '-') + '</span></td>' +
-                '<td style="' + td + 'text-align:right;">' + _fmt(j.usedCount || 0) + '</td>' +
-                '<td style="' + td + 'text-align:center;">' +
-                    '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + (j.preMesUsedCount || 0) + '" ' +
-                        'style="width:7em;text-align:right;display:inline-block;">' +
+        const groups = _groupJigsByFamily(jigs);
+        const rows = groups.map(function (g) {
+            const rowId = 'bulkPreMes_' + g.primaryId;
+            const car = _jigCarKey(g);
+            const extra = g.colorLabels.length
+                ? g.colorLabels.join(' · ')
+                : (g.partNames.length > 1 ? g.partNames.slice(1).join(', ') : '');
+            const partTitle = g.partNames.join(' / ');
+            return '<tr class="pre-mes-bulk-row" data-car="' + _esc(car) + '" data-jig-ids="' + _esc(g.memberIds.join(',')) + '">' +
+                '<td style="' + td + 'text-align:center;font-weight:700;color:var(--accent-blue);white-space:nowrap;">' + _esc(g.carModel || '-') + '</td>' +
+                '<td style="' + td + 'white-space:nowrap;" title="' + _esc(partTitle) + '">' +
+                    _esc(g.familyName || g.partNames[0] || '-') +
+                    (extra ? '<span style="margin-left:6px;font-size:0.72rem;font-weight:700;color:var(--accent-blue);">' + _esc(extra) + '</span>' : '') +
                 '</td>' +
-                '<td style="' + td + 'text-align:center;">' +
-                    '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.saveBulkPreMesUsedCount(\'' + _js(j.id) + '\')">저장</button>' +
+                '<td style="' + td + 'text-align:center;white-space:nowrap;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(g.line || '-') + '</span></td>' +
+                '<td style="' + td + 'text-align:right;white-space:nowrap;">' + _fmt(g.usedCount || 0) + '</td>' +
+                '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
+                    '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + (g.preMesUsedCount || '') + '" ' +
+                        'style="width:auto;min-width:7em;text-align:right;display:inline-block;">' +
+                '</td>' +
+                '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
+                    '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.saveBulkPreMesUsedCount(\'' + _js(g.primaryId) + '\')">저장</button>' +
                     '<span id="' + rowId + '_status" style="margin-left:6px;font-size:0.72rem;color:var(--accent-green);"></span>' +
                 '</td>' +
             '</tr>';
         }).join('');
+        const cars = _sortedUniqueCars(groups);
+        const countByCar = {};
+        groups.forEach(function (g) {
+            const car = _jigCarKey(g);
+            if (!car) return;
+            countByCar[car] = (countByCar[car] || 0) + 1;
+        });
         return note +
+            '<div id="preMesBulkCarBar">' + _carFilterBar(_preMesBulkCarFilter, 'filterPreMesBulkCar', cars, countByCar, groups.length) + '</div>' +
             '<div style="max-height:60vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">' +
-            '<table style="width:100%;border-collapse:collapse;">' +
+            '<table id="preMesBulkTable" class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
                 '<thead><tr style="background:var(--bg-secondary);">' +
                     '<th style="' + th + '">차종</th>' +
                     '<th style="' + th + '">제품명</th>' +
@@ -788,33 +1209,41 @@ var JigModule = (function () {
                     '<th style="' + th + '">구축 전 누적</th>' +
                     '<th style="' + th + '">저장</th>' +
                 '</tr></thead>' +
-                '<tbody>' + rows + '</tbody>' +
+                '<tbody>' + rows +
+                    '<tr id="preMesBulkEmptyRow" style="display:none;"><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">선택한 차종의 품목이 없습니다.</td></tr>' +
+                '</tbody>' +
             '</table></div>';
     }
 
-    async function saveBulkPreMesUsedCount(jigId) {
-        if (!_isAdminUser()) {
-            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
-            return;
+    function filterPreMesBulkCar(car) {
+        _preMesBulkCarFilter = String(car || '').trim();
+        const rows = document.querySelectorAll('#preMesBulkTable .pre-mes-bulk-row');
+        const countByCar = {};
+        let total = 0;
+        let visible = 0;
+        rows.forEach(function (tr) {
+            const c = tr.getAttribute('data-car') || '';
+            total += 1;
+            if (c) countByCar[c] = (countByCar[c] || 0) + 1;
+            const match = !_preMesBulkCarFilter || c === _preMesBulkCarFilter;
+            tr.style.display = match ? '' : 'none';
+            if (match) visible += 1;
+        });
+        const empty = document.getElementById('preMesBulkEmptyRow');
+        if (empty) empty.style.display = visible ? 'none' : '';
+        const bar = document.getElementById('preMesBulkCarBar');
+        if (bar) {
+            const cars = _sortedUniqueCars(Array.prototype.map.call(rows, function (tr) {
+                return { carModel: tr.getAttribute('data-car') || '' };
+            }));
+            bar.innerHTML = _carFilterBar(_preMesBulkCarFilter, 'filterPreMesBulkCar', cars, countByCar, total);
         }
-        const jig = Storage.getById(STORE, jigId);
-        if (!jig) {
-            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
-            return;
-        }
-        const raw = document.getElementById('bulkPreMes_' + jigId);
-        const qty = parseInt(raw && raw.value, 10);
-        if (!Number.isFinite(qty) || qty < 0) {
-            UIUtils.toast('누적횟수를 0 이상으로 입력하세요.', 'warning');
-            return;
-        }
+    }
+
+    async function _upsertPreMesBaseline(jigId, qty, actorWorker) {
         const logs = Storage.getAll(LOG_STORE) || [];
         const replacementDate = _latestReplacementDate(logs, jigId);
         const existing = _preMesBaselineLog(jigId);
-        const actor = _currentUser();
-        const worker = actor
-            ? String(actor.displayName || actor.username || actor.id || '')
-            : '';
         const date = replacementDate || _today();
         const payload = {
             jigId: jigId,
@@ -823,15 +1252,47 @@ var JigModule = (function () {
             useCount: qty,
             source: 'pre_mes_baseline',
             note: 'EMS 구축 전 실적 매칭',
-            worker: worker
+            worker: actorWorker || ''
         };
+        if (qty === 0) {
+            if (existing) await Storage.remove(LOG_STORE, existing.id);
+            return;
+        }
+        if (existing) {
+            await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, payload));
+            return;
+        }
+        await Storage.add(LOG_STORE, payload);
+    }
+
+    async function saveBulkPreMesUsedCount(jigId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        const raw = document.getElementById('bulkPreMes_' + jigId);
+        const tr = raw && raw.closest ? raw.closest('tr') : null;
+        const ids = String((tr && tr.getAttribute('data-jig-ids')) || jigId)
+            .split(',')
+            .map(function (s) { return s.trim(); })
+            .filter(Boolean);
+        if (!ids.length) {
+            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const rawVal = String((raw && raw.value) || '').trim();
+        const qty = rawVal === '' ? 0 : parseInt(rawVal, 10);
+        if (!Number.isFinite(qty) || qty < 0) {
+            UIUtils.toast('누적횟수를 숫자로 입력하세요. 공란은 0으로 저장됩니다.', 'warning');
+            return;
+        }
+        const actor = _currentUser();
+        const worker = actor
+            ? String(actor.displayName || actor.username || actor.id || '')
+            : '';
         try {
-            if (qty === 0) {
-                if (existing) await Storage.remove(LOG_STORE, existing.id);
-            } else if (existing) {
-                await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, payload));
-            } else {
-                await Storage.add(LOG_STORE, payload);
+            for (let i = 0; i < ids.length; i++) {
+                await _upsertPreMesBaseline(ids[i], qty, worker);
             }
         } catch (e) {
             UIUtils.toast('저장에 실패했습니다.', 'error');
@@ -839,26 +1300,27 @@ var JigModule = (function () {
         }
         const statusEl = document.getElementById('bulkPreMes_' + jigId + '_status');
         if (statusEl) {
-            statusEl.textContent = '저장됨';
+            statusEl.textContent = ids.length > 1 ? '저장됨 (' + ids.length + '품목)' : '저장됨';
             setTimeout(function () { if (statusEl) statusEl.textContent = ''; }, 2000);
         }
         loadAll();
     }
 
     function loadAll() {
-        const enriched = _enrichedJigs();
-        renderBlocks(_applyJigFilters(enriched));
+        renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
         _populateLogFilter(Storage.getAll(STORE) || []);
         renderLog();
     }
 
-    function _applyJigFilters(jigs) {
+    function _applyJigFilters(jigs, opts) {
+        const skipCar = !!(opts && opts.skipCar);
         const itemTypeMap = _productItemTypeMap();
         return (jigs || []).filter(j => {
             if (!_showAsItems && _isAsItemType(_jigItemType(j, itemTypeMap))) return false;
             if (_currentLine && j.line !== _currentLine) return false;
             if (_currentStatus === 'warning') return _lifePct(j) >= 80 && _lifePct(j) < 100;
             if (_currentStatus === 'exceeded') return _lifePct(j) >= 100;
+            if (!skipCar && _lifeCarFilter && _jigCarKey(j) !== _lifeCarFilter) return false;
             return true;
         });
     }
@@ -878,131 +1340,266 @@ var JigModule = (function () {
     function filterLine(line) {
         _currentLine = line;
         _currentStatus = '';
-        const enriched = _enrichedJigs();
         _updateFilterButtons();
-        renderBlocks(_applyJigFilters(enriched));
+        renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
     }
 
     function filterStatus(status) {
         _currentStatus = _currentStatus === status ? '' : status;
         _currentLine = '';
-        const enriched = _enrichedJigs();
         _updateFilterButtons();
-        renderBlocks(_applyJigFilters(enriched));
+        renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
     }
 
-    function renderBlocks(jigs) {
-        const el = document.getElementById('jigBlocks');
-        if (!el) return;
-        if (!jigs.length) {
-            el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text-muted);">
-                <span class="material-symbols-outlined" style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">build</span>
-                등록된 JIG가 없습니다. 단건 등록으로 도장 JIG를 등록하세요.
-            </div>`;
-            return;
-        }
+    function filterLifeCar(car) {
+        _lifeCarFilter = String(car || '').trim();
+        renderBlocks(_applyJigFilters(_enrichedJigs(), { skipCar: true }));
+    }
 
-        const groups = {};
-        jigs.forEach(j => {
-            const car = j.carModel || '차종 미지정';
-            if (!groups[car]) groups[car] = [];
-            groups[car].push(j);
+    function _sortLifeJigs(jigs, opts) {
+        return (jigs || []).slice().sort(function (a, b) {
+            if (opts && opts.sortByPct) {
+                const dp = _lifePct(b) - _lifePct(a);
+                if (dp) return dp;
+            }
+            const ai = CAR_ORDER.indexOf(_jigCarKey(a));
+            const bi = CAR_ORDER.indexOf(_jigCarKey(b));
+            if (ai !== bi) return (ai < 0 ? 999 : ai) - (bi < 0 ? 999 : bi);
+            return (_jigCarKey(a) || '').localeCompare(_jigCarKey(b) || '', 'ko')
+                || (a.partName || '').localeCompare(b.partName || '', 'ko')
+                || (a.line || '').localeCompare(b.line || '');
         });
+    }
 
-        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
-        const orderingByJigId = {};
-        orderings.forEach(o => {
-            if (o.jigId) orderingByJigId[o.jigId] = o;
-        });
+    function _needsLifeAction(j) {
+        return _lifePct(j) >= 90;
+    }
 
+    function _lifePinSection(cfg, jigs, orderingByJigId, rowOpts) {
+        if (!jigs.length) return '';
+        return '<div class="jig-block" style="margin-bottom:16px;border:1px solid ' + cfg.border + ';border-radius:12px;overflow:hidden;background:#fff;">' +
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:10px 14px;background:' + cfg.bg + ';border-bottom:1px solid ' + cfg.border + ';">' +
+                '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
+                    '<span class="material-symbols-outlined" style="font-size:18px;color:' + cfg.color + ';">' + cfg.icon + '</span>' +
+                    '<strong style="font-size:0.92rem;color:' + cfg.color + ';">' + cfg.title + '</strong>' +
+                    '<span style="font-size:0.74rem;font-weight:700;color:' + cfg.color + ';">' + jigs.length + '건</span>' +
+                    (cfg.actionHtml || '') +
+                '</div>' +
+                '<span style="font-size:0.72rem;font-weight:700;color:' + cfg.hintColor + ';">' + cfg.hint + '</span>' +
+            '</div>' +
+            _lifeTableRows(jigs, orderingByJigId, rowOpts) +
+        '</div>';
+    }
+
+    function _lifeTableRows(jigs, orderingByJigId, opts) {
+        const showTodayBadge = !!(opts && opts.showTodayBadge);
+        const showActionBadge = !!(opts && opts.showActionBadge);
+        const todayIdMap = (opts && opts.todayIdMap) || {};
         const thStyle = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:2px solid var(--border-color);white-space:nowrap;';
-
-        const sorted = jigs.slice().sort((a, b) =>
-            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
-            (a.partName || '').localeCompare(b.partName || '', 'ko') ||
-            (a.line || '').localeCompare(b.line || '')
-        );
-
+        const sorted = _sortLifeJigs(jigs, opts);
         let prevCar = null;
-        const rows = sorted.map(j => {
+        const rows = sorted.map(function (j, idx) {
             const pct = Math.min(100, _lifePct(j));
             const barColor = pct >= 100 ? 'var(--accent-red)' : pct >= 80 ? 'var(--accent-orange)' : 'var(--accent-green)';
             const status = pct >= 100 ? ['수명초과', 'var(--accent-red)'] : pct >= 80 ? ['임박', 'var(--accent-orange)'] : ['정상', 'var(--accent-green)'];
-            const aliases = (j.partAliases || []).filter(p => p !== j.partName);
-            const car = j.carModel || '차종 미지정';
+            const aliases = (j.partAliases || []).filter(function (p) { return p !== j.partName; });
+            const car = _jigCarKey(j) || '차종 미지정';
             const td  = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.82rem;';
             const tdn = td + 'white-space:nowrap;';
             const isNewCar = car !== prevCar;
             prevCar = car;
             const partTitle = (j.partName || '-') + (aliases.length ? ' / 병합: ' + aliases.join(', ') : '');
             const carCell = isNewCar
-                ? `<td class="jig-col-short" style="${tdn}text-align:center;font-weight:700;color:var(--accent-blue);border-top:${isNewCar && sorted.indexOf(j) > 0 ? '2px solid var(--border-color)' : 'none'};">${_esc(car)}</td>`
-                : `<td class="jig-col-short" style="${td}text-align:center;color:var(--text-muted);font-size:0.75rem;"></td>`;
-            return `
-            <tr${isNewCar && sorted.indexOf(j) > 0 ? ' style="border-top:2px solid var(--border-color);"' : ''}>
-                ${carCell}
-                <td class="jig-col-part" style="${td}">
-                    <span class="jig-part-name-text" title="${_esc(partTitle)}">${_esc(j.partName || '-')}</span>
-                    ${aliases.length ? `<span class="jig-part-alias">병합: ${aliases.map(_esc).join(', ')}</span>` : ''}
-                </td>
-                <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">${_esc(j.line || '-')}</span></td>
-                <td class="jig-col-short" style="${tdn}text-align:center;">${j.maxCount ? _fmt(j.maxCount) : '-'}</td>
-                <td class="jig-col-short" style="${tdn}text-align:center;">
-                    <button type="button" class="btn btn-sm btn-outline"
-                        title="${_isAdminUser() ? '이력 보기 · EMS 구축 전 횟수 입력' : '생산일보 이력 보기'}${(j.preMesUsedCount || 0) ? ' (구축 전 ' + _fmt(j.preMesUsedCount) + '회 포함)' : ''}"
-                        onclick="JigModule.openUsageHistory('${_js(j.id)}')"
-                        style="padding:1px 8px;font-size:0.82rem;font-weight:700;color:var(--accent-blue);border-color:rgba(37,99,235,.35);">
-                        ${_fmt(j.usedCount || 0)}
-                    </button>
-                </td>
-                <td class="jig-col-progress" style="${td}">
-                    <div class="jig-life-bar-wrap" title="90% 도달 시 조치 준비">
-                        <div class="jig-life-bar">
-                            <div style="width:${pct}%;background:${barColor};height:100%;border-radius:4px;"></div>
-                            <div style="position:absolute;left:90%;top:0;bottom:0;width:2px;background:var(--accent-red);box-shadow:0 0 0 1px rgba(255,255,255,.8);"></div>
-                        </div>
-                        <span style="font-size:0.72rem;font-weight:700;color:${barColor};">${pct.toFixed(0)}%</span>
-                    </div>
-                </td>
-                <td class="jig-col-short" style="${tdn}text-align:center;font-size:0.78rem;color:var(--text-muted);">
-                    ${j.lastResetDate || j.registDate || '-'}
-                    ${orderingByJigId[j.id] ? `<span style="margin-left:4px;padding:1px 5px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.68rem;font-weight:600;">발주 ${_esc(orderingByJigId[j.id].orderDate || '-')}</span>` : ''}
-                </td>
-                <td class="jig-col-short" style="${tdn}text-align:center;"><span style="background:${status[1]};color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">${status[0]}</span></td>
-                <td class="jig-col-short" style="${tdn}text-align:center;">
-                    <button class="btn btn-sm btn-outline" onclick="JigModule.resetCount('${_js(j.id)}')" style="padding:2px 8px;font-size:0.78rem;" title="조치 초기화">
-                        조치
-                    </button>
-                </td>
-            </tr>`;
+                ? '<td class="jig-col-short" style="' + tdn + 'text-align:center;font-weight:700;color:var(--accent-blue);">' + _esc(car) + '</td>'
+                : '<td class="jig-col-short" style="' + td + 'text-align:center;color:var(--text-muted);font-size:0.75rem;"></td>';
+            const todayUsed = Number(j.todayUsedCount) || 0;
+            const planDay = Number(j.todayPlanUseDay) || 0;
+            const planNow = Number(j.todayPlanUseNow) || 0;
+            const showTodayUse = !!(showTodayBadge || todayIdMap[j.id] || todayUsed > 0 || planDay > 0);
+            const todayUsedColor = todayUsed > 0 ? '#ea580c' : 'var(--text-primary)';
+            const todayUseTitle = '실적 ' + _fmt(todayUsed) + '회'
+                + (planDay > 0 ? (' · 현재시각 예측 ' + _fmtJigUse(planNow) + '회 · 금일계획 ' + _fmtJigUse(planDay) + '회') : '')
+                + (j.todayPlanHint ? (' / ' + j.todayPlanHint) : '');
+            const todayUseCell = showTodayUse
+                ? ('<td class="jig-col-short" style="' + tdn + 'text-align:center;cursor:pointer;" title="' + _esc(todayUseTitle) + '"'
+                    + ' onclick="JigModule.openTodayUseForecast(\'' + _js(j.id) + '\')">'
+                    + '<div style="font-weight:800;color:' + todayUsedColor + ';white-space:nowrap;">실적 ' + _fmt(todayUsed) + '</div>'
+                    + (planDay > 0
+                        ? '<div style="font-size:0.66rem;font-weight:700;color:#c2410c;line-height:1.25;white-space:nowrap;">현재 ' + _fmtJigUse(planNow) + ' · 계획 ' + _fmtJigUse(planDay) + '</div>'
+                        : '')
+                    + '</td>')
+                : ('<td class="jig-col-short" style="' + tdn + 'text-align:center;color:var(--text-muted);">-</td>');
+            const todayBadge = (showTodayBadge || todayIdMap[j.id])
+                ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#c2410c;border:1px solid #fdba74;font-size:0.66rem;font-weight:800;vertical-align:middle;">금일</span>'
+                : '';
+            const actionBadge = showActionBadge
+                ? (pct >= 100
+                    ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#fef2f2;color:#b91c1c;border:1px solid #fecaca;font-size:0.66rem;font-weight:800;vertical-align:middle;">수명초과</span>'
+                    : '<span style="display:inline-block;margin-left:6px;padding:1px 6px;border-radius:999px;background:#fff7ed;color:#c2410c;border:1px solid #fdba74;font-size:0.66rem;font-weight:800;vertical-align:middle;">조치 90%</span>')
+                : '';
+            return '<tr' + (isNewCar && idx > 0 ? ' style="border-top:2px solid var(--border-color);"' : '') + '>' +
+                carCell +
+                '<td class="jig-col-part" style="' + td + '">' +
+                    '<span class="jig-part-name-text" title="' + _esc(partTitle) + '">' + _esc(j.partName || '-') + '</span>' +
+                    todayBadge + actionBadge +
+                    (aliases.length ? '<span class="jig-part-alias">병합: ' + aliases.map(_esc).join(', ') + '</span>' : '') +
+                '</td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(j.line || '-') + '</span></td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' + (j.maxCount ? _fmt(j.maxCount) : '-') + '</td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' +
+                    '<button type="button" class="btn btn-sm btn-outline"' +
+                    ' title="' + (_isAdminUser() ? '이력 보기 · EMS 구축 전 횟수 입력' : '생산일보 이력 보기') + ((j.preMesUsedCount || 0) ? ' (구축 전 ' + _fmt(j.preMesUsedCount) + '회 포함)' : '') + '"' +
+                    ' onclick="JigModule.openUsageHistory(\'' + _js(j.id) + '\')"' +
+                    ' style="padding:1px 8px;font-size:0.82rem;font-weight:700;color:var(--accent-blue);border-color:rgba(37,99,235,.35);">' +
+                    _fmt(j.usedCount || 0) +
+                    '</button>' +
+                '</td>' +
+                todayUseCell +
+                '<td class="jig-col-progress" style="' + td + '">' +
+                    '<div class="jig-life-bar-wrap" title="90% 도달 시 조치 준비">' +
+                        '<div class="jig-life-bar">' +
+                            '<div style="width:' + pct + '%;background:' + barColor + ';height:100%;border-radius:4px;"></div>' +
+                            '<div style="position:absolute;left:90%;top:0;bottom:0;width:2px;background:var(--accent-red);box-shadow:0 0 0 1px rgba(255,255,255,.8);"></div>' +
+                        '</div>' +
+                        '<span style="font-size:0.72rem;font-weight:700;color:' + barColor + ';">' + pct.toFixed(0) + '%</span>' +
+                    '</div>' +
+                '</td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;font-size:0.78rem;color:var(--text-muted);">' +
+                    (j.lastResetDate || j.registDate || '-') +
+                    (orderingByJigId[j.id] ? '<span style="margin-left:4px;padding:1px 5px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.68rem;font-weight:600;">발주 ' + _esc(orderingByJigId[j.id].orderDate || '-') + '</span>' : '') +
+                '</td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;"><span style="background:' + status[1] + ';color:#fff;padding:1px 7px;border-radius:4px;font-size:0.68rem;">' + status[0] + '</span></td>' +
+                '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' +
+                    '<button class="btn btn-sm btn-outline" onclick="JigModule.resetCount(\'' + _js(j.id) + '\')" style="padding:2px 8px;font-size:0.78rem;" title="조치 초기화">조치</button>' +
+                '</td>' +
+            '</tr>';
         }).join('');
+        return '<div class="jig-table-scroll"><table class="jig-life-table">' +
+            '<thead><tr style="background:var(--bg-secondary);">' +
+            '<th class="jig-col-short" style="' + thStyle + '">차종</th>' +
+            '<th class="jig-col-part" style="' + thStyle + '">제품명</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">라인</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">수명횟수</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">누적횟수</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">금일사용</th>' +
+            '<th class="jig-col-progress" style="' + thStyle + '">수명진행률</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">이전교체일</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">상태</th>' +
+            '<th class="jig-col-short" style="' + thStyle + '">수명조치</th>' +
+            '</tr></thead><tbody>' + (rows || '<tr><td colspan="10" style="text-align:center;padding:24px;color:var(--text-muted);">해당하는 지그가 없습니다.</td></tr>') +
+            '</tbody></table></div>';
+    }
 
-        el.innerHTML = `
-        <div class="jig-block">
-            <div class="jig-table-scroll">
-            <table class="jig-life-table">
-                <thead><tr style="background:var(--bg-secondary);">
-                    <th class="jig-col-short" style="${thStyle}">차종</th>
-                    <th class="jig-col-part" style="${thStyle}">제품명</th>
-                    <th class="jig-col-short" style="${thStyle}">라인</th>
-                    <th class="jig-col-short" style="${thStyle}">수명횟수</th>
-                    <th class="jig-col-short" style="${thStyle}">누적횟수</th>
-                    <th class="jig-col-progress" style="${thStyle}">수명진행률</th>
-                    <th class="jig-col-short" style="${thStyle}">이전교체일</th>
-                    <th class="jig-col-short" style="${thStyle}">상태</th>
-                    <th class="jig-col-short" style="${thStyle}">수명조치</th>
-                </tr></thead>
-                <tbody>${rows}</tbody>
-            </table>
-            </div>
-        </div>`;
+    function renderBlocks(jigs) {
+        const el = document.getElementById('jigBlocks');
+        if (!el) return;
+        const pool = jigs || [];
+        if (!pool.length) {
+            el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text-muted);">
+                <span class="material-symbols-outlined" style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">build</span>
+                등록된 JIG가 없습니다. 단건 등록으로 도장 JIG를 등록하세요.
+            </div>`;
+            _refreshAsShowCount();
+            return;
+        }
+
+        const cars = _sortedUniqueCars(pool);
+        const countByCar = {};
+        pool.forEach(function (j) {
+            const car = _jigCarKey(j);
+            if (!car) return;
+            countByCar[car] = (countByCar[car] || 0) + 1;
+        });
+        if (_lifeCarFilter && cars.indexOf(_lifeCarFilter) < 0) {
+            cars.push(_lifeCarFilter);
+            if (countByCar[_lifeCarFilter] == null) countByCar[_lifeCarFilter] = 0;
+        }
+        const filtered = pool.filter(function (j) {
+            return !_lifeCarFilter || _jigCarKey(j) === _lifeCarFilter;
+        });
+        const todayJobs = _todayPaintingJobs();
+        const todayAll = filtered.filter(function (j) {
+            return todayJobs.some(function (job) { return _jigMatchesWorkJob(j, job); });
+        });
+        const todayAllIds = {};
+        todayAll.forEach(function (j) { todayAllIds[j.id] = true; });
+        const actionJigs = filtered.filter(_needsLifeAction);
+        const actionIds = {};
+        actionJigs.forEach(function (j) { actionIds[j.id] = true; });
+        const todayJigs = todayAll.filter(function (j) { return !actionIds[j.id]; });
+        const rest = filtered.filter(function (j) { return !actionIds[j.id] && !todayAllIds[j.id]; });
+
+        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
+        const orderingByJigId = {};
+        orderings.forEach(function (o) {
+            if (o.jigId) orderingByJigId[o.jigId] = o;
+        });
+
+        const actionHtml = _lifePinSection({
+            title: '조치 필요 (90% 사용)',
+            icon: 'warning',
+            color: '#b91c1c',
+            hintColor: '#9f1239',
+            border: '#fecaca',
+            bg: '#fef2f2',
+            hint: '조치가 다가옵니다. JIG 발주가 필요합니다.',
+            actionHtml: '<button type="button" class="btn btn-sm btn-outline" onclick="Router.navigate(\'jig-ordering\')" style="padding:2px 8px;font-size:0.72rem;font-weight:700;border-color:#fecaca;color:#b91c1c;">발주 관리</button>'
+        }, actionJigs, orderingByJigId, { showActionBadge: true, todayIdMap: todayAllIds, sortByPct: true });
+
+        const todayHtml = _lifePinSection({
+            title: '금일 작업 품목 지그',
+            icon: 'today',
+            color: '#c2410c',
+            hintColor: '#9a3412',
+            border: '#fdba74',
+            bg: '#fff7ed',
+            hint: '금일사용 = 실적 / 현재시각 예측 · 금일계획 (계획 시간 비례)'
+        }, todayJigs, orderingByJigId, { showTodayBadge: true });
+
+        const restTitle = (actionJigs.length || todayJigs.length)
+            ? '<div style="display:flex;align-items:center;gap:8px;margin:0 0 8px;">' +
+                '<strong style="font-size:0.88rem;">전체 지그</strong>' +
+                '<span style="font-size:0.74rem;color:var(--text-muted);">' + rest.length + '건</span>' +
+              '</div>'
+            : '';
+
+        let bodyHtml = '';
+        if (!filtered.length) {
+            bodyHtml = '<div style="text-align:center;padding:36px;color:var(--text-muted);">선택한 차종의 지그가 없습니다.</div>';
+        } else {
+            bodyHtml = actionHtml + todayHtml;
+            if (rest.length) {
+                bodyHtml += '<div class="jig-block">' + restTitle + _lifeTableRows(rest, orderingByJigId, { showTodayBadge: false }) + '</div>';
+            }
+        }
+
+        el.innerHTML =
+            _carFilterBar(_lifeCarFilter, 'filterLifeCar', cars, countByCar, pool.length) +
+            bodyHtml;
         _bindJigLifeFit();
         _scheduleFitJigLifePartNames();
         _refreshAsShowCount();
     }
 
+    function _lifeTableAvailWidth(wrap) {
+        const page = wrap.closest('.jig-page') || document.getElementById('contentArea');
+        const block = wrap.closest('.jig-block');
+        const pageW = page ? Math.floor(page.clientWidth) : 0;
+        const blockW = block ? Math.floor(block.clientWidth) : 0;
+        const wrapW = Math.floor(wrap.clientWidth || 0);
+        const vals = [pageW, blockW, wrapW].filter(function (n) {
+            if (n <= 40) return false;
+            if (pageW && n > pageW + 2) return false;
+            return true;
+        });
+        return vals.length ? Math.min.apply(null, vals) : Math.max(320, pageW || wrapW || 800);
+    }
+
     function _fitJigLifePartNames() {
-        const table = document.querySelector('#jigBlocks .jig-life-table');
+        document.querySelectorAll('#jigBlocks .jig-life-table').forEach(_fitOneJigLifeTable);
+    }
+
+    function _fitOneJigLifeTable(table) {
         if (!table) return;
         const wrap = table.closest('.jig-table-scroll');
         if (!wrap) return;
@@ -1014,8 +1611,11 @@ var JigModule = (function () {
         });
         const oldGroup = table.querySelector('colgroup');
         if (oldGroup) oldGroup.remove();
+
+        const avail = _lifeTableAvailWidth(wrap);
         table.style.tableLayout = 'auto';
-        table.style.width = 'max-content';
+        table.style.width = 'auto';
+        table.style.maxWidth = 'none';
 
         const row = (table.tHead && table.tHead.rows[0]) || (table.tBodies[0] && table.tBodies[0].rows[0]);
         if (!row) return;
@@ -1029,7 +1629,6 @@ var JigModule = (function () {
             (parseFloat(window.getComputedStyle(partSample).paddingLeft) || 0) +
             (parseFloat(window.getComputedStyle(partSample).paddingRight) || 0)
         ) : 16;
-        const avail = wrap.clientWidth;
         const colWidths = Array.from(row.cells).map(function (cell) {
             return cell.getBoundingClientRect().width;
         });
@@ -1040,15 +1639,25 @@ var JigModule = (function () {
             }
         });
 
-        const minProgress = Math.max(260, Math.round(avail * 0.38));
-        const maxPart = Math.min(Math.round(avail * 0.28), Math.max(160, avail - otherW - minProgress));
+        const minProgress = 72;
+        const minPart = 88;
         let partW = Math.ceil(nameW + pad + 2);
-        partW = Math.min(Math.max(partW, 96), Math.max(96, maxPart));
-        let progressW = Math.max(minProgress, avail - otherW - partW);
-        if (otherW + partW + progressW > avail) {
-            progressW = Math.max(minProgress, avail - otherW - partW);
-            partW = Math.max(96, avail - otherW - progressW);
+        partW = Math.min(partW, Math.max(minPart, Math.round(avail * 0.28)));
+        let progressW = avail - otherW - partW;
+        if (progressW < minProgress) {
+            progressW = minProgress;
+            partW = Math.max(minPart, avail - otherW - progressW);
         }
+        if (otherW + partW + progressW > avail) {
+            partW = Math.max(72, avail - otherW - minProgress);
+            progressW = Math.max(56, avail - otherW - partW);
+        }
+        if (otherW + 72 + 56 > avail) {
+            partW = 72;
+            progressW = Math.max(56, avail - otherW - partW);
+        }
+        const used = otherW + partW + progressW;
+        if (used < avail) progressW += (avail - used);
 
         const group = document.createElement('colgroup');
         Array.from(row.cells).forEach(function (cell, i) {
@@ -1056,12 +1665,14 @@ var JigModule = (function () {
             let w = colWidths[i] || 0;
             if (cell.classList.contains('jig-col-part')) w = partW;
             if (cell.classList.contains('jig-col-progress')) w = progressW;
-            col.style.width = w + 'px';
+            col.style.width = Math.max(0, w) + 'px';
             group.appendChild(col);
         });
         table.insertBefore(group, table.firstChild);
         table.style.tableLayout = 'fixed';
         table.style.width = avail + 'px';
+        table.style.maxWidth = '100%';
+        wrap.style.overflowX = (otherW + partW + progressW > avail + 1) ? 'auto' : 'hidden';
 
         names.forEach(function (el) {
             const base = parseFloat(window.getComputedStyle(el).fontSize) || 13;
@@ -1668,11 +2279,11 @@ var JigModule = (function () {
         return cars;
     }
 
-    function _masterCarFilterBar(cars, countByCar, total) {
+    function _carFilterBar(current, handlerName, cars, countByCar, total) {
         function btn(value, label, count) {
-            const active = (_masterCarFilter || '') === (value || '');
+            const active = (current || '') === (value || '');
             return '<button type="button" class="btn btn-sm ' + (active ? 'btn-primary' : 'btn-outline') + '"' +
-                ' onclick="JigModule.filterMasterCar(\'' + _js(value) + '\')" style="white-space:nowrap;">' +
+                ' onclick="JigModule.' + handlerName + '(\'' + _js(value) + '\')" style="white-space:nowrap;">' +
                 _esc(label) + (count != null ? ' <span style="font-weight:600;opacity:.85;">' + count + '</span>' : '') +
                 '</button>';
         }
@@ -1681,6 +2292,10 @@ var JigModule = (function () {
             btn('', '전체', total) +
             (cars || []).map(function (car) { return btn(car, car, countByCar[car] || 0); }).join('') +
             '</div>';
+    }
+
+    function _masterCarFilterBar(cars, countByCar, total) {
+        return _carFilterBar(_masterCarFilter, 'filterMasterCar', cars, countByCar, total);
     }
 
     /* 제품 구분(양산/개발/A·S) 배지 색상 — 안전관리 MSDS 화면과 동일 컨벤션 */
@@ -2383,6 +2998,9 @@ var JigModule = (function () {
 
     function _thicknessMeasurePointCards(d, readOnly) {
         const thicknessPhotos = Array.isArray(d.thicknessPointPhotos) ? d.thicknessPointPhotos : [];
+        const pointMms = Array.from({ length: THICKNESS_MM_COUNT }, function (_, i) {
+            return _getThicknessPointMm(d, i);
+        });
         return Array.from({ length: THICKNESS_JIG_COUNT }, function (_, jigIndex) {
             const withPhoto = jigIndex === 0;
             const cards = Array.from({ length: THICKNESS_STAGE_COUNT }, function (__, stage) {
@@ -2395,12 +3013,15 @@ var JigModule = (function () {
                     withPhoto
                 );
             }).join('');
+            const avgCard = _jigAvgIncreaseCard(jigIndex, _calcOneJigFilm(_jigThicknessSlice(pointMms, jigIndex)));
             return '<div style="margin-bottom:' + (jigIndex < THICKNESS_JIG_COUNT - 1 ? '12px' : '0') + ';">' +
                 '<div style="font-size:0.8rem;font-weight:800;color:var(--text-primary);margin-bottom:6px;">지그 ' + (jigIndex + 1) +
                 '<span style="font-weight:500;color:var(--text-muted);font-size:0.72rem;margin-left:8px;">' +
                 (withPhoto ? '측정값 + 사진 등록' : '측정값만 입력') +
                 '</span></div>' +
-                '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;">' + cards + '</div></div>';
+                '<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr)) minmax(168px,0.72fr);gap:12px;align-items:stretch;">' +
+                cards + avgCard +
+                '</div></div>';
         }).join('');
     }
 
@@ -2440,6 +3061,68 @@ var JigModule = (function () {
                 <label class="form-label">품명 <span style="color:var(--accent-red)">*</span>${_masterSelectedPartNames(d).length > 1 ? ' <span style="font-size:0.72rem;color:var(--accent-blue);font-weight:600;">(공용)</span>' : ''}</label>
                 <div id="jigMasterPartField">${_masterPartNamesFieldHtml(d.carModel || '', _masterSelectedPartNames(d), readOnly)}</div>
             </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">발주 수량 (EA)</label>
+                    <input type="number" class="form-input" id="jigMasterOrderQty" value="${d.orderQty || ''}" min="0" placeholder="도장-A 자동"${roAttr}>
+                    <div id="jigMasterOrderQtyHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">
+                        도장-A: 1,092 × CVT · 도장-B: 175 × CVT → 필요 수량 × 101% = 발주 수량
+                    </div>
+                    <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:0.8rem;cursor:${readOnly ? 'default' : 'pointer'};">
+                        <input type="checkbox" id="jigMasterIntegratedJig" ${d.integratedJig ? 'checked' : ''}${roAttr}
+                            onchange="JigModule.onIntegratedJigToggle()">
+                        <span><strong>CVT 일체형 지그</strong> <span style="color:var(--text-muted);font-weight:400;">(6거치 일체 지그 등 — CVT 직접 입력)</span></span>
+                    </label>
+                    ${readOnly && d.integratedJig
+                        ? `<div style="font-size:0.78rem;margin-top:6px;color:var(--text-secondary);">일체형 CVT: <strong>${d.integratedJigCvt || 1}</strong></div>`
+                        : `<div id="jigMasterIntegratedJigCvtWrap" style="display:${d.integratedJig ? '' : 'none'};margin-top:6px;">
+                            <label class="form-label" style="font-size:0.78rem;margin-bottom:4px;">일체형 CVT <span style="color:var(--accent-red)">*</span></label>
+                            <input type="number" class="form-input" id="jigMasterIntegratedJigCvt" value="${d.integratedJigCvt || (d.integratedJig ? 1 : '')}" min="1" step="1" placeholder="예: 6"${roAttr}
+                                oninput="JigModule.recalcMasterOrderQty()">
+                        </div>`}
+                </div>
+                <div class="form-group" style="grid-column:span 2;">
+                    <label class="form-label">적용 라인</label>
+                    <div style="display:flex;gap:14px;align-items:center;height:38px;">
+                        ${APPLIED_LINE_OPTIONS.map(line => `
+                            <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:${readOnly ? 'default' : 'pointer'};">
+                                <input type="checkbox" class="jigMasterAppliedLine" value="${_esc(line)}" ${(Array.isArray(d.appliedLines) && d.appliedLines.includes(line)) ? 'checked' : ''}${roAttr}
+                                    onchange="JigModule.recalcMasterOrderQty()">
+                                ${_esc(line)}
+                            </label>
+                        `).join('')}
+                    </div>
+                </div>
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:4px;">
+                ${readOnly
+                    ? [
+                        _masterPhotoViewBox('지그 사진 1', jigPhotos[0] || ''),
+                        _masterPhotoViewBox('지그 사진 2', jigPhotos[1] || ''),
+                        _masterPhotoViewBox('제품 결합 사진 1', fitPhotos[0] || ''),
+                        _masterPhotoViewBox('제품 결합 사진 2', fitPhotos[1] || '')
+                    ].join('')
+                    : [
+                        _masterPhotoBox('jigPhoto0', '지그 사진 1', jigPhotos[0] || ''),
+                        _masterPhotoBox('jigPhoto1', '지그 사진 2', jigPhotos[1] || ''),
+                        _masterPhotoBox('productFitPhoto0', '제품 결합 사진 1', fitPhotos[0] || ''),
+                        _masterPhotoBox('productFitPhoto1', '제품 결합 사진 2', fitPhotos[1] || '')
+                    ].join('')}
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+                <div class="form-group">
+                    <label class="form-label">재질</label>
+                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL"${roAttr}>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">구매처</label>
+                    <input type="text" class="form-input" id="jigMasterSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처 입력"${roAttr}>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">제작일</label>
+                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}"${roAttr}>
+                </div>
+            </div>
             <div style="margin:4px 0 10px;padding:10px 12px;border:1px solid rgba(37,99,235,0.2);border-radius:8px;background:rgba(37,99,235,0.04);">
                 <div style="font-size:0.8rem;font-weight:700;color:var(--accent-blue);margin-bottom:4px;">수명 근거 (두께)</div>
                 <div style="font-size:0.72rem;color:var(--text-muted);margin-bottom:10px;">지그 1·2·3 각각 초기·1회 도장·2회 도장 두께를 입력합니다. 사진은 지그 1만 등록하고, 1회 평균 도막두께는 입력된 지그 평균으로 계산합니다.</div>
@@ -2474,68 +3157,6 @@ var JigModule = (function () {
                     </div>
                 </div>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-                <div class="form-group">
-                    <label class="form-label">발주 수량 (EA)</label>
-                    <input type="number" class="form-input" id="jigMasterOrderQty" value="${d.orderQty || ''}" min="0" placeholder="도장-A 자동"${roAttr}>
-                    <div id="jigMasterOrderQtyHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">
-                        도장-A: 1,092 × CVT · 도장-B: 175 × CVT → 필요 수량 × 101% = 발주 수량
-                    </div>
-                    <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:0.8rem;cursor:${readOnly ? 'default' : 'pointer'};">
-                        <input type="checkbox" id="jigMasterIntegratedJig" ${d.integratedJig ? 'checked' : ''}${roAttr}
-                            onchange="JigModule.onIntegratedJigToggle()">
-                        <span><strong>CVT 일체형 지그</strong> <span style="color:var(--text-muted);font-weight:400;">(6거치 일체 지그 등 — CVT 직접 입력)</span></span>
-                    </label>
-                    ${readOnly && d.integratedJig
-                        ? `<div style="font-size:0.78rem;margin-top:6px;color:var(--text-secondary);">일체형 CVT: <strong>${d.integratedJigCvt || 1}</strong></div>`
-                        : `<div id="jigMasterIntegratedJigCvtWrap" style="display:${d.integratedJig ? '' : 'none'};margin-top:6px;">
-                            <label class="form-label" style="font-size:0.78rem;margin-bottom:4px;">일체형 CVT <span style="color:var(--accent-red)">*</span></label>
-                            <input type="number" class="form-input" id="jigMasterIntegratedJigCvt" value="${d.integratedJigCvt || (d.integratedJig ? 1 : '')}" min="1" step="1" placeholder="예: 6"${roAttr}
-                                oninput="JigModule.recalcMasterOrderQty()">
-                        </div>`}
-                </div>
-                <div class="form-group" style="grid-column:span 2;">
-                    <label class="form-label">적용 라인</label>
-                    <div style="display:flex;gap:14px;align-items:center;height:38px;">
-                        ${APPLIED_LINE_OPTIONS.map(line => `
-                            <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:${readOnly ? 'default' : 'pointer'};">
-                                <input type="checkbox" class="jigMasterAppliedLine" value="${_esc(line)}" ${(Array.isArray(d.appliedLines) && d.appliedLines.includes(line)) ? 'checked' : ''}${roAttr}
-                                    onchange="JigModule.recalcMasterOrderQty()">
-                                ${_esc(line)}
-                            </label>
-                        `).join('')}
-                    </div>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
-                <div class="form-group">
-                    <label class="form-label">재질</label>
-                    <input type="text" class="form-input" id="jigMasterMaterial" value="${_esc(d.material || '')}" placeholder="예: SUS, AL"${roAttr}>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">구매처</label>
-                    <input type="text" class="form-input" id="jigMasterSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처 입력"${roAttr}>
-                </div>
-                <div class="form-group">
-                    <label class="form-label">제작일</label>
-                    <input type="date" class="form-input" id="jigMasterMadeDate" value="${d.madeDate || d.registDate || _today()}"${roAttr}>
-                </div>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:4px;">
-                ${readOnly
-                    ? [
-                        _masterPhotoViewBox('지그 사진 1', jigPhotos[0] || ''),
-                        _masterPhotoViewBox('지그 사진 2', jigPhotos[1] || ''),
-                        _masterPhotoViewBox('제품 결합 사진 1', fitPhotos[0] || ''),
-                        _masterPhotoViewBox('제품 결합 사진 2', fitPhotos[1] || '')
-                    ].join('')
-                    : [
-                        _masterPhotoBox('jigPhoto0', '지그 사진 1', jigPhotos[0] || ''),
-                        _masterPhotoBox('jigPhoto1', '지그 사진 2', jigPhotos[1] || ''),
-                        _masterPhotoBox('productFitPhoto0', '제품 결합 사진 1', fitPhotos[0] || ''),
-                        _masterPhotoBox('productFitPhoto1', '제품 결합 사진 2', fitPhotos[1] || '')
-                    ].join('')}
-            </div>
             </div>`;
     }
 
@@ -2561,6 +3182,7 @@ var JigModule = (function () {
                 ? (_fmt(calc.manageCount) + ' 회 (도달 ' + _fmt(calc.limitCoatCount) + ' × 90%)')
                 : '—';
         }
+        _updateJigAvgIncreaseDisplays(points);
     }
 
     function _collectMasterForm(id) {
@@ -3421,6 +4043,7 @@ var JigModule = (function () {
         loadAll,
         filterLine,
         filterStatus,
+        filterLifeCar,
         renderJigMaster,
         renderLog,
         onCarModelChange,
@@ -3475,6 +4098,8 @@ var JigModule = (function () {
         openUsageHistory,
         savePreMesUsedCount,
         openPreMesBaselineBulkModal,
-        saveBulkPreMesUsedCount
+        filterPreMesBulkCar,
+        saveBulkPreMesUsedCount,
+        openTodayUseForecast
     };
 })();
