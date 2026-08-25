@@ -1053,6 +1053,8 @@ const PaintingWorkModule = (function() {
     let _currentDate = '';
     let _currentLine = '도장-A';
     let _autoInboundTimer = null;
+    let _qualityIssueWatchTimer = null;
+    let _qualityIssueWatchLoading = false;
 
     function _normalizePaintLine(line) {
         var s = String(line || '').trim();
@@ -1094,12 +1096,21 @@ const PaintingWorkModule = (function() {
     const UNENTERED_NOTIFY_SENT_KEY = 'unentered_work_notify_sent_v1';
     let _unenteredNotifySent = null;
     let _unenteredNotifySentLoading = null;
+    let _unenteredNotifyTimer = null;
+    let _unenteredNotifyVisitSent = {};
 
     function _unenteredNotifyKind() {
         if (typeof AuthModule !== 'undefined' && typeof AuthModule.unenteredWorkNotifyKindForLine === 'function') {
             return AuthModule.unenteredWorkNotifyKindForLine(_currentLine);
         }
         return _currentLine === '도장-B' ? 'unentered_work_b' : 'unentered_work_a';
+    }
+
+    function _overdueInboundNotifyKind() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.overdueInboundNotifyKindForLine === 'function') {
+            return AuthModule.overdueInboundNotifyKindForLine(_currentLine);
+        }
+        return _currentLine === '도장-B' ? 'overdue_inbound_b' : 'overdue_inbound_a';
     }
 
     function _loadUnenteredNotifySent() {
@@ -1125,43 +1136,94 @@ const PaintingWorkModule = (function() {
         return _unenteredNotifySentLoading;
     }
 
-    function _notifyUnenteredPlans(unentered) {
-        const list = Array.isArray(unentered) ? unentered.filter(Boolean) : [];
-        if (!list.length) return;
+    function _sendPeriodicNotify(kind, list, opts) {
+        opts = opts || {};
+        const rows = Array.isArray(list) ? list.filter(Boolean) : [];
+        if (!rows.length) return;
         if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
-        const kind = _unenteredNotifyKind();
         if (!kind) return;
         const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
             ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
             : [];
         if (!recipients.length) return;
         const today = UIUtils.today();
+        const interval = (typeof AuthModule.getIncomingInspNotifyInterval === 'function')
+            ? AuthModule.getIncomingInspNotifyInterval(kind)
+            : { mode: 'daily', hours: 4 };
+        const mode = interval && interval.mode ? interval.mode : 'daily';
+        const idOf = typeof opts.idOf === 'function'
+            ? opts.idOf
+            : function (r) { return String((r && r.id) || '').trim(); };
+        if (mode === 'every_open' && _unenteredNotifyVisitSent[kind]) return;
+        const logLabel = opts.logLabel || '주기 알림';
         _loadUnenteredNotifySent().then(function () {
             const sentMap = _unenteredNotifySent && typeof _unenteredNotifySent === 'object' ? _unenteredNotifySent : {};
             const byKind = (sentMap[kind] && typeof sentMap[kind] === 'object') ? sentMap[kind] : {};
-            const fresh = list.filter(function (p) {
-                const id = String((p && p.id) || '').trim();
+            const due = function (id) {
+                if (typeof AuthModule.shouldRepeatIncomingInspNotify === 'function') {
+                    return AuthModule.shouldRepeatIncomingInspNotify(kind, byKind[id]);
+                }
+                return String(byKind[id] || '').slice(0, 10) !== today;
+            };
+            const fresh = rows.filter(function (r) {
+                const id = idOf(r);
                 if (!id) return false;
-                return String(byKind[id] || '') !== today;
+                return due(id);
             });
-            if (!fresh.length) return;
+            if (!fresh.length) {
+                if (mode === 'every_open') _unenteredNotifyVisitSent[kind] = true;
+                return;
+            }
             const next = sentMap;
             const nextKind = Object.assign({}, byKind);
             const liveIds = {};
-            list.forEach(function (p) {
-                const id = String((p && p.id) || '').trim();
+            rows.forEach(function (r) {
+                const id = idOf(r);
                 if (id) liveIds[id] = true;
             });
             Object.keys(nextKind).forEach(function (id) {
-                if (!liveIds[id] && String(nextKind[id] || '') !== today) delete nextKind[id];
+                if (liveIds[id]) return;
+                const ts = Date.parse(nextKind[id]);
+                if (!isFinite(ts) || (Date.now() - ts) > 48 * 3600000) delete nextKind[id];
             });
-            fresh.forEach(function (p) {
-                const id = String((p && p.id) || '').trim();
-                if (id) nextKind[id] = today;
+            const sentAt = new Date().toISOString();
+            fresh.forEach(function (r) {
+                const id = idOf(r);
+                if (id) nextKind[id] = sentAt;
             });
             next[kind] = nextKind;
             _unenteredNotifySent = next;
-            const lines = fresh.map(function (p) {
+            if (mode === 'every_open') _unenteredNotifyVisitSent[kind] = true;
+            const lines = fresh.map(opts.formatLine).filter(Boolean);
+            try {
+                AuthModule.sendInternalMessage({
+                    targetType: 'user',
+                    targetIds: recipients,
+                    title: opts.title,
+                    body: [opts.intro, '', lines.join('\n')].filter(Boolean).join('\n'),
+                    category: kind,
+                    priority: 'high'
+                });
+            } catch (e) {
+                console.warn('[PaintingWork] ' + logLabel + ' 통보 실패:', e);
+                return;
+            }
+            if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+                Storage.setConfigValue(UNENTERED_NOTIFY_SENT_KEY, next).catch(function (e) {
+                    console.warn('[PaintingWork] ' + logLabel + ' 통보 기록 저장 실패:', e);
+                });
+            }
+        }).catch(function (e) {
+            console.warn('[PaintingWork] ' + logLabel + ' 통보 실패:', e);
+        });
+    }
+
+    function _notifyUnenteredPlans(unentered) {
+        _sendPeriodicNotify(_unenteredNotifyKind(), unentered, {
+            logLabel: '실적 미입력',
+            title: _currentLine + ' 실적 미입력 계획',
+            intro: '하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. ' + _currentLine + ' 작업에서 확인해 주세요.',
+            formatLine: function (p) {
                 const day = _planDayKey(p);
                 const timeStr = p.startTime ? (p.startTime + '~' + (p.endTime || '')) : (p.slot || '-');
                 const hasInbound = _hasConfirmedSiteInboundForPlan(p, day);
@@ -1170,31 +1232,25 @@ const PaintingWorkModule = (function() {
                     (p.color ? ' / ' + p.color : '') +
                     ' · ' + (hasInbound ? '미입력 실적' : '소재 입고 필요') +
                     ' · 계획 ' + UIUtils.formatNumber(p.planQty || 0);
-            });
-            try {
-                AuthModule.sendInternalMessage({
-                    targetType: 'user',
-                    targetIds: recipients,
-                    title: _currentLine + ' 실적 미입력 계획',
-                    body: [
-                        '하루 이상 지난 계획 중 도장 작업실적이 없는 항목입니다. ' + _currentLine + ' 작업에서 확인해 주세요.',
-                        '',
-                        lines.join('\n')
-                    ].join('\n'),
-                    category: kind,
-                    priority: 'high'
-                });
-            } catch (e) {
-                console.warn('[PaintingWork] 실적 미입력 통보 실패:', e);
-                return;
             }
-            if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
-                Storage.setConfigValue(UNENTERED_NOTIFY_SENT_KEY, next).catch(function (e) {
-                    console.warn('[PaintingWork] 실적 미입력 통보 기록 저장 실패:', e);
-                });
+        });
+    }
+
+    function _notifyOverdueInbound(pending) {
+        _sendPeriodicNotify(_overdueInboundNotifyKind(), pending, {
+            logLabel: '이전 날짜 미입고',
+            title: _currentLine + ' 이전 날짜 미입고 대기',
+            intro: '이전에 출고됐지만 아직 현장 입고 확인이 안 된 건입니다. ' + _currentLine + ' 작업에서 「입고 처리」해 주세요.',
+            formatLine: function (r) {
+                const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                    ? r.lots.map(function (l) { return l.lotNo || ''; }).filter(Boolean).join(', ')
+                    : String(r.lotNo || '').trim();
+                return '- ' + String(r.date || '').slice(0, 10) +
+                    ' · ' + (r.carModel || '-') + ' / ' + (r.partName || '-') +
+                    (r.color ? ' / ' + r.color : '') +
+                    (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                    ' · ' + UIUtils.formatNumber(r.quantity || r.qty || 0) + ' EA';
             }
-        }).catch(function (e) {
-            console.warn('[PaintingWork] 실적 미입력 통보 실패:', e);
         });
     }
 
@@ -1458,6 +1514,66 @@ const PaintingWorkModule = (function() {
         }
     }
 
+    function _findWorkProduct(work) {
+        if (!work || typeof Storage === 'undefined' || !DB.STORES || !DB.STORES.PRODUCTS) return null;
+        const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        if (work.productId) {
+            const byId = prods.find(function (p) { return String(p.id || '') === String(work.productId); });
+            if (byId) return byId;
+        }
+        return prods.find(function (p) {
+            return String(p.carModel || '').trim() === String(work.carModel || '').trim()
+                && String(p.partName || '').trim() === String(work.partName || '').trim()
+                && (!String(work.color || '').trim()
+                    || String(p.color || '').trim() === String(work.color || '').trim());
+        }) || null;
+    }
+
+    function _workGoesToInspectionWaiting(work) {
+        if (!work) return false;
+        if (!(Number(work.productionQty) > 0)) return false;
+        const prod = _findWorkProduct(work);
+        if (!prod) return false;
+        if (typeof LaserStandbyModule !== 'undefined'
+            && typeof LaserStandbyModule.isPaintingWorkLaserStandbyInbound === 'function') {
+            if (LaserStandbyModule.isPaintingWorkLaserStandbyInbound(work, prod)) return false;
+        }
+        return true;
+    }
+
+    /** 도장 실적 신규 등록 → 외관 검사 대기품 수신자에게 쪽지 */
+    function _notifyInspectionWaiting(work) {
+        if (!_workGoesToInspectionWaiting(work)) return;
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
+            ? AuthModule.getIncomingInspNotifyRecipientIds('insp_waiting')
+            : [];
+        if (!recipients.length) return;
+        const lotsTxt = (Array.isArray(work.lots) && work.lots.length)
+            ? work.lots.map(function (l) { return String((l && l.lotNo) || '').trim(); }).filter(Boolean).join(', ')
+            : String(work.lotNo || '').trim();
+        try {
+            AuthModule.sendInternalMessage({
+                targetType: 'user',
+                targetIds: recipients,
+                title: '외관 검사 대기품 등록',
+                body: [
+                    '도장 작업 실적이 등록되어 외관 검사 대기품에 올랐습니다. 도장 검사에서 확인해 주세요.',
+                    '',
+                    '- ' + (work.line || '-') + ' · ' + (work.carModel || '-') + ' / ' + (work.partName || '-') +
+                        (work.color ? ' / ' + work.color : '') +
+                        ' · ' + UIUtils.formatNumber(work.productionQty || 0) + ' EA' +
+                        (lotsTxt ? ' · LOT ' + lotsTxt : '') +
+                        (work.date ? ' · ' + String(work.date).slice(0, 10) : '')
+                ].join('\n'),
+                category: 'insp_waiting',
+                priority: 'high'
+            });
+        } catch (e) {
+            console.warn('[PaintingWork] 외관 검사 대기품 통보 실패:', e);
+        }
+    }
+
     function renderForLine(container, line) {
         _currentDate = UIUtils.today();
         _currentLine = _resolvePaintLine(line);
@@ -1584,7 +1700,17 @@ const PaintingWorkModule = (function() {
                             이전 날짜 미입고 대기 (최근 14일)
                             <span id="pwOverdueInputSummary${suffix}" style="font-size:0.75rem;color:var(--text-muted);font-weight:500;margin-left:6px;"></span>
                         </h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">"금일 현장 사출 입고" 표는 오늘 날짜만 보여줍니다. 아래는 이전에 출고됐지만 아직 현장 입고 확인이 안 된 건입니다.</span>
+                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                            ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml(
+                                    (typeof AuthModule.overdueInboundNotifyKindForLine === 'function'
+                                        ? AuthModule.overdueInboundNotifyKindForLine(_currentLine)
+                                        : (_currentLine === '도장-B' ? 'overdue_inbound_b' : 'overdue_inbound_a')),
+                                    { small: true, label: '이전 날짜 미입고 알림' }
+                                  )
+                                : ''}
+                            <span style="font-size:0.78rem;color:var(--text-muted);">"금일 현장 사출 입고" 표는 오늘 날짜만 보여줍니다. 아래는 이전에 출고됐지만 아직 현장 입고 확인이 안 된 건입니다.</span>
+                        </div>
                     </div>
                     <div class="card-body" style="padding:12px;">
                         <div class="data-table-wrapper" style="border:1px solid var(--border);border-radius:4px;overflow-x:auto;">
@@ -1742,8 +1868,11 @@ const PaintingWorkModule = (function() {
             </div>
         `;
 
+        _unenteredNotifyVisitSent = {};
         loadAll();
         _startAutoInboundTimer();
+        _startUnenteredNotifyTimer();
+        startQualityIssueWatch();
     }
 
     function _stopAutoInboundTimer() {
@@ -1762,6 +1891,125 @@ const PaintingWorkModule = (function() {
                 PaintingInputModule.runAutoSiteInbound(_currentLine);
             }
         }, 30000);
+    }
+
+    function _stopUnenteredNotifyTimer() {
+        if (_unenteredNotifyTimer) {
+            clearInterval(_unenteredNotifyTimer);
+            _unenteredNotifyTimer = null;
+        }
+    }
+
+    function _startUnenteredNotifyTimer() {
+        _stopUnenteredNotifyTimer();
+        _unenteredNotifyTimer = setInterval(function () {
+            const skipIfEveryOpen = function (kind) {
+                if (typeof AuthModule === 'undefined' || typeof AuthModule.getIncomingInspNotifyInterval !== 'function') return false;
+                const iv = AuthModule.getIncomingInspNotifyInterval(kind);
+                return !!(iv && iv.mode === 'every_open');
+            };
+            if (!skipIfEveryOpen(_unenteredNotifyKind())) {
+                const unentered = _collectUnenteredPlans();
+                if (unentered.length) _notifyUnenteredPlans(unentered);
+            }
+            if (!skipIfEveryOpen(_overdueInboundNotifyKind())) {
+                const overdue = _collectOverdueInbound();
+                if (overdue.length) _notifyOverdueInbound(overdue);
+            }
+        }, 60000);
+    }
+
+    function _ymdShift(ymd, days) {
+        var m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!m) return '';
+        var d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        d.setDate(d.getDate() + Number(days || 0));
+        var p = function (n) { return String(n).padStart(2, '0'); };
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    }
+
+    function _planStartMsForQuality(plan) {
+        var date = String((plan && plan.date) || '');
+        var time = String((plan && (plan.startTime || plan.slot)) || '');
+        var dm = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        var tm = time.match(/^(\d{1,2}):(\d{2})/);
+        if (!dm || !tm) return null;
+        var dt = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]), Number(tm[1]), Number(tm[2]), 0, 0);
+        var ms = dt.getTime();
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    function _hasDueQualityPlansWithoutIssue() {
+        var Q_STORE = DB.STORES.PROD_QUALITY_CHECK;
+        if (!PLAN_STORE || !Q_STORE) return false;
+        var now = Date.now();
+        var delayMs = 5 * 60 * 1000;
+        var today = UIUtils.today();
+        var fromDate = _ymdShift(today, -1);
+        var issues = (Storage.getAll(Q_STORE) || []).filter(function (d) {
+            return d && (d._docKind || 'quality_issue') === 'quality_issue';
+        });
+        var issuedPlan = {};
+        var issuedWork = {};
+        issues.forEach(function (i) {
+            if (i.planId) issuedPlan[String(i.planId)] = true;
+            if (i.workId) issuedWork[String(i.workId)] = true;
+        });
+        var workByPlan = {};
+        (Storage.getAll(STORE) || []).forEach(function (w) {
+            if (w && w.planId) workByPlan[String(w.planId)] = w;
+        });
+        var plans = Storage.getAll(PLAN_STORE) || [];
+        for (var i = 0; i < plans.length; i++) {
+            var p = plans[i];
+            if (!p || !p.id) continue;
+            if (!/도장/.test(String(p.line || ''))) continue;
+            if (!(p.carModel || p.partName)) continue;
+            if (String(p.status || '') === '취소') continue;
+            if (fromDate && p.date && p.date < fromDate) continue;
+            var startMs = _planStartMsForQuality(p);
+            if (startMs == null || now < startMs + delayMs) continue;
+            if (issuedPlan[String(p.id)]) continue;
+            var work = workByPlan[String(p.id)];
+            if (work && issuedWork[String(work.id)]) continue;
+            return true;
+        }
+        return false;
+    }
+
+    function _tickQualityIssueFromPlans() {
+        if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.syncFromStartedPlans === 'function') {
+            ProdQualityModule.syncFromStartedPlans();
+            return;
+        }
+        if (!_hasDueQualityPlansWithoutIssue()) return;
+        if (_qualityIssueWatchLoading) return;
+        if (typeof Router === 'undefined' || typeof Router.ensureLazyLoaded !== 'function') return;
+        _qualityIssueWatchLoading = true;
+        Router.ensureLazyLoaded('prod-quality').then(function () {
+            _qualityIssueWatchLoading = false;
+            if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.syncFromStartedPlans === 'function') {
+                ProdQualityModule.syncFromStartedPlans();
+            }
+        }).catch(function (err) {
+            _qualityIssueWatchLoading = false;
+            console.warn('[PaintingWork] 초중종물 모듈 로드 실패:', err);
+        });
+    }
+
+    function startQualityIssueWatch() {
+        _tickQualityIssueFromPlans();
+        if (_qualityIssueWatchTimer) return;
+        _qualityIssueWatchTimer = setInterval(_tickQualityIssueFromPlans, 30000);
+    }
+
+    function _attachQualityIssueToWork(work) {
+        if (!work || !work.id) return;
+        if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.attachWorkToPlanIssue === 'function') {
+            ProdQualityModule.attachWorkToPlanIssue(work).catch(function (e) {
+                console.warn('[PaintingWork] 초중종물 실적 연결 실패:', e);
+            });
+        }
     }
 
     // 라인 탭 전환
@@ -1860,6 +2108,13 @@ const PaintingWorkModule = (function() {
     // 오늘자 표("금일 현장 사출 입고")는 date===오늘 인 것만 보여준다. 그래서 확인을 놓친 채
     // 날짜가 지나버린 출고는 그 표에서 조용히 사라져 버리고, "작업일지 등록" 모달의 LOT 부족
     // 진단에 들어가지 않는 한 다시 보이지 않는다. 최근 14일 미입고를 여기서 상시 노출한다.
+    function _collectOverdueInbound() {
+        if (typeof PaintingInputModule === 'undefined' || !PaintingInputModule.listPendingWarehouseShipments) return [];
+        const today = UIUtils.today ? UIUtils.today() : '';
+        return (PaintingInputModule.listPendingWarehouseShipments(_currentLine, { days: 14 }) || [])
+            .filter(function (r) { return String(r.date || '').slice(0, 10) !== today; });
+    }
+
     function renderOverdueInputStockSection() {
         // PaintingWorkModule 스코프에는 공통 _esc가 없음 — 로컬 정의 필수 (openMaterialHistory와 동일 패턴)
         function _esc(s) {
@@ -1878,14 +2133,18 @@ const PaintingWorkModule = (function() {
             return;
         }
 
-        const today = UIUtils.today ? UIUtils.today() : '';
-        const pending = (PaintingInputModule.listPendingWarehouseShipments(_currentLine, { days: 14 }) || [])
-            .filter(function (r) { return String(r.date || '').slice(0, 10) !== today; });
+        const pending = _collectOverdueInbound();
 
         if (!pending.length) {
-            card.style.display = 'none';
-            body.innerHTML = '';
-            if (summary) summary.textContent = '';
+            if (_isPaintAdmin()) {
+                card.style.display = '';
+                body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">이전 날짜 미입고 대기가 없습니다.</td></tr>';
+                if (summary) summary.textContent = '';
+            } else {
+                card.style.display = 'none';
+                body.innerHTML = '';
+                if (summary) summary.textContent = '';
+            }
             return;
         }
 
@@ -1915,6 +2174,7 @@ const PaintingWorkModule = (function() {
                 <td style="white-space:nowrap;padding:8px 10px;">${actionHtml}</td>
             </tr>`;
         }).join('');
+        _notifyOverdueInbound(pending);
     }
 
     // ──────────────────────────────────────────────
@@ -2038,25 +2298,12 @@ const PaintingWorkModule = (function() {
         return true;
     }
 
-    function renderUnenteredPlans() {
-        const section = document.getElementById('pwUnenteredSection');
-        const suffix = _lineDomSuffix(_currentLine);
-        const body = document.getElementById('pwUnenteredBody' + suffix)
-            || document.getElementById('pwUnenteredBodyA')
-            || document.getElementById('pwUnenteredBodyB');
-        if (!section || !body) return;
-
+    function _collectUnenteredPlans() {
         const allPlans = Storage.getAll(PLAN_STORE) || [];
         const allWorks = Storage.getAll(STORE) || [];
         const today = UIUtils.today();
-
-        // ※ 생산계획 status '완료'는 종료시각 자동갱신 → 실적 유무와 무관
-        // ※ planId만 있고 수량 0인 스텁 실적은 "미입력"으로 유지
-        // 생산계획을 수정하면 구 문서가 남는 구조라, 걸러내지 않으면 수정 전 계획(예: 15,000)이
-        // 실적 미입력으로 계속 떠 있는다. 생산계획 현황 카드와 동일하게 일자+라인+시작시각
-        // 기준 최신 1건만 남긴다.
         const livePlans = _dedupePlanDocs(allPlans);
-        const unentered = livePlans.filter(function (p) {
+        return livePlans.filter(function (p) {
             if (!_isUnenteredCandidateDate(p, today)) return false;
             if (!(p.carModel || p.partName)) return false;
             if (!(Number(p.planQty) > 0)) return false;
@@ -2066,6 +2313,17 @@ const PaintingWorkModule = (function() {
             return _planDayKey(b).localeCompare(_planDayKey(a))
                 || String(a.startTime || '').localeCompare(String(b.startTime || ''));
         });
+    }
+
+    function renderUnenteredPlans() {
+        const section = document.getElementById('pwUnenteredSection');
+        const suffix = _lineDomSuffix(_currentLine);
+        const body = document.getElementById('pwUnenteredBody' + suffix)
+            || document.getElementById('pwUnenteredBodyA')
+            || document.getElementById('pwUnenteredBodyB');
+        if (!section || !body) return;
+
+        const unentered = _collectUnenteredPlans();
 
         if (unentered.length === 0) {
             if (_isPaintAdmin()) {
@@ -7409,6 +7667,7 @@ const PaintingWorkModule = (function() {
         if (typeof JigModule !== 'undefined' && JigModule.addUsageFromWork) {
             JigModule.addUsageFromWork(savedWork);
         }
+        _attachQualityIssueToWork(savedWork || data);
         if (planReasonVisible && planNotifyUsers.length) {
             var planQtyBase = Number((planReasonSection && planReasonSection.dataset && planReasonSection.dataset.planQty) || 0) || 0;
             _sendManagerNotification(
@@ -7471,6 +7730,11 @@ const PaintingWorkModule = (function() {
         }
         try { _notifyPaintMixUnregistered(savedWork || data); } catch (eMixN) {
             console.warn('[PaintingWork] 도료 사용 미등록 통보 실패:', eMixN);
+        }
+        if (!isLaserWipSave) {
+            try { _notifyInspectionWaiting(savedWork || data); } catch (eInspW) {
+                console.warn('[PaintingWork] 외관 검사 대기품 통보 실패:', eInspW);
+            }
         }
         loadAll();
     }
@@ -10258,6 +10522,8 @@ const PaintingWorkModule = (function() {
         UIUtils.toast('수정되었습니다.', 'success');
         _workViewId = null;
         UIUtils.closeModal();
+        var editedWork = Storage.getById(STORE, id);
+        _attachQualityIssueToWork(editedWork);
         loadAll();
     }
 
@@ -10598,6 +10864,7 @@ const PaintingWorkModule = (function() {
         setLine,
         onDateChange,
         loadAll,
+        startQualityIssueWatch,
         renderPlanSummary,
         renderUnenteredPlans,
         renderWorkList,
@@ -11290,7 +11557,9 @@ const PaintingInspectionModule = (function() {
                         <h4 style="margin:0;"><span class="material-symbols-outlined">done_all</span> 외관 검사 대기품</h4>
                         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                             ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
-                                ? AuthModule.incomingInspNotifyAdminButtonHtml('paint_insp', { small: true }) : ''}
+                                ? AuthModule.incomingInspNotifyAdminButtonHtml('insp_waiting', { small: true, label: '대기품 알림' })
+                                  + AuthModule.incomingInspNotifyAdminButtonHtml('paint_insp', { small: true, label: '검사완료 알림' })
+                                : ''}
                             <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다.</span>
                         </div>
                     </div>

@@ -35,6 +35,31 @@ const Router = (function() {
         });
     }
 
+    function _ensureBundleLoaded(bundle) {
+        if (!bundle) return Promise.resolve();
+        if (bundle.loaded) return Promise.resolve();
+        if (bundle.loadPromise) return bundle.loadPromise;
+        bundle.loading = true;
+        bundle.loadPromise = _loadScriptOnce(bundle.src).then(function() {
+            bundle.loaded = true;
+            bundle.loading = false;
+            if (typeof bundle.onLoad === 'function') bundle.onLoad();
+        }).catch(function(err) {
+            bundle.loading = false;
+            bundle.loadPromise = null;
+            throw err;
+        });
+        return bundle.loadPromise;
+    }
+
+    /** 페이지 이동 없이 lazy 번들만 로드 (백그라운드 동기화용) */
+    function ensureLazyLoaded(pageName) {
+        if (modules[pageName]) return Promise.resolve();
+        var bundle = _lazyPageMap[pageName];
+        if (!bundle) return Promise.resolve();
+        return _ensureBundleLoaded(bundle);
+    }
+
     function _showLazySpinner(pageName) {
         var ca = document.getElementById('contentArea');
         if (!ca) return;
@@ -375,31 +400,24 @@ const Router = (function() {
         // ── Lazy 번들: 아직 로드 안 된 모듈 ─────────────────────────────
         if (!modules[pageName] && _lazyPageMap[pageName]) {
             var bundle = _lazyPageMap[pageName];
-            if (bundle.loading) {
-                bundle.pending = pageName;  // 마지막 요청 페이지로 업데이트
+            bundle.pending = pageName;
+            if (!bundle.loaded) {
+                _showLazySpinner(pageName);
+                _ensureBundleLoaded(bundle).then(function() {
+                    var target = bundle.pending || pageName;
+                    bundle.pending = null;
+                    navigate(target);
+                }).catch(function(err) {
+                    console.error('[Router] lazy load 실패:', err);
+                    var ca = document.getElementById('contentArea');
+                    if (ca) ca.innerHTML = '<div class="empty-state">'
+                        + '<span class="material-symbols-outlined" style="color:var(--accent-red);">error</span>'
+                        + '<h4>모듈 로드 오류</h4><p>' + err.message + '</p>'
+                        + '<button class="btn btn-primary" onclick="Router.navigate(\'' + pageName + '\')">다시 시도</button>'
+                        + '</div>';
+                });
                 return;
             }
-            bundle.loading = true;
-            bundle.pending = pageName;
-            _showLazySpinner(pageName);
-            _loadScriptOnce(bundle.src).then(function() {
-                bundle.loaded = true;
-                bundle.loading = false;
-                bundle.onLoad();
-                var target = bundle.pending;
-                bundle.pending = null;
-                navigate(target);
-            }).catch(function(err) {
-                bundle.loading = false;
-                console.error('[Router] lazy load 실패:', err);
-                var ca = document.getElementById('contentArea');
-                if (ca) ca.innerHTML = '<div class="empty-state">'
-                    + '<span class="material-symbols-outlined" style="color:var(--accent-red);">error</span>'
-                    + '<h4>모듈 로드 오류</h4><p>' + err.message + '</p>'
-                    + '<button class="btn btn-primary" onclick="Router.navigate(\'' + pageName + '\')">다시 시도</button>'
-                    + '</div>';
-            });
-            return;
         }
 
         if (!modules[pageName]) pageName = 'dashboard';
@@ -719,6 +737,7 @@ const Router = (function() {
         init: init,
         registerModule: registerModule,
         registerLazy: registerLazy,
+        ensureLazyLoaded: ensureLazyLoaded,
         navigate: navigate,
         renderModule: renderModule,
         getCurrentPage: getCurrentPage,

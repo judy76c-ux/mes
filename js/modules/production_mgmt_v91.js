@@ -19493,6 +19493,8 @@ var ProdSubMaterialsModule = (function() {
 var ProdQualityModule = (function() {
     const STORE = DB.STORES.PROD_QUALITY_CHECK;
     const PAINT_WORK_STORE = DB.STORES.PAINTING_WORK;
+    const PLAN_STORE = DB.STORES.PRODUCTION_PLANS;
+    const QUALITY_CREATE_DELAY_MIN = 5; // 계획 현황 작업 시작 후 초중종물 생성 대기(분)
     const TEMPLATE_KIND   = 'quality_template';
     const ISSUE_KIND      = 'quality_issue';
     const ITEM_MASTER_KIND = 'quality_item_master';
@@ -19504,6 +19506,9 @@ var ProdQualityModule = (function() {
 
     let _rootContainer = null;
     let _qualityStandardImage = null;
+    let _syncFromPlansRunning = false;
+    let _qualityPlanTimer = null;
+    const _creatingPlanIds = new Set();
 
     const DEFAULT_ITEMS = [
         { key: 'color_l', label: '색차 △L', unit: '△L', spec: '', method: '색차계', inputType: 'number' },
@@ -19971,15 +19976,24 @@ var ProdQualityModule = (function() {
                 <div class="card">
                     <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                         <h4 style="margin:0;"><span class="material-symbols-outlined">format_paint</span> 도장 작업일지 · 기준 양식 발행</h4>
-                        <span style="font-size:0.78rem;color:var(--text-muted);">미발행 작업·DATA 미입력은 기간 밖이어도 목록에 유지됩니다.</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">생산계획 현황 시작 ${QUALITY_CREATE_DELAY_MIN}분 후 자동 생성 · 미발행·DATA 미입력은 기간 밖이어도 유지됩니다.</span>
                     </div>
                     <div class="card-body" style="padding:0;">
-                        <div class="data-table-wrapper">
-                            <table class="data-table">
+                        <div class="data-table-wrapper" style="overflow-x:auto;">
+                            <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
-                                        <th>작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>생산 LOT</th><th>산출수량</th>
-                                        <th>기준 양식</th><th>DATA</th><th>작업</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">작업일</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">라인</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">차종</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">품명</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">생산 LOT</th>
+                                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">산출수량</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">기준 양식</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">DATA</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">초중종물 사진</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">작업</th>
                                     </tr>
                                 </thead>
                                 <tbody id="pqUnifiedBody"></tbody>
@@ -19998,6 +20012,8 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
         search();
+        syncFromStartedPlans();
+        _startQualityPlanTimer();
     }
 
     function openStandardsPage() {
@@ -21242,22 +21258,303 @@ var ProdQualityModule = (function() {
         }
     }
 
+    function _planSourceId(planId) {
+        return 'plan:' + String(planId || '');
+    }
+
+    function _isPlanSourceId(id) {
+        return String(id || '').indexOf('plan:') === 0;
+    }
+
+    function _planIdFromSourceId(id) {
+        const raw = String(id || '');
+        return _isPlanSourceId(raw) ? raw.slice(5) : '';
+    }
+
+    function _shiftDateYmd(ymd, days) {
+        const m = String(ymd || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (!m) return '';
+        const d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        d.setDate(d.getDate() + Number(days || 0));
+        const p = n => String(n).padStart(2, '0');
+        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+    }
+
+    function _planStartMs(plan) {
+        const date = String((plan && plan.date) || '');
+        const time = String((plan && (plan.startTime || plan.slot)) || '');
+        const dm = date.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        const tm = time.match(/^(\d{1,2}):(\d{2})/);
+        if (!dm || !tm) return null;
+        const dt = new Date(Number(dm[1]), Number(dm[2]) - 1, Number(dm[3]), Number(tm[1]), Number(tm[2]), 0, 0);
+        const ms = dt.getTime();
+        return Number.isFinite(ms) ? ms : null;
+    }
+
+    function _isPaintPlanLine(line) {
+        const s = String(line || '');
+        return /도장/.test(s) || /paint/i.test(s);
+    }
+
+    function _dedupePlansBySlot(plans) {
+        const bySlot = {};
+        const noSlot = [];
+        (plans || []).forEach(function(p) {
+            const key = String((p && (p.startTime || p.slot)) || '').trim();
+            const line = String((p && p.line) || '');
+            const date = String((p && p.date) || '');
+            if (!key) { noSlot.push(p); return; }
+            const slotKey = date + '|' + line + '|' + key;
+            const prev = bySlot[slotKey];
+            if (!prev) { bySlot[slotKey] = p; return; }
+            const newer = String(p.updatedAt || p.createdAt || '') > String(prev.updatedAt || prev.createdAt || '')
+                || (!(prev.updatedAt || prev.createdAt) && String(p.id || '') > String(prev.id || ''));
+            if (newer) bySlot[slotKey] = p;
+        });
+        return Object.values(bySlot).concat(noSlot);
+    }
+
+    function _planAsWork(plan) {
+        return {
+            id: _planSourceId(plan.id),
+            planId: plan.id,
+            date: plan.date || '',
+            line: plan.line || '',
+            carModel: plan.carModel || '',
+            partName: plan.partName || '',
+            color: plan.color || '',
+            lotNo: plan.lotNo || '',
+            productionQty: 0,
+            startTime: plan.startTime || plan.slot || '',
+            endTime: plan.endTime || '',
+            _fromPlan: true
+        };
+    }
+
+    function _dueQualityPlans(nowMs) {
+        const now = nowMs || Date.now();
+        const today = UIUtils.today();
+        const fromDate = _shiftDateYmd(today, -1);
+        const delayMs = QUALITY_CREATE_DELAY_MIN * 60 * 1000;
+        const raw = (Storage.getAll(PLAN_STORE) || []).filter(function(p) {
+            if (!p || !p.id) return false;
+            if (!_isPaintPlanLine(p.line)) return false;
+            if (!(p.carModel || p.partName)) return false;
+            if (String(p.status || '') === '취소') return false;
+            if (fromDate && p.date && p.date < fromDate) return false;
+            const startMs = _planStartMs(p);
+            if (startMs == null) return false;
+            return now >= startMs + delayMs;
+        });
+        return _dedupePlansBySlot(raw);
+    }
+
+    function _issueForSource(source, issueByWork, issueByPlan) {
+        if (!source) return null;
+        if (source.planId && issueByPlan && issueByPlan.get(String(source.planId))) {
+            return issueByPlan.get(String(source.planId));
+        }
+        if (!source._fromPlan && source.id && issueByWork) {
+            return issueByWork.get(source.id) || null;
+        }
+        return null;
+    }
+
+    function _buildIssueMaps() {
+        const issueByWork = new Map();
+        const issueByPlan = new Map();
+        _issues().forEach(function(i) {
+            if (i.workId) {
+                const prev = issueByWork.get(i.workId);
+                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
+                    issueByWork.set(i.workId, i);
+                }
+            }
+            if (i.planId) {
+                const key = String(i.planId);
+                const prev = issueByPlan.get(key);
+                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
+                    issueByPlan.set(key, i);
+                }
+            }
+        });
+        return { issueByWork, issueByPlan };
+    }
+
+    function _qualityListSources() {
+        const delayMs = QUALITY_CREATE_DELAY_MIN * 60 * 1000;
+        const now = Date.now();
+        const allWorks = (Storage.getAll(PAINT_WORK_STORE) || []).filter(function(w) {
+            if (!w || !w.planId) return true;
+            const plan = Storage.getById(PLAN_STORE, w.planId);
+            if (!plan) return true;
+            const startMs = _planStartMs(plan);
+            if (startMs == null) return true;
+            return now >= startMs + delayMs;
+        });
+        const worksByPlanId = new Map();
+        allWorks.forEach(function(w) {
+            if (w && w.planId) worksByPlanId.set(String(w.planId), w);
+        });
+        const extra = _dueQualityPlans(now).filter(function(p) {
+            return !worksByPlanId.has(String(p.id));
+        }).map(_planAsWork);
+        return allWorks.concat(extra);
+    }
+
+    function _resolveQualitySource(sourceId) {
+        const id = String(sourceId || '');
+        if (_isPlanSourceId(id)) {
+            const plan = Storage.getById(PLAN_STORE, _planIdFromSourceId(id));
+            return plan ? _planAsWork(plan) : null;
+        }
+        const work = Storage.getById(PAINT_WORK_STORE, id);
+        if (work) return work;
+        return null;
+    }
+
+    function _buildIssueFromSource(src) {
+        const line = src.line || '';
+        const items = _issueItemsForProduct(src.carModel, src.partName, src.color, [], line)
+            .filter(item => item.selected !== false);
+        const startTime = src.startTime || src.slot || '';
+        const endTime = src.endTime || '';
+        const hours = _durationHours(startTime, endTime);
+        return {
+            _docKind: ISSUE_KIND,
+            workId: src._fromPlan ? '' : (src.id || ''),
+            planId: src.planId || '',
+            createdFrom: 'plan_start_plus_5min',
+            date: src.date || UIUtils.today(),
+            type: '초물/중물/종물',
+            types: _typesForWorkHours(hours),
+            line,
+            carModel: src.carModel || '',
+            partName: src.partName || '',
+            color: src.color || '',
+            lotNo: src.lotNo || ((src.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
+            productionQty: Number(src.productionQty) || 0,
+            startTime,
+            endTime,
+            workHours: hours,
+            time: _formatIssueTime(startTime, endTime, hours),
+            items: items.map(item => ({ ...item })),
+            status: '발행대기',
+            inspector: '',
+            writer: '',
+            note: ''
+        };
+    }
+
+    function _existingIssueForPlan(planId, workId) {
+        const issues = _issues();
+        if (planId) {
+            const byPlan = issues.find(i => String(i.planId || '') === String(planId));
+            if (byPlan) return byPlan;
+        }
+        if (workId) {
+            const byWork = issues.find(i => String(i.workId || '') === String(workId));
+            if (byWork) return byWork;
+        }
+        return null;
+    }
+
+    function _startQualityPlanTimer() {
+        if (_qualityPlanTimer) return;
+        _qualityPlanTimer = setInterval(function() {
+            syncFromStartedPlans();
+        }, 30000);
+    }
+
+    async function syncFromStartedPlans() {
+        if (_syncFromPlansRunning) return 0;
+        _syncFromPlansRunning = true;
+        let created = 0;
+        try {
+            const due = _dueQualityPlans();
+            const works = Storage.getAll(PAINT_WORK_STORE) || [];
+            const workByPlan = new Map();
+            works.forEach(function(w) {
+                if (w && w.planId) workByPlan.set(String(w.planId), w);
+            });
+            for (let i = 0; i < due.length; i++) {
+                const plan = due[i];
+                const planId = String(plan.id);
+                if (_creatingPlanIds.has(planId)) continue;
+                const work = workByPlan.get(planId);
+                if (_existingIssueForPlan(planId, work && work.id)) continue;
+                const src = work || _planAsWork(plan);
+                const data = _buildIssueFromSource(Object.assign({}, src, { planId: plan.id }));
+                if (!data.items.length) continue;
+                _creatingPlanIds.add(planId);
+                try {
+                    await Storage.add(STORE, data);
+                    created += 1;
+                } catch (eAdd) {
+                    console.warn('[ProdQuality] plan-start issue create failed:', eAdd);
+                } finally {
+                    _creatingPlanIds.delete(planId);
+                }
+            }
+            if (created && _pqIsMainListVisible()) search();
+        } catch (eSync) {
+            console.warn('[ProdQuality] syncFromStartedPlans failed:', eSync);
+        } finally {
+            _syncFromPlansRunning = false;
+        }
+        return created;
+    }
+
+    async function attachWorkToPlanIssue(work) {
+        if (!work || !work.id) return null;
+        const existing = _existingIssueForPlan(work.planId, work.id);
+        if (!existing) return null;
+        const lotNo = work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')) || existing.lotNo || '';
+        const startTime = work.startTime || existing.startTime || '';
+        const endTime = work.endTime || existing.endTime || '';
+        const hours = _durationHours(startTime, endTime);
+        const patched = Object.assign({}, existing, {
+            workId: work.id,
+            planId: work.planId || existing.planId || '',
+            lotNo,
+            productionQty: Number(work.productionQty) || existing.productionQty || 0,
+            startTime,
+            endTime,
+            workHours: hours || existing.workHours,
+            time: _formatIssueTime(startTime, endTime, hours) || existing.time,
+            line: work.line || existing.line,
+            carModel: work.carModel || existing.carModel,
+            partName: work.partName || existing.partName,
+            color: work.color || existing.color
+        });
+        await Storage.update(STORE, existing.id, patched);
+        if (_pqIsMainListVisible()) search();
+        return patched;
+    }
+
     function search() {
         const start = document.getElementById('pqFilterStart').value;
         const end = document.getElementById('pqFilterEnd').value;
         const car = document.getElementById('pqFilterCar')?.value || '';
 
-        const allWorks = (Storage.getAll(PAINT_WORK_STORE) || []);
+        const allWorks = _qualityListSources();
         const allIssues = (Storage.getAll(STORE) || []).filter(d => (d._docKind || ISSUE_KIND) === ISSUE_KIND);
         const issuedWorkIds = new Set(allIssues.map(i => i.workId).filter(Boolean));
+        const issuedPlanIds = new Set(allIssues.map(i => i.planId).filter(Boolean).map(String));
         const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+
+        const isIssuedSource = (w) => {
+            if (w._fromPlan || w.planId) {
+                if (issuedPlanIds.has(String(w.planId))) return true;
+            }
+            return !!(w.id && issuedWorkIds.has(w.id));
+        };
 
         // 발행 대상: 필터에 해당하는 작업 + 미발행 작업은 누락 방지를 위해 항상 포함
         const filterWork = (w) =>
             (!start || w.date >= start) && (!end || w.date <= end) && (!car || w.carModel === car);
         const filteredWorkIds = new Set(allWorks.filter(filterWork).map(w => w.id));
-        const unissuedAlwaysOn = allWorks.filter(w => !issuedWorkIds.has(w.id)).map(w => w.id);
-        unissuedAlwaysOn.forEach(id => filteredWorkIds.add(id));
+        allWorks.filter(w => !isIssuedSource(w)).forEach(w => filteredWorkIds.add(w.id));
         const works = allWorks
             .filter(w => filteredWorkIds.has(w.id))
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -21325,6 +21622,109 @@ var ProdQualityModule = (function() {
         </div>`;
     }
 
+    function _pqPhotoSrc(p) {
+        if (!p || !p.url) return '';
+        return (typeof ApiClient !== 'undefined' && typeof ApiClient.photoUrl === 'function')
+            ? ApiClient.photoUrl(p.url)
+            : p.url;
+    }
+
+    function openPqPhoto(src, title) {
+        const url = String(src || '').trim();
+        if (!url) return;
+        const label = String(title || '초중종물 사진');
+        const w = 866;
+        const h = 710;
+        const left = Math.max(0, Math.round(((screen.availWidth || screen.width || w) - w) / 2));
+        const top = Math.max(0, Math.round(((screen.availHeight || screen.height || h) - h) / 2));
+        const features = 'popup=yes,width=' + w + ',height=' + h + ',left=' + left + ',top=' + top +
+            ',resizable=yes,scrollbars=yes,toolbar=no,menubar=no,location=no,status=no';
+        const win = window.open('', 'pqPhotoViewer', features);
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 이 사이트 팝업을 허용해 주세요.', 'warning');
+            return;
+        }
+        try { win.opener = null; } catch (eOp) {}
+        const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8">' +
+            '<title>' + _esc(label) + '</title>' +
+            '<style>' +
+            'html,body{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:"Malgun Gothic",sans-serif;}' +
+            '.wrap{display:flex;flex-direction:column;height:100%;}' +
+            '.stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px;}' +
+            '.stage img{display:block;max-width:92%;max-height:92%;object-fit:contain;transform-origin:center center;transition:transform .12s ease;background:#0b1220;}' +
+            '.bar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px 16px;background:#1f2937;border-top:1px solid #374151;}' +
+            '.bar .size{font-size:13px;font-weight:700;color:#d1d5db;min-width:110px;font-variant-numeric:tabular-nums;}' +
+            '.bar .actions{display:flex;align-items:center;justify-content:center;gap:10px;flex:1;}' +
+            '.bar button{appearance:none;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}' +
+            '.bar .rot{background:#2563eb;color:#fff;}' +
+            '.bar .rot:hover{background:#1d4ed8;}' +
+            '.hint{font-size:12px;color:#9ca3af;min-width:40px;text-align:right;}' +
+            '</style></head><body>' +
+            '<div class="wrap"><div class="stage"><img id="photo" alt="' + _esc(label) + '" src="' + _esc(url) + '"></div>' +
+            '<div class="bar">' +
+            '<span class="size" id="winSize">-</span>' +
+            '<div class="actions">' +
+            '<button type="button" class="rot" id="rotL">↺ 왼쪽 회전</button>' +
+            '<button type="button" class="rot" id="rotR">↻ 오른쪽 회전</button>' +
+            '</div>' +
+            '<span class="hint" id="degLabel">0°</span>' +
+            '</div></div>' +
+            '<script>(function(){' +
+            'var deg=0,img=document.getElementById("photo"),stage=document.querySelector(".stage"),lab=document.getElementById("degLabel"),sizeEl=document.getElementById("winSize");' +
+            'function winSizeText(){return Math.round(window.innerWidth||0)+" × "+Math.round(window.innerHeight||0);}' +
+            'function fit(){if(sizeEl)sizeEl.textContent=winSizeText();if(!img||!stage)return;var r=((deg%360)+360)%360;var swap=r===90||r===270;var sw=stage.clientWidth,sh=stage.clientHeight;' +
+            'img.style.maxWidth=(swap?Math.max(80,sh-24):Math.max(80,sw-24))+"px";' +
+            'img.style.maxHeight=(swap?Math.max(80,sw-24):Math.max(80,sh-24))+"px";' +
+            'img.style.transform="rotate("+deg+"deg)";if(lab)lab.textContent=r+"°";}' +
+            'function turn(d){deg+=d;fit();}' +
+            'document.getElementById("rotL").onclick=function(){turn(-90);};' +
+            'document.getElementById("rotR").onclick=function(){turn(90);};' +
+            'window.addEventListener("resize",fit);' +
+            'if(img.complete)fit();else img.onload=fit;fit();' +
+            '})();</script></body></html>';
+        win.document.open();
+        win.document.write(html);
+        win.document.close();
+        try { win.focus(); } catch (eF) {}
+    }
+
+    function _pqPhotoThumbCell(record, issueId) {
+        const photos = (record && Array.isArray(record.photos)) ? record.photos : [];
+        if (!photos.length) {
+            return '<span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">사진 없음</span>';
+        }
+        const types = ['초물', '중물', '종물'];
+        const short = { '초물': '초', '중물': '중', '종물': '종' };
+        const MAX = 2;
+        return '<div style="display:flex;align-items:flex-start;gap:8px;white-space:nowrap;">' +
+            types.map(function (type) {
+                const list = photos.filter(function (p) { return String(p.type || '') === type; });
+                const shown = list.slice(0, MAX);
+                const extra = list.length - shown.length;
+                const thumbs = shown.map(function (p) {
+                    const src = _pqPhotoSrc(p);
+                    if (!src) return '';
+                    const title = (p.name || type) + (p.uploadedAt ? ' · ' + String(p.uploadedAt).slice(0, 16).replace('T', ' ') : '');
+                    return '<img src="' + _esc(src) + '" alt="' + _esc(type) + '" title="' + _esc(title) + '"' +
+                        ' onclick="ProdQualityModule.openPqPhoto(\'' + _js(src) + '\',\'' + _js(type) + '\')"' +
+                        ' style="width:36px;height:36px;object-fit:cover;border-radius:4px;border:1px solid var(--border-color);cursor:pointer;background:#fff;flex-shrink:0;">';
+                }).join('');
+                const more = extra > 0
+                    ? '<button type="button" class="btn btn-outline btn-sm" title="나머지 사진 보기"' +
+                        (issueId ? ' onclick="ProdQualityModule.openDataView(\'' + _js(issueId) + '\')"' : '') +
+                        ' style="height:36px;min-width:28px;padding:0 6px;font-size:0.68rem;font-weight:700;">+' + extra + '</button>'
+                    : '';
+                const body = list.length
+                    ? thumbs + more
+                    : '<span style="width:36px;height:36px;border:1px dashed var(--border-color);border-radius:4px;display:inline-block;background:#f8fafc;flex-shrink:0;"></span>';
+                return '<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">' +
+                    '<span style="font-size:0.68rem;font-weight:700;color:var(--text-secondary);">' + short[type] + '</span>' +
+                    '<div style="display:flex;align-items:center;gap:3px;">' + body + '</div>' +
+                    '</div>';
+            }).join('') +
+            '</div>';
+    }
+
     function _pqIsMainListVisible() {
         return !!(document.getElementById('pqUnifiedBody') || document.getElementById('pqTableBody') || document.getElementById('pqWorkBody'));
     }
@@ -21334,40 +21734,28 @@ var ProdQualityModule = (function() {
         if (!tbody) return;
 
         const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
-        const issueByWork = new Map();
-        (issues || []).forEach(function(i) {
-            if (!i.workId) return;
-            const prev = issueByWork.get(i.workId);
-            if (!prev) {
-                issueByWork.set(i.workId, i);
-                return;
-            }
-            // 동일 작업에 여러 발행이 있으면 최신 발행 우선
-            const prevKey = String(prev.createdAt || prev.updatedAt || prev.id || prev.date || '');
-            const nextKey = String(i.createdAt || i.updatedAt || i.id || i.date || '');
-            if (nextKey.localeCompare(prevKey) > 0) issueByWork.set(i.workId, i);
-        });
-        // 전체 이슈 맵(필터 밖 작업에 연결된 발행 포함) — 동일 작업 복수 발행 시 최신 우선
-        const allIssueByWork = new Map();
-        _issues().filter(i => i.workId).forEach(function(i) {
-            const prev = allIssueByWork.get(i.workId);
-            if (!prev) { allIssueByWork.set(i.workId, i); return; }
-            const prevKey = String(prev.createdAt || prev.updatedAt || prev.id || prev.date || '');
-            const nextKey = String(i.createdAt || i.updatedAt || i.id || i.date || '');
-            if (nextKey.localeCompare(prevKey) > 0) allIssueByWork.set(i.workId, i);
-        });
+        const { issueByWork, issueByPlan } = _buildIssueMaps();
+        // 전체 이슈 맵(필터 밖 작업에 연결된 발행 포함)
+        const allMaps = _buildIssueMaps();
         const canDelete = _isAdminUser();
         const workIds = new Set((works || []).map(w => w.id));
+        const shownPlanIds = new Set();
+        (works || []).forEach(function(w) {
+            if (w.planId) shownPlanIds.add(String(w.planId));
+        });
 
         const rows = [];
 
         (works || []).forEach(function(w) {
-            const issue = issueByWork.get(w.id) || allIssueByWork.get(w.id) || null;
+            const issue = _issueForSource(w, issueByWork, issueByPlan)
+                || _issueForSource(w, allMaps.issueByWork, allMaps.issueByPlan)
+                || null;
             const record = issue ? recordMap.get(issue.id) : null;
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
             const printed = !!(issue && issue.printedAt);
             const sortKey = String(w.date || '') + ' ' + String(w.startTime || '') + '|' + String(w.id || '');
+            const sourceId = w._fromPlan ? _planSourceId(w.planId) : w.id;
 
             const statusCell = printed
                 ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(issue.printedAt))}</div>`
@@ -21385,29 +21773,33 @@ var ProdQualityModule = (function() {
 
             const printBtn = issue
                 ? `<button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>`
-                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.issueAndPrintFromWork('${_js(w.id)}')">발행</button>`;
+                : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.issueAndPrintFromWork('${_js(sourceId)}')">발행</button>`;
             const dataBtn = issue
                 ? (record
                     ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(issue.id)}')">DATA 보기</button>`
                     : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(issue.id)}')">DATA 입력</button>`)
                 : '';
             const delBtn = canDelete
-                ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeWorkLog('${_js(w.id)}')">삭제</button>`
+                ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeWorkLog('${_js(sourceId)}')">삭제</button>`
+                : '';
+            const waitingHint = w._fromPlan
+                ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">실적 대기</div>'
                 : '';
 
             rows.push({
                 sortKey,
                 html: `<tr>
-                    <td>${_fmtWorkDateCell(w)}</td>
-                    <td>${_esc(w.line || '-')}</td>
-                    <td><strong>${_esc(w.carModel || '-')}</strong></td>
-                    <td>${_esc(w.partName || '-')}</td>
-                    <td>${_esc(w.color || '-')}</td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${statusCell}</td>
-                    <td>${dataCell}</td>
-                    <td style="white-space:nowrap;">${printBtn}${dataBtn ? ' ' + dataBtn : ''}${delBtn ? ' ' + delBtn : ''}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_fmtWorkDateCell(w)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.line || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(w.carModel || '-')}</strong></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.partName || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.color || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
+                    <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(w.productionQty || 0)}${waitingHint}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${statusCell}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${dataCell}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${issue ? _pqPhotoThumbCell(record, issue.id) : '<span style="font-size:0.75rem;color:var(--text-muted);">—</span>'}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${printBtn}${dataBtn ? ' ' + dataBtn : ''}${delBtn ? ' ' + delBtn : ''}</td>
                 </tr>`
             });
         });
@@ -21415,6 +21807,7 @@ var ProdQualityModule = (function() {
         // 작업일지 없이 수동 발행된 양식, 또는 작업이 현재 목록에 없는 발행 건
         (issues || []).forEach(function(d) {
             if (d.workId && workIds.has(d.workId)) return;
+            if (d.planId && shownPlanIds.has(String(d.planId))) return;
 
             const record = recordMap.get(d.id);
             const printed = !!d.printedAt;
@@ -21435,16 +21828,17 @@ var ProdQualityModule = (function() {
             rows.push({
                 sortKey,
                 html: `<tr>
-                    <td>${_fmtIssueDateCell(d)}</td>
-                    <td>${_esc(d.line || '-')}</td>
-                    <td><strong>${_esc(d.carModel || '-')}</strong></td>
-                    <td>${_esc(d.partName || '-')}</td>
-                    <td>${_esc(d.color || '-')}</td>
-                    <td style="font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(d.productionQty || 0)}</td>
-                    <td>${statusCell}<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">항목 ${(d.items || []).length}</div></td>
-                    <td>${dataCell}</td>
-                    <td style="white-space:nowrap;">
+                    <td style="white-space:nowrap;padding:8px 10px;">${_fmtIssueDateCell(d)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.line || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(d.carModel || '-')}</strong></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.partName || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.color || '-')}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;font-family:monospace;font-size:0.8rem;">${_esc(d.lotNo || '-')}</td>
+                    <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(d.productionQty || 0)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${statusCell}<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">항목 ${(d.items || []).length}</div></td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${dataCell}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">${_pqPhotoThumbCell(record, d.id)}</td>
+                    <td style="white-space:nowrap;padding:8px 10px;">
                         <button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>
                         ${dataBtn}${delBtn ? ' ' + delBtn : ''}
                     </td>
@@ -21453,7 +21847,7 @@ var ProdQualityModule = (function() {
         });
 
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업·발행 이력이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업·발행 이력이 없습니다.</td></tr>`;
             return;
         }
 
@@ -21709,7 +22103,7 @@ var ProdQualityModule = (function() {
         el.innerHTML = entries.map(({ p, idx }) => {
             const src = ApiClient.photoUrl ? ApiClient.photoUrl(p.url) : p.url;
             return `<div style="position:relative;width:74px;height:74px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;">
-                <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="window.open('${_esc(src)}','_blank')">
+                <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="ProdQualityModule.openPqPhoto('${_js(src)}','${_js(p.type || p.name || '초중종물 사진')}')">
                 <button type="button" onclick="ProdQualityModule.removePqDataPhoto(${idx})"
                     style="position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:12px;line-height:1;">×</button>
             </div>`;
@@ -22906,13 +23300,24 @@ var ProdQualityModule = (function() {
             UIUtils.toast('삭제 권한은 관리자에게만 있습니다.', 'warning');
             return;
         }
-        const linkedIssue = _issues().find(i => i.workId === workId);
-        const msg = linkedIssue
-            ? '이 도장 작업일지와 연결된 기준 양식을 모두 삭제하시겠습니까?'
-            : '이 도장 작업일지를 삭제하시겠습니까?';
+        const source = _resolveQualitySource(workId);
+        const planId = (source && source.planId) || _planIdFromSourceId(workId);
+        const linkedIssue = _existingIssueForPlan(planId, source && !source._fromPlan ? source.id : workId);
+        const fromPlanOnly = !!(source && source._fromPlan) || _isPlanSourceId(workId);
+        const msg = fromPlanOnly
+            ? (linkedIssue ? '이 계획에서 생성된 초중종물 기준 양식을 삭제하시겠습니까? (생산계획은 유지됩니다)' : '삭제할 기준 양식이 없습니다.')
+            : (linkedIssue
+                ? '이 도장 작업일지와 연결된 기준 양식을 모두 삭제하시겠습니까?'
+                : '이 도장 작업일지를 삭제하시겠습니까?');
+        if (fromPlanOnly && !linkedIssue) {
+            UIUtils.toast('삭제할 기준 양식이 없습니다.', 'info');
+            return;
+        }
         UIUtils.confirm(msg, async () => {
             if (linkedIssue) await Storage.remove(STORE, linkedIssue.id);
-            await Storage.remove(PAINT_WORK_STORE, workId);
+            if (!fromPlanOnly && workId && !_isPlanSourceId(workId)) {
+                await Storage.remove(PAINT_WORK_STORE, workId);
+            }
             UIUtils.toast('삭제되었습니다.', 'success');
             search();
         });
@@ -22926,31 +23331,10 @@ var ProdQualityModule = (function() {
     }
 
     function openWriteFromWork(workId) {
-        const work = Storage.getById(PAINT_WORK_STORE, workId);
+        const work = _resolveQualitySource(workId);
         if (!work) return;
-        const existing = _issues().find(i => i.workId === workId);
-        const base = existing || {
-            _docKind: ISSUE_KIND,
-            workId,
-            date: work.date || UIUtils.today(),
-            type: '초물/중물/종물',
-            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
-            line: work.line || '',
-            carModel: work.carModel || '',
-            partName: work.partName || '',
-            color: work.color || '',
-            lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
-            productionQty: Number(work.productionQty) || 0,
-            startTime: work.startTime || '',
-            endTime: work.endTime || '',
-            workHours: _durationHours(work.startTime || '', work.endTime || ''),
-            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
-            items: _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false).map(item => ({ ...item })),
-            status: '발행대기',
-            inspector: '',
-            writer: '',
-            note: ''
-        };
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
+        const base = existing || _buildIssueFromSource(work);
         if (!base.items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
@@ -22958,13 +23342,15 @@ var ProdQualityModule = (function() {
         }
         UIUtils.showModal('초중종물 기준 양식 발행', fillForm(base), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="ProdQualityModule.saveWriteAndPrint('${_js(workId)}','${_js(existing ? existing.id : '')}')">기준 양식 발행</button>
+            <button class="btn btn-primary" onclick="ProdQualityModule.saveWriteAndPrint('${_js(work._fromPlan ? _planSourceId(work.planId) : work.id)}','${_js(existing ? existing.id : '')}')">기준 양식 발행</button>
         `, 'xl');
     }
 
     async function saveWriteAndPrint(workId, issueId = '') {
         const data = collectData();
-        data.workId = workId || data.workId || '';
+        const source = _resolveQualitySource(workId);
+        data.workId = (source && !source._fromPlan) ? (source.id || '') : (_isPlanSourceId(workId) ? '' : (workId || data.workId || ''));
+        data.planId = (source && source.planId) || data.planId || _planIdFromSourceId(workId) || '';
         data.status = '발행대기';
         if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
         if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
@@ -22981,42 +23367,19 @@ var ProdQualityModule = (function() {
     }
 
     async function issueAndPrintFromWork(workId) {
-        const work = Storage.getById(PAINT_WORK_STORE, workId);
+        const work = _resolveQualitySource(workId);
         if (!work) return;
-        // 이미 발행된 양식이 있으면 바로 인쇄
-        const existing = _issues().find(i => i.workId === workId);
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
         if (existing) {
             printIssue(existing.id);
             return;
         }
-        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false);
-        if (!items.length) {
+        const data = _buildIssueFromSource(work);
+        if (!data.items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 설정하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
-        const data = {
-            _docKind: ISSUE_KIND,
-            workId,
-            date: work.date || UIUtils.today(),
-            type: '초물/중물/종물',
-            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
-            line: work.line || '',
-            carModel: work.carModel || '',
-            partName: work.partName || '',
-            color: work.color || '',
-            lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
-            productionQty: Number(work.productionQty) || 0,
-            startTime: work.startTime || '',
-            endTime: work.endTime || '',
-            workHours: _durationHours(work.startTime || '', work.endTime || ''),
-            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
-            items: items.map(item => ({ ...item })),
-            status: '발행대기',
-            inspector: '',
-            writer: '',
-            note: ''
-        };
         const saved = await Storage.add(STORE, data);
         UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
         search();
@@ -23024,38 +23387,16 @@ var ProdQualityModule = (function() {
     }
 
     async function issueFromWork(workId) {
-        const work = Storage.getById(PAINT_WORK_STORE, workId);
+        const work = _resolveQualitySource(workId);
         if (!work) return;
-        const items = _issueItemsForProduct(work.carModel, work.partName, work.color, [], work.line || '').filter(item => item.selected !== false);
-        if (!items.length) {
+        const data = _buildIssueFromSource(work);
+        if (!data.items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
             openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
-        const data = {
-            _docKind: ISSUE_KIND,
-            workId,
-            date: work.date || UIUtils.today(),
-            type: '초물/중물/종물',
-            types: _typesForWorkHours(_durationHours(work.startTime || '', work.endTime || '')),
-            line: work.line || '',
-            carModel: work.carModel || '',
-            partName: work.partName || '',
-            color: work.color || '',
-            lotNo: work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')),
-            productionQty: Number(work.productionQty) || 0,
-            startTime: work.startTime || '',
-            endTime: work.endTime || '',
-            workHours: _durationHours(work.startTime || '', work.endTime || ''),
-            time: _formatIssueTime(work.startTime || '', work.endTime || ''),
-            items: items.map(item => ({ ...item })),
-            status: '발행대기',
-            inspector: '',
-            writer: '',
-            note: ''
-        };
-        const existing = _issues().find(i => i.workId === workId);
-        if (existing) await Storage.update(STORE, existing.id, data);
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
+        if (existing) await Storage.update(STORE, existing.id, Object.assign({}, existing, data));
         else await Storage.add(STORE, data);
         UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
         search();
@@ -24710,6 +25051,8 @@ window.addEventListener('afterprint', () => {
         ,saveWriteAndPrint
         ,issueFromWork
         ,issueAndPrintFromWork
+        ,syncFromStartedPlans
+        ,attachWorkToPlanIssue
         ,openView
         ,openItemListModal
         ,saveItemMaster
@@ -24737,6 +25080,7 @@ window.addEventListener('afterprint', () => {
         ,markIssuePrinted
         ,openDataModal
         ,openDataView
+        ,openPqPhoto
         ,addPqDataPhotos
         ,removePqDataPhoto
         ,_formatFilmValue

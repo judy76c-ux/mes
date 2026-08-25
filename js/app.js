@@ -87,7 +87,7 @@ const App = (function() {
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
                  'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=274',
+                'js/modules/production_mgmt_v91.js?v=275',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -119,6 +119,9 @@ const App = (function() {
             Router.init();
             console.log('✅ 라우터 초기화 완료');
             if (typeof MesZoomFit !== 'undefined' && MesZoomFit.install) MesZoomFit.install();
+            if (typeof PaintingWorkModule !== 'undefined' && PaintingWorkModule.startQualityIssueWatch) {
+                PaintingWorkModule.startQualityIssueWatch();
+            }
 
             // 5. 첫 방문 체크
             checkFirstVisit();

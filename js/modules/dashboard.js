@@ -632,8 +632,8 @@ const DashboardModule = (function() {
 
     /* ══════════════════════════════════════════════════════════
        초중종물(품질체크) 기준 발행 누락 경고 섹션
-       - 대상: PROD_QUALITY_CHECK의 quality_template가 존재하는 도장 작업(초중종물 대상)
-       - 미발행: quality_issue(workId=work.id) 레코드가 없거나 printedAt 없음
+       - 대상: 계획 시작 5분 후 생성된 quality_issue 또는 도장 작업(초중종물 대상)
+       - 미발행: quality_issue가 없거나 printedAt 없음
     ══════════════════════════════════════════════════════════ */
     function renderQualityStdWarnings() {
         const el = document.getElementById('dashQualityStdWarnings');
@@ -665,21 +665,59 @@ const DashboardModule = (function() {
         }
 
         const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
+        const issueByPlan = new Map();
+        _issues().forEach(function(i) {
+            if (!i.planId) return;
+            const prev = issueByPlan.get(String(i.planId));
+            if (!prev || String(i.createdAt || i.id || '') > String(prev.createdAt || prev.id || '')) {
+                issueByPlan.set(String(i.planId), i);
+            }
+        });
         const today = UIUtils.today();
+        const seen = new Set();
+        const missing = [];
 
-        const missing = works
-            .filter(function(w) {
-                if (!w || !w.id) return false;
-                const tmpl = _templateFor(w.carModel, w.color);
-                if (!tmpl) return false;
-                const issue = issueMap.get(w.id);
-                if (!issue) return true;
-                return !issue.printedAt;
-            })
-            .sort(function(a, b) {
-                return (b.date || '').localeCompare(a.date || '') ||
-                       String(b.registeredAt || b.createdAt || '').localeCompare(String(a.registeredAt || a.createdAt || ''));
+        works.forEach(function(w) {
+            if (!w || !w.id) return;
+            const tmpl = _templateFor(w.carModel, w.color);
+            if (!tmpl) return;
+            const issue = issueMap.get(w.id) || (w.planId ? issueByPlan.get(String(w.planId)) : null);
+            if (issue && issue.printedAt) return;
+            seen.add(w.id);
+            if (w.planId) seen.add('plan:' + w.planId);
+            missing.push({
+                id: w.id,
+                date: w.date,
+                line: w.line,
+                carModel: w.carModel,
+                partName: w.partName,
+                color: w.color,
+                issue: issue,
+                sortKey: String(w.registeredAt || w.createdAt || w.date || '')
             });
+        });
+
+        _issues().forEach(function(issue) {
+            if (issue.printedAt) return;
+            const key = issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id);
+            if (seen.has(key) || (issue.workId && seen.has(issue.workId)) || (issue.planId && seen.has('plan:' + issue.planId))) return;
+            if (!_templateFor(issue.carModel, issue.color) && !(issue.items || []).length) return;
+            seen.add(key);
+            missing.push({
+                id: issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id),
+                date: issue.date,
+                line: issue.line,
+                carModel: issue.carModel,
+                partName: issue.partName,
+                color: issue.color,
+                issue: issue,
+                sortKey: String(issue.createdAt || issue.updatedAt || issue.id || issue.date || '')
+            });
+        });
+
+        missing.sort(function(a, b) {
+            return (b.date || '').localeCompare(a.date || '') || String(b.sortKey).localeCompare(String(a.sortKey));
+        });
 
         if (!missing.length) { el.innerHTML = ''; return; }
 
@@ -693,7 +731,7 @@ const DashboardModule = (function() {
         }
 
         const rows = show.map(function(w) {
-            const issue = issueMap.get(w.id);
+            const issue = w.issue;
             const statusText = issue ? (issue.printedAt ? '발행완료' : '발행대기') : '미발행';
             const overdue = w.date && w.date < today;
             const warnBadge = overdue
@@ -1189,13 +1227,14 @@ const DashboardModule = (function() {
     // 대시보드 → 초중종물(기준 발행) 화면 오픈
     function openQualityIssueFromWork(workId) {
         try {
-            // 도장 작업 실적 상세가 있으면 먼저 열기 (사용자 컨텍스트 유지)
-            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openWorkViewPage === 'function') {
-                try { PaintingWorkModule.openWorkViewPage(workId); } catch (e) {}
+            const sourceId = String(workId || '');
+            if (sourceId.indexOf('plan:') !== 0) {
+                if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openWorkViewPage === 'function') {
+                    try { PaintingWorkModule.openWorkViewPage(workId); } catch (e) {}
+                }
             }
 
-            // prod-quality 페이지로 이동 후 해당 workId로 발행 모달 열기
-            try { sessionStorage.setItem('dash_prodQuality_workId', String(workId || '')); } catch (e) {}
+            try { sessionStorage.setItem('dash_prodQuality_workId', sourceId); } catch (e) {}
             Router.navigate('prod-quality');
 
             let retry = 0;

@@ -19,6 +19,11 @@ const AuthModule = (function () {
     const AUTH_ROLES_CONFIG_KEY    = 'auth_roles';
     const PROD_NOTIFY_RECIPIENTS_KEY = 'prod_notify_recipients_v1';
     const INCOMING_INSP_NOTIFY_KEY = 'incoming_insp_notify_recipients_v1';
+    const INCOMING_INSP_NOTIFY_INTERVAL_KEY = 'incoming_insp_notify_interval_v1';
+    const INCOMING_INSP_INTERVAL_KINDS = [
+        'unentered_work_a', 'unentered_work_b',
+        'overdue_inbound_a', 'overdue_inbound_b'
+    ];
     let _usersCache = null;
     let _permissionsCache = null;
     let _messagesCache = null;
@@ -27,9 +32,10 @@ const AuthModule = (function () {
     let _prodNotifyLoaded = false;
     const INCOMING_INSP_NOTIFY_KEYS = [
         'injection', 'paint', 'site_return',
-        'site_inbound_a', 'site_inbound_b', 'paint_insp',
+        'site_inbound_a', 'site_inbound_b', 'paint_insp', 'insp_waiting',
         'missing_inbound_a', 'missing_inbound_b',
         'unentered_work_a', 'unentered_work_b',
+        'overdue_inbound_a', 'overdue_inbound_b',
         'laser_inbound', 'paint_out',
         'paint_mix_a', 'paint_mix_b'
     ];
@@ -40,6 +46,8 @@ const AuthModule = (function () {
     }
     let _incomingInspNotify = _emptyIncomingInspNotify();
     let _incomingInspNotifyLoaded = false;
+    let _incomingInspNotifyInterval = {};
+    let _incomingInspNotifyIntervalLoaded = false;
 
     /* ── 역할 정의 ─────────────────────────────────────────── */
     const ROLES = [
@@ -1388,6 +1396,7 @@ const AuthModule = (function () {
         await ensureAdminUser();
         await ensureProdNotifyRecipients();
         await ensureIncomingInspNotifyRecipients();
+        await ensureIncomingInspNotifyInterval();
         _setupInterceptor();
         _applyWriteMode();
         _updateTopbar();
@@ -1436,10 +1445,13 @@ const AuthModule = (function () {
         if (kind === 'site_inbound_b') return 'site_inbound_b';
         if (kind === 'site_inbound_a' || kind === 'site_inbound') return 'site_inbound_a';
         if (kind === 'paint_insp') return 'paint_insp';
+        if (kind === 'insp_waiting') return 'insp_waiting';
         if (kind === 'missing_inbound_b') return 'missing_inbound_b';
         if (kind === 'missing_inbound_a') return 'missing_inbound_a';
         if (kind === 'unentered_work_b') return 'unentered_work_b';
         if (kind === 'unentered_work_a' || kind === 'unentered_work') return 'unentered_work_a';
+        if (kind === 'overdue_inbound_b') return 'overdue_inbound_b';
+        if (kind === 'overdue_inbound_a' || kind === 'overdue_inbound') return 'overdue_inbound_a';
         if (kind === 'laser_inbound') return 'laser_inbound';
         if (kind === 'paint_out') return 'paint_out';
         if (kind === 'paint_mix_b') return 'paint_mix_b';
@@ -1454,10 +1466,13 @@ const AuthModule = (function () {
         if (key === 'site_inbound_b') return '금일 현장 사출 입고 (도장-B)';
         if (key === 'site_inbound_a') return '금일 현장 사출 입고 (도장-A)';
         if (key === 'paint_insp') return '외관 검사 완료';
+        if (key === 'insp_waiting') return '외관 검사 대기품';
         if (key === 'missing_inbound_b') return '소재 입고 필요 (도장-B)';
         if (key === 'missing_inbound_a') return '소재 입고 필요 (도장-A)';
         if (key === 'unentered_work_b') return '실적 미입력 계획 (도장-B)';
         if (key === 'unentered_work_a') return '실적 미입력 계획 (도장-A)';
+        if (key === 'overdue_inbound_b') return '이전 날짜 미입고 대기 (도장-B)';
+        if (key === 'overdue_inbound_a') return '이전 날짜 미입고 대기 (도장-A)';
         if (key === 'laser_inbound') return '레이져 입고 확인 대기';
         if (key === 'paint_out') return '도료 창고 출고';
         if (key === 'paint_mix_b') return '도료 사용 미등록 (도장-B)';
@@ -1477,13 +1492,20 @@ const AuthModule = (function () {
         if (key === 'paint_insp') {
             return '외관 검사(부분검사 포함)를 등록하면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
+        if (key === 'insp_waiting') {
+            return '도장 작업 실적이 등록되어 외관 검사 대기품에 오르면 지정한 사용자에게 쪽지가 갑니다. 레이저 대기로 바로 넘어가는 품목은 제외됩니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
         if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
             const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
             return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'unentered_work_a' || key === 'unentered_work_b') {
             const line = key === 'unentered_work_b' ? '도장-B' : '도장-A';
-            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 쪽지가 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 쪽지가 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+        }
+        if (key === 'overdue_inbound_a' || key === 'overdue_inbound_b') {
+            const line = key === 'overdue_inbound_b' ? '도장-B' : '도장-A';
+            return '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'laser_inbound') {
             return '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
@@ -1523,6 +1545,13 @@ const AuthModule = (function () {
         const s = String(line || '').trim();
         if (s === '도장-B' || s === '도장(B)') return 'unentered_work_b';
         if (s === '도장-A' || s === '도장(A)') return 'unentered_work_a';
+        return '';
+    }
+
+    function overdueInboundNotifyKindForLine(line) {
+        const s = String(line || '').trim();
+        if (s === '도장-B' || s === '도장(B)') return 'overdue_inbound_b';
+        if (s === '도장-A' || s === '도장(A)') return 'overdue_inbound_a';
         return '';
     }
 
@@ -1592,6 +1621,170 @@ const AuthModule = (function () {
             }
         }
         return getIncomingInspNotifyRecipientIds(key);
+    }
+
+    function _incomingInspKindSupportsInterval(kind) {
+        return INCOMING_INSP_INTERVAL_KINDS.indexOf(_incomingInspKind(kind)) >= 0;
+    }
+
+    function _normalizeIncomingInspInterval(raw) {
+        const src = raw && typeof raw === 'object' ? raw : {};
+        const mode = String(src.mode || '').trim();
+        const hours = Math.min(24, Math.max(1, Math.round(Number(src.hours) || 4)));
+        if (mode === 'once' || mode === 'every_open' || mode === 'hours') {
+            return { mode: mode, hours: hours };
+        }
+        return { mode: 'daily', hours: hours };
+    }
+
+    function _emptyIncomingInspInterval() {
+        const o = {};
+        INCOMING_INSP_INTERVAL_KINDS.forEach(function (k) {
+            o[k] = _normalizeIncomingInspInterval(null);
+        });
+        return o;
+    }
+
+    function _normalizeIncomingInspIntervalMap(raw) {
+        const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
+        const o = _emptyIncomingInspInterval();
+        INCOMING_INSP_INTERVAL_KINDS.forEach(function (k) {
+            o[k] = _normalizeIncomingInspInterval(src[k]);
+        });
+        return o;
+    }
+
+    function _snapshotIncomingInspInterval() {
+        return _normalizeIncomingInspIntervalMap(_incomingInspNotifyInterval);
+    }
+
+    async function ensureIncomingInspNotifyInterval(forceReload) {
+        if (_incomingInspNotifyIntervalLoaded && !forceReload) {
+            return _snapshotIncomingInspInterval();
+        }
+        try {
+            const raw = (typeof Storage !== 'undefined' && Storage.getConfigValue)
+                ? await Storage.getConfigValue(INCOMING_INSP_NOTIFY_INTERVAL_KEY)
+                : null;
+            _incomingInspNotifyInterval = _normalizeIncomingInspIntervalMap(raw);
+        } catch (e) {
+            _incomingInspNotifyInterval = _emptyIncomingInspInterval();
+        }
+        _incomingInspNotifyIntervalLoaded = true;
+        return _snapshotIncomingInspInterval();
+    }
+
+    function getIncomingInspNotifyInterval(kind) {
+        const key = _incomingInspKind(kind);
+        if (!_incomingInspKindSupportsInterval(key)) return null;
+        const src = _incomingInspNotifyInterval && _incomingInspNotifyInterval[key];
+        return _normalizeIncomingInspInterval(src);
+    }
+
+    async function saveIncomingInspNotifyInterval(kind, interval) {
+        const key = _incomingInspKind(kind);
+        if (!_incomingInspKindSupportsInterval(key)) return null;
+        _incomingInspNotifyInterval = _normalizeIncomingInspIntervalMap(_incomingInspNotifyInterval);
+        _incomingInspNotifyInterval[key] = _normalizeIncomingInspInterval(interval);
+        _incomingInspNotifyIntervalLoaded = true;
+        if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
+            try {
+                await Storage.setConfigValue(INCOMING_INSP_NOTIFY_INTERVAL_KEY, _snapshotIncomingInspInterval());
+            } catch (e) {
+                console.warn('[AuthModule] 알림 주기 저장 실패:', e);
+            }
+        }
+        return getIncomingInspNotifyInterval(key);
+    }
+
+    function incomingInspNotifyIntervalLabel(interval) {
+        const iv = _normalizeIncomingInspInterval(interval);
+        if (iv.mode === 'once') return '해소될 때까지 1회';
+        if (iv.mode === 'every_open') return '화면을 열 때마다';
+        if (iv.mode === 'hours') return '매 ' + iv.hours + '시간';
+        return '하루 1회';
+    }
+
+    function _parseNotifySentAt(raw) {
+        const s = String(raw || '').trim();
+        if (!s) return null;
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+            const d = new Date(s + 'T00:00:00');
+            return isNaN(d.getTime()) ? null : d;
+        }
+        const n = Number(s);
+        if (String(n) === s && isFinite(n) && n > 0) {
+            const d = new Date(n);
+            return isNaN(d.getTime()) ? null : d;
+        }
+        const d = new Date(s);
+        return isNaN(d.getTime()) ? null : d;
+    }
+
+    function _localDayKey(d) {
+        if (!d || isNaN(d.getTime())) return '';
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+    }
+
+    function shouldRepeatIncomingInspNotify(kind, lastSentAt, now) {
+        if (!_incomingInspKindSupportsInterval(kind)) return !lastSentAt;
+        const iv = getIncomingInspNotifyInterval(kind) || _normalizeIncomingInspInterval(null);
+        const at = now instanceof Date ? now : new Date();
+        if (iv.mode === 'every_open') return true;
+        const last = _parseNotifySentAt(lastSentAt);
+        if (!last) return true;
+        if (iv.mode === 'once') return false;
+        if (iv.mode === 'hours') {
+            return (at.getTime() - last.getTime()) >= (iv.hours * 3600000);
+        }
+        return _localDayKey(at) !== _localDayKey(last);
+    }
+
+    function collectIncomingInspNotifyInterval(kind) {
+        const safe = _incomingInspKind(kind);
+        const modeEl = document.querySelector('input[name="incoming-insp-interval-mode-' + safe + '"]:checked');
+        const hoursEl = document.getElementById('incoming-insp-interval-hours-' + safe);
+        return _normalizeIncomingInspInterval({
+            mode: modeEl ? modeEl.value : 'daily',
+            hours: hoursEl ? hoursEl.value : 4
+        });
+    }
+
+    function toggleIncomingInspIntervalHours(kind, enable) {
+        const el = document.getElementById('incoming-insp-interval-hours-' + _incomingInspKind(kind));
+        if (el) el.disabled = !enable;
+    }
+
+    function buildIncomingInspNotifyIntervalHtml(kind) {
+        const safe = _incomingInspKind(kind);
+        if (!_incomingInspKindSupportsInterval(safe)) return '';
+        const iv = getIncomingInspNotifyInterval(safe) || _normalizeIncomingInspInterval(null);
+        const name = 'incoming-insp-interval-mode-' + safe;
+        const hoursId = 'incoming-insp-interval-hours-' + safe;
+        const radio = function (mode, label, extra) {
+            const checked = iv.mode === mode ? ' checked' : '';
+            return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:0.82rem;">' +
+                '<input type="radio" name="' + _esc(name) + '" value="' + _esc(mode) + '"' + checked +
+                ' onchange="AuthModule.toggleIncomingInspIntervalHours(\'' + safe + '\',' + (mode === 'hours' ? 'true' : 'false') + ')"' +
+                ' style="width:15px;height:15px;accent-color:#dc2626;">' +
+                '<span>' + label + '</span>' + (extra || '') + '</label>';
+        };
+        const hoursExtra = '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;">' +
+            '<input type="number" class="form-input" id="' + hoursId + '" min="1" max="24" step="1" value="' + iv.hours + '"' +
+            (iv.mode === 'hours' ? '' : ' disabled') +
+            ' style="width:64px;padding:3px 6px;font-size:0.82rem;">' +
+            '<span style="font-size:0.78rem;color:var(--text-muted);">시간</span></span>';
+        return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
+            '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
+            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">도장 작업 화면이 열려 있거나 다시 열릴 때 검사합니다. 서버가 따로 시간을 맞춰 보내지는 않습니다.</div>' +
+            radio('once', '해소될 때까지 1회') +
+            radio('daily', '하루 1회') +
+            radio('hours', '지정 시간마다', hoursExtra) +
+            radio('every_open', '화면을 열 때마다') +
+            '</div>';
     }
 
     function collectIncomingInspNotifySelection(checkboxClass) {
@@ -1708,17 +1901,23 @@ const AuthModule = (function () {
             UIUtils.showModal(label + ' 알림 수신자',
                 '<p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 12px;">' +
                 _esc(_incomingInspKindHint(safe)) + '</p>' +
+                buildIncomingInspNotifyIntervalHtml(safe) +
                 buildIncomingInspNotifyAdminHtml(safe, cls, { alwaysExpanded: true }),
                 '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
                 '<button class="btn btn-primary" onclick="AuthModule.saveIncomingInspNotifyFromForm(\'' + safe + '\',\'' + cls + '\')">저장</button>',
                 '720px'
             );
         };
-        if (_incomingInspNotifyLoaded) {
-            open();
-            return;
-        }
-        ensureIncomingInspNotifyRecipients().then(open).catch(open);
+        const load = function () {
+            const rec = _incomingInspNotifyLoaded
+                ? Promise.resolve()
+                : ensureIncomingInspNotifyRecipients();
+            const iv = (_incomingInspNotifyIntervalLoaded || !_incomingInspKindSupportsInterval(safe))
+                ? Promise.resolve()
+                : ensureIncomingInspNotifyInterval();
+            Promise.all([rec, iv]).then(open).catch(open);
+        };
+        load();
     }
 
     async function saveIncomingInspNotifyFromForm(kind, checkboxClass) {
@@ -1728,10 +1927,16 @@ const AuthModule = (function () {
         }
         const ids = collectIncomingInspNotifySelection(checkboxClass);
         await saveIncomingInspNotifyRecipients(kind, ids);
+        let intervalNote = '';
+        if (_incomingInspKindSupportsInterval(kind)) {
+            const interval = collectIncomingInspNotifyInterval(kind);
+            await saveIncomingInspNotifyInterval(kind, interval);
+            intervalNote = ' · 주기 ' + incomingInspNotifyIntervalLabel(interval);
+        }
         UIUtils.closeModal();
         UIUtils.toast(
             ids.length
-                ? ('수신자 ' + ids.length + '명을 저장했습니다.')
+                ? ('수신자 ' + ids.length + '명을 저장했습니다.' + intervalNote)
                 : '수신자를 비웠습니다. 등록 알림을 보내지 않습니다.',
             'success'
         );
@@ -2024,6 +2229,12 @@ const AuthModule = (function () {
         ensureIncomingInspNotifyRecipients,
         getIncomingInspNotifyRecipientIds,
         saveIncomingInspNotifyRecipients,
+        ensureIncomingInspNotifyInterval,
+        getIncomingInspNotifyInterval,
+        saveIncomingInspNotifyInterval,
+        shouldRepeatIncomingInspNotify,
+        incomingInspNotifyIntervalLabel,
+        toggleIncomingInspIntervalHours,
         resolveIncomingInspNotifyRecipientIds,
         collectIncomingInspNotifySelection,
         toggleIncomingInspNotifyUsers,
@@ -2036,6 +2247,7 @@ const AuthModule = (function () {
         missingInboundNotifyKindForLine,
         paintMixNotifyKindForLine,
         unenteredWorkNotifyKindForLine,
+        overdueInboundNotifyKindForLine,
     };
 })();
 

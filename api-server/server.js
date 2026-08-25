@@ -999,22 +999,46 @@ app.get('/api/photos/browse', async (req, res) => {
     return a.name.localeCompare(b.name);
   });
 
-  const rows = entries.map(e => {
+  const IMG_EXT = new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp']);
+  const cards = entries.map(e => {
     const childSub = safeSub ? `${safeSub}/${e.name}` : e.name;
     if (e.isDirectory()) {
-      return `<li>📁 <a href="/api/photos/browse?subdir=${encodeURIComponent(childSub)}">${_escapeHtml(e.name)}</a></li>`;
+      return `<a class="card folder" href="/api/photos/browse?subdir=${encodeURIComponent(childSub)}">
+        <div class="thumb folder-icon">📁</div>
+        <div class="cap" title="${_escapeHtml(e.name)}">${_escapeHtml(e.name)}</div>
+      </a>`;
     }
     const encPath = childSub.split('/').map(encodeURIComponent).join('/');
-    return `<li>📄 <a href="/uploads/${encPath}" target="_blank" rel="noopener">${_escapeHtml(e.name)}</a></li>`;
+    const ext = path.extname(e.name).toLowerCase();
+    const url = `/uploads/${encPath}`;
+    const thumb = IMG_EXT.has(ext)
+      ? `<img class="thumb" src="${url}" loading="lazy" alt="${_escapeHtml(e.name)}">`
+      : `<div class="thumb file-icon">📄</div>`;
+    return `<a class="card" href="${url}" target="_blank" rel="noopener">
+      ${thumb}
+      <div class="cap" title="${_escapeHtml(e.name)}">${_escapeHtml(e.name)}</div>
+    </a>`;
   }).join('');
 
   const parentSub = safeSub.split('/').slice(0, -1).join('/');
-  const parentLink = safeSub ? `<p><a href="/api/photos/browse?subdir=${encodeURIComponent(parentSub)}">⬅ 상위 폴더</a></p>` : '';
+  const parentLink = safeSub ? `<a class="up" href="/api/photos/browse?subdir=${encodeURIComponent(parentSub)}">⬅ 상위 폴더</a>` : '';
 
   res.send(`<!doctype html><html><head><meta charset="utf-8"><title>${_escapeHtml('/' + safeSub)}</title>
-    <style>body{font-family:sans-serif;padding:20px;color:#1e293b;} li{margin:5px 0;font-size:14px;} a{text-decoration:none;color:#2563eb;} a:hover{text-decoration:underline;}</style>
-    </head><body><h3 style="font-size:15px;">${_escapeHtml('/' + safeSub)}</h3>${parentLink}
-    <ul style="list-style:none;padding-left:4px;">${rows || '<li style="color:#94a3b8;">(빈 폴더)</li>'}</ul></body></html>`);
+    <style>
+      body{font-family:sans-serif;padding:18px;color:#1e293b;background:#f8fafc;}
+      h3{font-size:15px;margin:0 0 10px;}
+      .up{display:inline-block;margin-bottom:14px;color:#2563eb;text-decoration:none;font-size:13px;}
+      .up:hover{text-decoration:underline;}
+      .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px;}
+      .card{display:flex;flex-direction:column;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;text-decoration:none;color:#1e293b;box-shadow:0 1px 2px rgba(0,0,0,.04);transition:box-shadow .15s;}
+      .card:hover{box-shadow:0 4px 10px rgba(0,0,0,.1);}
+      .thumb{width:100%;height:120px;object-fit:cover;background:#f1f5f9;display:flex;align-items:center;justify-content:center;font-size:36px;}
+      .folder .thumb{background:#eff6ff;}
+      .cap{padding:6px 8px;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+      .empty{color:#94a3b8;font-size:13px;}
+    </style>
+    </head><body><h3>${_escapeHtml('/' + safeSub)}</h3>${parentLink}
+    <div class="grid">${cards || '<div class="empty">(빈 폴더)</div>'}</div></body></html>`);
 });
 
 app.delete('/api/photos', async (req, res) => {

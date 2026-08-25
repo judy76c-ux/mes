@@ -88,7 +88,8 @@
       "Bash(node --check js/modules/laser.js)",
       "Bash(echo \"clean=$?\")",
       "Bash(node --check js/modules/laser-wip.js)",
-      "Bash(node -e ' *)"
+      "Bash(node -e ' *)",
+      "Bash(node --check server.js)"
     ]
   }
 }

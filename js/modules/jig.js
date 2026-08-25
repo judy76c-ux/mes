@@ -330,6 +330,10 @@ var JigModule = (function () {
                             title="자동 생성된 JIG 사용 이력을 삭제 후 도장 작업 실적 기준으로 다시 계산합니다.">
                             <span class="material-symbols-outlined">sync</span> 데이터 보정/재계산
                         </button>
+                        <button class="btn btn-outline btn-sm" onclick="JigModule.openPreMesBaselineBulkModal()"
+                            title="MES 구축 전 사용해온 누적횟수를 품목별로 한번에 입력합니다. 조치(교체/초기화) 이력이 있는 품목은 이미 초기화 이후 실적만 반영되어 제외됩니다.">
+                            <span class="material-symbols-outlined">history_edu</span> 구축 전 누적 일괄입력
+                        </button>
                     ` : ''}
                 </div>
             </div>
@@ -694,6 +698,123 @@ var JigModule = (function () {
         UIUtils.closeModal();
         loadAll();
         openUsageHistory(jigId);
+    }
+
+    // MES 구축 전 누적횟수를 품목별로 한번에 입력하는 화면.
+    // 조치(교체/초기화) 이력이 있는 품목은 초기화 이후 실적만 유효 카운트되므로 대상에서 제외한다.
+    function openPreMesBaselineBulkModal() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        const jigs = _enrichedJigs()
+            .filter(function (j) { return !j.lastResetDate; })
+            .sort(function (a, b) {
+                return (a.carModel || '').localeCompare(b.carModel || '', 'ko')
+                    || (a.partName || '').localeCompare(b.partName || '', 'ko')
+                    || (a.line || '').localeCompare(b.line || '');
+            });
+        UIUtils.showModal(
+            '구축 전 누적 일괄입력',
+            _renderPreMesBaselineBulkBody(jigs),
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            'xl'
+        );
+    }
+
+    function _renderPreMesBaselineBulkBody(jigs) {
+        const th = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;';
+        const td = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;';
+        const note = '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);font-size:0.78rem;color:var(--text-secondary);">' +
+            'MES 구축 이전부터 사용해 온 품목의 누적횟수를 입력합니다. 입력한 값은 MES 이후 실적에 더해집니다.<br>' +
+            '<strong style="color:#ea580c;">조치(교체/초기화) 이력이 있는 품목은 이미 초기화 시점 이후 실적만 반영되어 있어 아래 목록에서 자동 제외됩니다.</strong>' +
+            '</div>';
+        if (!jigs.length) {
+            return note + '<div style="padding:24px;text-align:center;color:var(--text-muted);">입력이 필요한 품목이 없습니다. (전체 품목이 조치 이력을 보유 중)</div>';
+        }
+        const rows = jigs.map(function (j) {
+            const rowId = 'bulkPreMes_' + j.id;
+            return '<tr>' +
+                '<td style="' + td + 'text-align:center;font-weight:700;color:var(--accent-blue);">' + _esc(j.carModel || '-') + '</td>' +
+                '<td style="' + td + '">' + _esc(j.partName || '-') + '</td>' +
+                '<td style="' + td + 'text-align:center;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(j.line || '-') + '</span></td>' +
+                '<td style="' + td + 'text-align:right;">' + _fmt(j.usedCount || 0) + '</td>' +
+                '<td style="' + td + 'text-align:center;">' +
+                    '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + (j.preMesUsedCount || 0) + '" ' +
+                        'style="width:7em;text-align:right;display:inline-block;">' +
+                '</td>' +
+                '<td style="' + td + 'text-align:center;">' +
+                    '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.saveBulkPreMesUsedCount(\'' + _js(j.id) + '\')">저장</button>' +
+                    '<span id="' + rowId + '_status" style="margin-left:6px;font-size:0.72rem;color:var(--accent-green);"></span>' +
+                '</td>' +
+            '</tr>';
+        }).join('');
+        return note +
+            '<div style="max-height:60vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">' +
+            '<table style="width:100%;border-collapse:collapse;">' +
+                '<thead><tr style="background:var(--bg-secondary);">' +
+                    '<th style="' + th + '">차종</th>' +
+                    '<th style="' + th + '">제품명</th>' +
+                    '<th style="' + th + '">라인</th>' +
+                    '<th style="' + th + '">MES 누적</th>' +
+                    '<th style="' + th + '">구축 전 누적</th>' +
+                    '<th style="' + th + '">저장</th>' +
+                '</tr></thead>' +
+                '<tbody>' + rows + '</tbody>' +
+            '</table></div>';
+    }
+
+    async function saveBulkPreMesUsedCount(jigId) {
+        if (!_isAdminUser()) {
+            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        const jig = Storage.getById(STORE, jigId);
+        if (!jig) {
+            UIUtils.toast('JIG를 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const raw = document.getElementById('bulkPreMes_' + jigId);
+        const qty = parseInt(raw && raw.value, 10);
+        if (!Number.isFinite(qty) || qty < 0) {
+            UIUtils.toast('누적횟수를 0 이상으로 입력하세요.', 'warning');
+            return;
+        }
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jigId);
+        const existing = _preMesBaselineLog(jigId);
+        const actor = _currentUser();
+        const worker = actor
+            ? String(actor.displayName || actor.username || actor.id || '')
+            : '';
+        const date = replacementDate || _today();
+        const payload = {
+            jigId: jigId,
+            date: date,
+            workType: 'EMS 구축 전 누적',
+            useCount: qty,
+            source: 'pre_mes_baseline',
+            note: 'EMS 구축 전 실적 매칭',
+            worker: worker
+        };
+        try {
+            if (qty === 0) {
+                if (existing) await Storage.remove(LOG_STORE, existing.id);
+            } else if (existing) {
+                await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, payload));
+            } else {
+                await Storage.add(LOG_STORE, payload);
+            }
+        } catch (e) {
+            UIUtils.toast('저장에 실패했습니다.', 'error');
+            return;
+        }
+        const statusEl = document.getElementById('bulkPreMes_' + jigId + '_status');
+        if (statusEl) {
+            statusEl.textContent = '저장됨';
+            setTimeout(function () { if (statusEl) statusEl.textContent = ''; }, 2000);
+        }
+        loadAll();
     }
 
     function loadAll() {
@@ -3162,6 +3283,8 @@ var JigModule = (function () {
         addUsageFromWork,
         syncFromPaintingWork,
         openUsageHistory,
-        savePreMesUsedCount
+        savePreMesUsedCount,
+        openPreMesBaselineBulkModal,
+        saveBulkPreMesUsedCount
     };
 })();
