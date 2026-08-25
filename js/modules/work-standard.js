@@ -195,15 +195,18 @@ const WorkStandardModule = (function () {
             if (!_editData.selfInspect)  _editData.selfInspect  = _defCondRows();
             if (!_editData.abnormalCond) _editData.abnormalCond = _defCondRows();
             if (!_editData.carModel)     _editData.carModel     = _editData.model || '';
+            if (!_editData.condVisible)  _editData.condVisible  = { condManage:true, selfInspect:true, abnormalCond:true };
         } else {
             _editData = {
                 processNo:'', processName:'', equipName:'', partName:'', carModel:'',
                 author:'', reviewer:'', approver:'',
                 authorDate:_today(), reviewerDate:'', approverDate:'',
                 workSteps: _defSteps(),
+                stepCols: 3, stepGap: 8,
                 condManage:   _defCondRows(),
                 selfInspect:  _defCondRows(),
                 abnormalCond: _defCondRows(),
+                condVisible: { condManage:true, selfInspect:true, abnormalCond:true },
                 safetyNotes:'', abnormalActions:'',
                 revisions: _defRevs(),
             };
@@ -303,14 +306,26 @@ const WorkStandardModule = (function () {
                     <tbody>
                         <tr>
                             <td style="vertical-align:top;${B}padding:0;">
-                                <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:3px;display:flex;align-items:center;">
+                                <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:3px;display:flex;align-items:center;gap:10px;">
                                     <span style="flex:1;">작 업 순 서</span>
+                                    <label style="display:flex;align-items:center;gap:3px;font-size:0.65rem;font-weight:400;letter-spacing:0;">열
+                                        <select id="wsStepCols" onchange="WorkStandardModule._applyStepLayout()" style="font-size:0.7rem;padding:1px 3px;">
+                                            <option value="1"${(d.stepCols||3)===1?' selected':''}>1</option>
+                                            <option value="2"${(d.stepCols||3)===2?' selected':''}>2</option>
+                                            <option value="3"${(d.stepCols||3)===3?' selected':''}>3</option>
+                                            <option value="4"${(d.stepCols||3)===4?' selected':''}>4</option>
+                                        </select>
+                                    </label>
+                                    <label style="display:flex;align-items:center;gap:3px;font-size:0.65rem;font-weight:400;letter-spacing:0;">간격
+                                        <input type="number" id="wsStepGap" min="0" max="30" value="${d.stepGap??8}"
+                                            onchange="WorkStandardModule._applyStepLayout()" style="width:42px;font-size:0.7rem;padding:1px 3px;">
+                                    </label>
                                     <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.68rem;"
                                         onclick="WorkStandardModule._addStep()">
                                         <span class="material-symbols-outlined" style="font-size:12px;vertical-align:middle;">add</span> 단계 추가
                                     </button>
                                 </div>
-                                <div id="wsStepsList" style="min-height:400px;padding:6px;display:flex;flex-direction:column;gap:10px;"></div>
+                                <div id="wsStepsList" style="min-height:400px;padding:6px;"></div>
                             </td>
                             <td style="vertical-align:top;border:1px solid #222;border-left:none;padding:0;">
                                 ${_condTblEditHtml('condManage','조건관리 표준 (만드는 조건)')}
@@ -368,26 +383,43 @@ const WorkStandardModule = (function () {
     function _condTblEditHtml(key, label) {
         const C  = 'border:1px solid #222;padding:2px 4px;';
         const HB = 'border:1px solid #222;padding:3px 4px;background:#bdd7ee;font-weight:700;text-align:center;font-size:7.8pt;';
+        const visible = _editData.condVisible ? _editData.condVisible[key] !== false : true;
         return `
-        <div style="background:#bdd7ee;border:1px solid #222;padding:3px 5px;text-align:center;
-                    font-weight:700;font-size:9pt;letter-spacing:2px;display:flex;align-items:center;">
-            <span style="flex:1;">${_esc(label)}</span>
-            <button type="button" onclick="WorkStandardModule._addCondRow('${key}')"
-                style="border:1px solid #fff;background:rgba(255,255,255,.35);border-radius:4px;
-                       color:#1e3a5f;cursor:pointer;font-size:0.65rem;padding:0 6px;line-height:1.6;">+ 행</button>
-        </div>
-        <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-            <colgroup>
-                <col style="width:6%"><col style="width:15%"><col style="width:26%">
-                <col style="width:13%"><col style="width:9%"><col style="width:23%"><col style="width:8%">
-            </colgroup>
-            <thead><tr>
-                <th style="${HB}">순</th><th style="${HB}">관리항목</th>
-                <th style="${HB}">관리기준</th><th style="${HB}">확인방법</th>
-                <th style="${HB}">주기</th><th style="${HB}">관리방안</th><th style="${HB}"></th>
-            </tr></thead>
-            <tbody id="wsCondBody_${key}"></tbody>
-        </table>`;
+        <div id="wsCondWrap_${key}">
+            <div style="background:#bdd7ee;border:1px solid #222;padding:3px 5px;text-align:center;
+                        font-weight:700;font-size:9pt;letter-spacing:2px;display:flex;align-items:center;gap:8px;">
+                <label style="display:flex;align-items:center;gap:3px;font-size:0.62rem;font-weight:400;
+                              letter-spacing:0;cursor:pointer;white-space:nowrap;">
+                    <input type="checkbox" id="wsCondOn_${key}" ${visible ? 'checked' : ''}
+                        onchange="WorkStandardModule._toggleCondSection('${key}')" style="width:12px;height:12px;">사용
+                </label>
+                <span style="flex:1;">${_esc(label)}</span>
+                <button type="button" onclick="WorkStandardModule._addCondRow('${key}')"
+                    style="border:1px solid #fff;background:rgba(255,255,255,.35);border-radius:4px;
+                           color:#1e3a5f;cursor:pointer;font-size:0.65rem;padding:0 6px;line-height:1.6;">+ 행</button>
+            </div>
+            <table id="wsCondTable_${key}" style="width:100%;border-collapse:collapse;table-layout:fixed;${visible ? '' : 'display:none;'}">
+                <colgroup>
+                    <col style="width:6%"><col style="width:15%"><col style="width:26%">
+                    <col style="width:13%"><col style="width:9%"><col style="width:23%"><col style="width:8%">
+                </colgroup>
+                <thead><tr>
+                    <th style="${HB}">순</th><th style="${HB}">관리항목</th>
+                    <th style="${HB}">관리기준</th><th style="${HB}">확인방법</th>
+                    <th style="${HB}">주기</th><th style="${HB}">관리방안</th><th style="${HB}"></th>
+                </tr></thead>
+                <tbody id="wsCondBody_${key}"></tbody>
+            </table>
+        </div>`;
+    }
+
+    function _toggleCondSection(key) {
+        const cb = document.getElementById('wsCondOn_' + key);
+        const tbl = document.getElementById('wsCondTable_' + key);
+        if (!cb || !tbl) return;
+        if (!_editData.condVisible) _editData.condVisible = { condManage:true, selfInspect:true, abnormalCond:true };
+        _editData.condVisible[key] = !!cb.checked;
+        tbl.style.display = cb.checked ? '' : 'none';
     }
 
     /* ── 렌더 전체 ──────────────────────────────────────────── */
@@ -399,60 +431,140 @@ const WorkStandardModule = (function () {
         _renderRevTable();
     }
 
-    /* ── 작업 단계 카드 ─────────────────────────────────────── */
+    /* ── 작업 단계 타일 (열/간격 조절 가능한 그리드) ───────────── */
     function _renderSteps() {
         const list = document.getElementById('wsStepsList');
         if (!list) return;
+        const cols = _editData.stepCols || 3;
+        const gap  = (_editData.stepGap ?? 8);
+        list.style.position = 'relative';
+        list.style.display = 'grid';
+        list.style.gridTemplateColumns = `repeat(${cols}, 1fr)`;
+        list.style.gap = `${gap}px`;
+        list.style.alignItems = 'start';
         list.innerHTML = _editData.workSteps.map((s,i) => _stepCardHtml(s,i)).join('');
+        requestAnimationFrame(_installStepGapHandles);
+    }
+
+    function _applyStepLayout() {
+        _syncSteps();
+        const colsEl = document.getElementById('wsStepCols');
+        const gapEl  = document.getElementById('wsStepGap');
+        _editData.stepCols = parseInt(colsEl && colsEl.value, 10) || 3;
+        const gap = parseInt(gapEl && gapEl.value, 10);
+        _editData.stepGap = Number.isFinite(gap) ? gap : 8;
+        _renderSteps();
+    }
+
+    /* ── 열/행 사이 선을 실제로 드래그해서 간격 조절 ───────────── */
+    let _gapDragState = null;
+
+    function _installStepGapHandles() {
+        const list = document.getElementById('wsStepsList');
+        if (!list) return;
+        list.querySelectorAll('.ws-gap-handle').forEach(h => h.remove());
+        const tiles = Array.from(list.children).filter(el => !el.classList.contains('ws-gap-handle'));
+        if (tiles.length < 2) return;
+        const cols = _editData.stepCols || 3;
+        const gap  = _editData.stepGap ?? 8;
+        const handleStyle = 'position:absolute;z-index:5;background:transparent;';
+
+        const makeHandle = (axis, style) => {
+            const h = document.createElement('div');
+            h.className = 'ws-gap-handle';
+            h.style.cssText = handleStyle + style + (axis === 'col' ? 'cursor:col-resize;' : 'cursor:row-resize;');
+            h.addEventListener('mousedown', e => _startGapDrag(e, axis));
+            h.addEventListener('mouseenter', () => { h.style.background = 'rgba(37,99,235,0.25)'; });
+            h.addEventListener('mouseleave', () => { h.style.background = 'transparent'; });
+            list.appendChild(h);
+        };
+
+        // 열 사이 (세로) 핸들 — 각 행에서 마지막 열이 아닌 타일의 오른쪽 경계
+        for (let i = 0; i < tiles.length - 1; i++) {
+            if ((i % cols) === cols - 1) continue;
+            const t = tiles[i];
+            makeHandle('col', `top:${t.offsetTop}px;left:${t.offsetLeft + t.offsetWidth}px;width:${Math.max(gap,6)}px;height:${t.offsetHeight}px;`);
+        }
+        // 행 사이 (가로) 핸들 — 다음 행이 있는 각 행의 하단 경계
+        const rows = Math.ceil(tiles.length / cols);
+        for (let r = 0; r < rows - 1; r++) {
+            const startIdx = r * cols;
+            const endIdx = Math.min(startIdx + cols, tiles.length) - 1;
+            const t0 = tiles[startIdx], t1 = tiles[endIdx];
+            makeHandle('row', `top:${t0.offsetTop + t0.offsetHeight}px;left:${t0.offsetLeft}px;width:${(t1.offsetLeft + t1.offsetWidth) - t0.offsetLeft}px;height:${Math.max(gap,6)}px;`);
+        }
+    }
+
+    function _startGapDrag(e, axis) {
+        e.preventDefault();
+        _gapDragState = { axis, startX: e.clientX, startY: e.clientY, startGap: _editData.stepGap ?? 8 };
+        document.addEventListener('mousemove', _onGapDrag);
+        document.addEventListener('mouseup', _endGapDrag);
+    }
+
+    function _onGapDrag(e) {
+        if (!_gapDragState) return;
+        const delta = _gapDragState.axis === 'col' ? (e.clientX - _gapDragState.startX) : (e.clientY - _gapDragState.startY);
+        const newGap = Math.max(0, Math.min(40, Math.round(_gapDragState.startGap + delta)));
+        if (newGap !== _editData.stepGap) {
+            _syncSteps();
+            _editData.stepGap = newGap;
+            const gapEl = document.getElementById('wsStepGap');
+            if (gapEl) gapEl.value = newGap;
+            _renderSteps();
+        }
+    }
+
+    function _endGapDrag() {
+        _gapDragState = null;
+        document.removeEventListener('mousemove', _onGapDrag);
+        document.removeEventListener('mouseup', _endGapDrag);
     }
 
     function _stepCardHtml(s, i) {
         const photos = s.photos || [];
         const photoSlots = photos.map((p,pi) => `
-            <div style="position:relative;display:inline-block;margin:3px;">
-                <img src="${p}" style="width:110px;height:88px;object-fit:cover;border-radius:5px;
-                            display:block;cursor:pointer;border:2px solid var(--border-color);"
+            <div style="position:relative;flex:1;min-width:0;">
+                <img src="${p}" style="width:100%;height:110px;object-fit:cover;display:block;
+                            cursor:pointer;border:1px solid #222;"
                      onclick="WorkStandardModule._replacePhoto(${i},${pi})" title="클릭하여 변경">
                 <button style="position:absolute;top:2px;right:2px;background:rgba(239,68,68,0.9);
-                               color:#fff;border:none;border-radius:50%;width:20px;height:20px;
-                               cursor:pointer;font-size:12px;line-height:1;padding:0;display:flex;
+                               color:#fff;border:none;border-radius:50%;width:18px;height:18px;
+                               cursor:pointer;font-size:11px;line-height:1;padding:0;display:flex;
                                align-items:center;justify-content:center;"
                     onclick="WorkStandardModule._removePhoto(${i},${pi})">×</button>
             </div>`).join('');
         const addPhotoBtn = `
-            <div style="display:inline-block;margin:3px;vertical-align:top;">
-                <div style="width:110px;height:88px;border:2px dashed var(--border-color);border-radius:5px;
+            <div style="flex:${photos.length ? '0 0 auto' : '1'};min-width:${photos.length ? '54px' : '0'};">
+                <div style="width:${photos.length ? '54px' : '100%'};height:110px;border:2px dashed #94a3b8;
                             display:flex;flex-direction:column;align-items:center;justify-content:center;
-                            cursor:pointer;color:var(--text-muted);gap:4px;background:var(--bg-secondary);"
+                            cursor:pointer;color:#64748b;gap:2px;background:#f8fafc;"
                      onclick="WorkStandardModule._addPhoto(${i})">
-                    <span class="material-symbols-outlined" style="font-size:26px;color:var(--accent-blue);">add_photo_alternate</span>
-                    <span style="font-size:0.72rem;">사진 추가</span>
+                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">add_photo_alternate</span>
+                    ${photos.length ? '' : '<span style="font-size:0.68rem;">사진 추가</span>'}
                 </div>
             </div>`;
         return `
-        <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;">
-            <div style="background:#5da03a;color:#fff;padding:7px 12px;
-                        display:flex;align-items:center;justify-content:space-between;">
-                <div style="display:flex;align-items:center;gap:10px;flex:1;">
-                    <span style="font-weight:700;font-size:0.88rem;white-space:nowrap;">Step ${i+1}.</span>
-                    <input type="text" id="wsStepName_${i}" value="${_esc(s.name)}"
-                           placeholder="단계 제목 입력 (예: 도료공급 통 위치 확인)"
-                           style="flex:1;background:rgba(255,255,255,0.2);border:none;border-radius:4px;
-                                  padding:3px 8px;color:#fff;font-size:0.85rem;font-weight:600;"
-                           oninput="this.style.color='#fff'">
-                </div>
-                <button style="background:rgba(255,255,255,0.2);border:1px solid rgba(255,255,255,0.4);
-                               color:#fff;border-radius:5px;padding:3px 10px;cursor:pointer;font-size:0.78rem;"
-                    onclick="WorkStandardModule._delStep(${i})">단계 삭제</button>
+        <div style="border:1px solid #222;display:flex;flex-direction:column;background:#fff;min-width:0;overflow:hidden;box-sizing:border-box;">
+            <div style="background:#bdd7ee;border-bottom:1px solid #222;padding:5px 8px;
+                        display:flex;align-items:center;gap:6px;min-width:0;">
+                <span style="font-weight:700;font-size:0.82rem;white-space:nowrap;">${i+1}.</span>
+                <input type="text" id="wsStepName_${i}" value="${_esc(s.name)}"
+                       placeholder="단계 제목 입력"
+                       style="flex:1;background:transparent;border:none;font-size:0.82rem;
+                              font-weight:700;text-align:center;min-width:0;">
+                <button type="button" style="border:none;background:none;color:#dc2626;
+                               cursor:pointer;font-size:0.72rem;font-weight:700;white-space:nowrap;"
+                    onclick="WorkStandardModule._delStep(${i})">삭제</button>
             </div>
-            <div style="padding:10px;">
-                <div style="display:flex;flex-wrap:wrap;align-items:flex-start;margin-bottom:8px;">
-                    ${photoSlots}${addPhotoBtn}
-                </div>
-                <textarea class="form-input" id="wsStepDesc_${i}" rows="2"
-                    style="resize:vertical;font-size:0.8rem;padding:6px 8px;width:100%;"
-                    placeholder="작업 설명 입력...">${_esc(s.desc)}</textarea>
+            <div style="display:flex;gap:2px;padding:2px;min-width:0;">
+                ${photoSlots}${addPhotoBtn}
             </div>
+            <textarea id="wsStepDesc_${i}" rows="2"
+                style="width:100%;border:none;border-top:1px solid #222;background:#ffef9f;
+                       resize:vertical;font-size:0.78rem;font-weight:700;text-align:center;
+                       padding:6px 8px;font-family:inherit;box-sizing:border-box;"
+                placeholder="작업 설명 입력...">${_esc(s.desc)}</textarea>
         </div>`;
     }
 
@@ -626,9 +738,12 @@ const WorkStandardModule = (function () {
             reviewerDate:    document.getElementById('wsReviewerDate')?.value        ||'',
             approverDate:    document.getElementById('wsApproverDate')?.value        ||'',
             workSteps:       _editData.workSteps,
+            stepCols:        _editData.stepCols || 3,
+            stepGap:         _editData.stepGap ?? 8,
             condManage:      _editData.condManage,
             selfInspect:     _editData.selfInspect,
             abnormalCond:    _editData.abnormalCond,
+            condVisible:     _editData.condVisible || { condManage:true, selfInspect:true, abnormalCond:true },
             safetyNotes:     document.getElementById('wsSafetyNotes')?.value         ||'',
             abnormalActions: document.getElementById('wsAbnormalActions')?.value      ||'',
             revisions:       _editData.revisions,
@@ -783,36 +898,33 @@ const WorkStandardModule = (function () {
             </tbody>
         </table>`;
 
-        /* ── 좌측: 작업 순서 (각 단계 = 녹색 헤더 + 사진행 + 설명) ─ */
+        /* ── 좌측: 작업 순서 (열/간격 조절 가능한 타일 그리드) ───── */
         const steps = (rec.workSteps||[]).map(_normalizeStep);
-        const stepsHtml = steps.length ? steps.map((s,i) => {
-            const photos = s.photos || [];
-            const photoTdW = photos.length > 0
-                ? Math.floor(100 / Math.max(photos.length, 1)) + '%'
-                : '100%';
-            const photoRow = photos.length > 0
-                ? `<tr>${photos.map(p => `
-                    <td style="padding:2px;text-align:center;vertical-align:top;width:${photoTdW};">
-                        <img src="${p}" style="width:100%;max-height:92px;object-fit:cover;display:block;">
-                    </td>`).join('')}</tr>`
-                : '';
-            const descRow = s.desc
-                ? `<tr><td colspan="${Math.max(photos.length,1)}"
-                        style="padding:4px 5px;font-size:8.5pt;white-space:pre-wrap;vertical-align:top;${B}">
-                        ${_esc(s.desc).replace(/\n/g,'<br>')}
-                   </td></tr>`
-                : '';
-            return `
-            <div style="margin-bottom:0;">
-                <div style="background:#5da03a;color:#fff;padding:3px 7px;
-                            font-weight:700;font-size:9pt;letter-spacing:0.5px;">
-                    ${i+1}. ${_esc(s.name||'작업 단계 '+(i+1))}
-                </div>
-                <table style="width:100%;border-collapse:collapse;table-layout:fixed;">
-                    <tbody>${photoRow}${descRow}</tbody>
-                </table>
-            </div>`;
-        }).join('<div style="height:1px;background:#222;"></div>')
+        const stepCols = rec.stepCols || 3;
+        const stepGap  = rec.stepGap ?? 8;
+        const stepsHtml = steps.length ? `
+            <div style="display:grid;grid-template-columns:repeat(${stepCols},1fr);gap:${stepGap}px;padding:${stepGap}px;">
+                ${steps.map((s,i) => {
+                    const photos = s.photos || [];
+                    const photoRow = photos.length
+                        ? `<div style="display:flex;gap:2px;padding:2px;">${photos.map(p => `
+                            <div style="flex:1;min-width:0;"><img src="${p}"
+                                style="width:100%;height:110px;object-fit:cover;display:block;border:1px solid #222;"></div>`).join('')}</div>`
+                        : '';
+                    return `
+                    <div style="${B}display:flex;flex-direction:column;background:#fff;">
+                        <div style="background:#bdd7ee;border-bottom:1px solid #222;padding:5px 8px;
+                                    text-align:center;font-weight:700;font-size:8.5pt;">
+                            ${i+1}. ${_esc(s.name||'작업 단계 '+(i+1))}
+                        </div>
+                        ${photoRow}
+                        <div style="border-top:1px solid #222;background:#ffef9f;font-weight:700;
+                                    font-size:8pt;text-align:center;padding:6px 8px;white-space:pre-wrap;">
+                            ${_esc(s.desc).replace(/\n/g,'<br>')}
+                        </div>
+                    </div>`;
+                }).join('')}
+            </div>`
         : `<div style="padding:20px;text-align:center;color:#999;">작업 순서를 입력하세요.</div>`;
 
         /* ── 우측: 조건관리 표준 ─────────────────────────────── */
@@ -851,11 +963,16 @@ const WorkStandardModule = (function () {
         const actionHtml = actionLines.map((l,i)=>`<div style="padding:2px 0;">${i+1}. ${_esc(l)}</div>`).join('') ||
             '<div style="height:40px;"></div>';
 
+        const condVisible = key => rec.condVisible ? rec.condVisible[key] !== false : true;
+        const condBlocks = [];
+        if (condVisible('condManage'))   condBlocks.push(_condTbl(rec.condManage,   '조건관리 표준 (만드는 조건)'));
+        if (condVisible('selfInspect'))  condBlocks.push(_condTbl(rec.selfInspect,  '자주검사 표준 (만들어진 조건)'));
+        if (condVisible('abnormalCond')) condBlocks.push(_condTbl(rec.abnormalCond, '이상처리 기준'));
+        const condHtml = condBlocks.join('<div style="height:1px;background:#222;"></div>');
+
         const rightCol = `
-            ${_condTbl(rec.condManage, '조건관리 표준 (만드는 조건)')}
-            ${rec.selfInspect && rec.selfInspect.some(r=>r.item) ? '<div style="height:1px;background:#222;"></div>' + _condTbl(rec.selfInspect,'자주검사 표준 (만들어진 조건)') : ''}
-            ${rec.abnormalCond && rec.abnormalCond.some(r=>r.item) ? '<div style="height:1px;background:#222;"></div>' + _condTbl(rec.abnormalCond,'이상처리 기준') : ''}
-            <div style="height:1px;background:#222;"></div>
+            ${condHtml}
+            ${condHtml ? '<div style="height:1px;background:#222;"></div>' : ''}
             <div style="background:#bdd7ee;${C}text-align:center;font-weight:700;font-size:9pt;letter-spacing:3px;">안 전 관 리</div>
             <div style="${C}font-size:8.5pt;min-height:38px;padding:4px 6px;">${safetyHtml}</div>
             <div style="height:1px;background:#222;"></div>
@@ -936,7 +1053,8 @@ const WorkStandardModule = (function () {
         init, render, search,
         openEditor, save, remove, preview, _doPrint,
         _addStep, _delStep, _addPhoto, _replacePhoto, _removePhoto,
-        _addCondRow, _delCondRow, _addRevRow,
+        _applyStepLayout,
+        _addCondRow, _delCondRow, _addRevRow, _toggleCondSection,
         _openProdStandardsDoc,
     };
 })();

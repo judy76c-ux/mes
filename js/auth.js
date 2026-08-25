@@ -1502,15 +1502,15 @@ const AuthModule = (function () {
         }
         if (key === 'missing_inbound_a' || key === 'missing_inbound_b') {
             const line = key === 'missing_inbound_b' ? '도장-B' : '도장-A';
-            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return line + ' 생산계획이 시작됐는데 현장 사출 입고 확인이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'unentered_work_a' || key === 'unentered_work_b') {
             const line = key === 'unentered_work_b' ? '도장-B' : '도장-A';
-            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 쪽지가 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return '하루 이상 지난 ' + line + ' 계획 중 도장 작업실적이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 소재 입고가 없는 건도 함께 포함됩니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'overdue_inbound_a' || key === 'overdue_inbound_b') {
             const line = key === 'overdue_inbound_b' ? '도장-B' : '도장-A';
-            return '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 쪽지가 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 알림 주기는 이 화면에서 지정합니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'laser_inbound') {
             return '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 쪽지가 갑니다. 이 화면은 관리자만 볼 수 있습니다.';
@@ -1523,7 +1523,7 @@ const AuthModule = (function () {
             return line + ' 도장 작업 실적이 등록되면 도료사용등록이 필요한 건으로 지정한 사용자에게 쪽지가 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         if (key === 'quality_cs') {
-            return '어제 이전 작업 중 초중종물 DATA가 없으면 지정한 사용자에게 쪽지가 갑니다. 당일 건은 알림하지 않습니다. 알림 주기는 이 화면에서 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
+            return '어제 이전 작업 중 초중종물 DATA가 없으면 지정한 사용자에게 첫 쪽지가 가고, 같은 건의 반복은 텔레그램만 갑니다. 당일 건은 알림하지 않습니다. 알림 주기는 이 화면에서 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
         }
         return '수입검사 등록 시 쪽지를 받을 사용자를 지정합니다. 이 화면은 관리자만 볼 수 있습니다.';
     }
@@ -1635,14 +1635,26 @@ const AuthModule = (function () {
         return INCOMING_INSP_INTERVAL_KINDS.indexOf(_incomingInspKind(kind)) >= 0;
     }
 
+    function _clampNotifyMinutes(rawMinutes, rawHours) {
+        let m = Number(rawMinutes);
+        if (!isFinite(m) || m <= 0) {
+            const h = Number(rawHours);
+            if (isFinite(h) && h > 0) m = h * 60;
+            else m = 15;
+        }
+        return Math.min(60, Math.max(5, Math.round(m)));
+    }
+
     function _normalizeIncomingInspInterval(raw) {
         const src = raw && typeof raw === 'object' ? raw : {};
-        const mode = String(src.mode || '').trim();
-        const hours = Math.min(24, Math.max(1, Math.round(Number(src.hours) || 4)));
-        if (mode === 'once' || mode === 'every_open' || mode === 'hours') {
-            return { mode: mode, hours: hours };
+        let mode = String(src.mode || '').trim();
+        if (mode === 'once') {
+            mode = 'once';
+        } else {
+            mode = 'interval';
         }
-        return { mode: 'daily', hours: hours };
+        const minutes = _clampNotifyMinutes(src.minutes, src.hours);
+        return { mode: mode, minutes: minutes, hours: minutes };
     }
 
     function _emptyIncomingInspInterval() {
@@ -1707,10 +1719,8 @@ const AuthModule = (function () {
 
     function incomingInspNotifyIntervalLabel(interval) {
         const iv = _normalizeIncomingInspInterval(interval);
-        if (iv.mode === 'once') return '해소될 때까지 1회';
-        if (iv.mode === 'every_open') return '화면을 열 때마다';
-        if (iv.mode === 'hours') return '매 ' + iv.hours + '시간';
-        return '하루 1회';
+        if (iv.mode === 'once') return '알림 발생 시 1회';
+        return '해소될 때까지 매 ' + iv.minutes + '분';
     }
 
     function _parseNotifySentAt(raw) {
@@ -1729,40 +1739,33 @@ const AuthModule = (function () {
         return isNaN(d.getTime()) ? null : d;
     }
 
-    function _localDayKey(d) {
-        if (!d || isNaN(d.getTime())) return '';
-        const y = d.getFullYear();
-        const m = String(d.getMonth() + 1).padStart(2, '0');
-        const day = String(d.getDate()).padStart(2, '0');
-        return y + '-' + m + '-' + day;
-    }
-
     function shouldRepeatIncomingInspNotify(kind, lastSentAt, now) {
         if (!_incomingInspKindSupportsInterval(kind)) return !lastSentAt;
         const iv = getIncomingInspNotifyInterval(kind) || _normalizeIncomingInspInterval(null);
         const at = now instanceof Date ? now : new Date();
-        if (iv.mode === 'every_open') return true;
         const last = _parseNotifySentAt(lastSentAt);
         if (!last) return true;
         if (iv.mode === 'once') return false;
-        if (iv.mode === 'hours') {
-            return (at.getTime() - last.getTime()) >= (iv.hours * 3600000);
-        }
-        return _localDayKey(at) !== _localDayKey(last);
+        return (at.getTime() - last.getTime()) >= (iv.minutes * 60000);
     }
 
     function collectIncomingInspNotifyInterval(kind) {
         const safe = _incomingInspKind(kind);
         const modeEl = document.querySelector('input[name="incoming-insp-interval-mode-' + safe + '"]:checked');
-        const hoursEl = document.getElementById('incoming-insp-interval-hours-' + safe);
+        const minutesEl = document.getElementById('incoming-insp-interval-minutes-' + safe)
+            || document.getElementById('incoming-insp-interval-hours-' + safe);
+        let mode = modeEl ? modeEl.value : 'interval';
+        if (mode !== 'once') mode = 'interval';
         return _normalizeIncomingInspInterval({
-            mode: modeEl ? modeEl.value : 'daily',
-            hours: hoursEl ? hoursEl.value : 4
+            mode: mode,
+            minutes: minutesEl ? minutesEl.value : 15
         });
     }
 
     function toggleIncomingInspIntervalHours(kind, enable) {
-        const el = document.getElementById('incoming-insp-interval-hours-' + _incomingInspKind(kind));
+        const safe = _incomingInspKind(kind);
+        const el = document.getElementById('incoming-insp-interval-minutes-' + safe)
+            || document.getElementById('incoming-insp-interval-hours-' + safe);
         if (el) el.disabled = !enable;
     }
 
@@ -1771,27 +1774,25 @@ const AuthModule = (function () {
         if (!_incomingInspKindSupportsInterval(safe)) return '';
         const iv = getIncomingInspNotifyInterval(safe) || _normalizeIncomingInspInterval(null);
         const name = 'incoming-insp-interval-mode-' + safe;
-        const hoursId = 'incoming-insp-interval-hours-' + safe;
+        const minutesId = 'incoming-insp-interval-minutes-' + safe;
         const radio = function (mode, label, extra) {
             const checked = iv.mode === mode ? ' checked' : '';
             return '<label style="display:flex;align-items:center;gap:8px;padding:6px 0;cursor:pointer;font-size:0.82rem;">' +
                 '<input type="radio" name="' + _esc(name) + '" value="' + _esc(mode) + '"' + checked +
-                ' onchange="AuthModule.toggleIncomingInspIntervalHours(\'' + safe + '\',' + (mode === 'hours' ? 'true' : 'false') + ')"' +
+                ' onchange="AuthModule.toggleIncomingInspIntervalHours(\'' + safe + '\',' + (mode === 'interval' ? 'true' : 'false') + ')"' +
                 ' style="width:15px;height:15px;accent-color:#dc2626;">' +
                 '<span>' + label + '</span>' + (extra || '') + '</label>';
         };
-        const hoursExtra = '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;">' +
-            '<input type="number" class="form-input" id="' + hoursId + '" min="1" max="24" step="1" value="' + iv.hours + '"' +
-            (iv.mode === 'hours' ? '' : ' disabled') +
+        const minutesExtra = '<span style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;">' +
+            '<input type="number" class="form-input" id="' + minutesId + '" min="5" max="60" step="5" value="' + iv.minutes + '"' +
+            (iv.mode === 'interval' ? '' : ' disabled') +
             ' style="width:64px;padding:3px 6px;font-size:0.82rem;">' +
-            '<span style="font-size:0.78rem;color:var(--text-muted);">시간</span></span>';
+            '<span style="font-size:0.78rem;color:var(--text-muted);">분 (5~60) 간격 발송</span></span>';
         return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
-            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">도장 작업 화면이 열려 있거나 다시 열릴 때 검사합니다. 서버가 따로 시간을 맞춰 보내지는 않습니다.</div>' +
-            radio('once', '해소될 때까지 1회') +
-            radio('daily', '하루 1회') +
-            radio('hours', '지정 시간마다', hoursExtra) +
-            radio('every_open', '화면을 열 때마다') +
+            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. 화면이 열려 있을 때 주기를 검사합니다.</div>' +
+            radio('interval', '해소될 때까지', minutesExtra) +
+            radio('once', '알림 발생 시 1회') +
             '</div>';
     }
 
@@ -1886,8 +1887,11 @@ const AuthModule = (function () {
                         '<span style="font-size:0.82rem;font-weight:600;">' + _esc(u.name) + '</span></label>';
                 }).join('') + '</div></div>'
             : '';
+        const recHint = _incomingInspKindSupportsInterval(kind)
+            ? '체크한 사용자만 알림을 받습니다. 지정하지 않으면 보내지 않습니다. 반복은 Chat ID가 있는 수신자 텔레그램으로만 갑니다.'
+            : '체크한 사용자만 쪽지를 받습니다. 지정하지 않으면 알림을 보내지 않습니다.';
         const inner = '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:8px;">' + _esc(_incomingInspKindLabel(kind)) + ' 알림 수신자</div>' +
-            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">체크한 사용자만 쪽지를 받습니다. 지정하지 않으면 알림을 보내지 않습니다.</div>' +
+            '<div style="font-size:0.76rem;color:var(--text-muted);margin-bottom:10px;">' + recHint + '</div>' +
             '<div style="display:flex;flex-direction:column;gap:12px;max-height:240px;overflow:auto;">' + blocks + extra + '</div>';
         if (opts.alwaysExpanded) {
             return '<div style="border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff7f7;padding:10px 12px;">' + inner + '</div>';
@@ -2046,6 +2050,24 @@ const AuthModule = (function () {
         _saveMessages(rows);
         _updateTopbar();
         _queueNotifyMirrors(rows[rows.length - 1]);
+        return true;
+    }
+
+    function sendTelegramNotify(payload) {
+        const targetType = String(payload?.targetType || 'user');
+        const targetIds = _normalizeMessageTargetIds(payload);
+        const title = String(payload?.title || '').trim();
+        const body = String(payload?.body || '').trim();
+        if (!title || !body) return false;
+        if (targetType !== 'all' && !targetIds.length) return false;
+        const recipients = _cloneRecipients(targetType, targetIds);
+        if (targetType !== 'all' && !recipients.length) return false;
+        _flushTelegramMirrors([{
+            title: title,
+            body: body,
+            senderName: String(payload?.senderName || '시스템'),
+            recipients: recipients
+        }]);
         return true;
     }
 
@@ -2216,6 +2238,7 @@ const AuthModule = (function () {
         requireAdminAuth,
         getUnreadInboxCount,
         sendInternalMessage,
+        sendTelegramNotify,
         sendSystemMessage,
         openInboxModal,
         openComposeMessageModal,

@@ -1147,7 +1147,7 @@ const PaintingWorkModule = (function() {
         opts = opts || {};
         const rows = Array.isArray(list) ? list.filter(Boolean) : [];
         if (!rows.length) return;
-        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
+        if (typeof AuthModule === 'undefined') return;
         if (!kind) return;
         const recipients = (typeof AuthModule.getIncomingInspNotifyRecipientIds === 'function')
             ? AuthModule.getIncomingInspNotifyRecipientIds(kind)
@@ -1156,7 +1156,7 @@ const PaintingWorkModule = (function() {
         const today = UIUtils.today();
         const interval = (typeof AuthModule.getIncomingInspNotifyInterval === 'function')
             ? AuthModule.getIncomingInspNotifyInterval(kind)
-            : { mode: 'daily', hours: 4 };
+            : { mode: 'daily', minutes: 15 };
         const mode = interval && interval.mode ? interval.mode : 'daily';
         const idOf = typeof opts.idOf === 'function'
             ? opts.idOf
@@ -1181,6 +1181,44 @@ const PaintingWorkModule = (function() {
                 if (mode === 'every_open') _unenteredNotifyVisitSent[kind] = true;
                 return;
             }
+            const first = [];
+            const repeats = [];
+            fresh.forEach(function (r) {
+                const id = idOf(r);
+                if (!byKind[id]) first.push(r);
+                else repeats.push(r);
+            });
+            const buildBody = function (part) {
+                const lines = part.map(opts.formatLine).filter(Boolean);
+                return [opts.intro, '', lines.join('\n')].filter(Boolean).join('\n');
+            };
+            const payloadBase = {
+                targetType: 'user',
+                targetIds: recipients,
+                title: opts.title,
+                category: kind,
+                priority: 'high',
+                senderName: '시스템'
+            };
+            const sentIds = [];
+            try {
+                if (first.length && typeof AuthModule.sendInternalMessage === 'function') {
+                    const ok = AuthModule.sendInternalMessage(Object.assign({}, payloadBase, {
+                        body: buildBody(first)
+                    }));
+                    if (ok) first.forEach(function (r) { sentIds.push(idOf(r)); });
+                }
+                if (repeats.length && typeof AuthModule.sendTelegramNotify === 'function') {
+                    const ok = AuthModule.sendTelegramNotify(Object.assign({}, payloadBase, {
+                        body: buildBody(repeats)
+                    }));
+                    if (ok) repeats.forEach(function (r) { sentIds.push(idOf(r)); });
+                }
+            } catch (e) {
+                console.warn('[PaintingWork] ' + logLabel + ' 통보 실패:', e);
+                return;
+            }
+            if (!sentIds.length) return;
             const next = sentMap;
             const nextKind = Object.assign({}, byKind);
             const liveIds = {};
@@ -1194,27 +1232,12 @@ const PaintingWorkModule = (function() {
                 if (!isFinite(ts) || (Date.now() - ts) > 48 * 3600000) delete nextKind[id];
             });
             const sentAt = new Date().toISOString();
-            fresh.forEach(function (r) {
-                const id = idOf(r);
+            sentIds.forEach(function (id) {
                 if (id) nextKind[id] = sentAt;
             });
             next[kind] = nextKind;
             _unenteredNotifySent = next;
             if (mode === 'every_open') _unenteredNotifyVisitSent[kind] = true;
-            const lines = fresh.map(opts.formatLine).filter(Boolean);
-            try {
-                AuthModule.sendInternalMessage({
-                    targetType: 'user',
-                    targetIds: recipients,
-                    title: opts.title,
-                    body: [opts.intro, '', lines.join('\n')].filter(Boolean).join('\n'),
-                    category: kind,
-                    priority: 'high'
-                });
-            } catch (e) {
-                console.warn('[PaintingWork] ' + logLabel + ' 통보 실패:', e);
-                return;
-            }
             if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
                 Storage.setConfigValue(UNENTERED_NOTIFY_SENT_KEY, next).catch(function (e) {
                     console.warn('[PaintingWork] ' + logLabel + ' 통보 기록 저장 실패:', e);
