@@ -1037,7 +1037,7 @@ const WorkStandardModule = (function () {
         if (old) old.remove();
         const pages = rec.pages && rec.pages.length ? rec.pages : [_defPage()];
         const pagesHtml = pages.map((_, idx) => `
-            <div class="ws-print-page" style="background:#fff;margin:0 auto 16px;width:420mm;min-height:297mm;padding:6mm 7mm;box-sizing:border-box;
+            <div class="ws-print-page" style="background:#fff;margin:0 auto 16px;width:100%;max-width:1587px;aspect-ratio:420/297;padding:6mm 7mm;box-sizing:border-box;
                 font-family:'맑은 고딕','나눔고딕',Arial,sans-serif;color:#000;font-size:9.5pt;line-height:1.3;">
                 ${_buildDocHtml(rec, idx)}
             </div>`).join('');
@@ -1047,7 +1047,7 @@ const WorkStandardModule = (function () {
             'position:fixed;inset:0;background:rgba(0,0,0,.82);z-index:9999;'+
             'display:flex;flex-direction:column;overflow:auto;padding:16px;';
         overlay.innerHTML = `
-            <div style="max-width:1240px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;width:100%;">
+            <div style="max-width:1650px;margin:0 auto;background:#fff;border-radius:8px;overflow:hidden;width:100%;">
                 <div style="background:#1e293b;padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
                     <span style="color:#fff;font-weight:600;">
                         작업 표준서 — ${_esc(pages[0].processName||'')} [${_esc(pages[0].carModel||'')}] · 총 ${pages.length}페이지
