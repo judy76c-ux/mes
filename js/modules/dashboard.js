@@ -1394,10 +1394,12 @@ const DashboardModule = (function() {
             if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">쪽지 기능을 사용할 수 없습니다.</span>';
             return;
         }
-        // 로그인 확인은 여기서 한 번만. sendInternalMessage는 미로그인 시 수신자마다
-        // 토스트를 띄우므로, 루프 전에 막아야 같은 경고가 인원수만큼 쌓이지 않는다.
+        // 이 발송은 Slack 채널과 수신자 개인 텔레그램까지 함께 나간다. 대시보드는 로그아웃
+        // 상태에서도 열리므로 로그인 게이트가 없으면 누구나 외부 채널에 알림을 뿌릴 수 있다.
+        // 확인은 여기서 한 번만 — sendInternalMessage는 미로그인 시 수신자마다 토스트를
+        // 띄우므로, 루프 전에 막아야 같은 경고가 인원수만큼 쌓이지 않는다.
         if (typeof AuthModule.getCurrentUser === 'function' && !AuthModule.getCurrentUser()) {
-            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">로그인 후 쪽지를 보낼 수 있습니다. 발신자 기록이 필요합니다.</span>';
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">로그인 후 발송할 수 있습니다. Slack·텔레그램으로 함께 나가는 알림입니다.</span>';
             return;
         }
 
