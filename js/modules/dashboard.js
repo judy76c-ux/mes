@@ -290,7 +290,7 @@ const DashboardModule = (function() {
             '<span style="font-weight:700;font-size:0.88rem;color:#c2410c;">외관 검사 지연</span>' +
             '<span style="background:#ea580c;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:700;">' + items.length + '</span>' +
             '</div>' +
-            '<span style="font-size:0.75rem;color:var(--text-muted);">도장작업일 +2일 이상 미검사 · 클릭하여 이동</span>' +
+            '<span style="font-size:0.75rem;color:var(--text-muted);">초중종물 발행 완료 · 도장작업일 +2일 이상 미검사 · 클릭하여 이동</span>' +
             '</div>' +
             '<div style="overflow-x:auto;">' +
             '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +

@@ -3750,10 +3750,41 @@ const PaintingInspectionModule = (function() {
         return Math.floor((today.getTime() - painted.getTime()) / 86400000);
     }
 
+    function _isQualityFormIssued(issue) {
+        if (!issue) return false;
+        const status = String(issue.status || '').replace(/\s/g, '');
+        return !!issue.printedAt || status === '발행완료';
+    }
+
+    function _qualityIssues() {
+        return (Storage.getAll(DB.STORES.PROD_QUALITY_CHECK) || []).filter(d => {
+            const kind = d && d._docKind;
+            return !kind || kind === 'quality_issue';
+        });
+    }
+
+    function _qualityIssueForWork(work) {
+        if (!work) return null;
+        const issues = _qualityIssues();
+        return issues.find(i => i.workId && String(i.workId) === String(work.id))
+            || issues.find(i =>
+                String(i.date || '') === String(work.date || '') &&
+                String(i.carModel || '') === String(work.carModel || '') &&
+                String(i.partName || '') === String(work.partName || '') &&
+                String(i.color || '') === String(work.color || '')
+            )
+            || null;
+    }
+
+    function _hasQualityIssueIssued(work) {
+        return _isQualityFormIssued(_qualityIssueForWork(work));
+    }
+
     function _isUninspectedOverdue(work) {
         if (!work || work.inspectionStatus === 'completed') return false;
         const days = _daysSincePaintingDate(work.date);
-        return days != null && days >= OVERDUE_INSPECTION_DAYS;
+        if (days == null || days < OVERDUE_INSPECTION_DAYS) return false;
+        return _hasQualityIssueIssued(work);
     }
 
     function _findProductForWork(work, products) {
@@ -3791,19 +3822,21 @@ const PaintingInspectionModule = (function() {
     }
 
     function _updateOverdueNavBadge(count) {
-        const nav = document.getElementById('nav-painting-inspection');
-        if (!nav) return;
-        let badge = nav.querySelector('.paint-insp-overdue-nav-badge');
-        if (!count) {
-            if (badge) badge.remove();
-            return;
-        }
-        if (!badge) {
-            badge = document.createElement('span');
-            badge.className = 'paint-insp-overdue-nav-badge';
-            nav.appendChild(badge);
-        }
-        badge.textContent = count > 99 ? '99+' : String(count);
+        ['nav-painting-inspection', 'nav-prod-quality'].forEach(function(navId) {
+            const nav = document.getElementById(navId);
+            if (!nav) return;
+            let badge = nav.querySelector('.paint-insp-overdue-nav-badge');
+            if (!count) {
+                if (badge) badge.remove();
+                return;
+            }
+            if (!badge) {
+                badge = document.createElement('span');
+                badge.className = 'paint-insp-overdue-nav-badge';
+                nav.appendChild(badge);
+            }
+            badge.textContent = count > 99 ? '99+' : String(count);
+        });
     }
 
     function _updateTopbarProcessAlert(count, works) {
@@ -3818,7 +3851,7 @@ const PaintingInspectionModule = (function() {
         }
         btn.style.display = 'inline-flex';
         btn.classList.add('has-alert');
-        btn.title = '외관 검사 지연 ' + count + '건 (도장작업일 +' + OVERDUE_INSPECTION_DAYS + '일 이상 미검사)';
+        btn.title = '초중종물 발행 완료 후 도장작업일 +' + OVERDUE_INSPECTION_DAYS + '일 이상 미검사 ' + count + '건';
         if (countEl) countEl.textContent = count > 99 ? '99+' : String(count);
         btn.dataset.count = String(count);
         btn.dataset.sample = works && works[0]
@@ -3842,7 +3875,7 @@ const PaintingInspectionModule = (function() {
                 targetType: 'role',
                 targetIds: OVERDUE_NOTIFY_ROLES,
                 title: '외관 검사 지연: ' + (w.partName || w.carModel || w.id),
-                body: '도장작업일 ' + (w.date || '-') + ' 품목이 ' + OVERDUE_INSPECTION_DAYS +
+                body: '초중종물 발행이 완료된 품목입니다.\n도장작업일 ' + (w.date || '-') + ' 기준 ' + OVERDUE_INSPECTION_DAYS +
                     '일 이상 미검사 상태입니다. (지연 ' + (days != null ? days : OVERDUE_INSPECTION_DAYS) + '일)\n' +
                     '차종: ' + (w.carModel || '-') +
                     '\n품명: ' + (w.partName || '-') +
@@ -3872,7 +3905,7 @@ const PaintingInspectionModule = (function() {
     function openOverdueAlertPanel() {
         const overdue = getOverdueUninspectedWorks();
         if (!overdue.length) {
-            UIUtils.toast('도장작업일 +' + OVERDUE_INSPECTION_DAYS + '일 이상 미검사 품목이 없습니다.', 'info');
+            UIUtils.toast('초중종물 발행 완료 후 도장작업일 +' + OVERDUE_INSPECTION_DAYS + '일 이상 미검사 품목이 없습니다.', 'info');
             return;
         }
         const rows = overdue.map(w => {
@@ -3893,7 +3926,7 @@ const PaintingInspectionModule = (function() {
         UIUtils.showModal(
             '외관 검사 지연 알림',
             '<div style="margin-bottom:10px;font-size:0.85rem;color:var(--text-secondary);">' +
-            '도장작업일 기준 <strong>' + OVERDUE_INSPECTION_DAYS + '일 이상</strong> 지난 <strong>미검사</strong> 품목 ' +
+            '초중종물 <strong>발행 완료</strong> 후 도장작업일 기준 <strong>' + OVERDUE_INSPECTION_DAYS + '일 이상</strong> 지난 <strong>미검사</strong> 품목 ' +
             overdue.length + '건입니다. 대기 목록에서 주황 음영이 깜박입니다.</div>' +
             '<div class="data-table-wrapper"><table class="data-table"><thead><tr>' +
             '<th>도장작업일</th><th>라인</th><th>차종</th><th>품명</th><th>컬러</th><th>사출 LOT</th><th style="text-align:right;">지연</th>' +
@@ -3993,7 +4026,7 @@ const PaintingInspectionModule = (function() {
                             <span class="material-symbols-outlined">done_all</span> 외관 검사 대기품
                             <span id="paintInspOverdueBadge" class="paint-insp-overdue-badge" style="display:none;"></span>
                         </h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">도장 작업 완료된 제품을 외관 검사합니다. 도장작업일 +2일 이상 미검사는 음영이 깜박입니다.</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">초중종물 발행 완료 후 도장작업일 +2일 이상 미검사는 음영이 깜박입니다.</span>
                     </div>
                     <div class="card-body" id="inspectionWaitingList"></div>
                 </div>
@@ -4164,8 +4197,8 @@ const PaintingInspectionModule = (function() {
             ? `<div class="paint-insp-overdue-banner">
                     <span class="material-symbols-outlined">notification_important</span>
                     <div>
-                        <strong>도장작업일 +${OVERDUE_INSPECTION_DAYS}일 이상 미검사 ${overdueCount}건</strong>
-                        <span>해당 행은 주황 음영이 깜박이며, 품질/도장 담당자에게 알림이 지정됩니다.</span>
+                        <strong>초중종물 발행 완료 · 도장작업일 +${OVERDUE_INSPECTION_DAYS}일 이상 미검사 ${overdueCount}건</strong>
+                        <span>해당 행은 주황 음영이 깜박이며, 품질/도장 담당자에게 알림이 지정됩니다. 미발행(발행대기) 품목은 제외합니다.</span>
                     </div>
                     <button type="button" class="btn btn-sm btn-outline" onclick="PaintingInspectionModule.openOverdueAlertPanel()">알림 보기</button>
                </div>`
@@ -6926,6 +6959,8 @@ const PaintingInspectionModule = (function() {
         printNonconformStandardPage,
         getInspectionWaitingWorks,
         getOverdueUninspectedWorks,
+        isOverdueUninspectedWork: _isUninspectedOverdue,
+        hasQualityIssueIssued: _hasQualityIssueIssued,
         syncOverdueInspectionAlerts,
         openOverdueAlertPanel
     };
