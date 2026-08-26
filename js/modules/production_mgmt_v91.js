@@ -22031,7 +22031,17 @@ var ProdQualityModule = (function() {
     }
 
     function _measureItemsForIssue(issue = {}) {
-        return _sortItemsByMaster(_normalizeQualityItems(issue.items || []))
+        const specItems = _specItemsForIssue(issue);
+        const source = specItems.length ? specItems : (issue.items || []);
+        const filtered = specItems.length
+            ? source
+            : source.filter(item => {
+                if (item && item.selected === false) return false;
+                const group = _measureGroupOfItem(item);
+                if (group === 'color' || group === 'gloss') return _hasSpecValue(item);
+                return true;
+            });
+        return _sortItemsByMaster(_normalizeQualityItems(filtered))
             .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
             .filter(item => item.measureGroup);
     }
@@ -22205,29 +22215,39 @@ var ProdQualityModule = (function() {
                     ${(typeHeaders.length ? typeHeaders : typeOrder).map(type => `
                     <div style="border:1px solid var(--border-color);border-radius:8px;padding:8px;background:#fff;">
                         <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;margin-bottom:6px;">
-                            <strong style="font-size:.82rem;">${_esc(type)}</strong>
+                            <strong style="font-size:.82rem;">${_esc(type)} <span id="pqDataPhotoCount_${_esc(type)}" style="font-weight:600;color:var(--text-muted);font-size:.72rem;"></span></strong>
                             <div style="display:flex;gap:4px;">
-                                <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="촬영">
+                                <label class="btn btn-sm btn-outline pq-photo-add-ctrl" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="촬영 후 추가">
                                     <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">photo_camera</span>
-                                    <input type="file" accept="image/*" capture="environment" multiple
+                                    <input type="file" accept="image/*" capture="environment"
                                         onchange="ProdQualityModule.addPqDataPhotos(this,'${_esc(type)}')" style="display:none;">
                                 </label>
-                                <label class="btn btn-sm btn-outline" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="파일 선택">
+                                <label class="btn btn-sm btn-outline pq-photo-add-ctrl" style="cursor:pointer;font-size:.7rem;padding:3px 7px;" title="파일 추가 (여러 장)">
                                     <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">upload</span>
                                     <input type="file" accept="image/*" multiple
                                         onchange="ProdQualityModule.addPqDataPhotos(this,'${_esc(type)}')" style="display:none;">
                                 </label>
                             </div>
                         </div>
-                        <div id="pqDataPhotoList_${_esc(type)}" style="display:flex;flex-wrap:wrap;gap:6px;min-height:40px;"></div>
+                        <div id="pqDataPhotoList_${_esc(type)}" style="display:flex;flex-wrap:wrap;gap:6px;min-height:74px;align-items:flex-start;"></div>
                     </div>`).join('')}
                 </div>
             </div>
         `;
     }
 
-    // 사진 업로드/삭제는 모달 메모리 상태로 관리
+    // 사진 업로드/삭제는 모달 메모리 상태로 관리. 초물/중물/종물 각각 여러 장 추가 가능.
     let _pqDataPhotos = [];
+    let _pqDataPhotoReadOnly = false;
+
+    function _pqPhotoAddTileHtml(type) {
+        return `<label class="pq-photo-add-tile pq-photo-add-ctrl" title="사진 추가 (여러 장 가능)"
+            style="width:74px;height:74px;border:1px dashed var(--accent-blue,#2563eb);border-radius:6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer;background:#eff6ff;color:var(--accent-blue,#2563eb);flex-shrink:0;">
+            <span class="material-symbols-outlined" style="font-size:22px;">add_a_photo</span>
+            <span style="font-size:.64rem;font-weight:700;">추가</span>
+            <input type="file" accept="image/*" multiple onchange="ProdQualityModule.addPqDataPhotos(this,'${_esc(type)}')" style="display:none;">
+        </label>`;
+    }
 
     // 초물/중물/종물 열별로 나눠 렌더링 — idx는 _pqDataPhotos 배열 기준 전역 인덱스(삭제용)
     function _renderPqDataPhotoList(type) {
@@ -22235,18 +22255,21 @@ var ProdQualityModule = (function() {
         if (!el) return;
         const entries = [];
         _pqDataPhotos.forEach((p, idx) => { if ((p.type || '') === type) entries.push({ p, idx }); });
-        if (!entries.length) {
+        const countEl = document.getElementById('pqDataPhotoCount_' + type);
+        if (countEl) countEl.textContent = entries.length ? `· ${entries.length}장` : '';
+        const thumbs = entries.map(({ p, idx }) => {
+            const src = ApiClient.photoUrl ? ApiClient.photoUrl(p.url) : p.url;
+            return `<div style="position:relative;width:74px;height:74px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;flex-shrink:0;">
+                <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="ProdQualityModule.openPqPhoto('${_js(src)}','${_js(p.type || p.name || '초중종물 사진')}')">
+                ${_pqDataPhotoReadOnly ? '' : `<button type="button" onclick="ProdQualityModule.removePqDataPhoto(${idx})"
+                    style="position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:12px;line-height:1;">×</button>`}
+            </div>`;
+        }).join('');
+        if (!entries.length && _pqDataPhotoReadOnly) {
             el.innerHTML = `<div style="padding:8px;color:var(--text-muted);font-size:.68rem;text-align:center;width:100%;">사진 없음</div>`;
             return;
         }
-        el.innerHTML = entries.map(({ p, idx }) => {
-            const src = ApiClient.photoUrl ? ApiClient.photoUrl(p.url) : p.url;
-            return `<div style="position:relative;width:74px;height:74px;border:1px solid var(--border-color);border-radius:6px;overflow:hidden;background:#fff;">
-                <img src="${_esc(src)}" alt="${_esc(p.name || '')}" style="width:100%;height:100%;object-fit:cover;cursor:pointer;" onclick="ProdQualityModule.openPqPhoto('${_js(src)}','${_js(p.type || p.name || '초중종물 사진')}')">
-                <button type="button" onclick="ProdQualityModule.removePqDataPhoto(${idx})"
-                    style="position:absolute;top:2px;right:2px;width:18px;height:18px;border:0;border-radius:50%;background:rgba(220,38,38,.92);color:#fff;font-weight:800;cursor:pointer;font-size:12px;line-height:1;">×</button>
-            </div>`;
-        }).join('');
+        el.innerHTML = thumbs + (_pqDataPhotoReadOnly ? '' : _pqPhotoAddTileHtml(type));
     }
 
     function _renderAllPqDataPhotoLists() {
@@ -22254,6 +22277,7 @@ var ProdQualityModule = (function() {
     }
 
     async function addPqDataPhotos(input, type) {
+        if (_pqDataPhotoReadOnly) return;
         const files = Array.from(input?.files || []);
         if (!files.length) return;
         // 저장 폴더: quality-checksheet/{YYYY}/{MM} — 기록일 우선, 없으면 오늘
@@ -22286,6 +22310,7 @@ var ProdQualityModule = (function() {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
+        _pqDataPhotoReadOnly = false;
         _pqDataPhotos = Array.isArray(record.photos) ? record.photos.map(p => ({ ...p })) : [];
         UIUtils.showModal('초중종물 DATA 입력', _measureRecordForm(issue, record), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
@@ -22298,23 +22323,19 @@ var ProdQualityModule = (function() {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
+        _pqDataPhotoReadOnly = true;
         _pqDataPhotos = Array.isArray(record.photos) ? record.photos.map(p => ({ ...p })) : [];
         UIUtils.showModal('초중종물 DATA 보기', _measureRecordForm(issue, record), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
             <button class="btn btn-primary" onclick="UIUtils.closeModal();setTimeout(()=>ProdQualityModule.openDataModal('${_js(issueId)}'),50)">편집</button>
         `, 'xl');
-        // 보기 모드: 모든 입력 비활성화 (사진 영역은 클릭 가능하게 유지, 삭제 버튼만 숨김)
+        // 보기 모드: 모든 입력 비활성화 (사진 미리보기 클릭은 유지)
         const body = document.getElementById('modalBody');
         if (body) {
             body.querySelectorAll('input, select, textarea').forEach(el => { el.disabled = true; });
-            // 사진 영역 버튼(촬영/파일 선택, 삭제 ×)은 숨김
             setTimeout(() => {
                 _renderAllPqDataPhotoLists();
-                body.querySelectorAll('[id^="pqDataPhotoList_"]').forEach(list => {
-                    list.querySelectorAll('button').forEach(b => { b.style.display = 'none'; });
-                });
-                // 촬영/파일선택 라벨도 비활성화
-                body.querySelectorAll('#modalBody label.btn').forEach(l => { l.style.pointerEvents = 'none'; l.style.opacity = '0.4'; });
+                body.querySelectorAll('.pq-photo-add-ctrl').forEach(el => { el.style.display = 'none'; });
             }, 50);
             body.querySelectorAll('button').forEach(btn => { if (!btn.closest('.modal-footer')) btn.disabled = true; });
         }
@@ -22737,21 +22758,22 @@ var ProdQualityModule = (function() {
         ) || null;
     }
 
-    // 제품 마스터 기준 템플릿 조회 (carModel+partName+color 우선, 없으면 carModel+color, 없으면 carModel)
+    // 제품 마스터 기준 템플릿 조회 (carModel+partName+color+공정 우선)
+    // 품명이 있으면 차종-only 템플릿으로 내려가지 않는다.
+    // (차종 공통 기준의 색차 등이 품목별 기준에 없는 항목으로 인쇄에 섞이는 것을 막음)
     function _templateForProduct(carModel, partName, color, paintProcess = '') {
         const car = _normText(carModel), part = _normText(partName), clr = _normText(color);
         const proc = _normText(paintProcess);
         const tmpls = _templates();
-        // paintProcess가 있으면 정확히 매칭되는 것을 우선 탐색
         if (proc) {
             const exact = tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && _normText(t.color||'')===clr && _normText(t.paintProcess||'')===proc)
                 || tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && !_normText(t.color||'') && _normText(t.paintProcess||'')===proc);
             if (exact) return exact;
         }
-        // 기존 방식 (paintProcess 없는 레코드 또는 fallback)
-        return tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && _normText(t.color||'')===clr && !_normText(t.paintProcess||''))
-            || tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && !_normText(t.color||'') && !_normText(t.paintProcess||''))
-            || tmpls.find(t => _normText(t.carModel)===car && !t.partName && _normText(t.color||'')===clr && !_normText(t.paintProcess||''))
+        const partLevel = tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && _normText(t.color||'')===clr && !_normText(t.paintProcess||''))
+            || tmpls.find(t => _normText(t.carModel)===car && _normText(t.partName||'')===part && !_normText(t.color||'') && !_normText(t.paintProcess||''));
+        if (part) return partLevel || null;
+        return tmpls.find(t => _normText(t.carModel)===car && !t.partName && _normText(t.color||'')===clr && !_normText(t.paintProcess||''))
             || tmpls.find(t => _normText(t.carModel)===car && !t.partName && !_normText(t.color||'') && !_normText(t.paintProcess||''))
             || null;
     }
@@ -22806,6 +22828,41 @@ var ProdQualityModule = (function() {
         return fallbackToMaster
             ? _masterItems().map(item => _normalizeItemForEdit({ ...item, selected: true }))
             : [];
+    }
+
+    function _fallbackColorsForProduct(product, extraColors = []) {
+        const fromProduct = product ? [
+            product.color, product.paintColor, product.paint, product.drawingColor,
+            product.paintColorA, product.paintColorB
+        ] : [];
+        return [...new Set([...fromProduct, ...(extraColors || [])].map(_normText).filter(Boolean))];
+    }
+
+    // 품목별 항목 기준만 반환. 마스터/차종 기본 항목(색차 등)은 넣지 않는다.
+    function _specItemsForIssue(d = {}) {
+        const car = d.carModel || '';
+        const part = d.partName || '';
+        const line = d.line || '';
+        if (!car || !part) return [];
+        const product = _findProductForQuality(car, part, d.color || '');
+        const resolvedColor = product && line
+            ? (_resolveProductColor(product, line) || _resolveIssueColor(car, part, d.color || ''))
+            : _resolveIssueColor(car, part, d.color || '');
+        const fallbackColors = _fallbackColorsForProduct(product, [d.color, resolvedColor]);
+        return _productSpecItems(car, part, resolvedColor, {
+            fallbackToMaster: false,
+            paintProcess: line,
+            fallbackColors
+        }).filter(item => item && item.selected !== false);
+    }
+
+    function _stripUnspecifiedColorGloss(items = []) {
+        return (items || []).filter(item => {
+            if (!item || item.selected === false) return false;
+            const group = _measureGroupOfItem(item);
+            if (group === 'color' || group === 'gloss') return _hasSpecValue(item);
+            return true;
+        });
     }
 
     function _masterItemRecord() {
@@ -23019,11 +23076,11 @@ var ProdQualityModule = (function() {
         const timeParts = _issueTimeParts(d);
         const duration = d.workHours || _durationHours(timeParts.startTime, timeParts.endTime);
         const shouldLoadItems = !!(d.carModel && d.partName);
-        // 항상 현재 템플릿 기반으로 항목을 가져오고, 저장된 측정값(d.items)은 병합만 함
-        // 라인(도장-A/B)을 넘겨 품목별 항목 기준과 동일한 프리셋을 사용한다.
+        // 품목별 항목 기준을 우선하고, 저장된 측정값(d.items)은 병합만 함.
+        // 기준이 없으면 저장된 항목에서 기준값 없는 색차/광택만 제외한다.
         const templateItems = shouldLoadItems
-            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
-            : (d.items || []);
+            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, d.items || [], d.line || '')
+            : _stripUnspecifiedColorGloss(d.items || []);
         const items = templateItems.length
             ? _sortItemsByMaster(_mergeIssueItems(templateItems, d.items || []).map(item => _normalizeItemForEdit({ ...item })))
             : [];
@@ -23210,20 +23267,16 @@ var ProdQualityModule = (function() {
     }
 
     function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = [], paintProcess = '') {
-        const proc = _normText(paintProcess);
-        const product = _findProductForQuality(carModel, partName, color);
-        // 라인(도장-A/B)이 있으면 공정별 컬러로 품목별 기준을 조회한다.
-        // (품목별 항목 기준은 paintProcess+paintColorA/B로 저장되므로 라인 없이 조회하면 기본 마스터 항목이 나옴)
-        const resolvedColor = product && proc
-            ? (_resolveProductColor(product, proc) || _resolveIssueColor(carModel, partName, color))
-            : _resolveIssueColor(carModel, partName, color);
-        const presetItems = _productSpecItems(carModel, partName, resolvedColor, {
-            fallbackToMaster: false,
-            paintProcess: proc
+        const specItems = _specItemsForIssue({
+            carModel,
+            partName,
+            color,
+            line: paintProcess
         });
-        const baseItems = presetItems.length
-            ? presetItems
-            : _itemsForCar(carModel, resolvedColor).map(item => _normalizeItemForEdit({ ...item }));
+        const baseItems = specItems.length
+            ? specItems
+            : _stripUnspecifiedColorGloss(currentItems);
+        if (!baseItems.length) return [];
         return _sortItemsByMaster(_mergeIssueItems(baseItems, currentItems).map(item => _normalizeItemForEdit({ ...item })));
     }
 
@@ -24814,20 +24867,13 @@ var ProdQualityModule = (function() {
     function printIssue(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
-        // 발행 당시 저장된 items가 기본 마스터(색차·광택 등)여도,
-        // 인쇄/재인쇄는 현재 품목별 항목 기준(프리셋)을 우선 적용한다.
-        const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
-        const resolvedColor = product && d.line
-            ? (_resolveProductColor(product, d.line) || _resolveIssueColor(d.carModel || '', d.partName || '', d.color || ''))
-            : _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
-        const templateItems = (d.carModel && d.partName)
-            ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
-                .filter(item => item.selected !== false)
-            : [];
+        // 인쇄/재인쇄는 현재 품목별 항목 기준만 사용한다.
+        // 발행 당시 저장된 items에 색차·광택 등 마스터 기본값이 들어 있어도 품목 기준에 없으면 제외.
+        const specItems = _specItemsForIssue(d);
         const items = _sortItemsByMaster(
-            (templateItems.length
-                ? _mergeIssueItems(templateItems, d.items || [])
-                : _normalizeQualityItems(d.items || [])
+            (specItems.length
+                ? _mergeIssueItems(specItems, d.items || [])
+                : _stripUnspecifiedColorGloss(_normalizeQualityItems(d.items || []))
             ).map(item => _normalizeItemForEdit({ ...item }))
         );
         // ✓ 작업시간 기준(4hr 규정)을 우선 적용 — 예전에 발행된 기준 양식(저장된 d.types)도
