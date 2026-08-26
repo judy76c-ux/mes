@@ -114,6 +114,9 @@ const DashboardModule = (function() {
             <!-- 관리자 보고 누락 -->
             <div id="dashManagerAlerts"></div>
 
+            <!-- 외관 검사 지연 -->
+            <div id="dashInspectionOverdueAlerts"></div>
+
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
@@ -165,6 +168,7 @@ const DashboardModule = (function() {
 
         renderProductionTiles();
         renderManagerAlerts();
+        renderInspectionOverdueAlerts();
         renderMonitorTiles();   // async
         renderImprovementTiles();
         renderBoardSection();
@@ -242,6 +246,70 @@ const DashboardModule = (function() {
             '</tr></thead>' +
             '<tbody>' + rows + '</tbody>' +
             '</table></div></div>';
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       외관 검사 지연 (도장작업일 +2일 이상 미검사)
+    ══════════════════════════════════════════════════════════ */
+    function renderInspectionOverdueAlerts() {
+        const el = document.getElementById('dashInspectionOverdueAlerts');
+        if (!el) return;
+        if (typeof PaintingInspectionModule === 'undefined' ||
+            typeof PaintingInspectionModule.getOverdueUninspectedWorks !== 'function') {
+            el.innerHTML = '';
+            return;
+        }
+        const items = PaintingInspectionModule.getOverdueUninspectedWorks() || [];
+        if (typeof PaintingInspectionModule.syncOverdueInspectionAlerts === 'function') {
+            PaintingInspectionModule.syncOverdueInspectionAlerts();
+        }
+        if (!items.length) { el.innerHTML = ''; return; }
+
+        const rows = items.slice(0, 20).map(function(d) {
+            const wp = (d.date || '').split('-');
+            const dateStr = wp.length === 3 ? wp[1] + '-' + wp[2] : (d.date || '-');
+            const painted = new Date((d.date || '') + 'T00:00:00');
+            const days = isNaN(painted.getTime())
+                ? 2
+                : Math.max(2, Math.floor((_startOfLocalDay(new Date()) - _startOfLocalDay(painted)) / 86400000));
+            return '<tr style="cursor:pointer;" onclick="Router.navigate(\'painting-inspection\')">' +
+                '<td style="white-space:nowrap;font-size:0.82rem;color:var(--text-muted);">' + dateStr + '</td>' +
+                '<td style="font-size:0.83rem;font-weight:600;">' + _esc(d.carModel || '-') + '</td>' +
+                '<td style="font-size:0.83rem;">' + _esc(d.partName || '-') + '</td>' +
+                '<td style="font-size:0.82rem;">' + _esc(d.color || '-') + '</td>' +
+                '<td style="font-size:0.82rem;">' + _esc(d.line || '-') + '</td>' +
+                '<td style="font-size:0.78rem;font-weight:700;color:#c2410c;">지연 ' + days + '일</td>' +
+                '</tr>';
+        }).join('');
+
+        el.innerHTML =
+            '<div class="card" style="margin-bottom:0;border-left:3px solid #ea580c;">' +
+            '<div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">' +
+            '<div style="display:flex;align-items:center;gap:7px;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;color:#ea580c;">notifications_active</span>' +
+            '<span style="font-weight:700;font-size:0.88rem;color:#c2410c;">외관 검사 지연</span>' +
+            '<span style="background:#ea580c;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:700;">' + items.length + '</span>' +
+            '</div>' +
+            '<span style="font-size:0.75rem;color:var(--text-muted);">도장작업일 +2일 이상 미검사 · 클릭하여 이동</span>' +
+            '</div>' +
+            '<div style="overflow-x:auto;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +
+            '<thead><tr style="background:var(--bg-secondary);">' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">작업일</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">차종</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">품명</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">컬러</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">라인</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">상태</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+            '</table></div></div>';
+    }
+
+    function _startOfLocalDay(date) {
+        const d = date instanceof Date ? new Date(date.getTime()) : new Date();
+        d.setHours(0, 0, 0, 0);
+        return d;
     }
 
     /* ══════════════════════════════════════════════════════════

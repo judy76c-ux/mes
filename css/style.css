@@ -2060,6 +2060,143 @@ input[type="time"] {
     animation: fadeInUp 0.4s ease both;
 }
 
+/* 외관 검사 지연(도장작업일 +2일 이상 미검사) 알림 */
+@keyframes paint-insp-overdue-blink {
+    0%, 100% { background-color: rgba(255, 247, 237, 0.95); }
+    50% { background-color: rgba(253, 186, 116, 0.72); }
+}
+
+tr.paint-insp-overdue-row > td {
+    animation: paint-insp-overdue-blink 1.2s ease-in-out infinite;
+}
+
+tr.paint-insp-overdue-row > td:first-child {
+    box-shadow: inset 3px 0 0 #ea580c;
+}
+
+.paint-insp-overdue-chip {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: #c2410c;
+    color: #fff;
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+}
+
+.paint-insp-overdue-badge {
+    display: inline-flex;
+    align-items: center;
+    background: #ea580c;
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.paint-insp-overdue-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(234, 88, 12, 0.35);
+    border-radius: 8px;
+    background: #fff7ed;
+    color: #9a3412;
+}
+
+.paint-insp-overdue-banner .material-symbols-outlined {
+    color: #ea580c;
+    flex-shrink: 0;
+}
+
+.paint-insp-overdue-banner div {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.paint-insp-overdue-banner span {
+    font-size: 0.78rem;
+    color: #c2410c;
+}
+
+.paint-insp-overdue-nav-badge {
+    margin-left: auto;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #ea580c;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.sidebar.collapsed .paint-insp-overdue-nav-badge {
+    position: absolute;
+    top: 4px;
+    right: 6px;
+    margin-left: 0;
+    min-width: 14px;
+    height: 14px;
+    font-size: 9px;
+    padding: 0 3px;
+}
+
+#topbarProcessAlertBtn {
+    position: relative;
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 4px;
+    color: var(--text-muted);
+    display: none;
+    align-items: center;
+    flex-shrink: 0;
+}
+
+#topbarProcessAlertBtn.has-alert {
+    color: #ea580c;
+}
+
+#topbarProcessAlertBtn .material-symbols-outlined {
+    font-size: 20px;
+}
+
+#topbarProcessAlertCount {
+    position: absolute;
+    right: -2px;
+    top: -2px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 999px;
+    background: #ea580c;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    tr.paint-insp-overdue-row > td {
+        animation: none;
+        background-color: #fed7aa;
+    }
+}
+
 /* ===================================================================
    반응형
    =================================================================== */

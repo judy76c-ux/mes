@@ -75,6 +75,18 @@ const App = (function() {
             // 5. 사출 LOT 번호 형식 오류 자동 감지 (백그라운드)
             setTimeout(() => _checkLotErrors(), 1500);
 
+            // 5-1. 외관 검사 지연(도장작업일 +2일 미검사) 알림
+            setTimeout(() => {
+                try {
+                    if (typeof PaintingInspectionModule !== 'undefined' &&
+                        typeof PaintingInspectionModule.syncOverdueInspectionAlerts === 'function') {
+                        PaintingInspectionModule.syncOverdueInspectionAlerts();
+                    }
+                } catch (e) {
+                    console.warn('[App] overdue inspection alert sync skipped:', e);
+                }
+            }, 800);
+
         } catch (error) {
             console.error('❌ 초기화 실패:', error);
             const contentArea = document.getElementById('contentArea');

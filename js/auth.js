@@ -819,8 +819,14 @@ const AuthModule = (function () {
         if (targetType === 'all') {
             return [{ type: 'all', id: 'all', label: '전체 사용자' }];
         }
-        const users = _getUsers().filter(user => user.active !== false);
         const ids = Array.isArray(targetIds) ? targetIds : [targetIds];
+        if (targetType === 'role') {
+            return ids
+                .map(id => String(id || '').trim())
+                .filter(Boolean)
+                .map(id => ({ type: 'role', id, label: _roleLabel(id) }));
+        }
+        const users = _getUsers().filter(user => user.active !== false);
         const recipients = ids.map(targetId => {
             const user = users.find(row =>
                 String(row.id) === String(targetId) ||
@@ -838,27 +844,43 @@ const AuthModule = (function () {
         return recipients;
     }
 
+    function hasRelatedMessage(category, relatedId) {
+        const cat = String(category || '');
+        const rid = String(relatedId || '');
+        if (!cat || !rid) return false;
+        return _getMessages().some(msg =>
+            String(msg.category || '') === cat && String(msg.relatedId || '') === rid
+        );
+    }
+
     function sendInternalMessage(payload) {
         const current = getCurrentUser();
-        if (!current) {
-            UIUtils.toast('로그인 후 메시지를 보낼 수 있습니다.', 'warning');
+        const isSystem = payload?.system === true;
+        const silent = payload?.silent === true || isSystem;
+        if (!current && !isSystem) {
+            if (!silent) UIUtils.toast('로그인 후 메시지를 보낼 수 있습니다.', 'warning');
             return false;
         }
         const targetType = String(payload?.targetType || 'user');
         const targetIds = _normalizeMessageTargetIds(payload);
         const title = String(payload?.title || '').trim();
         const body = String(payload?.body || '').trim();
+        const category = String(payload?.category || 'general');
+        const relatedId = String(payload?.relatedId || '').trim();
         if (!title || !body) {
-            UIUtils.toast('제목과 내용을 입력해 주세요.', 'warning');
+            if (!silent) UIUtils.toast('제목과 내용을 입력해 주세요.', 'warning');
             return false;
         }
         if (targetType !== 'all' && !targetIds.length) {
-            UIUtils.toast('수신 대상을 선택해 주세요.', 'warning');
+            if (!silent) UIUtils.toast('수신 대상을 선택해 주세요.', 'warning');
             return false;
+        }
+        if (relatedId && hasRelatedMessage(category, relatedId)) {
+            return true;
         }
         const recipients = _cloneRecipients(targetType, targetIds);
         if (targetType !== 'all' && !recipients.length) {
-            UIUtils.toast('선택한 수신자를 찾을 수 없습니다.', 'warning');
+            if (!silent) UIUtils.toast('선택한 수신자를 찾을 수 없습니다.', 'warning');
             return false;
         }
         const rows = _getMessages();
@@ -866,10 +888,11 @@ const AuthModule = (function () {
             id: _newMessageId(),
             title,
             body,
-            category: String(payload?.category || 'general'),
+            category,
+            relatedId,
             priority: String(payload?.priority || 'normal'),
-            senderId: String(current.id || ''),
-            senderName: String(current.displayName || current.username || ''),
+            senderId: isSystem ? 'system' : String(current.id || ''),
+            senderName: isSystem ? '시스템' : String(current.displayName || current.username || ''),
             recipients,
             sentAt: new Date().toISOString(),
             readBy: []
@@ -1037,6 +1060,7 @@ const AuthModule = (function () {
         checkSettingsAuth,
         getUnreadInboxCount,
         sendInternalMessage,
+        hasRelatedMessage,
         openInboxModal,
         openComposeMessageModal,
         markMessageRead,
