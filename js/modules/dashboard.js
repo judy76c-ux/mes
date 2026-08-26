@@ -633,7 +633,8 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        초중종물(품질체크) 기준 발행 누락 경고 섹션
        - 대상: 계획 시작 5분 후 생성된 quality_issue 또는 도장 작업(초중종물 대상)
-       - 미발행: quality_issue가 없거나 printedAt 없음
+       - 미발행: 발행완료(printedAt/상태) 이력이 없는 도장 작업만 표시
+       - 자동 생성 발행대기보다 같은 작업의 발행완료 이력을 우선한다
     ══════════════════════════════════════════════════════════ */
     function renderQualityStdWarnings() {
         const el = document.getElementById('dashQualityStdWarnings');
@@ -650,8 +651,58 @@ const DashboardModule = (function() {
         const TEMPLATE_KIND = 'quality_template';
 
         function _normText(v) { return String(v || '').trim(); }
+        function _dateKey(v) { return String(v || '').trim().slice(0, 10); }
         function _templates() { return qAll.filter(d => d && d._docKind === TEMPLATE_KIND); }
         function _issues()    { return qAll.filter(d => d && (d._docKind || ISSUE_KIND) === ISSUE_KIND); }
+
+        function _isPrinted(issue) {
+            if (!issue) return false;
+            const status = String(issue.status || '').replace(/\s/g, '');
+            return !!issue.printedAt || status === '발행완료' || status.indexOf('발행완료') !== -1;
+        }
+
+        function _issueStamp(issue) {
+            return String((issue && (issue.updatedAt || issue.createdAt || issue.printedAt || issue.id)) || '');
+        }
+
+        function _prefer(prev, next) {
+            if (!prev) return next || null;
+            if (!next) return prev;
+            const p = _isPrinted(prev) ? 1 : 0;
+            const n = _isPrinted(next) ? 1 : 0;
+            if (n !== p) return n > p ? next : prev;
+            return _issueStamp(next) > _issueStamp(prev) ? next : prev;
+        }
+
+        function _fieldsMatch(a, b) {
+            if (_normText(a.carModel) !== _normText(b.carModel)) return false;
+            if (_normText(a.partName) !== _normText(b.partName)) return false;
+            const c1 = _normText(a.color);
+            const c2 = _normText(b.color);
+            if (c1 && c2 && c1 !== c2) return false;
+            return true;
+        }
+
+        function _issueMatchesWork(issue, w) {
+            if (!issue || !w) return false;
+            if (issue.workId && String(issue.workId) === String(w.id)) return true;
+            if (issue.planId && w.planId && String(issue.planId) === String(w.planId)) return true;
+            if (!_fieldsMatch(issue, w)) return false;
+            const idate = _dateKey(issue.date);
+            const wdate = _dateKey(w.date);
+            if (idate && wdate && idate === wdate) return true;
+            const ilot = String(issue.lotNo || '').replace(/\s+/g, '').toUpperCase();
+            const wlot = String(w.lotNo || '').replace(/\s+/g, '').toUpperCase();
+            return !!(ilot && wlot && (ilot === wlot || ilot.indexOf(wlot) !== -1 || wlot.indexOf(ilot) !== -1));
+        }
+
+        function _issueForWork(w, issues) {
+            let found = null;
+            issues.forEach(function(issue) {
+                if (_issueMatchesWork(issue, w)) found = _prefer(found, issue);
+            });
+            return found;
+        }
 
         function _templateFor(carModel, color) {
             const car = _normText(carModel);
@@ -664,15 +715,7 @@ const DashboardModule = (function() {
             return rows.find(t => !_normText(t.color)) || rows[0] || null;
         }
 
-        const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
-        const issueByPlan = new Map();
-        _issues().forEach(function(i) {
-            if (!i.planId) return;
-            const prev = issueByPlan.get(String(i.planId));
-            if (!prev || String(i.createdAt || i.id || '') > String(prev.createdAt || prev.id || '')) {
-                issueByPlan.set(String(i.planId), i);
-            }
-        });
+        const issues = _issues();
         const today = UIUtils.today();
         const seen = new Set();
         const missing = [];
@@ -681,8 +724,8 @@ const DashboardModule = (function() {
             if (!w || !w.id) return;
             const tmpl = _templateFor(w.carModel, w.color);
             if (!tmpl) return;
-            const issue = issueMap.get(w.id) || (w.planId ? issueByPlan.get(String(w.planId)) : null);
-            if (issue && issue.printedAt) return;
+            const issue = _issueForWork(w, issues);
+            if (_isPrinted(issue)) return;
             seen.add(w.id);
             if (w.planId) seen.add('plan:' + w.planId);
             missing.push({
@@ -697,8 +740,15 @@ const DashboardModule = (function() {
             });
         });
 
-        _issues().forEach(function(issue) {
-            if (issue.printedAt) return;
+        issues.forEach(function(issue) {
+            if (_isPrinted(issue)) return;
+            const alreadyIssued = issues.some(function(other) {
+                if (other === issue || !_isPrinted(other)) return false;
+                if (issue.workId && other.workId && String(issue.workId) === String(other.workId)) return true;
+                if (issue.planId && other.planId && String(issue.planId) === String(other.planId)) return true;
+                return _fieldsMatch(issue, other) && _dateKey(issue.date) === _dateKey(other.date);
+            });
+            if (alreadyIssued) return;
             const key = issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id);
             if (seen.has(key) || (issue.workId && seen.has(issue.workId)) || (issue.planId && seen.has('plan:' + issue.planId))) return;
             if (!_templateFor(issue.carModel, issue.color) && !(issue.items || []).length) return;
@@ -732,7 +782,7 @@ const DashboardModule = (function() {
 
         const rows = show.map(function(w) {
             const issue = w.issue;
-            const statusText = issue ? (issue.printedAt ? '발행완료' : '발행대기') : '미발행';
+            const statusText = issue ? (_isPrinted(issue) ? '발행완료' : '발행대기') : '미발행';
             const overdue = w.date && w.date < today;
             const warnBadge = overdue
                 ? _badge('전일 이전 미발행', '#dc2626', 'rgba(239,68,68,.08)', 'error')
