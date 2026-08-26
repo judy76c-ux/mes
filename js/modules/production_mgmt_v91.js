@@ -22039,18 +22039,23 @@ var ProdQualityModule = (function() {
         return '0.1';
     }
 
+    function _keepMeasureItem(item = {}) {
+        const group = item.measureGroup || _measureGroupOfItem(item);
+        const text = `${item.key || ''} ${item.label || ''}`;
+        const isColorGloss = group === 'color' || group === 'gloss' || /색차|△L|△a|△b|광택/i.test(text);
+        if (!isColorGloss) return true;
+        if (_hasSpecValue(item)) return true;
+        const shown = String(_composeRangeSpec(item) || item.spec || '').trim();
+        return _meaningfulSpecText(shown);
+    }
+
     function _measureItemsForIssue(issue = {}) {
         const specItems = _specItemsForIssue(issue);
         const source = specItems.length ? specItems : (issue.items || []);
         return _sortItemsByMaster(_normalizeQualityItems(_stripUnspecifiedColorGloss(source)))
             .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
             .filter(item => item.measureGroup)
-            .filter(item => {
-                if (item.measureGroup === 'color' || item.measureGroup === 'gloss') {
-                    return _hasSpecValue(item);
-                }
-                return true;
-            });
+            .filter(_keepMeasureItem);
     }
 
     function _formatMeasureValue(v) {
@@ -22194,29 +22199,11 @@ var ProdQualityModule = (function() {
                     </div>
                 </div>`;
             })()}
-            ${items.length ? `
-                <div class="data-table-wrapper" style="max-height:46vh;overflow:auto;">
-                    <table class="data-table" style="font-size:0.82rem;">
-                        <thead>
-                            <tr>
-                                <th style="width:44px;text-align:center;">No</th>
-                                <th style="min-width:170px;">관리항목</th>
-                                <th>기준</th>
-                                <th style="width:70px;">단위</th>
-                                <th style="width:110px;">초물</th>
-                                <th style="width:110px;">중물</th>
-                                <th style="width:110px;">종물</th>
-                                <th style="min-width:150px;">비고</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            ` : `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">색차, 광택, 도막두께 관리항목이 없습니다.</div>`}
-            <div style="margin-top:14px;border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:#f8fafc;">
+            <div style="margin-bottom:14px;border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:#f8fafc;">
                 <div style="display:flex;align-items:center;gap:6px;font-weight:700;font-size:.86rem;margin-bottom:10px;">
                     <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">photo_camera</span>
                     초중종물 사진 등록
+                    <span style="font-weight:500;color:var(--text-muted);font-size:.72rem;">각 단계 여러 장 추가 가능</span>
                 </div>
                 <div style="display:grid;grid-template-columns:repeat(${(typeHeaders.length || 1)},minmax(0,1fr));gap:10px;">
                     ${(typeHeaders.length ? typeHeaders : typeOrder).map(type => `
@@ -22240,6 +22227,25 @@ var ProdQualityModule = (function() {
                     </div>`).join('')}
                 </div>
             </div>
+            ${items.length ? `
+                <div class="data-table-wrapper" style="max-height:46vh;overflow:auto;">
+                    <table class="data-table" style="font-size:0.82rem;">
+                        <thead>
+                            <tr>
+                                <th style="width:44px;text-align:center;">No</th>
+                                <th style="min-width:170px;">관리항목</th>
+                                <th>기준</th>
+                                <th style="width:70px;">단위</th>
+                                <th style="width:110px;">초물</th>
+                                <th style="width:110px;">중물</th>
+                                <th style="width:110px;">종물</th>
+                                <th style="min-width:150px;">비고</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rows}</tbody>
+                    </table>
+                </div>
+            ` : `<div style="padding:28px;text-align:center;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">색차, 광택, 도막두께 관리항목이 없습니다.</div>`}
         `;
     }
 
