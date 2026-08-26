@@ -2062,12 +2062,17 @@ input[type="time"] {
 
 /* 외관 검사 지연(도장작업일 +2일 이상 미검사) 알림 */
 @keyframes paint-insp-overdue-blink {
-    0%, 100% { background-color: rgba(255, 247, 237, 0.95); }
-    50% { background-color: rgba(253, 186, 116, 0.72); }
+    0%, 100% { background-color: #ffedd5; }
+    50% { background-color: #fb923c; }
 }
 
+tr.paint-insp-overdue-row,
 tr.paint-insp-overdue-row > td {
-    animation: paint-insp-overdue-blink 1.2s ease-in-out infinite;
+    animation: paint-insp-overdue-blink 1.15s ease-in-out infinite;
+}
+
+.data-table tbody tr.paint-insp-overdue-row:hover {
+    background: transparent;
 }
 
 tr.paint-insp-overdue-row > td:first-child {
@@ -2191,6 +2196,7 @@ tr.paint-insp-overdue-row > td:first-child {
 }
 
 @media (prefers-reduced-motion: reduce) {
+    tr.paint-insp-overdue-row,
     tr.paint-insp-overdue-row > td {
         animation: none;
         background-color: #fed7aa;
