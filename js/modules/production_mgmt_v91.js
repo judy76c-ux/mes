@@ -19569,17 +19569,26 @@ var ProdQualityModule = (function() {
         return '';
     }
 
+    function _meaningfulSpecText(v) {
+        const s = String(v == null ? '' : v).trim();
+        if (!s) return false;
+        if (/^[-–—./]+$/.test(s)) return false;
+        if (s === '기준에 준할 것') return false;
+        return true;
+    }
+
     // 항목별 기준값 입력 여부 판단
     function _hasSpecValue(item = {}) {
         if (_isGlossSpecItem(item)) {
             const { targetSpec, toleranceSpec } = _glossValues(item);
-            return !!(targetSpec && toleranceSpec);
+            return _meaningfulSpecText(targetSpec) && _meaningfulSpecText(toleranceSpec);
         }
         if (_isRangeSpecItem(item)) {
             const { upperSpec, lowerSpec } = _rangeSpecValues(item);
-            return !!(upperSpec || lowerSpec || item.spec);
+            if (_meaningfulSpecText(upperSpec) || _meaningfulSpecText(lowerSpec)) return true;
+            return _meaningfulSpecText(item.spec);
         }
-        return !!(item.spec && String(item.spec).trim());
+        return _meaningfulSpecText(item.spec);
     }
 
     // 제품 기준값 상태: 'none' | 'items-only' | 'partial' | 'complete'
@@ -22033,17 +22042,15 @@ var ProdQualityModule = (function() {
     function _measureItemsForIssue(issue = {}) {
         const specItems = _specItemsForIssue(issue);
         const source = specItems.length ? specItems : (issue.items || []);
-        const filtered = specItems.length
-            ? source
-            : source.filter(item => {
-                if (item && item.selected === false) return false;
-                const group = _measureGroupOfItem(item);
-                if (group === 'color' || group === 'gloss') return _hasSpecValue(item);
+        return _sortItemsByMaster(_normalizeQualityItems(_stripUnspecifiedColorGloss(source)))
+            .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
+            .filter(item => item.measureGroup)
+            .filter(item => {
+                if (item.measureGroup === 'color' || item.measureGroup === 'gloss') {
+                    return _hasSpecValue(item);
+                }
                 return true;
             });
-        return _sortItemsByMaster(_normalizeQualityItems(filtered))
-            .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
-            .filter(item => item.measureGroup);
     }
 
     function _formatMeasureValue(v) {
@@ -22849,11 +22856,11 @@ var ProdQualityModule = (function() {
             ? (_resolveProductColor(product, line) || _resolveIssueColor(car, part, d.color || ''))
             : _resolveIssueColor(car, part, d.color || '');
         const fallbackColors = _fallbackColorsForProduct(product, [d.color, resolvedColor]);
-        return _productSpecItems(car, part, resolvedColor, {
+        return _stripUnspecifiedColorGloss(_productSpecItems(car, part, resolvedColor, {
             fallbackToMaster: false,
             paintProcess: line,
             fallbackColors
-        }).filter(item => item && item.selected !== false);
+        }).filter(item => item && item.selected !== false));
     }
 
     function _stripUnspecifiedColorGloss(items = []) {
@@ -23267,12 +23274,12 @@ var ProdQualityModule = (function() {
     }
 
     function _issueItemsForProduct(carModel = '', partName = '', color = '', currentItems = [], paintProcess = '') {
-        const specItems = _specItemsForIssue({
+        const specItems = _stripUnspecifiedColorGloss(_specItemsForIssue({
             carModel,
             partName,
             color,
             line: paintProcess
-        });
+        }));
         const baseItems = specItems.length
             ? specItems
             : _stripUnspecifiedColorGloss(currentItems);
@@ -24869,11 +24876,12 @@ var ProdQualityModule = (function() {
         if (!d) return;
         // 인쇄/재인쇄는 현재 품목별 항목 기준만 사용한다.
         // 발행 당시 저장된 items에 색차·광택 등 마스터 기본값이 들어 있어도 품목 기준에 없으면 제외.
-        const specItems = _specItemsForIssue(d);
+        const specItems = _stripUnspecifiedColorGloss(_specItemsForIssue(d));
         const items = _sortItemsByMaster(
-            (specItems.length
-                ? _mergeIssueItems(specItems, d.items || [])
-                : _stripUnspecifiedColorGloss(_normalizeQualityItems(d.items || []))
+            _stripUnspecifiedColorGloss(
+                specItems.length
+                    ? _mergeIssueItems(specItems, d.items || [])
+                    : _normalizeQualityItems(d.items || [])
             ).map(item => _normalizeItemForEdit({ ...item }))
         );
         // ✓ 작업시간 기준(4hr 규정)을 우선 적용 — 예전에 발행된 기준 양식(저장된 d.types)도
