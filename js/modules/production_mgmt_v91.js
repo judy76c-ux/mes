@@ -21358,36 +21358,117 @@ var ProdQualityModule = (function() {
         return _dedupePlansBySlot(raw);
     }
 
-    function _issueForSource(source, issueByWork, issueByPlan) {
+    function _normalizePlanId(planId) {
+        const s = String(planId || '');
+        if (!s) return '';
+        return _isPlanSourceId(s) ? _planIdFromSourceId(s) : s;
+    }
+
+    function _qualityFingerprint(x) {
+        if (!x) return '';
+        return [
+            String(x.date || '').slice(0, 10),
+            String(x.line || '').trim(),
+            String((x.startTime || x.slot || '')).trim().slice(0, 5),
+            String(x.carModel || '').trim(),
+            String(x.partName || '').trim(),
+            String(x.color || '').trim()
+        ].join('|').toLowerCase();
+    }
+
+    function _measureIssueIdSet() {
+        const ids = new Set();
+        _measureRecords().forEach(function(r) {
+            if (r && r.issueId) ids.add(String(r.issueId));
+        });
+        return ids;
+    }
+
+    function _measureRecordMap() {
+        const map = new Map();
+        _measureRecords().forEach(function(r) {
+            if (!r || !r.issueId) return;
+            const key = String(r.issueId);
+            const prev = map.get(key);
+            if (!prev || String(r.updatedAt || r.createdAt || '') > String(prev.updatedAt || prev.createdAt || '')) {
+                map.set(key, r);
+            }
+        });
+        return map;
+    }
+
+    function _issueRank(issue, measureIds) {
+        if (!issue) return 0;
+        const ids = measureIds || _measureIssueIdSet();
+        let n = 0;
+        if (issue.dataRecordId || (issue.id && ids.has(String(issue.id)))) n += 100;
+        if (issue.printedAt) n += 20;
+        if (issue.dataRecordedAt) n += 10;
+        if (issue.workId) n += 5;
+        return n;
+    }
+
+    function _pickBestIssue(issues, measureIds) {
+        if (!issues || !issues.length) return null;
+        const ids = measureIds || _measureIssueIdSet();
+        return issues.reduce(function(best, cur) {
+            if (!best) return cur;
+            const rb = _issueRank(best, ids);
+            const rc = _issueRank(cur, ids);
+            if (rc !== rb) return rc > rb ? cur : best;
+            return String(cur.updatedAt || cur.createdAt || cur.id || '') > String(best.updatedAt || best.createdAt || best.id || '')
+                ? cur : best;
+        }, null);
+    }
+
+    function _issueForSource(source, issueByWork, issueByPlan, issueByFp) {
         if (!source) return null;
-        if (source.planId && issueByPlan && issueByPlan.get(String(source.planId))) {
-            return issueByPlan.get(String(source.planId));
-        }
+        const cands = [];
+        const pid = _normalizePlanId(source.planId);
+        if (pid && issueByPlan && issueByPlan.get(pid)) cands.push(issueByPlan.get(pid));
         if (!source._fromPlan && source.id && issueByWork) {
-            return issueByWork.get(source.id) || null;
+            const byWork = issueByWork.get(source.id) || issueByWork.get(String(source.id));
+            if (byWork) cands.push(byWork);
         }
-        return null;
+        if (issueByFp) {
+            const fp = _qualityFingerprint(source);
+            if (fp && issueByFp.get(fp)) cands.push(issueByFp.get(fp));
+        }
+        return _pickBestIssue(cands);
     }
 
     function _buildIssueMaps() {
-        const issueByWork = new Map();
-        const issueByPlan = new Map();
+        const groupsWork = {};
+        const groupsPlan = {};
+        const groupsFp = {};
+        const measureIds = _measureIssueIdSet();
         _issues().forEach(function(i) {
             if (i.workId) {
-                const prev = issueByWork.get(i.workId);
-                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
-                    issueByWork.set(i.workId, i);
-                }
+                const k = String(i.workId);
+                (groupsWork[k] = groupsWork[k] || []).push(i);
             }
-            if (i.planId) {
-                const key = String(i.planId);
-                const prev = issueByPlan.get(key);
-                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
-                    issueByPlan.set(key, i);
-                }
+            const pid = _normalizePlanId(i.planId);
+            if (pid) {
+                (groupsPlan[pid] = groupsPlan[pid] || []).push(i);
+            }
+            const fp = _qualityFingerprint(i);
+            if (fp && String(i.date || '')) {
+                (groupsFp[fp] = groupsFp[fp] || []).push(i);
             }
         });
-        return { issueByWork, issueByPlan };
+        const issueByWork = new Map();
+        const issueByPlan = new Map();
+        const issueByFp = new Map();
+        Object.keys(groupsWork).forEach(function(k) {
+            issueByWork.set(k, _pickBestIssue(groupsWork[k], measureIds));
+        });
+        Object.keys(groupsPlan).forEach(function(k) {
+            issueByPlan.set(k, _pickBestIssue(groupsPlan[k], measureIds));
+        });
+        Object.keys(groupsFp).forEach(function(k) {
+            issueByFp.set(k, _pickBestIssue(groupsFp[k], measureIds));
+        });
+        return { issueByWork, issueByPlan, issueByFp };
     }
 
     function _qualityListSources() {
@@ -21455,17 +21536,29 @@ var ProdQualityModule = (function() {
         };
     }
 
-    function _existingIssueForPlan(planId, workId) {
+    function _existingIssueForPlan(planId, workId, hint) {
         const issues = _issues();
-        if (planId) {
-            const byPlan = issues.find(i => String(i.planId || '') === String(planId));
-            if (byPlan) return byPlan;
+        const pid = _normalizePlanId(planId);
+        const wid = workId ? String(workId) : '';
+        const matches = [];
+        const seen = {};
+        function add(i) {
+            if (!i || !i.id || seen[i.id]) return;
+            seen[i.id] = true;
+            matches.push(i);
         }
-        if (workId) {
-            const byWork = issues.find(i => String(i.workId || '') === String(workId));
-            if (byWork) return byWork;
+        issues.forEach(function(i) {
+            if (pid && _normalizePlanId(i.planId) === pid) add(i);
+            else if (wid && String(i.workId || '') === wid) add(i);
+        });
+        if (!matches.length && hint && String(hint.date || '') && (hint.carModel || hint.partName)) {
+            const fp = _qualityFingerprint(hint);
+            issues.forEach(function(i) {
+                if (wid && i.workId && String(i.workId) !== wid) return;
+                if (_qualityFingerprint(i) === fp) add(i);
+            });
         }
-        return null;
+        return _pickBestIssue(matches);
     }
 
     function _startQualityPlanTimer() {
@@ -21480,13 +21573,13 @@ var ProdQualityModule = (function() {
     }
 
     function _collectOverdueQuality() {
-        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+        const recordMap = _measureRecordMap();
         const maps = _buildIssueMaps();
         const list = [];
         const seen = {};
         _qualityListSources().forEach(function (w) {
-            const issue = _issueForSource(w, maps.issueByWork, maps.issueByPlan);
-            const hasData = !!(issue && recordMap.get(issue.id));
+            const issue = _issueForSource(w, maps.issueByWork, maps.issueByPlan, maps.issueByFp);
+            const hasData = !!(issue && recordMap.get(String(issue.id)));
             if (!_isOverdueQualitySource(w, hasData)) return;
             const date = String(w.date || '').slice(0, 10);
             if (!date || date >= UIUtils.today()) return;
@@ -21595,8 +21688,8 @@ var ProdQualityModule = (function() {
                 const planId = String(plan.id);
                 if (_creatingPlanIds.has(planId)) continue;
                 const work = workByPlan.get(planId);
-                if (_existingIssueForPlan(planId, work && work.id)) continue;
                 const src = work || _planAsWork(plan);
+                if (_existingIssueForPlan(planId, work && work.id, src)) continue;
                 const data = _buildIssueFromSource(Object.assign({}, src, { planId: plan.id }));
                 if (!data.items.length) continue;
                 _creatingPlanIds.add(planId);
@@ -21620,8 +21713,24 @@ var ProdQualityModule = (function() {
 
     async function attachWorkToPlanIssue(work) {
         if (!work || !work.id) return null;
-        const existing = _existingIssueForPlan(work.planId, work.id);
+        const existing = _existingIssueForPlan(work.planId, work.id, work);
         if (!existing) return null;
+        const pid = _normalizePlanId(work.planId || existing.planId);
+        const siblings = _issues().filter(function(i) {
+            if (!i || i.id === existing.id) return false;
+            if (pid && _normalizePlanId(i.planId) === pid) return true;
+            return String(i.workId || '') === String(work.id);
+        });
+        let printedAt = existing.printedAt || '';
+        let dataRecordId = existing.dataRecordId || '';
+        let dataRecordedAt = existing.dataRecordedAt || '';
+        siblings.forEach(function(s) {
+            if (!printedAt && s.printedAt) printedAt = s.printedAt;
+            if (!dataRecordId && s.dataRecordId) {
+                dataRecordId = s.dataRecordId;
+                dataRecordedAt = s.dataRecordedAt || dataRecordedAt;
+            }
+        });
         const lotNo = work.lotNo || ((work.lots || []).map(l => l.lotNo).filter(Boolean).join(', ')) || existing.lotNo || '';
         const startTime = work.startTime || existing.startTime || '';
         const endTime = work.endTime || existing.endTime || '';
@@ -21638,7 +21747,10 @@ var ProdQualityModule = (function() {
             line: work.line || existing.line,
             carModel: work.carModel || existing.carModel,
             partName: work.partName || existing.partName,
-            color: work.color || existing.color
+            color: work.color || existing.color,
+            printedAt: printedAt || existing.printedAt || '',
+            dataRecordId: dataRecordId || existing.dataRecordId || '',
+            dataRecordedAt: dataRecordedAt || existing.dataRecordedAt || ''
         });
         await Storage.update(STORE, existing.id, patched);
         if (_pqIsMainListVisible()) search();
@@ -21654,7 +21766,7 @@ var ProdQualityModule = (function() {
         const allIssues = (Storage.getAll(STORE) || []).filter(d => (d._docKind || ISSUE_KIND) === ISSUE_KIND);
         const issuedWorkIds = new Set(allIssues.map(i => i.workId).filter(Boolean));
         const issuedPlanIds = new Set(allIssues.map(i => i.planId).filter(Boolean).map(String));
-        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
+        const recordMap = _measureRecordMap();
 
         const isIssuedSource = (w) => {
             if (w._fromPlan || w.planId) {
@@ -21676,7 +21788,7 @@ var ProdQualityModule = (function() {
         const filterIssue = (d) =>
             (!start || d.date >= start) && (!end || d.date <= end) && (!car || d.carModel === car);
         const filteredIssueIds = new Set(allIssues.filter(filterIssue).map(d => d.id));
-        const noDataAlwaysOn = allIssues.filter(d => !recordMap.has(d.id)).map(d => d.id);
+        const noDataAlwaysOn = allIssues.filter(d => !recordMap.has(String(d.id))).map(d => d.id);
         noDataAlwaysOn.forEach(id => filteredIssueIds.add(id));
         // 발행 시간 기준 정렬 (최근 발행 우선): createdAt > id(시간순 슬러그) > date
         const issueSortKey = (d) => String(d.createdAt || d.updatedAt || d.id || d.date || '');
@@ -21870,24 +21982,26 @@ var ProdQualityModule = (function() {
         const tbody = document.getElementById('pqUnifiedBody');
         if (!tbody) return;
 
-        const recordMap = new Map(_measureRecords().filter(r => r.issueId).map(r => [r.issueId, r]));
-        const { issueByWork, issueByPlan } = _buildIssueMaps();
+        const recordMap = _measureRecordMap();
+        const { issueByWork, issueByPlan, issueByFp } = _buildIssueMaps();
         // 전체 이슈 맵(필터 밖 작업에 연결된 발행 포함)
         const allMaps = _buildIssueMaps();
         const canDelete = _isAdminUser();
         const workIds = new Set((works || []).map(w => w.id));
         const shownPlanIds = new Set();
+        const shownIssueIds = new Set();
         (works || []).forEach(function(w) {
             if (w.planId) shownPlanIds.add(String(w.planId));
+            shownPlanIds.add(_normalizePlanId(w.planId));
         });
 
         const rows = [];
 
         (works || []).forEach(function(w) {
-            const issue = _issueForSource(w, issueByWork, issueByPlan)
-                || _issueForSource(w, allMaps.issueByWork, allMaps.issueByPlan)
+            const issue = _issueForSource(w, issueByWork, issueByPlan, issueByFp)
+                || _issueForSource(w, allMaps.issueByWork, allMaps.issueByPlan, allMaps.issueByFp)
                 || null;
-            const record = issue ? recordMap.get(issue.id) : null;
+            const record = issue ? recordMap.get(String(issue.id)) : null;
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
             const printed = !!(issue && issue.printedAt);
@@ -21923,6 +22037,7 @@ var ProdQualityModule = (function() {
                 ? '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">실적 대기</div>'
                 : '';
             const overdue = _isOverdueQualitySource(w, !!record);
+            if (issue && issue.id) shownIssueIds.add(issue.id);
 
             rows.push({
                 sortKey,
@@ -21945,9 +22060,12 @@ var ProdQualityModule = (function() {
         // 작업일지 없이 수동 발행된 양식, 또는 작업이 현재 목록에 없는 발행 건
         (issues || []).forEach(function(d) {
             if (d.workId && workIds.has(d.workId)) return;
-            if (d.planId && shownPlanIds.has(String(d.planId))) return;
+            if (d.planId && (shownPlanIds.has(String(d.planId)) || shownPlanIds.has(_normalizePlanId(d.planId)))) return;
+            if (shownIssueIds.has(d.id)) return;
+            const bestFp = issueByFp && issueByFp.get(_qualityFingerprint(d));
+            if (bestFp && shownIssueIds.has(bestFp.id)) return;
 
-            const record = recordMap.get(d.id);
+            const record = recordMap.get(String(d.id));
             const printed = !!d.printedAt;
             const sortKey = String(d.createdAt || d.updatedAt || d.id || d.date || '');
             const statusCell = printed
@@ -22004,7 +22122,7 @@ var ProdQualityModule = (function() {
 
     function _measureRecordForIssue(issueId) {
         return _measureRecords()
-            .filter(r => r.issueId === issueId)
+            .filter(r => String(r.issueId || '') === String(issueId || ''))
             .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))[0] || null;
     }
 
@@ -23483,7 +23601,7 @@ var ProdQualityModule = (function() {
                 if (changed && typeof search === 'function') search();
             }
         }
-        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id, work);
         const base = existing || _buildIssueFromSource(work);
         if (!base.items.length) {
             UIUtils.toast('해당 차종의 관리항목을 먼저 선택하세요.', 'warning');
@@ -23509,7 +23627,9 @@ var ProdQualityModule = (function() {
             const existing = Storage.getById(STORE, issueId) || {};
             saved = await Storage.update(STORE, issueId, { ...existing, ...data });
         } else {
-            saved = await Storage.add(STORE, data);
+            const existing = _existingIssueForPlan(data.planId, data.workId, data);
+            if (existing) saved = await Storage.update(STORE, existing.id, { ...existing, ...data });
+            else saved = await Storage.add(STORE, data);
         }
         UIUtils.closeModal();
         search();
@@ -23519,7 +23639,7 @@ var ProdQualityModule = (function() {
     async function issueAndPrintFromWork(workId) {
         const work = _resolveQualitySource(workId);
         if (!work) return;
-        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id, work);
         if (existing) {
             printIssue(existing.id);
             return;
@@ -23545,7 +23665,7 @@ var ProdQualityModule = (function() {
             openTemplateModal(work.carModel || '', work.color || '');
             return;
         }
-        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id);
+        const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id, work);
         if (existing) await Storage.update(STORE, existing.id, Object.assign({}, existing, data));
         else await Storage.add(STORE, data);
         UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
@@ -25000,12 +25120,12 @@ table{border-collapse:collapse;width:100%}
 .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
 .main tr.color-row .measure-cell span{min-height:10mm;width:72%;font-size:0}
 @media print{
-  @page{size:A4 landscape;margin:0}
-  html,body{width:297mm;height:210mm;overflow:hidden;background:#fff!important;color:#000}
+  @page{size:A4 landscape;margin:5mm 7mm}
+  html,body{width:283mm;height:200mm;overflow:hidden;background:#fff!important;color:#000}
   body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .print-toolbar{display:none!important}
-  .print-page{width:297mm;height:210mm;margin:0;overflow:hidden;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
-  .sheet{width:297mm;height:210mm;max-width:none;min-height:0;overflow:hidden;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
+  .print-page{width:283mm;height:200mm;margin:0;overflow:hidden;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
+  .sheet{width:283mm;height:200mm;max-width:none;min-height:0;overflow:hidden;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
   .title-row,.top-grid,.cycle-note{flex:0 0 auto}
   .main{flex:1 1 auto;height:100%;width:100%}
   .measure-cell{height:auto;min-height:0}

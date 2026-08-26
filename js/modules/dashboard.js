@@ -1394,6 +1394,12 @@ const DashboardModule = (function() {
             if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">쪽지 기능을 사용할 수 없습니다.</span>';
             return;
         }
+        // 로그인 확인은 여기서 한 번만. sendInternalMessage는 미로그인 시 수신자마다
+        // 토스트를 띄우므로, 루프 전에 막아야 같은 경고가 인원수만큼 쌓이지 않는다.
+        if (typeof AuthModule.getCurrentUser === 'function' && !AuthModule.getCurrentUser()) {
+            if (statusEl) statusEl.innerHTML = '<span style="color:var(--accent-red);">로그인 후 쪽지를 보낼 수 있습니다. 발신자 기록이 필요합니다.</span>';
+            return;
+        }
 
         let noteOk = 0;
         checked.forEach(function(cb) {

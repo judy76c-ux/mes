@@ -2154,11 +2154,22 @@ const PaintingWorkModule = (function() {
 
     function _attachQualityIssueToWork(work) {
         if (!work || !work.id) return;
-        if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.attachWorkToPlanIssue === 'function') {
-            ProdQualityModule.attachWorkToPlanIssue(work).catch(function (e) {
-                console.warn('[PaintingWork] 초중종물 실적 연결 실패:', e);
-            });
+        function run() {
+            if (typeof ProdQualityModule !== 'undefined' && typeof ProdQualityModule.attachWorkToPlanIssue === 'function') {
+                ProdQualityModule.attachWorkToPlanIssue(work).catch(function (e) {
+                    console.warn('[PaintingWork] 초중종물 실적 연결 실패:', e);
+                });
+                return true;
+            }
+            return false;
         }
+        if (run()) return;
+        if (typeof Router === 'undefined' || typeof Router.ensureLazyLoaded !== 'function') return;
+        Router.ensureLazyLoaded('prod-quality').then(function () {
+            run();
+        }).catch(function (err) {
+            console.warn('[PaintingWork] 초중종물 모듈 로드 실패:', err);
+        });
     }
 
     // 라인 탭 전환

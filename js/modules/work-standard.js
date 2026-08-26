@@ -749,16 +749,17 @@ const WorkStandardModule = (function () {
             </div>`).join('');
         const addPhotoBtn = `
             <div style="flex:${photos.length ? '0 0 auto' : '1'};min-width:${photos.length ? '54px' : '0'};">
-                <div tabindex="0" title="클릭해 파일 선택, 또는 여기를 클릭한 뒤 Ctrl+V로 붙여넣기"
+                <div tabindex="0" title="여기를 클릭한 뒤 Ctrl+V로 붙여넣기 (파일 선택은 아이콘 클릭)"
                      style="width:${photos.length ? '54px' : '100%'};height:110px;border:2px dashed #94a3b8;
                             display:flex;flex-direction:column;align-items:center;justify-content:center;
-                            cursor:pointer;color:#64748b;gap:2px;background:#f8fafc;outline:none;"
-                     onclick="WorkStandardModule._addPhoto(${i})"
+                            cursor:text;color:#64748b;gap:2px;background:#f8fafc;outline:none;"
                      onpaste="WorkStandardModule._pastePhoto(event,${i})"
                      onfocus="this.style.borderColor='var(--accent-blue)'"
                      onblur="this.style.borderColor='#94a3b8'">
-                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">add_photo_alternate</span>
-                    ${photos.length ? '' : '<span style="font-size:0.62rem;text-align:center;line-height:1.3;">사진 추가<br>(Ctrl+V 붙여넣기)</span>'}
+                    <span class="material-symbols-outlined" title="클릭해 파일 선택"
+                        style="font-size:20px;color:var(--accent-blue);cursor:pointer;"
+                        onclick="event.stopPropagation();WorkStandardModule._addPhoto(${i})">add_photo_alternate</span>
+                    ${photos.length ? '' : '<span style="font-size:0.62rem;text-align:center;line-height:1.3;">Ctrl+V 붙여넣기<br>(아이콘 클릭: 파일 선택)</span>'}
                 </div>
             </div>`;
         return `
@@ -886,13 +887,17 @@ const WorkStandardModule = (function () {
         const C = 'border:1px solid #222;padding:1px 2px;';
         const cellInp = (id,val,ph='') => `<input id="${id}" value="${_esc(val||'')}" placeholder="${ph}"
             style="width:100%;border:none;background:transparent;font-size:7.8pt;padding:2px 3px;font-family:inherit;">`;
-        return `<tr style="height:23px;">
+        // 관리기준·관리방안은 문장이 길어 한 줄로는 잘리는 경우가 많아 2줄까지 줄바꿔 입력할 수 있게 한다.
+        const cellArea = (id,val,ph='') => `<textarea id="${id}" placeholder="${ph}" rows="2"
+            style="width:100%;height:100%;min-height:30px;border:none;background:transparent;font-size:7.8pt;
+                   padding:2px 3px;font-family:inherit;resize:none;line-height:1.25;overflow-y:auto;">${_esc(val||'')}</textarea>`;
+        return `<tr style="height:34px;">
             <td style="${C}text-align:center;font-size:7.8pt;color:#555;">${i+1}</td>
             <td style="${C}">${cellInp(`wsCi_${key}_${i}`,c.item,'관리항목')}</td>
-            <td style="${C}">${cellInp(`wsCs_${key}_${i}`,c.standard,'관리기준')}</td>
+            <td style="${C}">${cellArea(`wsCs_${key}_${i}`,c.standard,'관리기준')}</td>
             <td style="${C}">${cellInp(`wsCm_${key}_${i}`,c.method,'확인방법')}</td>
             <td style="${C}">${cellInp(`wsCc_${key}_${i}`,c.cycle,'주기')}</td>
-            <td style="${C}">${cellInp(`wsCr_${key}_${i}`,c.measure,'관리방안')}</td>
+            <td style="${C}">${cellArea(`wsCr_${key}_${i}`,c.measure,'관리방안')}</td>
             <td style="${C}text-align:center;">
                 <button type="button" style="border:none;background:none;color:#dc2626;cursor:pointer;font-size:0.75rem;font-weight:700;"
                     onclick="WorkStandardModule._delCondRow('${key}',${i})">×</button>
@@ -990,7 +995,7 @@ const WorkStandardModule = (function () {
         }
         try {
             if (_editId) {
-                await Storage.update(STORE, {id:_editId, ...data});
+                await Storage.update(STORE, _editId, data);
                 UIUtils.toast('저장되었습니다.','success');
             } else {
                 await Storage.add(STORE, data);
@@ -1198,13 +1203,13 @@ const WorkStandardModule = (function () {
                     <th style="${HB}">관리기준</th><th style="${HB}">확인방법</th>
                     <th style="${HB}">주기</th><th style="${HB}">관리방안</th>
                 </tr></thead>
-                <tbody>${data.map(c=>`<tr style="height:23px;">
+                <tbody>${data.map(c=>`<tr style="height:34px;">
                     <td style="${C}text-align:center;">${c.no}</td>
-                    <td style="${C}">${_esc(c.item)}</td>
-                    <td style="${C}">${_esc(c.standard)}</td>
+                    <td style="${C}white-space:pre-wrap;word-break:break-word;">${_esc(c.item)}</td>
+                    <td style="${C}white-space:pre-wrap;word-break:break-word;">${_esc(c.standard)}</td>
                     <td style="${C}text-align:center;">${_esc(c.method)}</td>
                     <td style="${C}text-align:center;">${_esc(c.cycle)}</td>
-                    <td style="${C}">${_esc(c.measure)}</td>
+                    <td style="${C}white-space:pre-wrap;word-break:break-word;">${_esc(c.measure)}</td>
                 </tr>`).join('')}</tbody>
             </table>`;
         };
