@@ -3750,10 +3750,50 @@ const PaintingInspectionModule = (function() {
         return Math.floor((today.getTime() - painted.getTime()) / 86400000);
     }
 
+    function _normQualityText(v) {
+        return String(v || '').trim();
+    }
+
+    function _qualityDateKey(v) {
+        const s = String(v || '').trim();
+        if (!s) return '';
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return s.slice(0, 10);
+        const y = d.getFullYear();
+        const m = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return y + '-' + m + '-' + day;
+    }
+
+    function _qualityLotKey(v) {
+        return String(v || '').replace(/\s+/g, '').toUpperCase();
+    }
+
+    function _workLotKey(work) {
+        if (!work) return '';
+        if (work.lotNo) return _qualityLotKey(work.lotNo);
+        const lots = Array.isArray(work.lots) ? work.lots.map(function(l) { return l && l.lotNo; }).filter(Boolean) : [];
+        return _qualityLotKey(lots.join(','));
+    }
+
+    function _qualityColorsMatch(a, b) {
+        const c1 = _normQualityText(a);
+        const c2 = _normQualityText(b);
+        if (!c1 || !c2) return true;
+        return c1 === c2;
+    }
+
+    function _qualityProductFieldsMatch(work, issue) {
+        return _normQualityText(work && work.carModel) === _normQualityText(issue && issue.carModel)
+            && _normQualityText(work && work.partName) === _normQualityText(issue && issue.partName)
+            && _qualityColorsMatch(work && work.color, issue && issue.color);
+    }
+
     function _isQualityFormIssued(issue) {
         if (!issue) return false;
         const status = String(issue.status || '').replace(/\s/g, '');
-        return !!issue.printedAt || status === '발행완료';
+        return !!issue.printedAt || status === '발행완료' || status.indexOf('발행완료') !== -1;
     }
 
     function _qualityIssues() {
@@ -3763,21 +3803,83 @@ const PaintingInspectionModule = (function() {
         });
     }
 
+    function _workMatchesQualityIssue(work, issue) {
+        if (!work || !issue) return false;
+        if (issue.workId && String(issue.workId) === String(work.id)) return true;
+        if (!_qualityProductFieldsMatch(work, issue)) return false;
+        const workDate = _qualityDateKey(work.date);
+        const issueDate = _qualityDateKey(issue.date);
+        if (workDate && issueDate && workDate === issueDate) return true;
+        const workLot = _workLotKey(work);
+        const issueLot = _qualityLotKey(issue.lotNo);
+        if (workLot && issueLot && (workLot === issueLot || workLot.indexOf(issueLot) !== -1 || issueLot.indexOf(workLot) !== -1)) {
+            return true;
+        }
+        return false;
+    }
+
     function _qualityIssueForWork(work) {
         if (!work) return null;
-        const issues = _qualityIssues();
-        return issues.find(i => i.workId && String(i.workId) === String(work.id))
-            || issues.find(i =>
-                String(i.date || '') === String(work.date || '') &&
-                String(i.carModel || '') === String(work.carModel || '') &&
-                String(i.partName || '') === String(work.partName || '') &&
-                String(i.color || '') === String(work.color || '')
-            )
-            || null;
+        const matches = _qualityIssues().filter(function(issue) {
+            return _workMatchesQualityIssue(work, issue);
+        });
+        return matches.find(_isQualityFormIssued) || matches[0] || null;
+    }
+
+    function _workForQualityIssue(issue) {
+        if (!issue) return null;
+        const works = Storage.getAll(PAINTING_WORK_STORE) || [];
+        if (issue.workId) {
+            const byId = works.find(function(w) { return String(w.id) === String(issue.workId); })
+                || Storage.getById(PAINTING_WORK_STORE, issue.workId);
+            if (byId) return byId;
+        }
+        const matches = works.filter(function(work) { return _workMatchesQualityIssue(work, issue); });
+        if (matches.length) {
+            return matches.find(function(work) { return work.inspectionStatus !== 'completed'; }) || matches[0];
+        }
+        const issueDate = _qualityDateKey(issue.date);
+        const candidates = works.filter(function(work) {
+            if (!_qualityProductFieldsMatch(work, issue)) return false;
+            const workDate = _qualityDateKey(work.date);
+            return !issueDate || !workDate || workDate <= issueDate;
+        }).sort(function(a, b) {
+            return _qualityDateKey(b.date).localeCompare(_qualityDateKey(a.date));
+        });
+        return candidates[0] || null;
     }
 
     function _hasQualityIssueIssued(work) {
-        return _isQualityFormIssued(_qualityIssueForWork(work));
+        if (!work) return false;
+        const issues = _qualityIssues();
+        if (issues.some(function(issue) {
+            return _isQualityFormIssued(issue) && _workMatchesQualityIssue(work, issue);
+        })) return true;
+        return issues.some(function(issue) {
+            if (!_isQualityFormIssued(issue)) return false;
+            const mapped = _workForQualityIssue(issue);
+            return mapped && String(mapped.id) === String(work.id);
+        });
+    }
+
+    function _todayDateKey() {
+        if (typeof UIUtils !== 'undefined' && typeof UIUtils.today === 'function') return UIUtils.today();
+        const d = new Date();
+        return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    }
+
+    function getUnissuedPaintingWorks() {
+        const today = _todayDateKey();
+        return (Storage.getAll(PAINTING_WORK_STORE) || [])
+            .filter(function(w) {
+                const date = _qualityDateKey(w.date);
+                if (!date || date >= today) return false;
+                return !_hasQualityIssueIssued(w);
+            })
+            .sort(function(a, b) {
+                return String(a.date || '').localeCompare(String(b.date || ''))
+                    || String(a.partName || '').localeCompare(String(b.partName || ''));
+            });
     }
 
     function _isUninspectedOverdue(work) {
@@ -6959,8 +7061,11 @@ const PaintingInspectionModule = (function() {
         printNonconformStandardPage,
         getInspectionWaitingWorks,
         getOverdueUninspectedWorks,
+        getUnissuedPaintingWorks,
         isOverdueUninspectedWork: _isUninspectedOverdue,
         hasQualityIssueIssued: _hasQualityIssueIssued,
+        qualityIssueForWork: _qualityIssueForWork,
+        findWorkForQualityIssue: _workForQualityIssue,
         syncOverdueInspectionAlerts,
         openOverdueAlertPanel
     };

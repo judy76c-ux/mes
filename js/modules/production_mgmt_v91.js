@@ -15051,21 +15051,65 @@ var ProdQualityModule = (function() {
         renderStats(works, data);
         renderWorkTable(works);
         renderTable(data);
+        if (!search._backfilling) {
+            search._backfilling = true;
+            _backfillIssueWorkIds(_issues()).then(function(changed) {
+                search._backfilling = false;
+                if (changed && document.getElementById('pqTableBody')) search();
+            }).catch(function(err) {
+                search._backfilling = false;
+                console.warn('[ProdQuality] workId backfill skipped:', err);
+            });
+        }
         if (typeof PaintingInspectionModule !== 'undefined' &&
             typeof PaintingInspectionModule.syncOverdueInspectionAlerts === 'function') {
             PaintingInspectionModule.syncOverdueInspectionAlerts();
         }
     }
 
+    function _isIssuePrinted(issue) {
+        if (!issue) return false;
+        const status = String(issue.status || '').replace(/\s/g, '');
+        return !!issue.printedAt || status === '발행완료' || status.indexOf('발행완료') !== -1;
+    }
+
+    function _isWorkQualityIssued(work) {
+        if (!work) return false;
+        if (typeof PaintingInspectionModule !== 'undefined' &&
+            typeof PaintingInspectionModule.hasQualityIssueIssued === 'function') {
+            return PaintingInspectionModule.hasQualityIssueIssued(work);
+        }
+        return _isIssuePrinted(_qualityIssueForWorkLocal(work));
+    }
+
+    function _qualityIssueForWorkLocal(work) {
+        if (!work) return null;
+        if (typeof PaintingInspectionModule !== 'undefined' &&
+            typeof PaintingInspectionModule.qualityIssueForWork === 'function') {
+            return PaintingInspectionModule.qualityIssueForWork(work);
+        }
+        const issues = _issues();
+        const matches = issues.filter(i =>
+            (i.workId && String(i.workId) === String(work.id)) ||
+            (String(i.date || '').slice(0, 10) === String(work.date || '').slice(0, 10) &&
+                String(i.carModel || '').trim() === String(work.carModel || '').trim() &&
+                String(i.partName || '').trim() === String(work.partName || '').trim() &&
+                (!String(i.color || '').trim() || !String(work.color || '').trim()
+                    || String(i.color || '').trim() === String(work.color || '').trim()))
+        );
+        return matches.find(_isIssuePrinted) || matches[0] || null;
+    }
+
     function renderStats(works, issues) {
-        const issuedWorkIds = new Set(issues.map(i => i.workId).filter(Boolean));
+        const unissued = works.filter(w => !_isWorkQualityIssued(w)).length;
+        const issuedCount = issues.filter(_isIssuePrinted).length;
         const configuredCars = new Set(_templates().map(t => `${t.carModel || ''}||${t.color || ''}`));
         const el = document.getElementById('pqStats');
         if (!el) return;
         el.innerHTML = `
             <div class="stat-card blue"><div class="stat-card-value">${works.length}</div><div class="stat-card-label">도장 작업 건수</div></div>
-            <div class="stat-card green"><div class="stat-card-value">${issues.length}</div><div class="stat-card-label">기준 양식 발행</div></div>
-            <div class="stat-card orange"><div class="stat-card-value">${works.filter(w => !issuedWorkIds.has(w.id)).length}</div><div class="stat-card-label">미발행</div></div>
+            <div class="stat-card green"><div class="stat-card-value">${issuedCount}</div><div class="stat-card-label">기준 양식 발행</div></div>
+            <div class="stat-card orange"><div class="stat-card-value">${unissued}</div><div class="stat-card-label">미발행</div></div>
             <div class="stat-card purple"><div class="stat-card-value">${configuredCars.size}</div><div class="stat-card-label">기준설정 차종/컬러</div></div>
         `;
     }
@@ -15078,17 +15122,42 @@ var ProdQualityModule = (function() {
 
     function _workForIssue(issue) {
         if (!issue) return null;
+        if (typeof PaintingInspectionModule !== 'undefined' &&
+            typeof PaintingInspectionModule.findWorkForQualityIssue === 'function') {
+            return PaintingInspectionModule.findWorkForQualityIssue(issue);
+        }
         if (issue.workId) {
             const byId = Storage.getById(PAINT_WORK_STORE, issue.workId);
             if (byId) return byId;
         }
         const works = Storage.getAll(PAINT_WORK_STORE) || [];
         return works.find(w =>
-            String(w.date || '') === String(issue.date || '') &&
-            String(w.carModel || '') === String(issue.carModel || '') &&
-            String(w.partName || '') === String(issue.partName || '') &&
-            String(w.color || '') === String(issue.color || '')
+            String(w.date || '').slice(0, 10) === String(issue.date || '').slice(0, 10) &&
+            String(w.carModel || '').trim() === String(issue.carModel || '').trim() &&
+            String(w.partName || '').trim() === String(issue.partName || '').trim() &&
+            (!String(w.color || '').trim() || !String(issue.color || '').trim()
+                || String(w.color || '').trim() === String(issue.color || '').trim())
         ) || null;
+    }
+
+    function _attachMatchingWorkId(data) {
+        if (!data) return data;
+        if (data.workId) return data;
+        const work = _workForIssue(data);
+        if (work && work.id) data.workId = work.id;
+        return data;
+    }
+
+    async function _backfillIssueWorkIds(issues) {
+        let changed = 0;
+        for (const issue of issues || []) {
+            if (!issue || issue.workId || !issue.id) continue;
+            const work = _workForIssue(issue);
+            if (!work || !work.id) continue;
+            await Storage.update(STORE, issue.id, { workId: work.id });
+            changed += 1;
+        }
+        return changed;
     }
 
     function renderWorkTable(works) {
@@ -15102,7 +15171,6 @@ var ProdQualityModule = (function() {
             if (banner) banner.innerHTML = '';
             return;
         }
-        const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
         const overdueCount = works.filter(_isWorkOverdueUninspected).length;
         const badge = document.getElementById('pqOverdueBadge');
         const banner = document.getElementById('pqOverdueBanner');
@@ -15130,12 +15198,8 @@ var ProdQualityModule = (function() {
         tbody.innerHTML = works.map(w => {
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
-            const issue = issueMap.get(w.id) || _issues().find(i =>
-                String(i.date || '') === String(w.date || '') &&
-                String(i.carModel || '') === String(w.carModel || '') &&
-                String(i.partName || '') === String(w.partName || '') &&
-                String(i.color || '') === String(w.color || '')
-            );
+            const issue = _qualityIssueForWorkLocal(w);
+            const issued = _isIssuePrinted(issue);
             const overdue = _isWorkOverdueUninspected(w);
             const days = overdue && typeof PaintingInspectionModule !== 'undefined'
                 ? (function() {
@@ -15156,13 +15220,13 @@ var ProdQualityModule = (function() {
                     <td>${_esc(w.color || '-')}</td>
                     <td style="font-family:monospace;font-size:0.8rem;">${_esc(w.lotNo || '-')}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(w.productionQty || 0)}</td>
-                    <td>${issue
-                        ? (issue.printedAt || String(issue.status || '').replace(/\s/g, '') === '발행완료'
-                            ? '<span class="badge badge-success">발행완료</span>'
-                            : '<span class="badge badge-success">작성완료</span>')
-                        : (hasTemplate
-                            ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
-                            : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`)}</td>
+                    <td>${issued
+                        ? '<span class="badge badge-success">발행완료</span>'
+                        : (issue
+                            ? '<span class="badge badge-warning">발행대기</span>'
+                            : (hasTemplate
+                                ? `<span class="badge badge-warning">미발행</span>`
+                                : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`))}</td>
                     <td style="white-space:nowrap;">
                         ${issue ? `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">인쇄물 발행</button>` : ''}
                         <button class="btn btn-sm ${issue ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.openWriteFromWork('${_js(w.id)}')">${issue ? '재발행' : '발행'}</button>
@@ -15179,7 +15243,7 @@ var ProdQualityModule = (function() {
             data.map((d, i) => {
                 const record = recordMap.get(d.id);
                 const printedText = d.printedAt ? String(d.printedAt).replace('T', ' ').slice(0, 16) : '-';
-                const status = d.status || (d.printedAt ? '발행완료' : '발행대기');
+                const status = _isIssuePrinted(d) ? '발행완료' : (d.status || '발행대기');
                 const statusClass = status === '발행완료' ? 'badge-success' : 'badge-warning';
                 const linkedWork = _workForIssue(d);
                 const overdue = _isWorkOverdueUninspected(linkedWork);
@@ -15271,7 +15335,8 @@ var ProdQualityModule = (function() {
             ...d,
             status: '발행완료',
             printedAt: now,
-            printHistory
+            printHistory,
+            workId: d.workId || (_workForIssue(d) || {}).id || ''
         });
         if (document.getElementById('pqTableBody')) search();
     }
@@ -15899,6 +15964,7 @@ var ProdQualityModule = (function() {
                 </div>
             </div>
             <input type="hidden" id="pqLotNo" value="${_esc(d.lotNo || '')}">
+            <input type="hidden" id="pqWorkId" value="${_esc(d.workId || '')}">
             <div style="border:1px solid var(--border-color);border-radius:8px;overflow:hidden;margin:8px 0;">
                 <div style="padding:7px 10px;background:var(--bg-secondary);font-weight:700;display:flex;align-items:center;justify-content:space-between;gap:8px;">
                     <span>발행 관리항목</span>
@@ -16167,6 +16233,7 @@ var ProdQualityModule = (function() {
             partName: document.getElementById('pqPartName').value.trim(),
             lotNo: document.getElementById('pqLotNo').value.trim(),
             color: document.getElementById('pqColor')?.value.trim() || '',
+            workId: document.getElementById('pqWorkId')?.value || '',
             productionQty: Number(document.getElementById('pqProductionQty')?.value) || 0,
             startTime,
             endTime,
@@ -16185,7 +16252,7 @@ var ProdQualityModule = (function() {
     }
 
     async function saveNew() {
-        const data = collectData();
+        const data = _attachMatchingWorkId(collectData());
             if (!data.date || !data.carModel || !data.partName || !data.line) { UIUtils.toast('발행일자, 차종, 품명, 라인을 입력하세요.', 'warning'); return; }
             if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const saved = await Storage.add(STORE, data);
@@ -16219,11 +16286,11 @@ var ProdQualityModule = (function() {
     }
 
     async function saveEdit(id) {
-        const data = collectData();
+        const data = _attachMatchingWorkId(collectData());
         if (!data.date || !data.carModel || !data.partName || !data.line) { UIUtils.toast('발행일자, 차종, 품명, 라인을 입력하세요.', 'warning'); return; }
         if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const existing = Storage.getById(STORE, id) || {};
-        await Storage.update(STORE, id, { ...existing, ...data, status: existing.status || data.status });
+        await Storage.update(STORE, id, { ...existing, ...data, status: existing.status || data.status, workId: data.workId || existing.workId || '' });
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');
         search();
@@ -16250,7 +16317,7 @@ var ProdQualityModule = (function() {
     function openWriteFromWork(workId) {
         const work = Storage.getById(PAINT_WORK_STORE, workId);
         if (!work) return;
-        const existing = _issues().find(i => i.workId === workId);
+        const existing = _issues().find(i => i.workId === workId) || _qualityIssueForWorkLocal(work);
         const base = existing || {
             _docKind: ISSUE_KIND,
             workId,
@@ -16285,7 +16352,7 @@ var ProdQualityModule = (function() {
     }
 
     async function saveWriteAndPrint(workId, issueId = '') {
-        const data = collectData();
+        const data = _attachMatchingWorkId(collectData());
         data.workId = workId || data.workId || '';
         data.status = '발행대기';
         if (!data.date || !data.carModel) { UIUtils.toast('발행일자와 차종을 입력하세요.', 'warning'); return; }
@@ -16333,8 +16400,8 @@ var ProdQualityModule = (function() {
             writer: '',
             note: ''
         };
-        const existing = _issues().find(i => i.workId === workId);
-        if (existing) await Storage.update(STORE, existing.id, data);
+        const existing = _issues().find(i => i.workId === workId) || _qualityIssueForWorkLocal(work);
+        if (existing) await Storage.update(STORE, existing.id, { ...existing, ...data, workId });
         else await Storage.add(STORE, data);
         UIUtils.toast('초중종물 기준 양식이 발행되었습니다.', 'success');
         search();

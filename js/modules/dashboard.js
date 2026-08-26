@@ -117,6 +117,9 @@ const DashboardModule = (function() {
             <!-- 외관 검사 지연 -->
             <div id="dashInspectionOverdueAlerts"></div>
 
+            <!-- 초중종물 미발행 -->
+            <div id="dashQualityUnissuedAlerts"></div>
+
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
@@ -169,6 +172,7 @@ const DashboardModule = (function() {
         renderProductionTiles();
         renderManagerAlerts();
         renderInspectionOverdueAlerts();
+        renderQualityUnissuedAlerts();
         renderMonitorTiles();   // async
         renderImprovementTiles();
         renderBoardSection();
@@ -291,6 +295,57 @@ const DashboardModule = (function() {
             '<span style="background:#ea580c;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:700;">' + items.length + '</span>' +
             '</div>' +
             '<span style="font-size:0.75rem;color:var(--text-muted);">초중종물 발행 완료 · 도장작업일 +2일 이상 미검사 · 클릭하여 이동</span>' +
+            '</div>' +
+            '<div style="overflow-x:auto;">' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +
+            '<thead><tr style="background:var(--bg-secondary);">' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">작업일</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">차종</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">품명</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">컬러</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">라인</th>' +
+            '<th style="padding:6px 12px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;">상태</th>' +
+            '</tr></thead>' +
+            '<tbody>' + rows + '</tbody>' +
+            '</table></div></div>';
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       초중종물 미발행 (전일 이전 도장작업 · 발행완료 제외)
+    ══════════════════════════════════════════════════════════ */
+    function renderQualityUnissuedAlerts() {
+        const el = document.getElementById('dashQualityUnissuedAlerts');
+        if (!el) return;
+        if (typeof PaintingInspectionModule === 'undefined' ||
+            typeof PaintingInspectionModule.getUnissuedPaintingWorks !== 'function') {
+            el.innerHTML = '';
+            return;
+        }
+        const items = PaintingInspectionModule.getUnissuedPaintingWorks() || [];
+        if (!items.length) { el.innerHTML = ''; return; }
+
+        const rows = items.slice(0, 20).map(function(d) {
+            const wp = (d.date || '').split('-');
+            const dateStr = wp.length === 3 ? wp[1] + '-' + wp[2] : (d.date || '-');
+            return '<tr style="cursor:pointer;" onclick="Router.navigate(\'prod-quality\')">' +
+                '<td style="white-space:nowrap;font-size:0.82rem;color:var(--text-muted);">' + dateStr + '</td>' +
+                '<td style="font-size:0.83rem;font-weight:600;">' + _esc(d.carModel || '-') + '</td>' +
+                '<td style="font-size:0.83rem;">' + _esc(d.partName || '-') + '</td>' +
+                '<td style="font-size:0.82rem;">' + _esc(d.color || '-') + '</td>' +
+                '<td style="font-size:0.82rem;">' + _esc(d.line || '-') + '</td>' +
+                '<td style="font-size:0.78rem;font-weight:700;color:#b45309;">미발행</td>' +
+                '</tr>';
+        }).join('');
+
+        el.innerHTML =
+            '<div class="card" style="margin-bottom:0;border-left:3px solid #d97706;">' +
+            '<div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);">' +
+            '<div style="display:flex;align-items:center;gap:7px;">' +
+            '<span class="material-symbols-outlined" style="font-size:18px;color:#d97706;">edit_document</span>' +
+            '<span style="font-weight:700;font-size:0.88rem;color:#b45309;">초중종물 미발행</span>' +
+            '<span style="background:#d97706;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:700;">' + items.length + '</span>' +
+            '</div>' +
+            '<span style="font-size:0.75rem;color:var(--text-muted);">전일 이전 도장작업 · 발행완료 품목은 제외 · 클릭하여 이동</span>' +
             '</div>' +
             '<div style="overflow-x:auto;">' +
             '<table style="width:100%;border-collapse:collapse;font-size:0.84rem;">' +
