@@ -21387,17 +21387,45 @@ var ProdQualityModule = (function() {
     }
 
     function _qualityDateKey(v) {
-        return String(v || '').trim().slice(0, 10);
+        const s = String(v || '').trim().replace('T', ' ');
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        return '';
+    }
+
+    function _normQualityKey(v) {
+        return String(v || '').trim().toUpperCase().replace(/\s+/g, '').replace(/[()[\]\-_/.,]/g, '');
+    }
+
+    function _normQualityPart(car, part) {
+        let p = _normQualityKey(part);
+        const c = _normQualityKey(car);
+        if (c && p.indexOf(c) === 0) p = p.slice(c.length);
+        return p;
+    }
+
+    function _colorsCompatible(a, b) {
+        const c1 = _normQualityKey(a);
+        const c2 = _normQualityKey(b);
+        if (!c1 || !c2) return true;
+        return c1 === c2 || c1.indexOf(c2) !== -1 || c2.indexOf(c1) !== -1;
     }
 
     function _qualityFieldsMatch(a, b) {
         if (!a || !b) return false;
-        if (_normText(a.carModel) !== _normText(b.carModel)) return false;
-        if (_normText(a.partName) !== _normText(b.partName)) return false;
-        const c1 = _normText(a.color);
-        const c2 = _normText(b.color);
-        if (c1 && c2 && c1 !== c2) return false;
-        return true;
+        if (_normQualityKey(a.carModel) !== _normQualityKey(b.carModel)) return false;
+        const p1 = _normQualityPart(a.carModel, a.partName);
+        const p2 = _normQualityPart(b.carModel, b.partName);
+        if (!p1 || !p2) return false;
+        if (p1 !== p2 && p1.indexOf(p2) === -1 && p2.indexOf(p1) === -1) return false;
+        return _colorsCompatible(a.color, b.color);
+    }
+
+    function _issueDateKeys(issue) {
+        const keys = [];
+        [_qualityDateKey(issue && issue.date), _qualityDateKey(issue && issue.printedAt)].forEach(function(d) {
+            if (d && keys.indexOf(d) === -1) keys.push(d);
+        });
+        return keys;
     }
 
     function _issueMatchesSource(issue, source) {
@@ -21405,12 +21433,13 @@ var ProdQualityModule = (function() {
         if (issue.workId && source.id && !source._fromPlan && String(issue.workId) === String(source.id)) return true;
         if (issue.planId && source.planId && String(issue.planId) === String(source.planId)) return true;
         if (!_qualityFieldsMatch(issue, source)) return false;
-        const idate = _qualityDateKey(issue.date);
         const sdate = _qualityDateKey(source.date);
-        if (idate && sdate && idate === sdate) return true;
+        const idates = _issueDateKeys(issue);
+        if (sdate && idates.indexOf(sdate) !== -1) return true;
         const ilot = String(issue.lotNo || '').replace(/\s+/g, '').toUpperCase();
         const slot = String(source.lotNo || '').replace(/\s+/g, '').toUpperCase();
-        return !!(ilot && slot && (ilot === slot || ilot.indexOf(slot) !== -1 || slot.indexOf(ilot) !== -1));
+        if (ilot && slot && (ilot === slot || ilot.indexOf(slot) !== -1 || slot.indexOf(ilot) !== -1)) return true;
+        return !!( _isIssuePrinted(issue) && sdate && !idates.length );
     }
 
     function _issueForSource(source, issueByWork, issueByPlan) {

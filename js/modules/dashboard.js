@@ -651,7 +651,19 @@ const DashboardModule = (function() {
         const TEMPLATE_KIND = 'quality_template';
 
         function _normText(v) { return String(v || '').trim(); }
-        function _dateKey(v) { return String(v || '').trim().slice(0, 10); }
+        function _dateKey(v) {
+            const s = String(v || '').trim().replace('T', ' ');
+            return /^\d{4}-\d{2}-\d{2}/.test(s) ? s.slice(0, 10) : '';
+        }
+        function _normKey(v) {
+            return String(v || '').trim().toUpperCase().replace(/\s+/g, '').replace(/[()[\]\-_/.,]/g, '');
+        }
+        function _normPart(car, part) {
+            let p = _normKey(part);
+            const c = _normKey(car);
+            if (c && p.indexOf(c) === 0) p = p.slice(c.length);
+            return p;
+        }
         function _templates() { return qAll.filter(d => d && d._docKind === TEMPLATE_KIND); }
         function _issues()    { return qAll.filter(d => d && (d._docKind || ISSUE_KIND) === ISSUE_KIND); }
 
@@ -675,12 +687,23 @@ const DashboardModule = (function() {
         }
 
         function _fieldsMatch(a, b) {
-            if (_normText(a.carModel) !== _normText(b.carModel)) return false;
-            if (_normText(a.partName) !== _normText(b.partName)) return false;
-            const c1 = _normText(a.color);
-            const c2 = _normText(b.color);
-            if (c1 && c2 && c1 !== c2) return false;
-            return true;
+            if (_normKey(a.carModel) !== _normKey(b.carModel)) return false;
+            const p1 = _normPart(a.carModel, a.partName);
+            const p2 = _normPart(b.carModel, b.partName);
+            if (!p1 || !p2) return false;
+            if (p1 !== p2 && p1.indexOf(p2) === -1 && p2.indexOf(p1) === -1) return false;
+            const c1 = _normKey(a.color);
+            const c2 = _normKey(b.color);
+            if (!c1 || !c2) return true;
+            return c1 === c2 || c1.indexOf(c2) !== -1 || c2.indexOf(c1) !== -1;
+        }
+
+        function _issueDates(issue) {
+            const keys = [];
+            [_dateKey(issue.date), _dateKey(issue.printedAt)].forEach(function(d) {
+                if (d && keys.indexOf(d) === -1) keys.push(d);
+            });
+            return keys;
         }
 
         function _issueMatchesWork(issue, w) {
@@ -688,12 +711,13 @@ const DashboardModule = (function() {
             if (issue.workId && String(issue.workId) === String(w.id)) return true;
             if (issue.planId && w.planId && String(issue.planId) === String(w.planId)) return true;
             if (!_fieldsMatch(issue, w)) return false;
-            const idate = _dateKey(issue.date);
             const wdate = _dateKey(w.date);
-            if (idate && wdate && idate === wdate) return true;
+            const idates = _issueDates(issue);
+            if (wdate && idates.indexOf(wdate) !== -1) return true;
             const ilot = String(issue.lotNo || '').replace(/\s+/g, '').toUpperCase();
             const wlot = String(w.lotNo || '').replace(/\s+/g, '').toUpperCase();
-            return !!(ilot && wlot && (ilot === wlot || ilot.indexOf(wlot) !== -1 || wlot.indexOf(ilot) !== -1));
+            if (ilot && wlot && (ilot === wlot || ilot.indexOf(wlot) !== -1 || wlot.indexOf(ilot) !== -1)) return true;
+            return !!( _isPrinted(issue) && wdate && !idates.length );
         }
 
         function _issueForWork(w, issues) {
@@ -746,7 +770,10 @@ const DashboardModule = (function() {
                 if (other === issue || !_isPrinted(other)) return false;
                 if (issue.workId && other.workId && String(issue.workId) === String(other.workId)) return true;
                 if (issue.planId && other.planId && String(issue.planId) === String(other.planId)) return true;
-                return _fieldsMatch(issue, other) && _dateKey(issue.date) === _dateKey(other.date);
+                return _fieldsMatch(issue, other) && (
+                    _dateKey(issue.date) === _dateKey(other.date)
+                    || _issueDates(issue).some(function(d) { return _issueDates(other).indexOf(d) !== -1; })
+                );
             });
             if (alreadyIssued) return;
             const key = issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id);
@@ -811,7 +838,7 @@ const DashboardModule = (function() {
                         <span style="font-weight:700;font-size:0.88rem;color:#b45309;">초중종물 기준 발행 누락</span>
                         <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:800;">${missing.length}</span>
                     </div>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">초중종물(품질체크) 기준 양식 미발행/미완료 · 클릭하여 발행 화면 열기</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">발행완료된 품목은 제외 · 클릭하여 발행 화면 열기</span>
                 </div>
                 <div style="overflow-x:auto;">
                     <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
