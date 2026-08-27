@@ -22,7 +22,8 @@ const DashboardModule = (function() {
             STORE.PAINTING_INSPECTIONS,
             STORE.SHIPPING_STANDBY,
             STORE.PRODUCT_INVENTORY,
-            STORE.PRODUCT_OUTGOING
+            STORE.PRODUCT_OUTGOING,
+            STORE.PROD_QUALITY_CHECK
         ].filter(Boolean));
 
         _cacheWarmUnsub = Storage.onCacheWarm(function(storeName, meta) {
@@ -631,9 +632,9 @@ const DashboardModule = (function() {
     }
 
     /* ══════════════════════════════════════════════════════════
-       초중종물(품질체크) 기준 발행 누락 경고 섹션
-       - 대상: 계획 시작 5분 후 생성된 quality_issue 또는 도장 작업(초중종물 대상)
-       - 미발행: quality_issue가 없거나 printedAt 없음
+       초중종물 기준 발행 누락 — 대시보드는 최근 7일만 타일로 표시
+       미발행 정의: 연결된 quality_issue에 printedAt/발행완료가 없음
+       (계획 시작 5분 후 자동 생성되는 문서는 기본값이 '발행대기')
     ══════════════════════════════════════════════════════════ */
     function renderQualityStdWarnings() {
         const el = document.getElementById('dashQualityStdWarnings');
@@ -648,15 +649,57 @@ const DashboardModule = (function() {
 
         const ISSUE_KIND    = 'quality_issue';
         const TEMPLATE_KIND = 'quality_template';
+        const LOOKBACK_DAYS = 7;
 
         function _normText(v) { return String(v || '').trim(); }
-        function _templates() { return qAll.filter(d => d && d._docKind === TEMPLATE_KIND); }
-        function _issues()    { return qAll.filter(d => d && (d._docKind || ISSUE_KIND) === ISSUE_KIND); }
+        function _dayOf(v) { return String(v || '').slice(0, 10); }
+        function _ymdDaysAgo(days) {
+            const d = new Date();
+            d.setDate(d.getDate() - Number(days || 0));
+            const y = d.getFullYear();
+            const m = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return y + '-' + m + '-' + day;
+        }
+        function _fp(x) {
+            if (!x) return '';
+            return [
+                _dayOf(x.date),
+                _normText(x.line),
+                String(x.startTime || x.slot || '').trim().slice(0, 5),
+                _normText(x.carModel),
+                _normText(x.partName),
+                _normText(x.color)
+            ].join('|').toLowerCase();
+        }
+        function _isPrinted(issue) {
+            if (!issue) return false;
+            if (issue.printedAt) return true;
+            return String(issue.status || '') === '발행완료';
+        }
+        function _rank(issue) {
+            if (!issue) return 0;
+            let n = 0;
+            if (_isPrinted(issue)) n += 20;
+            if (issue.workId) n += 5;
+            return n;
+        }
+        function _best(list) {
+            return (list || []).reduce(function(best, cur) {
+                if (!best) return cur;
+                if (_rank(cur) !== _rank(best)) return _rank(cur) > _rank(best) ? cur : best;
+                return String(cur.updatedAt || cur.createdAt || cur.id || '') >
+                    String(best.updatedAt || best.createdAt || best.id || '') ? cur : best;
+            }, null);
+        }
+
+        const templates = qAll.filter(d => d && d._docKind === TEMPLATE_KIND);
+        const issues = qAll.filter(d => d && (d._docKind || ISSUE_KIND) === ISSUE_KIND);
 
         function _templateFor(carModel, color) {
             const car = _normText(carModel);
             const clr = _normText(color);
-            const rows = _templates().filter(t => _normText(t.carModel) === car);
+            const rows = templates.filter(t => _normText(t.carModel) === car);
             if (clr) {
                 const exact = rows.find(t => _normText(t.color) === clr);
                 if (exact) return exact;
@@ -664,132 +707,80 @@ const DashboardModule = (function() {
             return rows.find(t => !_normText(t.color)) || rows[0] || null;
         }
 
-        const issueMap = new Map(_issues().filter(i => i.workId).map(i => [i.workId, i]));
-        const issueByPlan = new Map();
-        _issues().forEach(function(i) {
-            if (!i.planId) return;
-            const prev = issueByPlan.get(String(i.planId));
-            if (!prev || String(i.createdAt || i.id || '') > String(prev.createdAt || prev.id || '')) {
-                issueByPlan.set(String(i.planId), i);
+        const byWork = {};
+        const byPlan = {};
+        const byFp = {};
+        issues.forEach(function(i) {
+            if (i.workId) {
+                const k = String(i.workId);
+                (byWork[k] = byWork[k] || []).push(i);
+            }
+            if (i.planId) {
+                const k = String(i.planId);
+                (byPlan[k] = byPlan[k] || []).push(i);
+            }
+            const fp = _fp(i);
+            if (fp && _dayOf(i.date)) {
+                (byFp[fp] = byFp[fp] || []).push(i);
             }
         });
+
+        function _issueFor(src) {
+            const cands = [];
+            if (src && src.id && byWork[String(src.id)]) cands.push(_best(byWork[String(src.id)]));
+            if (src && src.planId && byPlan[String(src.planId)]) cands.push(_best(byPlan[String(src.planId)]));
+            const fp = _fp(src);
+            if (fp && byFp[fp]) cands.push(_best(byFp[fp]));
+            return _best(cands.filter(Boolean));
+        }
+
         const today = UIUtils.today();
+        const fromDate = _ymdDaysAgo(LOOKBACK_DAYS);
         const seen = new Set();
         const missing = [];
 
         works.forEach(function(w) {
             if (!w || !w.id) return;
-            const tmpl = _templateFor(w.carModel, w.color);
-            if (!tmpl) return;
-            const issue = issueMap.get(w.id) || (w.planId ? issueByPlan.get(String(w.planId)) : null);
-            if (issue && issue.printedAt) return;
+            const day = _dayOf(w.date);
+            if (day && day < fromDate) return;
+            if (!_templateFor(w.carModel, w.color)) return;
+            const issue = _issueFor(w);
+            if (_isPrinted(issue)) return;
             seen.add(w.id);
             if (w.planId) seen.add('plan:' + w.planId);
-            missing.push({
-                id: w.id,
-                date: w.date,
-                line: w.line,
-                carModel: w.carModel,
-                partName: w.partName,
-                color: w.color,
-                issue: issue,
-                sortKey: String(w.registeredAt || w.createdAt || w.date || '')
-            });
+            missing.push({ date: day, issue: issue });
         });
 
-        _issues().forEach(function(issue) {
-            if (issue.printedAt) return;
+        issues.forEach(function(issue) {
+            if (_isPrinted(issue)) return;
+            const day = _dayOf(issue.date);
+            if (day && day < fromDate) return;
             const key = issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id);
-            if (seen.has(key) || (issue.workId && seen.has(issue.workId)) || (issue.planId && seen.has('plan:' + issue.planId))) return;
+            if (seen.has(key) || (issue.workId && seen.has(String(issue.workId))) ||
+                (issue.planId && seen.has('plan:' + issue.planId))) return;
             if (!_templateFor(issue.carModel, issue.color) && !(issue.items || []).length) return;
+            if (_isPrinted(_issueFor(issue))) return;
             seen.add(key);
-            missing.push({
-                id: issue.workId || (issue.planId ? 'plan:' + issue.planId : issue.id),
-                date: issue.date,
-                line: issue.line,
-                carModel: issue.carModel,
-                partName: issue.partName,
-                color: issue.color,
-                issue: issue,
-                sortKey: String(issue.createdAt || issue.updatedAt || issue.id || issue.date || '')
-            });
-        });
-
-        missing.sort(function(a, b) {
-            return (b.date || '').localeCompare(a.date || '') || String(b.sortKey).localeCompare(String(a.sortKey));
+            missing.push({ date: day, issue: issue });
         });
 
         if (!missing.length) { el.innerHTML = ''; return; }
 
-        const show = missing;
-
-        function _badge(text, color, bg, icon) {
-            return `<span style="display:inline-flex;align-items:center;gap:4px;
-                        border:1px solid ${color}44;background:${bg};color:${color};
-                        border-radius:999px;padding:2px 8px;font-size:0.72rem;font-weight:800;white-space:nowrap;">
-                        <span class="material-symbols-outlined" style="font-size:13px;">${icon}</span>${_esc(text)}</span>`;
-        }
-
-        const rows = show.map(function(w) {
-            const issue = w.issue;
-            const statusText = issue ? (issue.printedAt ? '발행완료' : '발행대기') : '미발행';
-            const overdue = w.date && w.date < today;
-            const warnBadge = overdue
-                ? _badge('전일 이전 미발행', '#dc2626', 'rgba(239,68,68,.08)', 'error')
-                : _badge('기준 발행 필요', '#f59e0b', 'rgba(245,158,11,.10)', 'warning');
-
-            return `
-                <tr style="cursor:pointer;"
-                    onclick="DashboardModule.openQualityIssueFromWork('${_esc(w.id)}')"
-                    onmouseover="this.style.background='var(--bg-secondary)'"
-                    onmouseout="this.style.background=''">
-                    <td style="padding:6px 8px;white-space:nowrap;" onclick="event.stopPropagation()">
-                        <input type="checkbox" class="dash-pq-check" data-work-id="${_esc(w.id)}" onclick="event.stopPropagation()">
-                    </td>
-                    <td style="padding:6px 10px;white-space:nowrap;color:var(--text-muted);font-size:0.8rem;">${_esc(w.date || '-')}</td>
-                    <td style="padding:6px 8px;white-space:nowrap;font-size:0.78rem;color:#0891b2;font-weight:700;">${_esc(w.line || '-')}</td>
-                    <td style="padding:6px 8px;white-space:nowrap;font-weight:700;">${_esc(w.carModel || '-')}</td>
-                    <td style="padding:6px 8px;white-space:nowrap;font-weight:600;">${_esc(w.partName || '-')}</td>
-                    <td style="padding:6px 8px;white-space:nowrap;font-size:0.78rem;color:var(--text-muted);">${_esc(w.color || '-')}</td>
-                    <td style="padding:6px 8px;white-space:nowrap;">${warnBadge}</td>
-                    <td style="padding:6px 10px;white-space:nowrap;font-size:0.78rem;color:var(--text-secondary);">${_esc(statusText)}</td>
-                </tr>`;
-        }).join('');
-
+        const overdue = missing.filter(function(w) { return w.date && w.date < today; }).length;
+        const color = overdue ? '#ef4444' : '#f59e0b';
         el.innerHTML = `
-            <div class="card" style="margin-bottom:0;border-left:3px solid #f59e0b;">
-                <div style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border);gap:12px;flex-wrap:wrap;">
-                    <div style="display:flex;align-items:center;gap:7px;">
-                        <span class="material-symbols-outlined" style="font-size:18px;color:#f59e0b;">checklist</span>
-                        <span style="font-weight:700;font-size:0.88rem;color:#b45309;">초중종물 기준 발행 누락</span>
-                        <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:800;">${missing.length}</span>
-                    </div>
-                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                        <span style="font-size:0.75rem;color:var(--text-muted);">선택 후 일괄 발행 · 행 클릭 시 발행 화면</span>
-                        <button type="button" class="btn btn-sm btn-primary" onclick="DashboardModule.printSelectedQualityIssues()">선택한 건 인쇄물 발행</button>
-                    </div>
-                </div>
-                <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
-                    <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.84rem;">
-                        <thead>
-                            <tr style="background:var(--bg-secondary);">
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">
-                                    <input type="checkbox" title="전체 선택" onclick="DashboardModule.toggleQualityWarnSelectAll(this)">
-                                </th>
-                                <th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">작업일</th>
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">라인</th>
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">차종</th>
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">품명</th>
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">컬러</th>
-                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">경고</th>
-                                <th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">상태</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
-            </div>
-        `;
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,240px));gap:8px;">
+                ${_tile({
+                    icon: 'checklist',
+                    title: '초중종물 기준 발행',
+                    value: missing.length + '건',
+                    valueColor: color,
+                    sub: overdue ? ('전일 이전 ' + overdue + '건 · 최근 7일') : '최근 7일 발행 필요',
+                    size: 'sm',
+                    badge: '미발행',
+                    onClick: "Router.navigate('prod-quality')"
+                })}
+            </div>`;
     }
 
     /* ══════════════════════════════════════════════════════════

@@ -1704,10 +1704,10 @@ const AuthModule = (function () {
     function _normalizeIncomingInspInterval(raw) {
         const src = raw && typeof raw === 'object' ? raw : {};
         let mode = String(src.mode || '').trim();
-        if (mode === 'once') {
+        // 기본값은 '알림 발생 시 1회'. 반복 발송은 명시적으로 고른 경우에만 한다 —
+        // 기본이 반복이면 설정을 건드린 적 없는 알림까지 텔레그램을 계속 보낸다.
+        if (mode !== 'interval') {
             mode = 'once';
-        } else {
-            mode = 'interval';
         }
         const minutes = _clampNotifyMinutes(src.minutes, src.hours);
         return { mode: mode, minutes: minutes, hours: minutes };
@@ -1810,8 +1810,8 @@ const AuthModule = (function () {
         const modeEl = document.querySelector('input[name="incoming-insp-interval-mode-' + safe + '"]:checked');
         const minutesEl = document.getElementById('incoming-insp-interval-minutes-' + safe)
             || document.getElementById('incoming-insp-interval-hours-' + safe);
-        let mode = modeEl ? modeEl.value : 'interval';
-        if (mode !== 'once') mode = 'interval';
+        let mode = modeEl ? modeEl.value : 'once';
+        if (mode !== 'interval') mode = 'once';
         return _normalizeIncomingInspInterval({
             mode: mode,
             minutes: minutesEl ? minutesEl.value : 15
@@ -1847,8 +1847,8 @@ const AuthModule = (function () {
         return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
             '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. MES가 열려 있으면 약 1분마다 주기를 검사합니다.</div>' +
+            radio('once', '알림 발생 시 1회 <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400;">(기본)</span>') +
             radio('interval', '해소될 때까지', minutesExtra) +
-            radio('once', '알림 발생 시 1회') +
             '</div>';
     }
 
