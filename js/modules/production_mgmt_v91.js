@@ -26606,17 +26606,17 @@ var ProdEquipmentModule = (function() {
                        transition:background .1s;"
                 onmouseenter="if(!${sel})this.style.background='#f5f8ff';"
                 onmouseleave="if(!${sel})this.style.background='#fff';">
-                <div style="display:flex;align-items:center;gap:3px;font-size:${isChild?'0.75rem':'0.8rem'};
+                <div style="display:flex;align-items:center;gap:3px;font-size:${isChild?'0.66rem':'0.8rem'};
                              font-weight:${sel?'700':'500'};
                              color:${sel?'var(--accent-blue)':(isChild?'var(--text-secondary)':'var(--text-primary)')};
                              overflow:hidden;">
-                    ${isChild ? `<span style="flex-shrink:0;color:var(--text-muted);">ㄴ</span>` : ''}
+                    ${isChild ? `<span style="flex-shrink:0;color:var(--text-muted);font-size:0.62rem;">ㄴ</span>` : ''}
                     <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}</span>
                     ${childCount ? `<span style="flex-shrink:0;font-size:0.62rem;color:var(--text-muted);
                         background:var(--bg-tertiary,#f1f5f9);border-radius:8px;padding:0 5px;margin-left:2px;">하위${childCount}</span>` : ''}
                 </div>
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:3px;">
-                    <span style="font-size:0.66rem;font-weight:600;color:${sCol};
+                    <span style="font-size:${isChild?'0.58rem':'0.66rem'};font-weight:600;color:${sCol};
                                  background:${sBg};border:1px solid ${sCol}44;
                                  padding:0 5px;border-radius:8px;white-space:nowrap;">${e.status||'정상'}</span>
                     ${loggedIn ? `
