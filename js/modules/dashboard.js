@@ -148,11 +148,11 @@ const DashboardModule = (function() {
             <!-- 관리자 보고 누락 -->
             <div id="dashManagerAlerts"></div>
 
-            <!-- 초중종물(품질체크) 기준 발행 누락 -->
-            <div id="dashQualityStdWarnings"></div>
-
-            <!-- 출하검사 대기 목록 -->
-            <div id="dashShippingStandby"></div>
+            <!-- 초중종물 미발행 / 출하검사 대기 타일 -->
+            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;">
+                <div id="dashQualityStdWarnings"></div>
+                <div id="dashShippingStandby"></div>
+            </div>
 
             <!-- 도료 입고 대기 (물류담당자 전용) -->
             <div id="dashPaintPending"></div>
@@ -496,65 +496,31 @@ const DashboardModule = (function() {
         const el = document.getElementById('dashShippingStandby');
         if (!el) return;
         const waiting = (Storage.getAll(STORE.SHIPPING_STANDBY) || [])
-            .filter(d => d.status === '대기')
-            .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+            .filter(d => d.status === '대기');
         if (!waiting.length) { el.innerHTML = ''; return; }
 
-        const srcLabel = s => s === 'laser_inspection' ? '레이져' : '도장';
-        const srcColor = s => s === 'laser_inspection' ? '#a855f7' : '#3b82f6';
-
-        const rows = waiting.map(d => `
-            <tr style="cursor:pointer;" onclick="Router.navigate('shipping-standby')"
-                onmouseover="this.style.background='var(--bg-secondary)'"
-                onmouseout="this.style.background=''">
-                <td style="padding:5px 8px;white-space:nowrap;font-size:0.8rem;">${d.date || '-'}</td>
-                <td style="padding:5px 8px;">
-                    <span style="font-size:0.72rem;font-weight:600;color:${srcColor(d.source)};
-                        border:1px solid ${srcColor(d.source)}44;border-radius:3px;padding:1px 5px;">
-                        ${srcLabel(d.source)}
-                    </span>
-                </td>
-                <td style="padding:5px 8px;font-size:0.82rem;">${d.carModel || '-'}</td>
-                <td style="padding:5px 8px;font-size:0.82rem;font-weight:600;">${d.partName || '-'}</td>
-                <td style="padding:5px 8px;font-size:0.78rem;color:var(--text-muted);">${d.color || '-'}</td>
-                <td style="padding:5px 8px;text-align:right;font-weight:700;color:var(--accent-blue);">
-                    ${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}
-                </td>
-                <td style="padding:5px 8px;font-size:0.78rem;color:var(--text-secondary);">${d.customer || '-'}</td>
-            </tr>`).join('');
+        const today = UIUtils.today();
+        const laser = waiting.filter(d => d.source === 'laser_inspection').length;
+        const paint = waiting.length - laser;
+        const overdue = waiting.filter(d => d.date && String(d.date).slice(0, 10) < today).length;
+        const color = overdue ? '#ef4444' : '#f59e0b';
+        const parts = [];
+        if (paint) parts.push('도장 ' + paint);
+        if (laser) parts.push('레이져 ' + laser);
+        if (overdue) parts.push('전일 이전 ' + overdue);
 
         el.innerHTML = `
-            <div class="card" style="margin-bottom:0;padding:8px 12px 10px;">
-                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:7px;">
-                    <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
-                                letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:5px;">
-                        <span class="material-symbols-outlined" style="font-size:13px;color:#f59e0b;">pending_actions</span>
-                        출하검사 대기
-                        <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;font-weight:800;">
-                            ${waiting.length}건
-                        </span>
-                    </div>
-                    <button class="btn btn-sm btn-outline" onclick="Router.navigate('shipping-standby')"
-                        style="font-size:0.75rem;padding:3px 10px;">
-                        검사 등록 →
-                    </button>
-                </div>
-                <div class="data-table-wrapper" style="max-height:200px;overflow-y:auto;">
-                    <table class="data-table" style="font-size:0.82rem;">
-                        <thead>
-                            <tr>
-                                <th style="padding:4px 8px;">등록일</th>
-                                <th style="padding:4px 8px;">공정</th>
-                                <th style="padding:4px 8px;">차종</th>
-                                <th style="padding:4px 8px;">품명</th>
-                                <th style="padding:4px 8px;">컬러</th>
-                                <th style="padding:4px 8px;text-align:right;">수량</th>
-                                <th style="padding:4px 8px;">납품처</th>
-                            </tr>
-                        </thead>
-                        <tbody>${rows}</tbody>
-                    </table>
-                </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,240px));gap:8px;">
+                ${_tile({
+                    icon: 'pending_actions',
+                    title: '출하검사 대기',
+                    value: waiting.length + '건',
+                    valueColor: color,
+                    sub: parts.length ? parts.join(' · ') : '검사 등록 대기',
+                    size: 'sm',
+                    badge: '대기',
+                    onClick: "Router.navigate('shipping-standby')"
+                })}
             </div>`;
     }
 

@@ -18,8 +18,11 @@ const ShippingStandbyModule = (function() {
     let _sstdImages    = [];    // 편집 중 이미지 [{src,h,label}]
     let _sstdKbHandler = null;  // 편집 모달 키보드 핸들러
     let _sstdDragIdx   = -1;    // 이미지 드래그 인덱스
+    let _sstdResizeOn  = false; // 이미지 모서리 크기 조절 중
+    let _sstdPtRowDragFrom = -1; // 주요검사 Point 행 드래그 인덱스
     let _sstdCurrentKey = '';   // 현재 편집 중인 제품 key
     let _sstdViewWin    = null; // 보기 전용 팝업 (인쇄 아님)
+    let _sstdViewFitHandler = null;
 
     function _esc(value) {
         return String(value == null ? '' : value)
@@ -928,10 +931,24 @@ const ShippingStandbyModule = (function() {
         };
     }
 
-    // 이미지 정규화 (string 또는 {src,h,label})
+    // 이미지 정규화 (string 또는 {src,h,label,span})
+    // span: 0=자동(홀수 마지막은 한 줄 전체), 1=반칸, 2=한 줄 전체
     function _sstdNormImg(v) {
-        if (typeof v === 'string') return { src: v, h: 100, label: '' };
-        return { src: (v && v.src) || '', h: (v && v.h) || 100, label: (v && v.label) || '' };
+        if (typeof v === 'string') return { src: v, h: 100, label: '', span: 0 };
+        const span = Number(v && v.span);
+        return {
+            src: (v && v.src) || '',
+            h: (v && v.h) || 100,
+            label: (v && v.label) || '',
+            span: (span === 1 || span === 2) ? span : 0
+        };
+    }
+    function _sstdImgColSpan(o, i, total) {
+        if (!o) return 1;
+        if (o.span === 2) return 2;
+        if (o.span === 1) return 1;
+        if (total > 1 && total % 2 === 1 && i === total - 1) return 2;
+        return 1;
     }
 
     // 저장된 데이터를 문서형 포맷으로 정규화 (구 단순폼 데이터 하위호환)
@@ -1041,7 +1058,7 @@ const ShippingStandbyModule = (function() {
 
     /* ═══ 출하검사 기준서 — 수입검사와 동일한 문서형 편집기 ═══════════════ */
     const _SSTD_DIAG = 'linear-gradient(to top right,transparent calc(50% - 0.5px),#bbb calc(50% - 0.5px),#bbb calc(50% + 0.5px),transparent calc(50% + 0.5px))';
-    const _SSTD_HDL  = 'position:absolute;width:10px;height:10px;background:#2563eb;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.4);z-index:10;';
+    const _SSTD_HDL  = 'position:absolute;width:12px;height:12px;background:#2563eb;border:2px solid #fff;border-radius:50%;box-shadow:0 1px 3px rgba(0,0,0,.4);z-index:20;pointer-events:auto;touch-action:none;';
 
     /** 확인방법·시료 셀 합치기: 이전 행과 같은 구분이면 한 칸으로 표시 */
     function _sstdResolveMergePrev(pts) {
@@ -1103,7 +1120,13 @@ const ShippingStandbyModule = (function() {
                     style="font-size:8px;padding:1px 4px;border:1px solid #2563eb;border-radius:3px;background:#eff6ff;color:#1d4ed8;cursor:pointer;vertical-align:middle;white-space:nowrap;">선삭제</button>`)
             : '';
         return `<tr class="sstd-pt-row" data-group="${group}" data-merge-prev="${mergePrev ? '1' : '0'}" style="${muted}">
-            <td class="sstd-pt-no" style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;white-space:nowrap;">${idx == null ? '-' : idx + 1}</td>
+            <td class="sstd-pt-no" style="text-align:center;padding:3px;border:1px solid #bbb;font-size:10px;white-space:nowrap;">
+                <span class="sstd-pt-drag" title="드래그하여 순서 변경" draggable="true"
+                    style="display:inline-flex;align-items:center;cursor:grab;color:#94a3b8;vertical-align:middle;user-select:none;">
+                    <span class="material-symbols-outlined" style="font-size:14px;line-height:1;">drag_indicator</span>
+                </span>
+                <span class="sstd-pt-no-num">${idx == null ? '-' : idx + 1}</span>
+            </td>
             <td style="padding:2px;border:1px solid #bbb;white-space:nowrap;"><input class="sstd-pt-item" type="text" value="${_esc(pt.item || '')}"
                 style="border:none;background:transparent;font-size:10px;padding:2px;width:auto;min-width:5em;white-space:nowrap;"></td>
             <td style="padding:4px 2px;border:1px solid #bbb;"><div class="sstd-pt-std" contenteditable="true"
@@ -1241,30 +1264,48 @@ const ShippingStandbyModule = (function() {
 
     function _sstdRenderImgGrid(images) {
         if (!images || !images.length) return `
-            <div style="grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:150px;color:#bbb;gap:6px;">
+            <div style="grid-column:1/-1;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;min-height:0;color:#bbb;gap:6px;">
                 <span class="material-symbols-outlined" style="font-size:32px;">content_paste</span>
                 <span style="font-size:.75rem;">클릭 후 Ctrl+V 또는 파일 선택</span>
             </div>`;
         return images.map((img, i) => {
             const o = _sstdNormImg(img);
+            const last = i === images.length - 1;
+            const colSpan = _sstdImgColSpan(o, i, images.length);
+            const wide = colSpan === 2;
             return `
-            <div class="sstd-img-card" data-idx="${i}" draggable="true"
-                ondragstart="ShippingStandbyModule._sstdDragStart(event,${i})"
+            <div class="sstd-img-card" data-idx="${i}"
                 ondragover="ShippingStandbyModule._sstdDragOver(event)"
                 ondrop="ShippingStandbyModule._sstdDragDrop(event,${i})"
-                ondragend="ShippingStandbyModule._sstdDragEnd(event)"
-                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;cursor:grab;">
-                <div style="padding:2px 22px 2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;">
+                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;${wide ? 'grid-column:1/-1;' : ''}">
+                <div class="sstd-img-dragbar" draggable="true" title="드래그하여 위치 변경"
+                    ondragstart="ShippingStandbyModule._sstdDragStart(event,${i})"
+                    ondragend="ShippingStandbyModule._sstdDragEnd(event)"
+                    style="flex:0 0 auto;padding:2px 48px 2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;display:flex;align-items:center;gap:4px;cursor:grab;">
+                    <span class="material-symbols-outlined" style="font-size:14px;color:#64748b;flex:0 0 auto;">drag_indicator</span>
                     <input type="text" value="${_esc(o.label)}" placeholder="라벨 (예: 외관)"
                         onchange="ShippingStandbyModule._sstdUpdateImgLabel(${i},this.value)"
                         onclick="event.stopPropagation()"
-                        style="width:100%;border:none;background:transparent;font-size:10px;outline:none;"></div>
-                <div class="sstd-img-wrap" style="position:relative;overflow:visible;">
-                    <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
-                    <div style="${_SSTD_HDL}top:-5px;left:-5px;cursor:nw-resize;" onmousedown="event.stopPropagation();ShippingStandbyModule._sstdStartResize(event,${i},'nw')"></div>
-                    <div style="${_SSTD_HDL}top:-5px;right:-5px;cursor:ne-resize;" onmousedown="event.stopPropagation();ShippingStandbyModule._sstdStartResize(event,${i},'ne')"></div>
-                    <div style="${_SSTD_HDL}bottom:-5px;left:-5px;cursor:sw-resize;" onmousedown="event.stopPropagation();ShippingStandbyModule._sstdStartResize(event,${i},'sw')"></div>
-                    <div style="${_SSTD_HDL}bottom:-5px;right:-5px;cursor:se-resize;" onmousedown="event.stopPropagation();ShippingStandbyModule._sstdStartResize(event,${i},'se')"></div>
+                        onmousedown="event.stopPropagation()"
+                        style="flex:1;min-width:0;border:none;background:transparent;font-size:10px;outline:none;cursor:text;">
+                    <button type="button" title="${wide ? '반칸으로 줄이기' : '한 줄 전체로 넓히기'}"
+                        onclick="event.stopPropagation();ShippingStandbyModule._sstdToggleImgSpan(${i})"
+                        style="flex:0 0 auto;border:1px solid #cbd5e1;background:${wide ? '#dbeafe' : '#fff'};border-radius:3px;height:16px;font-size:9px;line-height:1;cursor:pointer;padding:0 4px;color:#1d4ed8;font-weight:700;">${wide ? '좁힘' : '넓힘'}</button>
+                    <button type="button" title="한 칸 앞으로 (오른쪽 위로)"
+                        onclick="event.stopPropagation();ShippingStandbyModule._sstdMoveImage(${i},-1)"
+                        ${i === 0 ? 'disabled' : ''}
+                        style="flex:0 0 auto;border:1px solid #cbd5e1;background:#fff;border-radius:3px;width:18px;height:16px;font-size:10px;line-height:1;cursor:pointer;padding:0;color:#334155;">◀</button>
+                    <button type="button" title="한 칸 뒤로"
+                        onclick="event.stopPropagation();ShippingStandbyModule._sstdMoveImage(${i},1)"
+                        ${last ? 'disabled' : ''}
+                        style="flex:0 0 auto;border:1px solid #cbd5e1;background:#fff;border-radius:3px;width:18px;height:16px;font-size:10px;line-height:1;cursor:pointer;padding:0;color:#334155;">▶</button>
+                </div>
+                <div class="sstd-img-wrap" style="height:${o.h}px;">
+                    <img src="${o.src}" draggable="false" alt="">
+                    <div class="sstd-img-hdl" style="${_SSTD_HDL}top:0;left:0;cursor:nw-resize;" onmousedown="ShippingStandbyModule._sstdStartResize(event,${i},'nw')"></div>
+                    <div class="sstd-img-hdl" style="${_SSTD_HDL}top:0;right:0;cursor:ne-resize;" onmousedown="ShippingStandbyModule._sstdStartResize(event,${i},'ne')"></div>
+                    <div class="sstd-img-hdl" style="${_SSTD_HDL}bottom:0;left:0;cursor:sw-resize;" onmousedown="ShippingStandbyModule._sstdStartResize(event,${i},'sw')"></div>
+                    <div class="sstd-img-hdl" style="${_SSTD_HDL}bottom:0;right:0;cursor:se-resize;" onmousedown="ShippingStandbyModule._sstdStartResize(event,${i},'se')"></div>
                 </div>
                 <button type="button" onclick="event.stopPropagation();ShippingStandbyModule._sstdRemoveImage(${i})"
                     style="position:absolute;top:22px;right:2px;background:rgba(220,38,38,.8);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1;z-index:11;">✕</button>
@@ -1385,7 +1426,13 @@ const ShippingStandbyModule = (function() {
             #sstdDoc .doc-input { border:none; background:transparent; width:100%; font-family:inherit; font-size:inherit; color:#111; padding:0; outline:none; vertical-align:middle; text-align:left; }
             #sstdDoc .doc-input:focus { background:#fffbeb; border-radius:2px; }
             #sstdDoc > table + table { margin-top:-1px; }
-            #sstdDoc .sstd-split-left { width:360px; max-width:360px; }
+            #sstdDoc .sstd-split-left { overflow:hidden; }
+            #sstdDoc .sstd-img-pane { display:flex;flex-direction:column;min-height:100%;overflow:hidden; }
+            #sstdDoc #sstdImgPasteZone { flex:0 0 auto;overflow:hidden;padding:6px;box-sizing:border-box; }
+            #sstdDoc #sstdImgGrid { display:grid;grid-template-columns:1fr 1fr;gap:6px;align-content:start;align-items:start; }
+            #sstdDoc .sstd-img-card { min-width:0;overflow:hidden;display:flex;flex-direction:column;box-sizing:border-box; }
+            #sstdDoc .sstd-img-wrap { position:relative;flex:0 0 auto;overflow:hidden;background:#fff; }
+            #sstdDoc .sstd-img-wrap img { width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;object-position:center;display:block;background:#fff;pointer-events:none; }
             #sstdDoc .sstd-split-handle:hover { background:rgba(37,99,235,0.35); }
             #sstdDoc .sstd-split-vresize:hover { background:rgba(37,99,235,0.35); }
             /* 조절 가능한 경계임을 항상 옅게 표시하고, 마우스를 올리면 진하게 */
@@ -1460,11 +1507,12 @@ const ShippingStandbyModule = (function() {
         <table class="sstd-split" id="sstdSplitTable" style="margin-top:0;table-layout:fixed;width:100%;${_splitHeightStyle}">
             <colgroup><col id="sstdSplitLeftCol" style="width:${_esc(_splitLeftWidth)}"><col></colgroup>
             <tr>
-                <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};border:1px solid #888;padding:0;height:1px;vertical-align:top;position:relative;">
+                <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};border:1px solid #888;padding:0;vertical-align:top;position:relative;overflow:hidden;">
                     <div class="sstd-split-handle" title="드래그해서 표 간격 조절"
                         onmousedown="ShippingStandbyModule._sstdStartSplitResize(event)"
                         style="position:absolute;top:0;bottom:0;right:-4px;width:8px;cursor:col-resize;z-index:5;"></div>
-                    <div class="doc-sec" style="display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
+                    <div class="sstd-img-pane">
+                    <div class="doc-sec" style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
                         <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
                             <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
@@ -1475,14 +1523,15 @@ const ShippingStandbyModule = (function() {
                         onpaste="ShippingStandbyModule._sstdOnPaste(event)"
                         onfocus="this.style.outline='2px dashed #2563eb';this.style.outlineOffset='-3px'"
                         onblur="this.style.outline='none'" onclick="this.focus()"
-                        style="outline:none;padding:6px;cursor:pointer;display:flex;flex-direction:column;height:calc(100% - 28px);">
-                        <div id="sstdImgGrid" style="display:grid;grid-template-columns:1fr 1fr;gap:4px;flex:1;align-content:start;">
+                        style="outline:none;cursor:pointer;">
+                        <div id="sstdImgGrid">
                             ${_sstdRenderImgGrid(_sstdImages)}
                         </div>
                     </div>
+                    </div>
                 </td>
                 <td class="sstd-split-right" style="vertical-align:top;border:1px solid #888;padding:0;height:100%;">
-                    <div class="doc-sec">주요검사 Point <span style="font-weight:400;font-size:10px;color:#555;">(외관 확인방법·시료는 전 항목 공통 · 선삭제로 합치기)</span></div>
+                    <div class="doc-sec">주요검사 Point <span style="font-weight:400;font-size:10px;color:#555;">(⋮⋮ 드래그로 순서 변경 · 확인방법·시료는 선삭제로 합치기)</span></div>
                     <div>
                     <table class="sstd-pt-table" id="sstdPtTable" style="font-size:10px;width:100%;table-layout:fixed;border-collapse:collapse;">
                         <colgroup>
@@ -1788,27 +1837,36 @@ const ShippingStandbyModule = (function() {
         </tr>`;}).join('');
 
         const imgs = (data.images || []).map(_sstdNormImg);
-        const imgHtml = imgs.length ? imgs.map(o => `
-            <div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;">
-                ${o.label ? `<div style="padding:2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>` : ''}
+        const imgHtml = imgs.length ? imgs.map(function(o, i) {
+            const wide = _sstdImgColSpan(o, i, imgs.length) === 2;
+            return `<div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;${wide ? 'grid-column:1/-1;' : ''}">
+                ${o.label ? `<div style="padding:1px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>` : ''}
                 <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
-            </div>`).join('')
-            : `<div style="display:flex;align-items:center;justify-content:center;min-height:120px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
+            </div>`;
+        }).join('')
+            : `<div style="display:flex;align-items:center;justify-content:center;min-height:80px;color:#bbb;font-size:.8rem;">이미지 없음</div>`;
 
         UIUtils.showModal('출하검사 기준서 보기', `
         <style>
-            #sstdViewDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
+            .modal-container:has(#sstdViewFit){height:96vh;max-height:96vh;width:min(96vw,1600px)!important;max-width:none!important;}
+            .modal-body:has(#sstdViewFit){overflow:hidden!important;padding:6px 10px 2px!important;display:flex;flex-direction:column;min-height:0;}
+            .modal-footer:has(+ *){ }
+            .modal-container:has(#sstdViewFit) .modal-header{padding:10px 16px;}
+            .modal-container:has(#sstdViewFit) .modal-footer{padding:8px 16px 12px;}
+            #sstdViewFit{flex:1 1 auto;min-height:0;width:100%;overflow:hidden;}
+            #sstdViewDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; transform-origin:top center; }
             #sstdViewDoc table { border-collapse:collapse; width:100%; }
-            #sstdViewDoc td, #sstdViewDoc th { border:1px solid #888; padding:3px 6px; vertical-align:middle; }
+            #sstdViewDoc td, #sstdViewDoc th { border:1px solid #888; padding:2px 5px; vertical-align:middle; }
             #sstdViewDoc .dth { background:#d0e4f7; font-weight:700; text-align:center; }
             #sstdViewDoc .dlb { background:#f0f0f0; font-weight:700; text-align:center; white-space:nowrap; }
-            #sstdViewDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:5px; font-size:12px; border:none !important; border-bottom:1px solid #888 !important; }
+            #sstdViewDoc .dsec { background:#d0e4f7; font-weight:700; text-align:center; padding:3px; font-size:12px; border:none !important; border-bottom:1px solid #888 !important; }
             #sstdViewDoc > table + table { margin-top:-1px; }
             #sstdViewDoc td > table { border-collapse:collapse; width:100%; }
             #sstdViewDoc td > table > tbody > tr:first-child > td { border-top:none; }
             #sstdViewDoc .sstd-corrective-stack { height:100%; }
             #sstdViewDoc .sstd-corrective-body { white-space:pre-wrap; }
         </style>
+        <div id="sstdViewFit">
         <div id="sstdViewDoc">
             <table>
                 <colgroup><col style="width:58px"><col style="width:260px"><col style="width:auto"><col style="width:26px"><col style="width:88px"><col style="width:88px"><col style="width:88px"></colgroup>
@@ -1887,12 +1945,50 @@ const ShippingStandbyModule = (function() {
                 </tr>
             </table>
         </div>
+        </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
             <button class="btn btn-outline" onclick="UIUtils.closeModal();ShippingStandbyModule._sstdPrint('${encodeURIComponent(key)}')"><span class="material-symbols-outlined">print</span> 출력</button>
             ${_sstdCanWrite() ? `<button class="btn btn-primary" onclick="UIUtils.closeModal();ShippingStandbyModule.openShippingStandardEditor('${encodeURIComponent(key)}')"><span class="material-symbols-outlined">edit</span> 편집</button>` : ''}
             ${_sstdCanDelete() ? `<button class="btn btn-danger" onclick="ShippingStandbyModule.deleteShippingStandard('${encodeURIComponent(key)}')"><span class="material-symbols-outlined">delete</span> 삭제</button>` : ''}
         `, 'xl');
+        _sstdBindViewFit();
+    }
+
+    function _sstdFitViewInModal() {
+        const wrap = document.getElementById('sstdViewFit');
+        const doc = document.getElementById('sstdViewDoc');
+        if (!wrap || !doc) {
+            if (_sstdViewFitHandler) {
+                window.removeEventListener('resize', _sstdViewFitHandler);
+                _sstdViewFitHandler = null;
+            }
+            return;
+        }
+        doc.style.transform = 'none';
+        doc.style.marginBottom = '0';
+        const availW = wrap.clientWidth;
+        const availH = wrap.clientHeight;
+        if (availW < 40 || availH < 40) return;
+        const w = Math.max(1, doc.scrollWidth);
+        const h = Math.max(1, doc.scrollHeight);
+        let s = Math.min(1, availW / w, availH / h);
+        if (!isFinite(s) || s <= 0) s = 1;
+        doc.style.transformOrigin = 'top center';
+        doc.style.transform = 'scale(' + s + ')';
+        doc.style.marginBottom = ((s - 1) * h) + 'px';
+    }
+
+    function _sstdBindViewFit() {
+        const run = function() { _sstdFitViewInModal(); };
+        if (_sstdViewFitHandler) window.removeEventListener('resize', _sstdViewFitHandler);
+        _sstdViewFitHandler = run;
+        window.addEventListener('resize', _sstdViewFitHandler);
+        setTimeout(run, 40);
+        setTimeout(run, 220);
+        document.querySelectorAll('#sstdViewDoc img').forEach(function(img) {
+            img.addEventListener('load', run);
+        });
     }
 
     async function _sstdOpenViewWindow(encodedKey) {
@@ -1924,9 +2020,13 @@ const ShippingStandbyModule = (function() {
         const _pBottomLeftWidth = _pLayout.bottomLeftWidth || '48%';
         const _pRevDateWidth = _pLayout.revDateWidth || _SSTD_REV_DATE_W;
 
-        const imgHtml = (std.images || []).map(_sstdNormImg).map(o => `<div style="border:1px solid #ccc;padding:2px;">
+        const pImgs = (std.images || []).map(_sstdNormImg);
+        const imgHtml = pImgs.map(function(o, i) {
+            const wide = _sstdImgColSpan(o, i, pImgs.length) === 2;
+            return `<div style="border:1px solid #ccc;padding:2px;${wide ? 'grid-column:1/-1;' : ''}">
                 ${o.label ? `<div style="font-size:9px;font-weight:700;text-align:center;padding:2px 0;background:#e8edf2;">${_esc(o.label)}</div>` : ''}
-                <img src="${o.src}" style="height:${px2mm(o.h)}mm;max-width:100%;"></div>`).join('');
+                <img src="${o.src}" style="height:${px2mm(o.h)}mm;max-width:100%;"></div>`;
+        }).join('');
 
         const _rawRevs = (std.revisions || []).filter(r => !!(r.no || r.reason));
         const revsP = _rawRevs.length ? _rawRevs : [{ no: '00', date: std.createdDate || UIUtils.today(), reason: '최초 작성', confirmer: '' }];
@@ -2137,37 +2237,117 @@ const ShippingStandbyModule = (function() {
         _sstdImages = _sstdImages.map(_sstdNormImg);
         if (_sstdImages[idx]) _sstdImages[idx].label = label;
     }
-    function _sstdDragStart(e, idx) { _sstdDragIdx = idx; e.dataTransfer.effectAllowed = 'move'; e.currentTarget.style.opacity = '0.5'; }
-    function _sstdDragOver(e) { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }
-    function _sstdDragEnd(e) { e.currentTarget.style.opacity = ''; _sstdDragIdx = -1; }
-    function _sstdDragDrop(e, toIdx) {
-        e.preventDefault();
-        if (_sstdDragIdx < 0 || _sstdDragIdx === toIdx) return;
-        const imgs = _sstdImages.map(_sstdNormImg);
-        const moved = imgs.splice(_sstdDragIdx, 1)[0];
-        imgs.splice(toIdx, 0, moved);
+    function _sstdToggleImgSpan(idx) {
+        _sstdImages = _sstdImages.map(_sstdNormImg);
+        const o = _sstdImages[idx];
+        if (!o) return;
+        const cur = _sstdImgColSpan(o, idx, _sstdImages.length);
+        o.span = cur === 2 ? 1 : 2;
+        const g = document.getElementById('sstdImgGrid');
+        if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
+    }
+    function _sstdMoveImage(idx, dir) {
+        _sstdImages = _sstdImages.map(_sstdNormImg);
+        const from = Number(idx);
+        const to = from + Number(dir);
+        if (from < 0 || to < 0 || from >= _sstdImages.length || to >= _sstdImages.length) return;
+        const imgs = _sstdImages.slice();
+        const moved = imgs.splice(from, 1)[0];
+        imgs.splice(to, 0, moved);
         _sstdImages = imgs;
         const g = document.getElementById('sstdImgGrid');
         if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
     }
+    function _sstdDragStart(e, idx) {
+        if (_sstdResizeOn) { e.preventDefault(); return; }
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) {
+            e.preventDefault();
+            return;
+        }
+        _sstdDragIdx = idx;
+        e.dataTransfer.effectAllowed = 'move';
+        try { e.dataTransfer.setData('text/plain', String(idx)); } catch (err) {}
+        const card = (e.currentTarget && e.currentTarget.closest) ? e.currentTarget.closest('.sstd-img-card') : e.currentTarget;
+        if (card) card.style.opacity = '0.5';
+    }
+    function _sstdDragOver(e) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'move';
+        const card = e.currentTarget && e.currentTarget.classList && e.currentTarget.classList.contains('sstd-img-card')
+            ? e.currentTarget
+            : (e.target.closest ? e.target.closest('.sstd-img-card') : null);
+        document.querySelectorAll('.sstd-img-card').forEach(function(el) {
+            el.style.outline = '';
+        });
+        if (card) card.style.outline = '2px solid #2563eb';
+    }
+    function _sstdDragEnd(e) {
+        document.querySelectorAll('.sstd-img-card').forEach(function(el) {
+            el.style.opacity = '';
+            el.style.outline = '';
+        });
+        _sstdDragIdx = -1;
+    }
+    function _sstdDragDrop(e, toIdx) {
+        e.preventDefault();
+        e.stopPropagation();
+        document.querySelectorAll('.sstd-img-card').forEach(function(el) { el.style.outline = ''; });
+        if (_sstdDragIdx < 0 || _sstdDragIdx === toIdx) return;
+        const imgs = _sstdImages.map(_sstdNormImg);
+        if (toIdx < 0 || toIdx >= imgs.length) return;
+        const tmp = imgs[_sstdDragIdx];
+        imgs[_sstdDragIdx] = imgs[toIdx];
+        imgs[toIdx] = tmp;
+        _sstdImages = imgs;
+        const g = document.getElementById('sstdImgGrid');
+        if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
+        _sstdDragIdx = -1;
+    }
+    function _sstdGrowSplitToGrid() {
+        const table = document.getElementById('sstdSplitTable');
+        const grid = document.getElementById('sstdImgGrid');
+        if (!table || !grid) return;
+        const pane = grid.closest('.sstd-img-pane');
+        const header = pane && pane.querySelector('.doc-sec');
+        const need = (header ? header.offsetHeight : 28) + grid.offsetHeight + 16;
+        const cur = table.getBoundingClientRect().height;
+        if (need > cur) table.style.height = Math.min(1400, need) + 'px';
+    }
     function _sstdStartResize(e, idx, dir) {
         e.preventDefault();
+        e.stopPropagation();
+        _sstdResizeOn = true;
         _sstdImages = _sstdImages.map(_sstdNormImg);
+        if (!_sstdImages[idx]) { _sstdResizeOn = false; return; }
         const startY = e.clientY;
-        const startH = _sstdImages[idx].h;
-        const card = document.querySelectorAll('.sstd-img-card')[idx];
-        const imgEl = card ? card.querySelector('img') : null;
-        if (card) card.draggable = false;
+        const startX = e.clientX;
+        const startH = Number(_sstdImages[idx].h) || 100;
+        const col = document.getElementById('sstdSplitLeftCol');
+        const td = document.querySelector('#sstdDoc .sstd-split-left');
+        const startW = parseInt((col && col.style.width) || '360', 10) || 360;
+        const card = document.querySelector('#sstdImgGrid .sstd-img-card[data-idx="' + idx + '"]');
+        const wrap = card ? card.querySelector('.sstd-img-wrap') : null;
+        const prevSelect = document.body.style.userSelect;
+        document.body.style.userSelect = 'none';
         function onMove(ev) {
-            const dy = dir.includes('s') ? ev.clientY - startY : startY - ev.clientY;
-            const newH = Math.max(50, Math.min(400, startH + dy));
+            ev.preventDefault();
+            const dy = dir.indexOf('s') >= 0 ? ev.clientY - startY : startY - ev.clientY;
+            const newH = Math.max(50, Math.min(720, startH + dy));
             _sstdImages[idx].h = newH;
-            if (imgEl) imgEl.style.height = newH + 'px';
+            if (wrap) wrap.style.height = newH + 'px';
+            if (dir.indexOf('e') >= 0 || dir.indexOf('w') >= 0) {
+                const dx = dir.indexOf('e') >= 0 ? ev.clientX - startX : startX - ev.clientX;
+                const newW = Math.max(200, Math.min(900, startW + dx));
+                if (col) col.style.width = newW + 'px';
+                if (td) td.style.width = newW + 'px';
+            }
+            _sstdGrowSplitToGrid();
         }
         function onUp() {
             document.removeEventListener('mousemove', onMove);
             document.removeEventListener('mouseup', onUp);
-            if (card) card.draggable = true;
+            document.body.style.userSelect = prevSelect || '';
+            _sstdResizeOn = false;
         }
         document.addEventListener('mousemove', onMove);
         document.addEventListener('mouseup', onUp);
@@ -2357,9 +2537,9 @@ const ShippingStandbyModule = (function() {
 
     function _sstdRenumberCheckRows() {
         let n = 0;
-        document.querySelectorAll('#sstdCheckBody tr.sstd-pt-row .sstd-pt-no').forEach(td => {
+        document.querySelectorAll('#sstdCheckBody tr.sstd-pt-row .sstd-pt-no-num').forEach(el => {
             n += 1;
-            td.textContent = String(n);
+            el.textContent = String(n);
         });
     }
 
@@ -2399,6 +2579,117 @@ const ShippingStandbyModule = (function() {
     function _sstdRefreshCheckLayout() {
         _sstdApplyGroupRowspans();
         _sstdRenumberCheckRows();
+        _sstdBindCheckRowDrag();
+    }
+
+    function _sstdEnsurePtDragStyle() {
+        if (document.getElementById('sstd-pt-drag-style')) return;
+        const st = document.createElement('style');
+        st.id = 'sstd-pt-drag-style';
+        st.textContent = [
+            '.sstd-pt-drag{cursor:grab;color:#94a3b8;}',
+            '.sstd-pt-drag:active{cursor:grabbing;}',
+            'tr.sstd-pt-row.sstd-pt-drop-before td{box-shadow:inset 0 2px 0 #2563eb;}',
+            'tr.sstd-pt-row.sstd-pt-drop-after td{box-shadow:inset 0 -2px 0 #2563eb;}'
+        ].join('');
+        document.head.appendChild(st);
+    }
+
+    function _sstdClearPtDropMarks(tb) {
+        if (!tb) return;
+        tb.querySelectorAll('tr.sstd-pt-row').forEach(function(r) {
+            r.classList.remove('sstd-pt-drop-before', 'sstd-pt-drop-after');
+        });
+    }
+
+    function _sstdReorderCheckRow(fromIdx, destIdx, group) {
+        const pts = _sstdReadCheckPointsFromDom(true);
+        if (fromIdx < 0 || fromIdx >= pts.length) return;
+        if (destIdx < 0) destIdx = 0;
+        if (destIdx > pts.length) destIdx = pts.length;
+        const moved = pts.splice(fromIdx, 1)[0];
+        if (!moved) return;
+        if (group) moved.group = _sstdNormGroup(group);
+        let insertAt = destIdx;
+        if (fromIdx < destIdx) insertAt -= 1;
+        if (insertAt < 0) insertAt = 0;
+        if (insertAt > pts.length) insertAt = pts.length;
+        pts.splice(insertAt, 0, moved);
+        pts.forEach(function(p, i) {
+            if (i === 0) {
+                p.mergePrev = false;
+                return;
+            }
+            if (_sstdNormGroup(p.group) !== _sstdNormGroup(pts[i - 1].group)) p.mergePrev = false;
+        });
+        _sstdWriteCheckBody(pts);
+    }
+
+    function _sstdBindCheckRowDrag() {
+        const tb = document.getElementById('sstdCheckBody');
+        if (!tb) return;
+        _sstdEnsurePtDragStyle();
+
+        tb.querySelectorAll('tr.sstd-pt-row .sstd-pt-drag').forEach(function(handle) {
+            if (handle.dataset.bound === '1') return;
+            handle.dataset.bound = '1';
+            handle.setAttribute('draggable', 'true');
+            handle.addEventListener('dragstart', function(e) {
+                const tr = handle.closest('tr.sstd-pt-row');
+                const rows = Array.from(tb.querySelectorAll('tr.sstd-pt-row'));
+                _sstdPtRowDragFrom = rows.indexOf(tr);
+                e.stopPropagation();
+                e.dataTransfer.effectAllowed = 'move';
+                try { e.dataTransfer.setData('text/plain', String(_sstdPtRowDragFrom)); } catch (err) {}
+                if (tr) {
+                    tr.style.opacity = '0.4';
+                    tr.classList.add('sstd-pt-dragging');
+                }
+            });
+            handle.addEventListener('dragend', function() {
+                _sstdClearPtDropMarks(tb);
+                tb.querySelectorAll('tr.sstd-pt-row').forEach(function(r) {
+                    r.classList.remove('sstd-pt-dragging');
+                    r.style.opacity = r.getAttribute('data-group') === 'hidden' ? '0.55' : '';
+                });
+                _sstdPtRowDragFrom = -1;
+            });
+        });
+
+        if (tb.dataset.ptDragTbody === '1') return;
+        tb.dataset.ptDragTbody = '1';
+        tb.addEventListener('dragover', function(e) {
+            if (_sstdPtRowDragFrom < 0) return;
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const over = e.target.closest ? e.target.closest('tr.sstd-pt-row') : null;
+            _sstdClearPtDropMarks(tb);
+            if (!over) return;
+            const rect = over.getBoundingClientRect();
+            const after = e.clientY > rect.top + rect.height / 2;
+            over.classList.add(after ? 'sstd-pt-drop-after' : 'sstd-pt-drop-before');
+        });
+        tb.addEventListener('drop', function(e) {
+            if (_sstdPtRowDragFrom < 0) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const rows = Array.from(tb.querySelectorAll('tr.sstd-pt-row'));
+            const fromIdx = _sstdPtRowDragFrom;
+            const over = e.target.closest ? e.target.closest('tr.sstd-pt-row') : null;
+            let destIdx = rows.length;
+            let group = '';
+            if (over && rows.indexOf(over) >= 0) {
+                const rect = over.getBoundingClientRect();
+                const after = e.clientY > rect.top + rect.height / 2;
+                destIdx = rows.indexOf(over) + (after ? 1 : 0);
+                group = _sstdRowGroup(over);
+            } else if (rows.length) {
+                group = _sstdRowGroup(rows[rows.length - 1]);
+            }
+            _sstdClearPtDropMarks(tb);
+            _sstdReorderCheckRow(fromIdx, destIdx, group);
+            _sstdPtRowDragFrom = -1;
+        });
     }
 
     function _sstdFindSectionInsertPoint(group) {
@@ -2544,6 +2835,8 @@ const ShippingStandbyModule = (function() {
         _sstdStartSplitResize, _sstdStartSplitVResize, _sstdStartPtColResize, _sstdStartBottomResize,
         _sstdStartRevDateResize,
         _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize,
+        _sstdMoveImage,
+        _sstdToggleImgSpan,
         _sstdAddCheckRow, _sstdInsertCheckRowAfter, _sstdRenumberCheckRows, _sstdRefreshCheckLayout,
         _sstdChangeCheckGroup, _sstdToggleMergePrev, _sstdRemoveCheckRow,
         _sstdAddRevRow, _sstdInsertRevRowAfter, _sstdOnCfInput,

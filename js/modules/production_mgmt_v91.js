@@ -25638,7 +25638,6 @@ var ProdEquipmentModule = (function() {
     let _line     = '도장A라인';
     let _equipId  = null;
     let _subTab   = 'spare';
-    let _openProcs  = new Set();
     let _rightTab   = 'map';   // 'map' | 'detail'
     let _layoutEditMode = false;
 
@@ -26161,56 +26160,53 @@ var ProdEquipmentModule = (function() {
             _renderEquipDashboard();
         } else if (_mode === 'general') {
             const _li = _isLoggedIn();
+            // 가로형 배치 — 설비 목록을 전체 폭에 공정 순서대로 펼치고(좌→우 = 공정 흐름),
+            // 현장 레이아웃/설비 상세는 그 아래에 둔다. 세로 1열이던 기존 배치는 공정이
+            // 12개를 넘어가면서 화면을 한참 스크롤해야 전체가 보였다.
             el.innerHTML = `
-            <div style="display:flex;gap:14px;align-items:flex-start;">
-                <!-- 왼쪽: 설비 목록 테이블 -->
-                <div style="width:540px;flex-shrink:0;">
-                    <div class="card" style="overflow:hidden;">
-                        <div style="display:flex;justify-content:space-between;align-items:center;
-                                    padding:12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
-                            <span style="font-weight:700;font-size:0.92rem;display:flex;align-items:center;gap:7px;">
-                                <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">build</span>
-                                설비 목록
-                            </span>
-                            ${_li ? `
-                            <button class="btn btn-primary" style="padding:5px 13px;font-size:0.82rem;display:flex;align-items:center;gap:5px;"
-                                onclick="ProdEquipmentModule.openEquipAddModal()">
-                                <span class="material-symbols-outlined" style="font-size:15px;">add</span>설비 추가
-                            </button>` : `
-                            <div style="display:flex;align-items:center;gap:4px;font-size:0.76rem;color:var(--text-muted);
-                                        background:var(--bg-tertiary,#f1f5f9);padding:4px 9px;border-radius:6px;">
-                                <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 후 편집 가능
-                            </div>`}
-                        </div>
-                        <div id="equipListBody"></div>
+            <div style="display:flex;flex-direction:column;gap:14px;">
+                <!-- 위: 설비 목록 (가로 그리드) -->
+                <div class="card" style="overflow:hidden;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;
+                                padding:12px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                        <span style="font-weight:700;font-size:0.92rem;display:flex;align-items:center;gap:7px;">
+                            <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">build</span>
+                            설비 목록
+                            <span id="equipListSummary" style="font-weight:400;font-size:0.78rem;color:var(--text-muted);"></span>
+                        </span>
+                        ${!_li ? `
+                        <div style="display:flex;align-items:center;gap:4px;font-size:0.76rem;color:var(--text-muted);
+                                    background:var(--bg-tertiary,#f1f5f9);padding:4px 9px;border-radius:6px;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 후 편집 가능
+                        </div>` : `
+                        <span style="font-size:0.74rem;color:var(--text-muted);">각 공정 카드의 <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-2px;">add_circle</span> 를 눌러 설비를 추가하세요</span>`}
                     </div>
+                    <div id="equipListBody"></div>
                 </div>
-                <!-- 오른쪽: 지도 뷰 / 설비 상세 탭 -->
-                <div style="flex:1;min-width:0;">
-                    <div class="card" style="overflow:hidden;">
-                        <!-- 탭 헤더 -->
-                        <div style="display:flex;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
-                            <button id="rtabMap"
-                                onclick="ProdEquipmentModule.switchRightTab('map')"
-                                style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
-                                       display:flex;align-items:center;justify-content:center;gap:5px;
-                                       border-bottom:2px solid ${_rightTab==='map' ? 'var(--accent-blue)' : 'transparent'};
-                                       color:${_rightTab==='map' ? 'var(--accent-blue)' : 'var(--text-muted)'};
-                                       background:transparent;transition:all .15s;">
-                                <span class="material-symbols-outlined" style="font-size:16px;">map</span>현장 레이아웃
-                            </button>
-                            <button id="rtabDetail"
-                                onclick="ProdEquipmentModule.switchRightTab('detail')"
-                                style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
-                                       display:flex;align-items:center;justify-content:center;gap:5px;
-                                       border-bottom:2px solid ${_rightTab==='detail' ? 'var(--accent-blue)' : 'transparent'};
-                                       color:${_rightTab==='detail' ? 'var(--accent-blue)' : 'var(--text-muted)'};
-                                       background:transparent;transition:all .15s;">
-                                <span class="material-symbols-outlined" style="font-size:16px;">info</span>설비 상세
-                            </button>
-                        </div>
-                        <div id="equipRightPanel"></div>
+                <!-- 아래: 지도 뷰 / 설비 상세 탭 -->
+                <div class="card" style="overflow:hidden;">
+                    <!-- 탭 헤더 -->
+                    <div style="display:flex;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
+                        <button id="rtabMap"
+                            onclick="ProdEquipmentModule.switchRightTab('map')"
+                            style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
+                                   display:flex;align-items:center;justify-content:center;gap:5px;
+                                   border-bottom:2px solid ${_rightTab==='map' ? 'var(--accent-blue)' : 'transparent'};
+                                   color:${_rightTab==='map' ? 'var(--accent-blue)' : 'var(--text-muted)'};
+                                   background:transparent;transition:all .15s;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">map</span>현장 레이아웃
+                        </button>
+                        <button id="rtabDetail"
+                            onclick="ProdEquipmentModule.switchRightTab('detail')"
+                            style="flex:1;padding:10px 0;border:none;cursor:pointer;font-size:0.83rem;font-weight:600;
+                                   display:flex;align-items:center;justify-content:center;gap:5px;
+                                   border-bottom:2px solid ${_rightTab==='detail' ? 'var(--accent-blue)' : 'transparent'};
+                                   color:${_rightTab==='detail' ? 'var(--accent-blue)' : 'var(--text-muted)'};
+                                   background:transparent;transition:all .15s;">
+                            <span class="material-symbols-outlined" style="font-size:16px;">info</span>설비 상세
+                        </button>
                     </div>
+                    <div id="equipRightPanel"></div>
                 </div>
             </div>`;
             _renderEquipList();
@@ -26535,6 +26531,19 @@ var ProdEquipmentModule = (function() {
             </button>`).join('');
     }
 
+    // 공정 타일 색 — 공정no(라인 무관 안정적인 키)를 해시해 팔레트에서 고른다.
+    // 이름만으로 고르면 라인마다 공정명이 달라 팔레트가 다르게 소진돼 일관성이 떨어진다.
+    const _EQUIP_COL_PALETTE = [
+        '#2563eb', '#7c3aed', '#0891b2', '#059669', '#d97706',
+        '#db2777', '#4f46e5', '#65a30d', '#ea580c', '#0284c7'
+    ];
+    function _procColor(proc) {
+        const key = String((proc && (proc.no != null ? proc.no : proc.name)) || '');
+        let hash = 0;
+        for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) >>> 0;
+        return _EQUIP_COL_PALETTE[hash % _EQUIP_COL_PALETTE.length];
+    }
+
     function _renderEquipList() {
         const el = document.getElementById('equipListBody');
         if (!el) return;
@@ -26545,12 +26554,6 @@ var ProdEquipmentModule = (function() {
         const _allStations = _getProcStations(_line);
         const _hiddenCount = _allStations.filter(p => _hiddenSet.has(p.name)).length;
         const visibleProcs = _allStations.filter(p => !_hiddenSet.has(p.name));
-
-        // 처음 로드 시 모든 공정 열기
-        if (_openProcs.size === 0) {
-            visibleProcs.forEach(p => _openProcs.add(p.name));
-            _openProcs.add('미분류');
-        }
 
         let html = '';
 
@@ -26579,116 +26582,243 @@ var ProdEquipmentModule = (function() {
             return;
         }
 
-        // 공정별 아코디언
-        const renderEquipRow = (e) => {
+        // 공정 순서(로딩→세척→제전→배합→…)를 좌→우 컬럼으로 배치하는 가로형 보드.
+        // 컬럼 안에서 설비가 위에서 아래로 쌓인다 — 세로 아코디언이던 이전 배치는
+        // 공정이 12개를 넘어가면서 화면을 계속 스크롤해야 전체가 보였다.
+        // childCount: 이 설비 밑에 하위 설비가 몇 대 있는지(뱃지 표시용). isChild면 "ㄴ" 표식 + 살짝 축소.
+        const renderEquipChip = (e, isChild, childCount) => {
             const sel  = e.id === _equipId;
             const sCol = e.status==='정상' ? '#16a34a' : e.status==='점검중' ? '#d97706' : e.status==='수리중' ? '#dc2626' : '#64748b';
             const sBg  = e.status==='정상' ? '#f0fdf4' : e.status==='점검중' ? '#fefce8' : e.status==='수리중' ? '#fef2f2' : '#f8fafc';
+            const canDrag = admin;
             return `
-            <div onclick="ProdEquipmentModule.selectEquip('${e.id}')"
-                style="display:flex;align-items:center;gap:7px;padding:7px 12px 7px 34px;
-                       cursor:pointer;background:${sel?'#eff6ff':'transparent'};
-                       border-left:3px solid ${sel?'var(--accent-blue)':'transparent'};
-                       border-bottom:1px solid var(--border-color);transition:background .1s;"
+            <div ${canDrag ? `draggable="true"
+                    ondragstart="ProdEquipmentModule._equipChipDragStart('${e.id}',event)"
+                    ondragover="ProdEquipmentModule._equipChipDragOver(event)"
+                    ondragleave="ProdEquipmentModule._equipChipDragLeave(event)"
+                    ondrop="ProdEquipmentModule._equipChipDrop('${e.id}',event)"
+                    ondragend="ProdEquipmentModule._equipChipDragEnd(event)"` : ''}
+                onclick="ProdEquipmentModule.selectEquip('${e.id}')"
+                style="padding:${isChild?'5px 7px':'6px 8px'};margin:${isChild?'0 0 5px':'0 6px 6px'};border-radius:6px;
+                       cursor:${canDrag?'grab':'pointer'};
+                       background:${sel?'#eff6ff':'#fff'};
+                       border:1px solid ${sel?'var(--accent-blue)':'var(--border-color)'};
+                       transition:background .1s;"
                 onmouseenter="if(!${sel})this.style.background='#f5f8ff';"
-                onmouseleave="this.style.background='${sel?'#eff6ff':'transparent'}';">
-                <span style="flex:1;font-size:0.83rem;font-weight:${sel?'700':'500'};
-                             color:${sel?'var(--accent-blue)':'var(--text-primary)'};
-                             overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}</span>
-                <span style="flex-shrink:0;font-size:0.7rem;font-weight:600;color:${sCol};
-                             background:${sBg};border:1px solid ${sCol}44;
-                             padding:1px 6px;border-radius:8px;white-space:nowrap;">${e.status||'정상'}</span>
-                ${loggedIn ? `
-                <div style="flex-shrink:0;display:flex;gap:3px;" onclick="event.stopPropagation();">
-                    <button onclick="ProdEquipmentModule.editEquip('${e.id}')"
-                        style="padding:2px 6px;border:1px solid var(--border-color);border-radius:4px;
-                               background:transparent;cursor:pointer;font-size:0.7rem;color:var(--accent-blue);">수정</button>
-                    <button onclick="ProdEquipmentModule.deleteEquip('${e.id}')"
-                        style="padding:2px 6px;border:1px solid #fca5a5;border-radius:4px;
-                               background:transparent;cursor:pointer;font-size:0.7rem;color:#dc2626;">삭제</button>
-                </div>` : ''}
+                onmouseleave="if(!${sel})this.style.background='#fff';">
+                <div style="display:flex;align-items:center;gap:3px;font-size:${isChild?'0.75rem':'0.8rem'};
+                             font-weight:${sel?'700':'500'};
+                             color:${sel?'var(--accent-blue)':(isChild?'var(--text-secondary)':'var(--text-primary)')};
+                             overflow:hidden;">
+                    ${isChild ? `<span style="flex-shrink:0;color:var(--text-muted);">ㄴ</span>` : ''}
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}</span>
+                    ${childCount ? `<span style="flex-shrink:0;font-size:0.62rem;color:var(--text-muted);
+                        background:var(--bg-tertiary,#f1f5f9);border-radius:8px;padding:0 5px;margin-left:2px;">하위${childCount}</span>` : ''}
+                </div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:3px;">
+                    <span style="font-size:0.66rem;font-weight:600;color:${sCol};
+                                 background:${sBg};border:1px solid ${sCol}44;
+                                 padding:0 5px;border-radius:8px;white-space:nowrap;">${e.status||'정상'}</span>
+                    ${loggedIn ? `
+                    <div style="flex-shrink:0;display:flex;gap:2px;" onclick="event.stopPropagation();">
+                        <button onclick="ProdEquipmentModule.editEquip('${e.id}')" title="수정"
+                            style="padding:1px 3px;border:none;background:transparent;cursor:pointer;
+                                   line-height:1;color:var(--accent-blue);">
+                            <span class="material-symbols-outlined" style="font-size:14px;">edit</span>
+                        </button>
+                        <button onclick="ProdEquipmentModule.deleteEquip('${e.id}')" title="삭제"
+                            style="padding:1px 3px;border:none;background:transparent;cursor:pointer;
+                                   line-height:1;color:#dc2626;">
+                            <span class="material-symbols-outlined" style="font-size:14px;">delete</span>
+                        </button>
+                    </div>` : ''}
+                </div>
             </div>`;
         };
 
+        const renderCol = (proc, equips, isCommon, isUncat) => {
+            const hasIssue   = equips.some(e => e.status === '수리중' || e.status === '점검중');
+            const issueCount = equips.filter(e => e.status === '수리중' || e.status === '점검중').length;
+            const tint       = isCommon ? '#0d9488' : _procColor(proc);
+            // 하위 설비 트리 구성 — parentId가 이 컬럼 안의 다른 설비를 가리킬 때만 자식으로 취급한다.
+            // 부모가 삭제·이동돼 링크가 끊긴 고아 항목은 최상위로 자연스럽게 떨어진다(조용히 안 보이는 사고 방지).
+            const byId = new Map(equips.map(e => [e.id, e]));
+            const topLevel = equips.filter(e => !e.parentId || !byId.has(e.parentId));
+            const childrenOf = (parentId) => equips
+                .filter(e => e.parentId === parentId && byId.has(e.parentId))
+                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+            const equipTreeHtml = topLevel.map(e => {
+                const kids = childrenOf(e.id);
+                const kidsHtml = kids.length
+                    ? `<div style="margin:0 6px 6px 18px;padding-left:8px;border-left:2px solid ${tint}55;">
+                        ${kids.map(c => renderEquipChip(c, true, 0)).join('')}
+                       </div>`
+                    : '';
+                return renderEquipChip(e, false, kids.length) + kidsHtml;
+            }).join('');
+            return `
+            <div style="flex:0 0 176px;width:176px;border-right:1px solid var(--border-color);
+                        display:flex;flex-direction:column;">
+                <div style="padding:8px 10px;background:${tint}1c;
+                           border-bottom:3px solid ${tint};user-select:none;">
+                    <div style="display:flex;align-items:center;gap:5px;">
+                        <span class="material-symbols-outlined"
+                            style="font-size:15px;flex-shrink:0;color:${tint};">${proc.icon}</span>
+                        <span style="flex:1;font-size:0.82rem;font-weight:700;
+                                     color:${tint};
+                                     overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
+                            ${_esc(proc.name)}
+                        </span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:4px;margin-top:3px;flex-wrap:wrap;">
+                        ${proc.no?`<span style="font-size:0.68rem;color:${tint};opacity:.75;">공정 ${proc.no}</span>`:''}
+                        ${equips.length > 0 ? `<span style="font-size:0.68rem;color:${tint};
+                            background:#fff;border:1px solid ${tint}55;
+                            border-radius:10px;padding:0 6px;">${equips.length}대</span>` : ''}
+                        ${hasIssue ? `<span style="font-size:0.68rem;font-weight:700;color:#dc2626;
+                            background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:0 5px;">⚠${issueCount}</span>` : ''}
+                    </div>
+                    ${(loggedIn && !isUncat) || admin ? `
+                    <div style="display:flex;align-items:center;justify-content:flex-end;gap:2px;margin-top:2px;">
+                        ${loggedIn && !isUncat ? `
+                        <button onclick="ProdEquipmentModule.openEquipAddModal('${_esc(proc.name)}')"
+                            title="이 공정에 설비 추가"
+                            style="padding:2px;border:none;background:transparent;cursor:pointer;opacity:.65;line-height:1;"
+                            onmouseenter="this.style.opacity='1';"
+                            onmouseleave="this.style.opacity='.65';">
+                            <span class="material-symbols-outlined" style="font-size:15px;color:${tint};">add_circle</span>
+                        </button>` : ''}
+                        ${admin ? `
+                        <button onclick="ProdEquipmentModule.hideProc('${_esc(proc.name)}')"
+                            title="이 공정 숨기기"
+                            style="padding:2px;border:none;background:transparent;cursor:pointer;opacity:.35;line-height:1;"
+                            onmouseenter="this.style.opacity='.9';"
+                            onmouseleave="this.style.opacity='.35';">
+                            <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">visibility_off</span>
+                        </button>` : ''}
+                    </div>` : ''}
+                </div>
+                <div style="flex:1;padding-top:6px;overflow-y:auto;max-height:520px;">
+                    ${equips.length > 0 ? equipTreeHtml :
+                        `<div style="padding:8px 10px;font-size:0.76rem;color:var(--text-muted);">설비 없음</div>`}
+                </div>
+            </div>`;
+        };
+
+        let cols = '';
         visibleProcs.forEach(proc => {
             const equips = allEquips
                 .filter(e => e.process === proc.name)
                 .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
-            const isOpen    = _openProcs.has(proc.name);
-            const isCommon  = proc.common;
-            const hasIssue  = equips.some(e => e.status === '수리중' || e.status === '점검중');
-            const issueCount = equips.filter(e => e.status === '수리중' || e.status === '점검중').length;
-
-            html += `
-            <div>
-                <div onclick="ProdEquipmentModule.toggleProc('${proc.name}')"
-                    style="display:flex;align-items:center;gap:7px;padding:9px 12px;
-                           cursor:pointer;background:${isOpen?'var(--bg-secondary)':'transparent'};
-                           border-bottom:1px solid var(--border-color);transition:background .12s;
-                           user-select:none;"
-                    onmouseenter="this.style.background='var(--bg-secondary)';"
-                    onmouseleave="this.style.background='${isOpen?'var(--bg-secondary)':'transparent'}';">
-                    <span class="material-symbols-outlined"
-                        style="font-size:15px;flex-shrink:0;color:${isCommon?'#0d9488':'var(--text-muted)'};">${proc.icon}</span>
-                    <span style="flex:1;font-size:0.84rem;font-weight:600;
-                                 color:${isCommon?'#0d9488':'var(--text-primary)'};
-                                 overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">
-                        ${proc.no?`<span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);">${proc.no} </span>`:''}${_esc(proc.name)}
-                    </span>
-                    ${equips.length > 0 ? `<span style="flex-shrink:0;font-size:0.7rem;color:var(--text-muted);
-                        background:var(--bg-tertiary,#f1f5f9);border:1px solid var(--border-color);
-                        border-radius:10px;padding:1px 7px;">${equips.length}</span>` : ''}
-                    ${hasIssue ? `<span style="flex-shrink:0;font-size:0.7rem;font-weight:700;color:#dc2626;
-                        background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:1px 6px;">⚠ ${issueCount}</span>` : ''}
-                    ${admin ? `
-                    <button onclick="event.stopPropagation();ProdEquipmentModule.hideProc('${proc.name}')"
-                        title="이 공정 숨기기"
-                        style="flex-shrink:0;padding:2px 3px;border:none;background:transparent;
-                               cursor:pointer;opacity:.35;line-height:1;"
-                        onmouseenter="this.style.opacity='.9';"
-                        onmouseleave="this.style.opacity='.35';">
-                        <span class="material-symbols-outlined" style="font-size:14px;color:var(--text-muted);">visibility_off</span>
-                    </button>` : ''}
-                    <span class="material-symbols-outlined"
-                        style="flex-shrink:0;font-size:17px;color:var(--text-muted);
-                               transition:transform .2s;transform:${isOpen?'rotate(180deg)':'rotate(0deg)'};">expand_more</span>
-                </div>
-                ${isOpen ? equips.length > 0 ? equips.map(renderEquipRow).join('') :
-                    `<div style="padding:10px 14px 10px 34px;font-size:0.8rem;color:var(--text-muted);
-                                 border-bottom:1px solid var(--border-color);">설비 없음</div>` : ''}
-            </div>`;
+            cols += renderCol(proc, equips, proc.common, false);
         });
 
-        // 미분류
+        // 미분류 — 맨 끝 컬럼 (실제 공정이 아니므로 설비 추가는 지원하지 않는다)
         const uncat = allEquips.filter(e => !e.process || !_allStations.find(p => p.name === e.process));
         if (uncat.length > 0) {
-            const isOpen = _openProcs.has('미분류');
-            html += `
-            <div>
-                <div onclick="ProdEquipmentModule.toggleProc('미분류')"
-                    style="display:flex;align-items:center;gap:7px;padding:9px 12px;
-                           cursor:pointer;background:${isOpen?'var(--bg-secondary)':'transparent'};
-                           border-bottom:1px solid var(--border-color);user-select:none;"
-                    onmouseenter="this.style.background='var(--bg-secondary)';"
-                    onmouseleave="this.style.background='${isOpen?'var(--bg-secondary)':'transparent'}';">
-                    <span class="material-symbols-outlined" style="font-size:15px;color:var(--text-muted);">inbox</span>
-                    <span style="flex:1;font-size:0.84rem;font-weight:600;color:var(--text-secondary);">미분류</span>
-                    <span style="font-size:0.7rem;color:var(--text-muted);background:var(--bg-tertiary,#f1f5f9);
-                        border:1px solid var(--border-color);border-radius:10px;padding:1px 7px;">${uncat.length}</span>
-                    <span class="material-symbols-outlined"
-                        style="font-size:17px;color:var(--text-muted);transition:transform .2s;
-                               transform:${isOpen?'rotate(180deg)':'rotate(0deg)'};">expand_more</span>
-                </div>
-                ${isOpen ? uncat.map(renderEquipRow).join('') : ''}
-            </div>`;
+            cols += renderCol({ name:'미분류', icon:'inbox', no:null }, uncat, false, true);
         }
 
+        html += `<div id="equipColRow" style="display:flex;align-items:flex-start;overflow-x:auto;">${cols}</div>`;
+
         el.innerHTML = html;
+
+        const summaryEl = document.getElementById('equipListSummary');
+        if (summaryEl) summaryEl.textContent = `공정 ${visibleProcs.length}개 · 설비 ${allEquips.length}대`;
+
+        _fitEquipColRow();
+        _bindEquipRowFit();
     }
 
-    function toggleProc(procName) {
-        if (_openProcs.has(procName)) _openProcs.delete(procName);
-        else _openProcs.add(procName);
+    /**
+     * 설비 목록 가로 줄 자동 배율 맞춤.
+     * 이 줄 자체가 overflow-x:auto라서 넘치는 폭을 스스로 흡수해버리기 때문에,
+     * 바깥 .card를 훑는 MesZoomFit._fitOverflowBlocks 범용 로직은 여기까지 못 미친다
+     * (겹친 매치는 바깥쪽만 남기고 걸러내는데, 정작 넘침은 바깥 .card엔 안 잡힌다).
+     * 그래서 이 줄만 따로 재고, 화면 폭에 맞춰 zoom을 줄인다 — 스크롤 대신 축소로 전체를 보여준다.
+     */
+    function _fitEquipColRow() {
+        const row = document.getElementById('equipColRow');
+        if (!row) return;
+        row.style.removeProperty('zoom');
+        const parent = row.parentElement;
+        const avail = parent ? parent.clientWidth : row.clientWidth;
+        if (avail <= 0) return;
+        const need = avail / Math.max(row.scrollWidth, 1);
+        if (need < 0.995) {
+            row.style.zoom = String(Math.max(0.62, Math.min(1, need)));
+        }
+    }
+
+    let _equipRowFitBound = false;
+    function _bindEquipRowFit() {
+        if (_equipRowFitBound) return;
+        _equipRowFitBound = true;
+        window.addEventListener('resize', _fitEquipColRow);
+        if (window.visualViewport) window.visualViewport.addEventListener('resize', _fitEquipColRow);
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 설비 카드 드래그 순서 변경 (관리자 전용) — 같은 라인·공정·상위설비(형제 그룹) 안에서만
+    // 순서를 바꾼다. 다른 컬럼/다른 상위설비로 드롭하면 무시한다(구조 변경은 수정 폼에서만).
+    // ════════════════════════════════════════════════════════════
+    let _equipDragSrc = null;
+
+    function _equipChipDragStart(id, event) {
+        if (!_isAdmin()) { if (event) event.preventDefault(); return; }
+        _equipDragSrc = id;
+        if (event && event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', id);
+        }
+        if (event) event.stopPropagation();
+    }
+
+    function _equipChipDragOver(event) {
+        if (!_isAdmin() || !_equipDragSrc) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+        if (event && event.currentTarget) event.currentTarget.style.borderTop = '2px solid var(--accent-blue)';
+    }
+
+    function _equipChipDragLeave(event) {
+        if (event && event.currentTarget) event.currentTarget.style.borderTop = '';
+    }
+
+    function _equipChipDragEnd() {
+        _equipDragSrc = null;
+        document.querySelectorAll('#equipColRow [draggable]').forEach(el => { el.style.borderTop = ''; });
+    }
+
+    async function _equipChipDrop(targetId, event) {
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.currentTarget) event.currentTarget.style.borderTop = '';
+        if (!_isAdmin()) return;
+        const srcId = _equipDragSrc;
+        _equipDragSrc = null;
+        if (!srcId || srcId === targetId) return;
+
+        const src    = Storage.getById(ST_EQUIP, srcId);
+        const target = Storage.getById(ST_EQUIP, targetId);
+        if (!src || !target) return;
+        if (src.line !== target.line || src.process !== target.process) return;
+        if ((src.parentId || '') !== (target.parentId || '')) return; // 같은 형제 그룹일 때만 순서 변경 허용
+
+        const siblings = (Storage.getAll(ST_EQUIP) || [])
+            .filter(e => e.line === src.line && e.process === src.process && (e.parentId || '') === (src.parentId || ''))
+            .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+        const fromIdx = siblings.findIndex(e => e.id === srcId);
+        if (fromIdx < 0) return;
+        const [moving] = siblings.splice(fromIdx, 1);
+        const toIdx = siblings.findIndex(e => e.id === targetId);
+        siblings.splice(toIdx < 0 ? siblings.length : toIdx, 0, moving);
+
+        for (let i = 0; i < siblings.length; i++) {
+            const newOrder = (i + 1) * 10;
+            if ((siblings[i].sortOrder || 0) !== newOrder) {
+                await Storage.update(ST_EQUIP, siblings[i].id, { sortOrder: newOrder });
+            }
+        }
         _renderEquipList();
     }
 
@@ -27479,15 +27609,34 @@ var ProdEquipmentModule = (function() {
                 `<option value="${_esc(p.name)}" ${selProc===p.name?'selected':''}>${p.name}</option>`
             ).join('');
     }
+    /** 상위 설비 후보 — 같은 라인·공정 안에서 자기 자신 제외, 이미 상위설비가 지정된 설비는 뺀다
+     *  (2단계까지만 지원: 하위 설비가 또 하위를 가질 수 없다). */
+    function _equipParentOptions(line, process, excludeId, selParentId) {
+        const candidates = (Storage.getAll(ST_EQUIP) || [])
+            .filter(x => x.line === line && x.process === process && x.id !== excludeId && !x.parentId)
+            .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+        return '<option value="">-- 없음 (최상위 설비) --</option>' +
+            candidates.map(c => `<option value="${c.id}" ${selParentId===c.id?'selected':''}>${_esc(c.name)}</option>`).join('');
+    }
+    let _equipFormEditId = '';
     function _onEquipLineChange() {
         const line = document.getElementById('efLine')?.value || _line;
         const sel  = document.getElementById('efProcess');
         if (sel) sel.innerHTML = _equipProcOptions(line, '');
+        _onEquipProcessChange();
+    }
+    function _onEquipProcessChange() {
+        const line = document.getElementById('efLine')?.value || _line;
+        const proc = document.getElementById('efProcess')?.value || '';
+        const sel  = document.getElementById('efParent');
+        if (sel) sel.innerHTML = _equipParentOptions(line, proc, _equipFormEditId, '');
     }
     function _equipForm(e, defaultProcess) {
         e = e || {};
+        _equipFormEditId = e.id || '';
         const selLine = e.line || _line;
         const selProc = e.process || defaultProcess || '';
+        const hasChildren = e.id ? (Storage.getAll(ST_EQUIP) || []).some(x => x.parentId === e.id) : false;
         return `
         <div class="form-row">
             <div class="form-group">
@@ -27499,10 +27648,23 @@ var ProdEquipmentModule = (function() {
             </div>
             <div class="form-group">
                 <label class="form-label">공정 <span style="color:var(--accent-red)">*</span></label>
-                <select class="form-select" id="efProcess">
+                <select class="form-select" id="efProcess" onchange="ProdEquipmentModule._onEquipProcessChange()">
                     ${_equipProcOptions(selLine, selProc)}
                 </select>
             </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label class="form-label">상위 설비 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(선택 — 하위 설비로 등록)</span></label>
+                <select class="form-select" id="efParent" ${hasChildren ? 'disabled' : ''}>
+                    ${hasChildren
+                        ? `<option value="">-- 없음 (최상위 설비) --</option>`
+                        : _equipParentOptions(selLine, selProc, e.id || '', e.parentId || '')}
+                </select>
+                ${hasChildren ? `<div style="margin-top:4px;font-size:0.74rem;color:var(--text-muted);">
+                    이 설비는 이미 하위 설비를 가지고 있어 다른 설비의 하위로 지정할 수 없습니다.</div>` : ''}
+            </div>
+            <div class="form-group"></div>
         </div>
         <div class="form-row">
             <div class="form-group">
@@ -27539,8 +27701,10 @@ var ProdEquipmentModule = (function() {
         </div>`;
     }
     function _collectEquip() {
+        const parentEl = document.getElementById('efParent');
         return { line:document.getElementById('efLine').value,
             process:document.getElementById('efProcess').value,
+            parentId:(parentEl && !parentEl.disabled) ? (parentEl.value || '') : '',
             name:document.getElementById('efName').value.trim(),
             model:document.getElementById('efModel').value.trim(),
             installDate:document.getElementById('efInstall').value,
@@ -27565,6 +27729,7 @@ var ProdEquipmentModule = (function() {
         const data = _collectEquip();
         if (!data.process) { UIUtils.toast('공정을 선택하세요.', 'warning'); return; }
         if (!data.name) { UIUtils.toast('설비명을 입력하세요.', 'warning'); return; }
+        if (data.parentId === id) data.parentId = ''; // 자기 자신을 상위로 지정하는 경우 방지(방어적)
         let saved;
         if (id) { await Storage.update(ST_EQUIP, id, data); saved = { id }; }
         else    { saved = await Storage.add(ST_EQUIP, data); _equipId = saved.id; }
@@ -27574,7 +27739,14 @@ var ProdEquipmentModule = (function() {
     }
     function deleteEquip(id) {
         if (!_isLoggedIn()) { UIUtils.toast('설비 삭제는 로그인 후 가능합니다.', 'warning'); return; }
-        UIUtils.confirm('이 설비와 관련된 모든 스페어/점검/이상/비가동 데이터도 함께 삭제됩니다.\n계속하시겠습니까?', async () => {
+        const children = (Storage.getAll(ST_EQUIP) || []).filter(x => x.parentId === id);
+        const msg = children.length
+            ? '이 설비와 관련된 모든 스페어/점검/이상/비가동 데이터도 함께 삭제됩니다.\n하위 설비 ' + children.length + '대는 최상위로 옮겨집니다.\n계속하시겠습니까?'
+            : '이 설비와 관련된 모든 스페어/점검/이상/비가동 데이터도 함께 삭제됩니다.\n계속하시겠습니까?';
+        UIUtils.confirm(msg, async () => {
+            for (const child of children) {
+                await Storage.update(ST_EQUIP, child.id, { parentId: '' });
+            }
             for (const st of [ST_SPARE, ST_CITEM, ST_CREC, ST_ISSUE, ST_DT]) {
                 const items = (Storage.getAll(st)||[]).filter(x => x.equipId === id);
                 for (const item of items) await Storage.remove(st, item.id);
@@ -30638,8 +30810,13 @@ var ProdEquipmentModule = (function() {
         exportTemperatureProfile,
         // 설비 일반관리
         selectEquip,
-        toggleProc,
         switchRightTab,
+        _equipChipDragStart,
+        _equipChipDragOver,
+        _equipChipDragLeave,
+        _equipChipDragEnd,
+        _equipChipDrop,
+        _onEquipProcessChange,
         // 레이아웃 타일 편집
         toggleLayoutEdit,
         saveLayoutTiles,

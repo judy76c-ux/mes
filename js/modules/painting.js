@@ -2296,15 +2296,9 @@ const PaintingWorkModule = (function() {
         const pending = _collectOverdueInbound();
 
         if (!pending.length) {
-            if (_isPaintAdmin()) {
-                card.style.display = '';
-                body.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">이전 날짜 미입고 대기가 없습니다.</td></tr>';
-                if (summary) summary.textContent = '';
-            } else {
-                card.style.display = 'none';
-                body.innerHTML = '';
-                if (summary) summary.textContent = '';
-            }
+            card.style.display = 'none';
+            body.innerHTML = '';
+            if (summary) summary.textContent = '';
             return;
         }
 
@@ -2486,13 +2480,8 @@ const PaintingWorkModule = (function() {
         const unentered = _collectUnenteredPlans();
 
         if (unentered.length === 0) {
-            if (_isPaintAdmin()) {
-                section.style.display = 'block';
-                body.innerHTML = '<tr><td colspan="5" style="text-align:center;padding:20px;color:var(--text-muted);font-size:0.82rem;">하루 이상 지난 미입력 계획이 없습니다.</td></tr>';
-            } else {
-                section.style.display = 'none';
-                body.innerHTML = '';
-            }
+            section.style.display = 'none';
+            body.innerHTML = '';
             return;
         }
 
