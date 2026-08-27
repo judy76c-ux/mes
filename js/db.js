@@ -19,7 +19,8 @@ const DB = (function() {
 
         // 생산 계획
         PRODUCTION_PLANS: 'production_plans', // 생산 계획 지시서
-        OVERTIME_PLANS: 'overtime_plans', // 연장근무계획
+        // deprecated — 연장근무계획 UI 제거(2026-08). 기존 데이터 보존 및 롤백을 위해 키만 유지. 다음 정리 시 삭제.
+        OVERTIME_PLANS: 'overtime_plans',
 
         // 수입검사
         INJECTION_INSPECTIONS: 'injection_inspections', // 사출 수입검사일지
@@ -101,6 +102,8 @@ const DB = (function() {
         EQUIP_SUPPLY_FILTER_LOG: 'equip_supply_filter_log', // 급기필터 교체 실적
         EQUIP_DRYER_CLEAN_LOG: 'equip_dryer_clean_log', // 건조로 청소 실적
         EQUIP_ACTIVATED_CARBON_LOG: 'equip_activated_carbon_log', // 활성탄 교체 실적
+        // 설비종합효율(OEE) 일별 — LOSS 시간(분)만 저장하고 수량·고장이력은 실적 스토어에서 파생한다
+        EQUIP_OEE_DAILY: 'equip_oee_daily',
 
         // SPC 관리 (v23)
         PROD_SPC_DATA:      'prod_spc_data',  // 도막두께/공정품질 SPC 측정 데이터
@@ -210,6 +213,13 @@ const DB = (function() {
             taskName:  { required: true,  type: 'string', label: '작업명' },
             startTime: { required: true,  type: 'string', label: '시작시간' },
             endTime:   { required: true,  type: 'string', label: '완료시간' }
+        },
+
+        // ── 설비종합효율(OEE) ─────────────────────────────────────
+        [STORES.EQUIP_OEE_DAILY]: {
+            date: { required: true, type: 'string', label: '일자',
+                    pattern: /^\d{4}-\d{2}-\d{2}$/, patternDesc: 'YYYY-MM-DD' },
+            line: { required: true, type: 'string', label: '라인' }
         },
 
         // ── 수입 검사 ──────────────────────────────────────────────
@@ -599,6 +609,7 @@ const DB = (function() {
         [STORES.EQUIP_AIR_FILTER_LOG]: { remove: 'operator', clear: 'manager' },
         [STORES.EQUIP_SUPPLY_FILTER_LOG]: { remove: 'operator', clear: 'manager' },
         [STORES.EQUIP_DRYER_CLEAN_LOG]: { remove: 'operator', clear: 'manager' },
+        [STORES.EQUIP_OEE_DAILY]:    { remove: 'operator', clear: 'manager' },
         // ── SPC 관리 (v23) ────────────────────────────────────────
         [STORES.PROD_SPC_DATA]:      { remove: 'operator', clear: 'manager' },
         // ── 3정5S 관리 (v25) ──────────────────────────────────────

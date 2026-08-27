@@ -87,7 +87,7 @@ const App = (function() {
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
                  'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=279',
+                'js/modules/production_mgmt_v91.js?v=280',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -251,7 +251,7 @@ const App = (function() {
         Router.registerModule('dashboard', DashboardModule);
         Router.registerModule('board', BoardModule);
         Router.registerModule('production-plan', ProductionPlanModule);
-        Router.registerModule('overtime-plan', OvertimePlanModule);
+        Router.registerModule('equipment-oee', EquipmentOeeModule);
         Router.registerModule('injection-incoming', InjectionIncomingModule);
         Router.registerModule('injection-warehouse', InjectionWarehouseModule);
         Router.registerModule('paint-incoming-inspection', PaintIncomingInspectionModule);

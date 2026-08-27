@@ -721,7 +721,7 @@ const DashboardModule = (function() {
 
         if (!missing.length) { el.innerHTML = ''; return; }
 
-        const show = missing.slice(0, 20);
+        const show = missing;
 
         function _badge(text, color, bg, icon) {
             return `<span style="display:inline-flex;align-items:center;gap:4px;
@@ -743,12 +743,15 @@ const DashboardModule = (function() {
                     onclick="DashboardModule.openQualityIssueFromWork('${_esc(w.id)}')"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
+                    <td style="padding:6px 8px;white-space:nowrap;" onclick="event.stopPropagation()">
+                        <input type="checkbox" class="dash-pq-check" data-work-id="${_esc(w.id)}" onclick="event.stopPropagation()">
+                    </td>
                     <td style="padding:6px 10px;white-space:nowrap;color:var(--text-muted);font-size:0.8rem;">${_esc(w.date || '-')}</td>
                     <td style="padding:6px 8px;white-space:nowrap;font-size:0.78rem;color:#0891b2;font-weight:700;">${_esc(w.line || '-')}</td>
-                    <td style="padding:6px 8px;font-weight:700;">${_esc(w.carModel || '-')}</td>
-                    <td style="padding:6px 8px;font-weight:600;">${_esc(w.partName || '-')}</td>
-                    <td style="padding:6px 8px;font-size:0.78rem;color:var(--text-muted);">${_esc(w.color || '-')}</td>
-                    <td style="padding:6px 8px;">${warnBadge}</td>
+                    <td style="padding:6px 8px;white-space:nowrap;font-weight:700;">${_esc(w.carModel || '-')}</td>
+                    <td style="padding:6px 8px;white-space:nowrap;font-weight:600;">${_esc(w.partName || '-')}</td>
+                    <td style="padding:6px 8px;white-space:nowrap;font-size:0.78rem;color:var(--text-muted);">${_esc(w.color || '-')}</td>
+                    <td style="padding:6px 8px;white-space:nowrap;">${warnBadge}</td>
                     <td style="padding:6px 10px;white-space:nowrap;font-size:0.78rem;color:var(--text-secondary);">${_esc(statusText)}</td>
                 </tr>`;
         }).join('');
@@ -761,12 +764,18 @@ const DashboardModule = (function() {
                         <span style="font-weight:700;font-size:0.88rem;color:#b45309;">초중종물 기준 발행 누락</span>
                         <span style="background:#f59e0b;color:#fff;border-radius:10px;padding:0 7px;font-size:0.73rem;font-weight:800;">${missing.length}</span>
                     </div>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">초중종물(품질체크) 기준 양식 미발행/미완료 · 클릭하여 발행 화면 열기</span>
+                    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                        <span style="font-size:0.75rem;color:var(--text-muted);">선택 후 일괄 발행 · 행 클릭 시 발행 화면</span>
+                        <button type="button" class="btn btn-sm btn-primary" onclick="DashboardModule.printSelectedQualityIssues()">선택한 건 인쇄물 발행</button>
+                    </div>
                 </div>
-                <div style="overflow-x:auto;">
-                    <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
+                <div style="overflow-x:auto;max-height:420px;overflow-y:auto;">
+                    <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.84rem;">
                         <thead>
                             <tr style="background:var(--bg-secondary);">
+                                <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">
+                                    <input type="checkbox" title="전체 선택" onclick="DashboardModule.toggleQualityWarnSelectAll(this)">
+                                </th>
                                 <th style="padding:6px 10px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">작업일</th>
                                 <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">라인</th>
                                 <th style="padding:6px 8px;text-align:left;font-size:0.72rem;color:var(--text-muted);font-weight:600;white-space:nowrap;">차종</th>
@@ -1224,6 +1233,57 @@ const DashboardModule = (function() {
         Router.navigate('prod-equipment');
     }
 
+    function toggleQualityWarnSelectAll(el) {
+        const on = !!(el && el.checked);
+        document.querySelectorAll('#dashQualityStdWarnings input.dash-pq-check').forEach(function(cb) {
+            cb.checked = on;
+        });
+    }
+
+    function _writePrintPreparing(win) {
+        if (!win) return;
+        try {
+            win.document.open();
+            win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>인쇄 준비</title></head>' +
+                '<body style="font-family:Malgun Gothic,sans-serif;padding:28px;color:#334155;">초중종물 기준 양식을 준비하는 중입니다...</body></html>');
+            win.document.close();
+        } catch (e) {}
+    }
+
+    function printSelectedQualityIssues() {
+        const ids = Array.from(document.querySelectorAll('#dashQualityStdWarnings input.dash-pq-check:checked'))
+            .map(function(el) { return el.getAttribute('data-work-id') || ''; })
+            .filter(Boolean);
+        if (!ids.length) {
+            UIUtils.toast('발행할 항목을 선택하세요.', 'warning');
+            return;
+        }
+        const win = window.open('', '_blank');
+        if (!win) {
+            UIUtils.toast('팝업 차단을 해제하세요.', 'warning');
+            return;
+        }
+        _writePrintPreparing(win);
+        window.__pqPendingPrint = { sourceIds: ids, win: win };
+        try { sessionStorage.setItem('dash_prodQuality_batchIds', JSON.stringify(ids)); } catch (e) {}
+        const run = function() {
+            if (window.ProdQualityModule && typeof window.ProdQualityModule.printSelectedFromWorks === 'function') {
+                window.__pqPendingPrint = null;
+                try { sessionStorage.removeItem('dash_prodQuality_batchIds'); } catch (e2) {}
+                window.ProdQualityModule.printSelectedFromWorks(ids, { win: win });
+                return true;
+            }
+            return false;
+        };
+        if (typeof Router !== 'undefined' && typeof Router.ensureLazyLoaded === 'function') {
+            Router.ensureLazyLoaded('prod-quality').then(function() {
+                if (!run()) Router.navigate('prod-quality');
+            }).catch(function() { Router.navigate('prod-quality'); });
+        } else {
+            Router.navigate('prod-quality');
+        }
+    }
+
     // 대시보드 → 초중종물(기준 발행) 화면 오픈
     function openQualityIssueFromWork(workId) {
         try {
@@ -1298,6 +1358,10 @@ const DashboardModule = (function() {
         const container = document.getElementById('contentArea');
         render(container);
         if (!silent) UIUtils.toast('대시보드를 새로고침했습니다.', 'success');
+    }
+
+    function refreshQualityWarnings() {
+        renderQualityStdWarnings();
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -1430,10 +1494,13 @@ const DashboardModule = (function() {
     return {
         render,
         refresh,
+        refreshQualityWarnings,
         openIlluminationCheck,
         openFProof,
         openEquipMode,
         openQualityIssueFromWork,
+        toggleQualityWarnSelectAll,
+        printSelectedQualityIssues,
         openProductAdjustLogs,
         openNotifyModal,
         _doSendNotify

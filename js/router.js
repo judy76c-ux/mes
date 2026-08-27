@@ -72,7 +72,7 @@ const Router = (function() {
     const PAGE_TITLES = {
         'dashboard': '대시보드',
         'production-plan': '생산 계획 지시서',
-        'overtime-plan': '연장근무계획',
+        'equipment-oee': '설비종합효율(OEE)',
         'injection-incoming': '사출 입고',
         'paint-incoming-inspection': '도료 입고',
         'incoming-overview': '수입검사',

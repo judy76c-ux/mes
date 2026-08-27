@@ -19978,6 +19978,7 @@ var ProdQualityModule = (function() {
                         <h4 style="margin:0;"><span class="material-symbols-outlined">format_paint</span> 도장 작업일지 · 기준 양식 발행</h4>
                         <span style="font-size:0.78rem;color:var(--text-muted);">생산계획 현황 시작 ${QUALITY_CREATE_DELAY_MIN}분 후 자동 생성 · 시작 시각이 지난 DATA 미입력은 작업일이 깜빡입니다.</span>
                         <div style="margin-left:auto;display:flex;align-items:center;gap:6px;">
+                            <button type="button" class="btn btn-sm btn-primary" onclick="ProdQualityModule.printSelectedRows()">선택한 건 인쇄물 발행</button>
                             ${(typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
                                 ? AuthModule.incomingInspNotifyAdminButtonHtml('quality_cs', { small: true, label: '초중종물 알림' })
                                 : ''}
@@ -19988,6 +19989,9 @@ var ProdQualityModule = (function() {
                             <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                                 <thead>
                                     <tr>
+                                        <th style="white-space:nowrap;padding:8px 6px;">
+                                            <input type="checkbox" id="pqSelectAll" title="전체 선택" onclick="ProdQualityModule.toggleSelectAll(this)">
+                                        </th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업일</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">라인</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">차종</th>
@@ -20017,6 +20021,7 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
         search();
+        _consumeDashboardBatchPrint();
         Promise.resolve(syncFromStartedPlans()).then(function () {
             notifyOverdueQuality();
         }).catch(function () {
@@ -22042,6 +22047,7 @@ var ProdQualityModule = (function() {
             rows.push({
                 sortKey,
                 html: `<tr>
+                    <td style="white-space:nowrap;padding:8px 6px;"><input type="checkbox" class="pq-row-check" data-source-id="${_esc(sourceId || '')}" data-issue-id="${_esc(issue && issue.id ? issue.id : '')}"></td>
                     ${_pqDateTd(_fmtWorkDateCell(w), overdue)}
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.line || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(w.carModel || '-')}</strong></td>
@@ -22085,6 +22091,7 @@ var ProdQualityModule = (function() {
             rows.push({
                 sortKey,
                 html: `<tr>
+                    <td style="white-space:nowrap;padding:8px 6px;"><input type="checkbox" class="pq-row-check" data-source-id="" data-issue-id="${_esc(d.id || '')}"></td>
                     ${_pqDateTd(_fmtIssueDateCell(d), overdue)}
                     <td style="white-space:nowrap;padding:8px 10px;">${_esc(d.line || '-')}</td>
                     <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(d.carModel || '-')}</strong></td>
@@ -22104,7 +22111,7 @@ var ProdQualityModule = (function() {
         });
 
         if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업·발행 이력이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:30px;color:var(--text-muted);">해당 기간의 도장 작업·발행 이력이 없습니다.</td></tr>`;
             return;
         }
 
@@ -22198,6 +22205,11 @@ var ProdQualityModule = (function() {
             printHistory
         });
         if (_pqIsMainListVisible()) search();
+        try {
+            if (window.DashboardModule && typeof DashboardModule.refreshQualityWarnings === 'function') {
+                DashboardModule.refreshQualityWarnings();
+            }
+        } catch (eDash) {}
     }
 
     function _measureRecordForm(issue, record = {}) {
@@ -24931,9 +24943,9 @@ var ProdQualityModule = (function() {
             : _issueItemRows([]);
     }
 
-    function printIssue(id) {
+    function _buildPrintSheetHtml(id) {
         const d = Storage.getById(STORE, id);
-        if (!d) return;
+        if (!d) return '';
         // 발행 당시 저장된 items가 기본 마스터(색차·광택 등)여도,
         // 인쇄/재인쇄는 현재 품목별 항목 기준(프리셋)을 우선 적용한다.
         const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
@@ -25059,8 +25071,212 @@ var ProdQualityModule = (function() {
         }).join('');
         const dateLot = `${_esc(d.date || '')}${d.lotNo ? `<br><span>${_esc(d.lotNo)}</span>` : ''}`;
         const logoSrc = new URL('assets/kc-logo.png', window.location.href).href;
-        const html = `
-<!doctype html><html><head><meta charset="utf-8"><title>초중종물 C/S</title>
+        return `
+<div class="print-page">
+  <div class="sheet">
+    <div class="title-row">
+      <div class="title-logo"><img src="${_esc(logoSrc)}" alt="KC 케미칼"></div>
+      <h1>도장 (초 · 중 · 종물) CHECK SHEET</h1>
+    </div>
+    <div class="top-grid">
+      <table class="meta">
+      <tr>
+        <th><span class="ko">차종</span><span class="en">model</span></th>
+        <th><span class="ko">부품</span><span class="en">Item</span></th>
+        <th><span class="ko">컬러</span><span class="en">Color</span></th>
+        <th><span class="ko">생산 수량</span><span class="en">LOT Volume</span></th>
+        <th><span class="ko">생산일(Date)</span><span class="en">LOT NO.</span></th>
+        <th><span class="ko">시간</span><span class="en">Time</span></th>
+      </tr>
+      <tr>
+        <td><strong>${_esc(d.carModel || '')}</strong></td>
+        <td><strong>${_esc(d.partName || '')}</strong></td>
+        <td><strong>${_esc(d.color || '')}</strong></td>
+        <td><strong>${UIUtils.formatNumber(d.productionQty || 0)}</strong></td>
+        <td><strong>${dateLot}</strong></td>
+        <td><strong>${_esc(d.time || ':')}</strong></td>
+      </tr>
+      </table>
+      <table class="sign">
+        <tr><th>작&nbsp;&nbsp;&nbsp;성</th><th>검&nbsp;&nbsp;&nbsp;토</th><th>승&nbsp;&nbsp;&nbsp;인</th></tr>
+        <tr><td></td><td></td><td></td></tr>
+      </table>
+    </div>
+    <div class="cycle-note">
+      <strong>주기 / 샘플 수량</strong>
+      <span>생산계획 시간 기준으로 생산 LOT가 4시간 이내: 초, 종 - 2회 실시</span>
+      <span>생산 LOT가 4hr 초과: 초, 중, 종 - 3회 실시</span>
+    </div>
+    <table class="main">
+    <colgroup>
+      <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:10%">
+    </colgroup>
+    <thead>
+      <tr>
+        <th rowspan="2" class="check-head">검사<br>여부</th>
+        <th rowspan="2" colspan="2">관리 항목</th>
+        <th colspan="2">관리 규격</th>
+        <th rowspan="2">점검 방법</th>
+        <th colspan="3" class="measure-head">측정 ( 측정값 / 결과 작성)</th>
+        <th rowspan="2">판&nbsp;&nbsp;정</th>
+      </tr>
+      <tr class="subhead">
+        <th class="spec-head-upper">상</th><th class="spec-head-lower">하</th>
+        ${lotHead('초물', 'IP')}
+        ${lotHead('중물', 'MP')}
+        ${lotHead('종물', 'FP')}
+      </tr>
+    </thead>
+    <tbody>${rows}</tbody>
+    </table>
+  </div>
+</div>`;
+    }
+
+    function printIssue(id) {
+        printIssues([id]);
+    }
+
+    function printIssues(ids, opts) {
+        opts = opts || {};
+        const unique = [];
+        const seen = new Set();
+        (ids || []).forEach(function(id) {
+            const k = String(id || '');
+            if (!k || seen.has(k)) return;
+            seen.add(k);
+            unique.push(k);
+        });
+        const pages = [];
+        unique.forEach(function(id) {
+            const pageHtml = _buildPrintSheetHtml(id);
+            if (pageHtml) pages.push({ id: id, html: pageHtml });
+        });
+        if (!pages.length) {
+            UIUtils.toast('인쇄할 양식이 없습니다.', 'warning');
+            if (opts.win && !opts.win.closed) {
+                try { opts.win.document.write('<!doctype html><html><body>인쇄할 양식이 없습니다.</body></html>'); opts.win.document.close(); } catch (e) {}
+            }
+            return;
+        }
+        _openQualityPrintWindow(pages, opts.win);
+    }
+
+    function toggleSelectAll(el) {
+        const on = !!(el && el.checked);
+        document.querySelectorAll('#pqUnifiedBody input.pq-row-check').forEach(function(cb) {
+            cb.checked = on;
+        });
+    }
+
+    function _consumeDashboardBatchPrint() {
+        const pending = window.__pqPendingPrint || null;
+        window.__pqPendingPrint = null;
+        let ids = pending && pending.sourceIds;
+        const win = pending && pending.win;
+        if (!ids || !ids.length) {
+            let raw = '';
+            try { raw = sessionStorage.getItem('dash_prodQuality_batchIds') || ''; } catch (e) {}
+            if (raw) {
+                try { sessionStorage.removeItem('dash_prodQuality_batchIds'); } catch (e2) {}
+                try { ids = JSON.parse(raw) || []; } catch (e3) { ids = []; }
+            }
+        } else {
+            try { sessionStorage.removeItem('dash_prodQuality_batchIds'); } catch (e) {}
+        }
+        if (ids && ids.length) printSelectedFromWorks(ids, { win: win });
+    }
+
+    function printSelectedFromWorks(workIds, opts) {
+        return printSelectedRows({ sourceIds: workIds || [], win: opts && opts.win });
+    }
+
+    async function printSelectedRows(opts) {
+        opts = opts || {};
+        const sourceIds = [];
+        const issueIds = [];
+        if (Array.isArray(opts.sourceIds) && opts.sourceIds.length) {
+            opts.sourceIds.forEach(function(id) { if (id) sourceIds.push(String(id)); });
+        } else {
+            const checks = document.querySelectorAll('#pqUnifiedBody input.pq-row-check:checked');
+            if (!checks.length) {
+                UIUtils.toast('인쇄할 항목을 선택하세요.', 'warning');
+                return;
+            }
+            checks.forEach(function(cb) {
+                const issueId = cb.getAttribute('data-issue-id') || '';
+                const sourceId = cb.getAttribute('data-source-id') || '';
+                if (issueId) issueIds.push(issueId);
+                else if (sourceId) sourceIds.push(sourceId);
+            });
+        }
+
+        const win = opts.win || window.open('', '_blank');
+        if (!win) {
+            UIUtils.toast('팝업 차단을 해제하세요.', 'warning');
+            return;
+        }
+        try {
+            win.document.open();
+            win.document.write('<!doctype html><html><head><meta charset="utf-8"><title>인쇄 준비</title></head>' +
+                '<body style="font-family:Malgun Gothic,sans-serif;padding:28px;color:#334155;">초중종물 기준 양식을 준비하는 중입니다...</body></html>');
+            win.document.close();
+        } catch (ePrep) {}
+
+        const startEl = document.getElementById('pqFilterStart');
+        const endEl = document.getElementById('pqFilterEnd');
+        let dateChanged = false;
+        sourceIds.forEach(function(id) {
+            const work = _resolveQualitySource(id);
+            if (!work || !work.date || !startEl || !endEl) return;
+            if (!startEl.value || startEl.value > work.date) { startEl.value = work.date; dateChanged = true; }
+            if (!endEl.value || endEl.value < work.date) { endEl.value = work.date; dateChanged = true; }
+        });
+
+        const toPrint = [];
+        const seen = new Set();
+        const skipped = [];
+        function addPrint(id) {
+            const k = String(id || '');
+            if (!k || seen.has(k)) return;
+            seen.add(k);
+            toPrint.push(k);
+        }
+        issueIds.forEach(addPrint);
+        for (let i = 0; i < sourceIds.length; i++) {
+            const work = _resolveQualitySource(sourceIds[i]);
+            if (!work) continue;
+            const existing = _existingIssueForPlan(work.planId, work._fromPlan ? '' : work.id, work);
+            if (existing) {
+                addPrint(existing.id);
+                continue;
+            }
+            const data = _buildIssueFromSource(work);
+            if (!data.items.length) {
+                skipped.push((work.carModel || '') + ' ' + (work.partName || ''));
+                continue;
+            }
+            const saved = await Storage.add(STORE, data);
+            addPrint(saved.id);
+        }
+        if (skipped.length) {
+            UIUtils.toast('관리항목 미설정 ' + skipped.length + '건은 건너뛰었습니다. 항목을 먼저 설정하세요.', 'warning');
+        }
+        if (!toPrint.length) {
+            if (!skipped.length) UIUtils.toast('인쇄할 양식이 없습니다.', 'warning');
+            try { win.document.write('<!doctype html><html><body>인쇄할 양식이 없습니다.</body></html>'); win.document.close(); } catch (eEmpty) {}
+            return;
+        }
+        if (dateChanged || sourceIds.length) {
+            try { search(); } catch (eSearch) {}
+        }
+        printIssues(toPrint, { win: win });
+    }
+
+    function _openQualityPrintWindow(pages, existingWin) {
+        const issueIds = (pages || []).map(function(p) { return p.id; });
+        const multi = pages.length > 1;
+        const html = `<!doctype html><html class="${multi ? 'print-multi' : ''}"><head><meta charset="utf-8"><title>초중종물 C/S</title>
 <style>
 *{box-sizing:border-box}
 html,body{margin:0;padding:0}
@@ -25069,7 +25285,6 @@ body{font-family:Arial,'Malgun Gothic',sans-serif;color:#111827;background:#eef2
 .print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
 .print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
-/* 화면 미리보기 = A4 가로 인쇄 영역과 동일 비율 */
 .print-page{width:297mm;height:210mm;margin:18px auto;overflow:hidden;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
 .sheet{width:100%;height:100%;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid}
 .title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:12mm;margin-bottom:1.5mm;border:1.6px solid #111827;background:#fff;flex:0 0 auto}
@@ -25130,72 +25345,17 @@ table{border-collapse:collapse;width:100%}
   .main{flex:1 1 auto;height:100%;width:100%}
   .measure-cell{height:auto;min-height:0}
   .measure-cell span{min-height:0}
+  html.print-multi,body.print-multi{width:auto!important;height:auto!important;overflow:visible!important}
+  body.print-multi .print-page{page-break-after:always;break-after:page;margin:0}
+  body.print-multi .print-page:last-child{page-break-after:auto;break-after:auto}
 }
-</style></head><body>
+</style></head><body class="${multi ? 'print-multi' : ''}">
 <div class="print-toolbar">
-  <span>클릭해서 수정 후 인쇄물 발행</span>
+  <span>클릭해서 수정 후 인쇄물 발행${multi ? ' (' + pages.length + '건)' : ''}</span>
   <button class="print-btn" onclick="window.print()">인쇄물 발행</button>
   <button class="print-close-btn" onclick="window.close()">창 닫기</button>
 </div>
-<div class="print-page">
-  <div class="sheet">
-    <div class="title-row">
-      <div class="title-logo"><img src="${_esc(logoSrc)}" alt="KC 케미칼"></div>
-      <h1>도장 (초 · 중 · 종물) CHECK SHEET</h1>
-    </div>
-    <div class="top-grid">
-      <table class="meta">
-      <tr>
-        <th><span class="ko">차종</span><span class="en">model</span></th>
-        <th><span class="ko">부품</span><span class="en">Item</span></th>
-        <th><span class="ko">컬러</span><span class="en">Color</span></th>
-        <th><span class="ko">생산 수량</span><span class="en">LOT Volume</span></th>
-        <th><span class="ko">생산일(Date)</span><span class="en">LOT NO.</span></th>
-        <th><span class="ko">시간</span><span class="en">Time</span></th>
-      </tr>
-      <tr>
-        <td><strong>${_esc(d.carModel || '')}</strong></td>
-        <td><strong>${_esc(d.partName || '')}</strong></td>
-        <td><strong>${_esc(d.color || '')}</strong></td>
-        <td><strong>${UIUtils.formatNumber(d.productionQty || 0)}</strong></td>
-        <td><strong>${dateLot}</strong></td>
-        <td><strong>${_esc(d.time || ':')}</strong></td>
-      </tr>
-      </table>
-      <table class="sign">
-        <tr><th>작&nbsp;&nbsp;&nbsp;성</th><th>검&nbsp;&nbsp;&nbsp;토</th><th>승&nbsp;&nbsp;&nbsp;인</th></tr>
-        <tr><td></td><td></td><td></td></tr>
-      </table>
-    </div>
-    <div class="cycle-note">
-      <strong>주기 / 샘플 수량</strong>
-      <span>생산계획 시간 기준으로 생산 LOT가 4시간 이내: 초, 종 - 2회 실시</span>
-      <span>생산 LOT가 4hr 초과: 초, 중, 종 - 3회 실시</span>
-    </div>
-    <table class="main">
-    <colgroup>
-      <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:10%">
-    </colgroup>
-    <thead>
-      <tr>
-        <th rowspan="2" class="check-head">검사<br>여부</th>
-        <th rowspan="2" colspan="2">관리 항목</th>
-        <th colspan="2">관리 규격</th>
-        <th rowspan="2">점검 방법</th>
-        <th colspan="3" class="measure-head">측정 ( 측정값 / 결과 작성)</th>
-        <th rowspan="2">판&nbsp;&nbsp;정</th>
-      </tr>
-      <tr class="subhead">
-        <th class="spec-head-upper">상</th><th class="spec-head-lower">하</th>
-        ${lotHead('초물', 'IP')}
-        ${lotHead('중물', 'MP')}
-        ${lotHead('종물', 'FP')}
-      </tr>
-    </thead>
-    <tbody>${rows}</tbody>
-    </table>
-  </div>
-</div>
+${pages.map(function(p) { return p.html; }).join('\n')}
 <script>
 document.querySelectorAll('.sheet h1,.sheet th,.sheet td,.sheet .cycle-note,.sheet .cycle-note *,.sheet .measure-cell span').forEach(el => {
   if (el.querySelector('.check-box')) return;
@@ -25207,104 +25367,95 @@ document.querySelectorAll('.check-box,.type-check').forEach(el => {
     el.textContent = el.textContent.trim() ? '' : '\\u2713';
   });
 });
-
-/** A4 가로(297×210mm)에 시트를 맞추고, 항목 수와 무관하게 본문 행 높이를 남은 공간에 균등 분배 */
 function fitOnePage() {
-  const page = document.querySelector('.print-page');
-  const sheet = document.querySelector('.sheet');
-  if (!page || !sheet) return;
-  const main = document.querySelector('.main');
-  const tbody = main ? main.tBodies[0] : null;
-  const rows = tbody ? Array.from(tbody.rows || []) : [];
-  const mm = (v) => Math.round(v * 96 / 25.4);
-
-  // 인라인 스타일 초기화
-  sheet.style.transform = '';
-  sheet.style.transformOrigin = '';
-  sheet.style.height = '';
-  sheet.style.width = '';
-  if (main) { main.style.height = ''; main.style.minHeight = ''; }
-  rows.forEach(row => {
-    row.style.height = '';
-    Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; cell.style.minHeight = ''; });
-  });
-  document.querySelectorAll('.measure-cell span').forEach(el => {
-    el.style.width = ''; el.style.height = ''; el.style.minHeight = ''; el.style.fontSize = '';
-  });
-
-  // 인쇄/미리보기 모두 A4 가로 고정 영역
-  const pageW = mm(297);
-  const pageH = mm(210);
-  page.style.width = pageW + 'px';
-  page.style.height = pageH + 'px';
-  sheet.style.width = pageW + 'px';
-  sheet.style.height = pageH + 'px';
-
-  if (main && rows.length) {
-    // 헤더(타이틀/메타/주기) 높이를 반영해 본표에 남은 세로 공간 계산
-    void sheet.offsetHeight;
-    const sheetRect = sheet.getBoundingClientRect();
-    const mainRect = main.getBoundingClientRect();
-    const padB = parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
-    const availableMainH = Math.max(140, Math.floor(pageH - (mainRect.top - sheetRect.top) - padB - 1));
-    const headH = Array.from(main.tHead?.rows || []).reduce((sum, row) => sum + row.getBoundingClientRect().height, 0);
-    const bodyTarget = Math.max(100, availableMainH - headH);
-
-    // 자연 높이 비율 유지하며 남은 공간 채움 (항목 적으면 행이 커지고, 많으면 줄어듦)
-    const naturalHeights = rows.map(row => Math.max(28, row.getBoundingClientRect().height));
-    const naturalBody = naturalHeights.reduce((s, h) => s + h, 0) || (rows.length * 40);
-    const scaleY = bodyTarget / naturalBody;
-    const minRow = rows.length <= 4 ? 48 : (rows.length <= 6 ? 36 : 28);
-
-    main.style.height = availableMainH + 'px';
-    let used = 0;
-    rows.forEach((row, idx) => {
-      let h = Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
-      if (idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
-      used += h;
-      row.style.height = h + 'px';
-      Array.from(row.cells || []).forEach(cell => {
-        cell.style.height = h + 'px';
-        cell.style.minHeight = h + 'px';
-      });
-      row.querySelectorAll('.measure-cell span').forEach(box => {
-        const boxH = Math.max(22, Math.floor(h * 0.68));
-        const boxW = Math.max(42, Math.min(Math.floor(h * 0.95), Math.floor(pageW * 0.08)));
-        box.style.height = boxH + 'px';
-        box.style.minHeight = boxH + 'px';
-        box.style.width = boxW + 'px';
-        if (box.textContent && box.textContent.trim()) {
-          box.style.fontSize = Math.max(12, Math.min(24, Math.floor(boxH * 0.42))) + 'px';
-        }
-      });
+  document.querySelectorAll('.print-page').forEach(page => {
+    const sheet = page.querySelector('.sheet');
+    if (!page || !sheet) return;
+    const main = page.querySelector('.main');
+    const tbody = main ? main.tBodies[0] : null;
+    const rows = tbody ? Array.from(tbody.rows || []) : [];
+    const mm = (v) => Math.round(v * 96 / 25.4);
+    sheet.style.transform = '';
+    sheet.style.transformOrigin = '';
+    sheet.style.height = '';
+    sheet.style.width = '';
+    if (main) { main.style.height = ''; main.style.minHeight = ''; }
+    rows.forEach(row => {
+      row.style.height = '';
+      Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; cell.style.minHeight = ''; });
     });
-  }
-
-  // 가로/세로 오버플로 시에만 축소 (여백이 남지 않도록 확대는 행 분배로 처리)
-  void sheet.offsetHeight;
-  const sheetW = sheet.scrollWidth || pageW;
-  const sheetH = sheet.scrollHeight || pageH;
-  const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
-  if (scale < 0.998) {
-    sheet.style.transformOrigin = 'top left';
-    sheet.style.transform = 'scale(' + Math.max(0.82, scale).toFixed(4) + ')';
-  }
+    page.querySelectorAll('.measure-cell span').forEach(el => {
+      el.style.width = ''; el.style.height = ''; el.style.minHeight = ''; el.style.fontSize = '';
+    });
+    const pageW = mm(297);
+    const pageH = mm(210);
+    page.style.width = pageW + 'px';
+    page.style.height = pageH + 'px';
+    sheet.style.width = pageW + 'px';
+    sheet.style.height = pageH + 'px';
+    if (main && rows.length) {
+      void sheet.offsetHeight;
+      const sheetRect = sheet.getBoundingClientRect();
+      const mainRect = main.getBoundingClientRect();
+      const padB = parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
+      const availableMainH = Math.max(140, Math.floor(pageH - (mainRect.top - sheetRect.top) - padB - 1));
+      const headH = Array.from(main.tHead && main.tHead.rows || []).reduce((sum, row) => sum + row.getBoundingClientRect().height, 0);
+      const bodyTarget = Math.max(100, availableMainH - headH);
+      const naturalHeights = rows.map(row => Math.max(28, row.getBoundingClientRect().height));
+      const naturalBody = naturalHeights.reduce((s, h) => s + h, 0) || (rows.length * 40);
+      const scaleY = bodyTarget / naturalBody;
+      const minRow = rows.length <= 4 ? 48 : (rows.length <= 6 ? 36 : 28);
+      main.style.height = availableMainH + 'px';
+      let used = 0;
+      rows.forEach((row, idx) => {
+        let h = Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
+        if (idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
+        used += h;
+        row.style.height = h + 'px';
+        Array.from(row.cells || []).forEach(cell => {
+          cell.style.height = h + 'px';
+          cell.style.minHeight = h + 'px';
+        });
+        row.querySelectorAll('.measure-cell span').forEach(box => {
+          const boxH = Math.max(22, Math.floor(h * 0.68));
+          const boxW = Math.max(42, Math.min(Math.floor(h * 0.95), Math.floor(pageW * 0.08)));
+          box.style.height = boxH + 'px';
+          box.style.minHeight = boxH + 'px';
+          box.style.width = boxW + 'px';
+          if (box.textContent && box.textContent.trim()) {
+            box.style.fontSize = Math.max(12, Math.min(24, Math.floor(boxH * 0.42))) + 'px';
+          }
+        });
+      });
+    }
+    void sheet.offsetHeight;
+    const sheetW = sheet.scrollWidth || pageW;
+    const sheetH = sheet.scrollHeight || pageH;
+    const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
+    if (scale < 0.998) {
+      sheet.style.transformOrigin = 'top left';
+      sheet.style.transform = 'scale(' + Math.max(0.82, scale).toFixed(4) + ')';
+    }
+  });
 }
 window.addEventListener('beforeprint', fitOnePage);
 window.addEventListener('load', () => setTimeout(fitOnePage, 60));
 window.addEventListener('resize', () => setTimeout(fitOnePage, 40));
 window.addEventListener('afterprint', () => {
+  const ids = ${JSON.stringify(issueIds)};
   if (window.opener && window.opener.ProdQualityModule && window.opener.ProdQualityModule.markIssuePrinted) {
-    window.opener.ProdQualityModule.markIssuePrinted('${_js(id)}');
+    ids.forEach(id => window.opener.ProdQualityModule.markIssuePrinted(id));
   }
   setTimeout(() => { try { window.close(); } catch(e) {} }, 300);
 });
 </script>
 </body></html>`;
-        const win = window.open('', '_blank');
+        const win = existingWin && !existingWin.closed ? existingWin : window.open('', '_blank');
         if (!win) { UIUtils.toast('팝업 차단을 해제하세요.', 'warning'); return; }
+        try { win.document.open(); } catch (eOpen) {}
         win.document.write(html);
         win.document.close();
+        try { win.focus(); } catch (eF) {}
     }
 
     return {
@@ -25348,6 +25499,10 @@ window.addEventListener('afterprint', () => {
         ,onIssueLineChange
         ,onIssueTimeChange
         ,printIssue
+        ,printIssues
+        ,toggleSelectAll
+        ,printSelectedRows
+        ,printSelectedFromWorks
         ,markIssuePrinted
         ,openDataModal
         ,openDataView
@@ -25819,6 +25974,18 @@ var ProdEquipmentModule = (function() {
         const thisDts    = dts.filter(r => (r.date||'').startsWith(ym));
         const dtMin      = thisDts.reduce((s,d) => s + (Number(d.duration)||0), 0);
 
+        // 이번 달 설비종합효율 — 계산은 전적으로 EquipmentOeeModule에 위임한다(계산식 중복 금지)
+        let oeeSummary = null;
+        try {
+            if (typeof EquipmentOeeModule !== 'undefined' && EquipmentOeeModule.getMonthlySummary) {
+                oeeSummary = EquipmentOeeModule.getMonthlySummary(ym, 'ALL');
+            }
+        } catch (e) { oeeSummary = null; }
+        const oeePct = (oeeSummary && oeeSummary.result && oeeSummary.result.oee != null)
+            ? oeeSummary.result.oee * 100 : null;
+        const oeeAccent = oeePct == null ? '#94a3b8'
+            : (oeePct >= 85 ? '#16a34a' : (oeePct >= 70 ? '#b45309' : '#dc2626'));
+
         // 이번 달 조도/F-PROOF/에어필터/급기필터/건조로
         const thisLux    = luxLogs.filter(l => (l.date||'').startsWith(ym));
         const thisFp     = fproofs.filter(r => (r.date||'').startsWith(ym));
@@ -25946,6 +26113,32 @@ var ProdEquipmentModule = (function() {
                 ${tile('pause_circle','#f59e0b','비가동 이력', dtMin ,'분 · ' + (dtMin/60).toFixed(1) + 'h',
                     monthLabel + ' 비가동 ' + thisDts.length + '건',
                     'general')}
+
+                <div onclick="Router.navigate('equipment-oee')"
+                     style="background:var(--bg-card,var(--bg-secondary));border:1px solid var(--border-color);
+                            border-radius:12px;padding:18px 20px;cursor:pointer;transition:all .18s;
+                            box-shadow:0 2px 6px rgba(0,0,0,.04);"
+                     onmouseenter="this.style.boxShadow='0 6px 18px rgba(0,0,0,.12)';this.style.transform='translateY(-2px)'"
+                     onmouseleave="this.style.boxShadow='0 2px 6px rgba(0,0,0,.04)';this.style.transform=''">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+                        <div style="width:36px;height:36px;border-radius:9px;background:${oeeAccent}1a;
+                                    display:flex;align-items:center;justify-content:center;flex-shrink:0;">
+                            <span class="material-symbols-outlined" style="font-size:20px;color:${oeeAccent};">speed</span>
+                        </div>
+                        <span style="font-weight:700;font-size:0.85rem;color:var(--text-primary);flex:1;">설비종합효율</span>
+                        <span class="material-symbols-outlined" style="font-size:13px;color:var(--text-muted);">arrow_forward_ios</span>
+                    </div>
+                    <div style="display:flex;align-items:baseline;gap:6px;">
+                        <span style="font-size:1.9rem;font-weight:800;line-height:1;color:${oeeAccent};">${oeePct == null ? '-' : oeePct.toFixed(1)}</span>
+                        <span style="font-size:0.78rem;color:var(--text-muted);">% OEE</span>
+                    </div>
+                    <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">
+                        ${oeeSummary
+                            ? monthLabel + ' · 입력 ' + oeeSummary.filledDays + '/' + oeeSummary.activeDays + '일'
+                              + (oeeSummary.errorDays ? ' · <span style="color:#dc2626;">오류 ' + oeeSummary.errorDays + '일</span>' : '')
+                            : monthLabel + ' 실적 미입력'}
+                    </div>
+                </div>
             </div>
 
             <!-- 세부 관리 타일 -->

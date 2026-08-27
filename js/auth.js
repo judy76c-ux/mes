@@ -135,7 +135,7 @@ const AuthModule = (function () {
         { id:'prod-sub-materials',        label:'부자재 관리',        group:'생산관리' },
         { id:'prod-equipment',            label:'설비관리',           group:'생산관리' },
         { id:'five-s',                    label:'3정5S 관리',         group:'생산관리' },
-        { id:'overtime-plan',             label:'연장근무계획',       group:'생산관리' },
+        { id:'equipment-oee',             label:'설비종합효율',       group:'생산관리' },
         { id:'prod-quality',              label:'초중종물 관리',      group:'공정품질' },
         { id:'prod-spc',                  label:'SPC 관리',           group:'공정품질' },
         { id:'spc-color',                 label:'색차 SPC',           group:'공정품질' },
@@ -186,9 +186,8 @@ const AuthModule = (function () {
         { key:'prod_standards',   label:'\uc81c\uc870 \uad00\ub9ac \ud45c\uc900', pages:['prod-standards','work-standard','robot-pg-std','drying-std','customer-return-nc-std'] },
         { key:'prod_conditions',  label:'\uc791\uc5c5\uc870\uac74 \uad00\ub9ac', pages:['prod-conditions'] },
         { key:'prod_submat',      label:'\ubd80\uc790\uc7ac \uad00\ub9ac', pages:['prod-sub-materials'] },
-        { key:'prod_equipment',   label:'\uc124\ube44\uad00\ub9ac',      pages:['prod-equipment'] },
+        { key:'prod_equipment',   label:'\uc124\ube44\uad00\ub9ac',      pages:['prod-equipment','equipment-oee'] },
         { key:'five_s',           label:'3\uc8155S \uad00\ub9ac',       pages:['five-s'] },
-        { key:'overtime_plan',    label:'\uc5f0\uc7a5\uadfc\ubb34\uacc4\ud68d', pages:['overtime-plan'] },
         { key:'quality_prod',     label:'\ucd08\uc911\uc885\ubb3c \uad00\ub9ac', pages:['prod-quality'] },
         { key:'quality_spc',      label:'SPC \uad00\ub9ac',            pages:['prod-spc','spc-color','spc-film','spc-gloss'] },
         { key:'quality_perf',     label:'\ud488\uc9c8 \uc2e4\uc801',    pages:['quality-performance','painting-quality-performance'] },
@@ -331,7 +330,7 @@ const AuthModule = (function () {
             'incoming-overview','injection-incoming','paint-incoming-inspection',
             'warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory',
             'injection-process','injection-work',
-            'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
+            'production-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             'laser-standby','laser-wip','laser-work','laser-inspection',
             'shipping-standby','product-warehouse',
         ];
@@ -374,7 +373,7 @@ const AuthModule = (function () {
             /* 영업관리자 — 영업·납품·제품창고 + 생산계획 조회 */
             sales_manager: rw([
                 'dashboard',
-                'production-plan','overtime-plan',
+                'production-plan',
                 'shipping-standby','product-warehouse',
                 'sales-delivery','sales-outsourcing',
                 'incoming-overview','warehouse-overview',
@@ -385,13 +384,13 @@ const AuthModule = (function () {
                 'dashboard',
                 'incoming-overview','paint-incoming-inspection',
                 'warehouse-overview','paint-inventory','paint-demand-plan',
-                'production-plan','overtime-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
+                'production-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             ]),
 
             /* 자주검사자 — 공정 자주 검사 담당 */
             self_inspector: rw([
                 'dashboard',
-                'production-plan','overtime-plan',
+                'production-plan',
                 'painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip',
                 'prod-quality','quality-performance',
                 'laser-inspection',
