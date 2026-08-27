@@ -167,19 +167,11 @@ const DashboardModule = (function() {
 
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
-
-            <!-- 운영 게시판 -->
-            <div id="dashBoardSection"></div>
-
-            <!-- 하단: 개선활동 -->
-            <div id="dashImprovementTiles"></div>
         </div>`;
 
         renderProductionTiles();
         renderAttentionTiles().catch(e => console.warn('[Dashboard] 대기/누락 타일 렌더 실패:', e));
         _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
-        renderImprovementTiles();
-        renderBoardSection();
         _bindCacheWarmRefreshOnce();
     }
 
@@ -903,93 +895,6 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        3정5S 예정일 계산 (대시보드용 간소화)
     ══════════════════════════════════════════════════════════ */
-    function renderImprovementTiles() {
-        const el = document.getElementById('dashImprovementTiles');
-        if (!el) return;
-
-        const storeName = DB.STORES.PROD_IMPROVEMENT_ACTIVITIES;
-        const rows = storeName ? (Storage.getAll(storeName) || []) : [];
-        const month = UIUtils.today().slice(0, 7);
-        const monthRows = rows.filter(r => String(r.date || r.createdAt || '').slice(0, 7) === month);
-
-        const rankMap = {};
-        monthRows.forEach(r => {
-            const name = r.proposer || '미지정';
-            if (!rankMap[name]) rankMap[name] = { proposed: 0, approved: 0, closed: 0, score: 0 };
-            rankMap[name].proposed += 1;
-            if (r.approval === 'approved') rankMap[name].approved += 1;
-            if (r.status === 'closed') rankMap[name].closed += 1;
-            rankMap[name].score += 1 + (r.approval === 'approved' ? 2 : 0) + (r.status === 'closed' ? 3 : 0);
-        });
-        const top = Object.entries(rankMap)
-            .map(([name, v]) => ({ name, ...v }))
-            .sort((a, b) => b.score - a.score || b.proposed - a.proposed)[0];
-
-        const pending = rows.filter(r => !r.approval || r.approval === 'pending' || r.status === 'reviewing' || r.status === 'draft').length;
-        const approved = rows.filter(r => r.approval === 'approved').length;
-        const running = rows.filter(r => ['planning', 'running', 'checking', 'maintaining'].includes(r.status)).length;
-        const closed = rows.filter(r => r.status === 'closed').length;
-        const recent = rows.slice()
-            .sort((a, b) => String(b.createdAt || b.date || '').localeCompare(String(a.createdAt || a.date || '')))
-            .slice(0, 3);
-
-        el.innerHTML = `
-        <div class="card" style="margin-bottom:0;padding:8px 12px 10px;display:flex;flex-direction:column;gap:8px;">
-            <div style="font-size:.65rem;font-weight:700;color:var(--text-muted);
-                        letter-spacing:.07em;text-transform:uppercase;display:flex;align-items:center;gap:5px;">
-                <span class="material-symbols-outlined" style="font-size:13px;">emoji_events</span>
-                개선활동 / 우수 사원
-            </div>
-
-            <!-- 우수 사원 -->
-            <div onclick="Router.navigate('improvement-activity')"
-                 style="border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:9px;background:#eff6ff;
-                        padding:8px 10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <div>
-                    <div style="font-size:.6rem;color:#1d4ed8;font-weight:800;">이달의 우수 사원 후보</div>
-                    <div style="font-size:1.15rem;font-weight:900;color:#0f172a;line-height:1.1;margin-top:2px;">${_esc(top?.name || '-')}</div>
-                    <div style="display:flex;gap:8px;font-size:.62rem;color:#475569;font-weight:700;margin-top:3px;">
-                        <span>점수 ${top ? top.score : 0}</span>
-                        <span>제안 ${top ? top.proposed : 0}</span>
-                        <span>승인 ${top ? top.approved : 0}</span>
-                        <span>완료 ${top ? top.closed : 0}</span>
-                    </div>
-                </div>
-                <span class="material-symbols-outlined" style="font-size:26px;color:#f59e0b;flex-shrink:0;">workspace_premium</span>
-            </div>
-
-            <!-- 개선 제안 현황 -->
-            <div onclick="Router.navigate('improvement-activity')"
-                 style="border:1px solid #bbf7d0;border-left:4px solid #10b981;border-radius:9px;background:#f0fdf4;
-                        padding:8px 10px;cursor:pointer;flex:1;">
-                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;">
-                    <div style="font-size:.63rem;color:#047857;font-weight:800;">개선 제안 현황</div>
-                    <span class="material-symbols-outlined" style="font-size:16px;color:#10b981;">tips_and_updates</span>
-                </div>
-                <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:5px;margin-bottom:7px;">
-                    ${_improveMini('검토대기', pending, '#f59e0b')}
-                    ${_improveMini('승인', approved, '#10b981')}
-                    ${_improveMini('진행', running, '#3b82f6')}
-                    ${_improveMini('완료', closed, '#6366f1')}
-                </div>
-                <div style="display:grid;gap:3px;font-size:.63rem;color:#334155;">
-                    ${recent.length ? recent.map(r => `
-                        <div style="display:flex;justify-content:space-between;gap:8px;border-top:1px dashed #bbf7d0;padding-top:3px;">
-                            <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:700;">${_esc(r.title || r.problem || '제목 없음')}</span>
-                            <span style="white-space:nowrap;color:#64748b;">${_esc(r.proposer || '-')}</span>
-                        </div>`).join('') : '<div style="color:#64748b;font-size:.63rem;">등록된 개선 제안이 없습니다.</div>'}
-                </div>
-            </div>
-        </div>`;
-    }
-
-    function _improveMini(label, value, color) {
-        return `<div style="border:1px solid ${color}33;background:#fff;border-radius:6px;padding:5px 4px;text-align:center;">
-            <div style="font-size:.95rem;font-weight:900;color:${color};line-height:1;">${UIUtils.formatNumber(value)}</div>
-            <div style="font-size:.58rem;color:#64748b;font-weight:800;margin-top:2px;">${label}</div>
-        </div>`;
-    }
-
     function _calcUpcomingForDash(assignments, today) {
         const results = [];
         const ms1day  = 24 * 3600 * 1000;
@@ -1015,77 +920,6 @@ const DashboardModule = (function() {
         const until = new Date(base.getTime() + 35 * ms1day).toISOString().split('T')[0];
         return results.filter(r => r.date >= from && r.date <= until)
                       .sort((a, b) => a.date.localeCompare(b.date));
-    }
-
-    /* ══════════════════════════════════════════════════════════
-       운영 게시판 섹션
-    ══════════════════════════════════════════════════════════ */
-    function renderBoardSection() {
-        const el = document.getElementById('dashBoardSection');
-        if (!el) return;
-
-        const CAT_COLOR = {
-            '오류 보고': { bg:'#fee2e2', text:'#dc2626' },
-            '개선 요청': { bg:'#fef3c7', text:'#d97706' },
-            '문의':      { bg:'#dbeafe', text:'#2563eb' },
-            '기타':      { bg:'#f1f5f9', text:'#64748b' }
-        };
-
-        const posts = (Storage.getAll(DB.STORES.BOARD_POSTS) || [])
-            .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
-            .slice(0, 5);
-
-        const replies = Storage.getAll(DB.STORES.BOARD_REPLIES) || [];
-
-        function relDate(iso) {
-            if (!iso) return '';
-            const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
-            if (diff === 0) return '오늘';
-            if (diff === 1) return '어제';
-            if (diff < 7)  return `${diff}일 전`;
-            return iso.slice(0, 10);
-        }
-
-        const rows = posts.length ? posts.map(p => {
-            const cc  = CAT_COLOR[p.category] || CAT_COLOR['기타'];
-            const cnt = (replies).filter(r => r.postId === p.id).length;
-            return `
-            <div onclick="Router.navigate('board')"
-                 style="display:flex;align-items:center;gap:10px;padding:7px 12px;
-                        border-bottom:1px solid var(--border-color);cursor:pointer;
-                        transition:background .15s;"
-                 onmouseover="this.style.background='var(--bg-secondary)'"
-                 onmouseout="this.style.background=''">
-                <span style="flex-shrink:0;font-size:.72rem;font-weight:700;padding:2px 7px;
-                             border-radius:10px;background:${cc.bg};color:${cc.text};
-                             white-space:nowrap;">${_esc(p.category || '기타')}</span>
-                <span style="flex:1;font-size:.85rem;color:var(--text-primary);
-                             white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
-                    ${_esc(p.title || '(제목 없음)')}
-                    ${cnt ? `<span style="font-size:.72rem;color:var(--accent-blue);margin-left:4px;">[${cnt}]</span>` : ''}
-                </span>
-                <span style="flex-shrink:0;font-size:.75rem;color:var(--text-muted);white-space:nowrap;">${_esc(p.author || '')}</span>
-                <span style="flex-shrink:0;font-size:.72rem;color:var(--text-muted);white-space:nowrap;min-width:42px;text-align:right;">${relDate(p.createdAt)}</span>
-            </div>`;
-        }).join('') : `<div style="text-align:center;padding:20px;font-size:.85rem;color:var(--text-muted);">
-            등록된 게시글이 없습니다.
-        </div>`;
-
-        el.innerHTML = `
-        <div class="card" style="margin-bottom:0;">
-            <div class="card-header" style="padding:8px 12px;">
-                <h4 style="font-size:.8rem;display:flex;align-items:center;gap:5px;margin:0;">
-                    <span class="material-symbols-outlined" style="font-size:15px;color:var(--accent-blue);">forum</span>
-                    운영 게시판
-                    ${posts.length ? `<span style="font-size:.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">최근 ${posts.length}건</span>` : ''}
-                </h4>
-                <button onclick="Router.navigate('board')" class="btn btn-sm btn-outline"
-                    style="font-size:.75rem;padding:2px 10px;height:24px;">
-                    전체보기
-                </button>
-            </div>
-            <div style="overflow:hidden;">${rows}</div>
-        </div>`;
     }
 
     /* ══════════════════════════════════════════════════════════
