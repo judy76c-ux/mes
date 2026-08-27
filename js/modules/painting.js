@@ -1160,8 +1160,8 @@ const PaintingWorkModule = (function() {
         const today = UIUtils.today();
         const interval = (typeof AuthModule.getIncomingInspNotifyInterval === 'function')
             ? AuthModule.getIncomingInspNotifyInterval(kind)
-            : { mode: 'daily', minutes: 15 };
-        const mode = interval && interval.mode ? interval.mode : 'daily';
+            : { mode: 'once', minutes: 15 };
+        const mode = interval && interval.mode ? interval.mode : 'once';
         const idOf = typeof opts.idOf === 'function'
             ? opts.idOf
             : function (r) { return String((r && r.id) || '').trim(); };
@@ -1212,7 +1212,7 @@ const PaintingWorkModule = (function() {
                     }));
                     if (ok) first.forEach(function (r) { sentIds.push(idOf(r)); });
                 }
-                if (repeats.length && typeof AuthModule.sendTelegramNotify === 'function') {
+                if (repeats.length && mode !== 'once' && typeof AuthModule.sendTelegramNotify === 'function') {
                     const ok = AuthModule.sendTelegramNotify(Object.assign({}, payloadBase, {
                         body: buildBody(repeats)
                     }));

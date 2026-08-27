@@ -20,6 +20,7 @@ const AuthModule = (function () {
     const PROD_NOTIFY_RECIPIENTS_KEY = 'prod_notify_recipients_v1';
     const INCOMING_INSP_NOTIFY_KEY = 'incoming_insp_notify_recipients_v1';
     const INCOMING_INSP_NOTIFY_INTERVAL_KEY = 'incoming_insp_notify_interval_v1';
+    const INCOMING_INSP_NOTIFY_INTERVAL_ONCE_FLAG = 'incoming_insp_notify_interval_default_once_v1';
     const KIND_NOTIFY_SENT_KEY = 'unentered_work_notify_sent_v1';
     let _usersCache = null;
     let _permissionsCache = null;
@@ -48,6 +49,7 @@ const AuthModule = (function () {
     let _incomingInspNotifyIntervalLoaded = false;
     let _kindNotifySent = null;
     let _kindNotifySentLoading = null;
+    let _kindNotifyInflight = {};
     let _notifyCollectors = {};
     let _notifyWatchTimer = null;
 
@@ -1641,10 +1643,10 @@ const AuthModule = (function () {
     function _normalizeIncomingInspInterval(raw) {
         const src = raw && typeof raw === 'object' ? raw : {};
         let mode = String(src.mode || '').trim();
-        if (mode === 'once') {
-            mode = 'once';
-        } else {
+        if (mode === 'interval') {
             mode = 'interval';
+        } else {
+            mode = 'once';
         }
         const minutes = _clampNotifyMinutes(src.minutes, src.hours);
         return { mode: mode, minutes: minutes, hours: minutes };
@@ -1671,6 +1673,31 @@ const AuthModule = (function () {
         return _normalizeIncomingInspIntervalMap(_incomingInspNotifyInterval);
     }
 
+    async function _migrateNotifyIntervalDefaultOnce() {
+        if (typeof Storage === 'undefined' || !Storage.getConfigValue) return;
+        try {
+            const done = await Storage.getConfigValue(INCOMING_INSP_NOTIFY_INTERVAL_ONCE_FLAG);
+            if (done) return;
+            INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
+                const cur = _incomingInspNotifyInterval[k] || _normalizeIncomingInspInterval(null);
+                if (cur.mode !== 'once') {
+                    _incomingInspNotifyInterval[k] = _normalizeIncomingInspInterval({
+                        mode: 'once',
+                        minutes: cur.minutes
+                    });
+                }
+            });
+            if (typeof Storage.setConfigValue === 'function') {
+                await Storage.setConfigValue(INCOMING_INSP_NOTIFY_INTERVAL_KEY, _snapshotIncomingInspInterval());
+                await Storage.setConfigValue(INCOMING_INSP_NOTIFY_INTERVAL_ONCE_FLAG, {
+                    at: new Date().toISOString()
+                });
+            }
+        } catch (e) {
+            console.warn('[AuthModule] 알림 주기 1회 기본 전환 실패:', e);
+        }
+    }
+
     async function ensureIncomingInspNotifyInterval(forceReload) {
         if (_incomingInspNotifyIntervalLoaded && !forceReload) {
             return _snapshotIncomingInspInterval();
@@ -1684,6 +1711,7 @@ const AuthModule = (function () {
             _incomingInspNotifyInterval = _emptyIncomingInspInterval();
         }
         _incomingInspNotifyIntervalLoaded = true;
+        await _migrateNotifyIntervalDefaultOnce();
         return _snapshotIncomingInspInterval();
     }
 
@@ -1747,8 +1775,8 @@ const AuthModule = (function () {
         const modeEl = document.querySelector('input[name="incoming-insp-interval-mode-' + safe + '"]:checked');
         const minutesEl = document.getElementById('incoming-insp-interval-minutes-' + safe)
             || document.getElementById('incoming-insp-interval-hours-' + safe);
-        let mode = modeEl ? modeEl.value : 'interval';
-        if (mode !== 'once') mode = 'interval';
+        let mode = modeEl ? modeEl.value : 'once';
+        if (mode !== 'interval') mode = 'once';
         return _normalizeIncomingInspInterval({
             mode: mode,
             minutes: minutesEl ? minutesEl.value : 15
@@ -1784,8 +1812,8 @@ const AuthModule = (function () {
         return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
             '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. MES가 열려 있으면 약 1분마다 주기를 검사합니다.</div>' +
-            radio('interval', '해소될 때까지', minutesExtra) +
             radio('once', '알림 발생 시 1회') +
+            radio('interval', '해소될 때까지', minutesExtra) +
             '</div>';
     }
 
@@ -1985,13 +2013,15 @@ const AuthModule = (function () {
         const recipients = getIncomingInspNotifyRecipientIds(key);
         if (!recipients.length) return;
         const interval = getIncomingInspNotifyInterval(key) || _normalizeIncomingInspInterval(null);
-        const mode = interval && interval.mode ? interval.mode : 'interval';
+        const mode = interval && interval.mode ? interval.mode : 'once';
         const idOf = typeof opts.idOf === 'function'
             ? opts.idOf
             : function (r) {
                 return String((r && (r.id || r.sourceId || r.key)) || '').trim();
             };
         const logLabel = opts.logLabel || _incomingInspKindLabel(key);
+        if (_kindNotifyInflight[key]) return;
+        _kindNotifyInflight[key] = true;
         _loadKindNotifySent().then(function () {
             const sentMap = _kindNotifySent && typeof _kindNotifySent === 'object' ? _kindNotifySent : {};
             const byKind = (sentMap[key] && typeof sentMap[key] === 'object') ? sentMap[key] : {};
@@ -2029,7 +2059,7 @@ const AuthModule = (function () {
                     const ok = sendInternalMessage(Object.assign({}, payloadBase, { body: buildBody(first) }));
                     if (ok) first.forEach(function (r) { sentIds.push(idOf(r)); });
                 }
-                if (repeats.length) {
+                if (repeats.length && mode !== 'once') {
                     const ok = sendTelegramNotify(Object.assign({}, payloadBase, { body: buildBody(repeats) }));
                     if (ok) repeats.forEach(function (r) { sentIds.push(idOf(r)); });
                 }
@@ -2063,6 +2093,8 @@ const AuthModule = (function () {
             }
         }).catch(function (e) {
             console.warn('[AuthModule] ' + logLabel + ' 통보 실패:', e);
+        }).then(function () {
+            _kindNotifyInflight[key] = false;
         });
     }
 
