@@ -607,18 +607,16 @@ const DashboardModule = (function() {
             warnColor: alerts.injOverdue > 0 ? '#ef4444' : '#8b5cf6',
             badge: '대기'
         }));
-        if (paintPending.visible) {
-            tiles.push(_countTile({
-                icon: 'inventory',
-                title: '도료 입고 대기',
-                count: paintPending.count,
-                warnSub: '창고 미입고',
-                okSub: '대기 없음',
-                onClick: "Router.navigate('paint-inventory')",
-                warnColor: '#0891b2',
-                badge: '대기'
-            }));
-        }
+        tiles.push(_countTile({
+            icon: 'inventory',
+            title: '도료 입고 대기',
+            count: paintPending.count,
+            warnSub: '창고 미입고',
+            okSub: '대기 없음',
+            onClick: "Router.navigate('paint-inventory')",
+            warnColor: '#0891b2',
+            badge: '대기'
+        }));
         tiles.push(_countTile({
             icon: 'edit_note',
             title: '실적 미입력',
