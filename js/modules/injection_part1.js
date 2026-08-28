@@ -343,8 +343,11 @@ var InjectionIncomingModule = (function() {
             const badLotSet = fifoViolationLots[d.id] || new Set();
             const injLotDisplay = lotList.map(l => {
                 const lotNo = l.lotNo || '-';
-                const lotQty = Number(l.qty) || 0;
-                const qtyText = lotQty > 0 ? ' (' + UIUtils.formatNumber(lotQty) + ')' : '';
+                let lotQty = Number(l.qty);
+                if (!(lotQty > 0) && lotList.length === 1) {
+                    lotQty = Number(d.incomingQty || d.passQty) || 0;
+                }
+                const qtyText = ' (' + UIUtils.formatNumber(lotQty > 0 ? lotQty : 0) + ')';
                 const bad = badLotSet.has(lotNo);
                 const style = bad
                     ? 'display:inline-block;background:#fff7ed;border:1px solid #fb923c;border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:800;color:#ea580c;white-space:nowrap;'

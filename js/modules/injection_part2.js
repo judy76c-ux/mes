@@ -3133,7 +3133,7 @@ var InjectionWarehouseModule = (function() {
                     <td style="white-space:nowrap;"><strong>${d.partName || '-'}</strong></td>
                     <td style="white-space:nowrap;">${d.color || '-'}</td>
                     <td style="white-space:nowrap;">${d.supplier || '-'}</td>
-                    <td style="min-width:160px;max-width:280px;">
+                    <td style="min-width:180px;max-width:420px;">
                         ${_lotBreakdownHtml(d)}
                         ${isIncoming ? _inspGroupBadgeHtml(d) : ''}
                     </td>
@@ -3378,13 +3378,50 @@ var InjectionWarehouseModule = (function() {
         return { label: route.label, color: route.color, detail: route.detail };
     }
 
+    function _inspLotEntries(insp) {
+        if (!insp) return [];
+        if (Array.isArray(insp.lots) && insp.lots.length) {
+            return insp.lots.map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: _lotNum(l && l.qty) };
+            }).filter(function (l) { return l.lotNo; });
+        }
+        const lotNo = String(insp.lotNo || '').trim();
+        if (!lotNo) return [];
+        return [{ lotNo: lotNo, qty: _lotNum(insp.passQty || insp.incomingQty) }];
+    }
+
+    function _linkedInspectionRecord(d) {
+        const inspId = String((d && d.inspId) || '').trim() || _findLinkedInspectionId(d);
+        if (!inspId) return null;
+        return Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId) || null;
+    }
+
+    /** 입고 이력 LOT 표시용. 창고 레코드는 대표 lotNo만 있는 경우가 많아,
+     *  연결된 수입검사 lots[]가 있으면 그 LOT·수량을 모두 보여 검사 이력과 대조한다. */
+    function _displayLotsForInbound(d) {
+        const warehouseLots = _recordLotEntries(d);
+        if (!d || d.type === '출고') return warehouseLots;
+        if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) {
+            return warehouseLots;
+        }
+        const inspLots = _inspLotEntries(_linkedInspectionRecord(d));
+        if (!inspLots.length) return warehouseLots;
+        const seen = {};
+        const out = inspLots.map(function (l) {
+            seen[l.lotNo] = true;
+            return { lotNo: l.lotNo, qty: l.qty };
+        });
+        warehouseLots.forEach(function (l) {
+            if (!seen[l.lotNo]) out.push(l);
+        });
+        return out;
+    }
+
     /** LOT별 수량 표시 — d.lotNo만 보면 lots[]가 여러 건이어도 항상 첫 LOT 하나만 보인다
      *  (d.lotNo는 대표값으로 항상 채워져 있어 "d.lotNo || lots 목록" 같은 폴백이 절대 lots로
-     *  안 넘어감). lots[]가 있으면 그걸 우선해서 LOT마다 수량을 같이 보여준다. */
+     *  안 넘어감). lots[]가 있으면 그걸 우선하고, 수입검사 연동 입고는 검사 LOT 전체를 붙인다. */
     function _lotBreakdownHtml(d) {
-        const lots = (Array.isArray(d && d.lots) && d.lots.length)
-            ? d.lots
-            : ((d && d.lotNo) ? [{ lotNo: d.lotNo, qty: d.quantity }] : []);
+        const lots = (d && d.type === '출고') ? _recordLotEntries(d) : _displayLotsForInbound(d);
         if (!lots.length) return '<span style="color:var(--text-muted);">-</span>';
         return lots.map(function (l) {
             const lotNo = String((l && l.lotNo) || '').trim() || '-';
@@ -11117,12 +11154,16 @@ var InjectionWarehouseModule = (function() {
             d.partName || '',
             d.color || '',
             d.supplier || '',
-            (Array.isArray(d.lots) && d.lots.length)
-                ? d.lots.map(function (l) {
-                    const qty = Number(l.qty) || 0;
-                    return (l.lotNo || '-') + (qty > 0 ? '(' + qty + ')' : '');
-                }).join(' / ')
-                : (d.lotNo || ''),
+            (function () {
+                const lots = (d.type === '출고') ? _recordLotEntries(d) : _displayLotsForInbound(d);
+                if (lots.length) {
+                    return lots.map(function (l) {
+                        const qty = Number(l.qty) || 0;
+                        return (l.lotNo || '-') + (qty > 0 ? '(' + qty + ')' : '');
+                    }).join(' / ');
+                }
+                return d.lotNo || '';
+            })(),
             d.unit || 'EA',
             d.quantity || 0,
             d.type || '입고',
