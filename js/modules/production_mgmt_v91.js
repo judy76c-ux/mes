@@ -25001,9 +25001,13 @@ var ProdQualityModule = (function() {
         };
         const itemDisplayInfo = item => {
             const key = String(item.key || '');
-            if (key === 'color_l') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△L<br><span class="item-sub-en">(Luminosity)</span>' };
-            if (key === 'color_a') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△a<br><span class="item-sub-en">(-a Green, +a Red)</span>' };
-            if (key === 'color_b') return { groupKey: 'color', groupLabel: '색차', detailHtml: '△b<br><span class="item-sub-en">(-b Blue, +b Yellow)</span>' };
+            // 색차 기준값(예: 색상 마스터 L값)이 입력돼 있으면 세부항목 칸에 함께 표시한다.
+            // ±공차만 있던 상/하 칸은 그대로 두고, 어느 값을 기준으로 한 공차인지만 덧붙인다.
+            const targetSuffix = (_isColorSpecItem(item) && item.targetSpec)
+                ? `<br><span class="item-target">기준 ${_esc(item.targetSpec)}</span>` : '';
+            if (key === 'color_l') return { groupKey: 'color', groupLabel: '색차', detailHtml: `△L<br><span class="item-sub-en">(Luminosity)</span>${targetSuffix}` };
+            if (key === 'color_a') return { groupKey: 'color', groupLabel: '색차', detailHtml: `△a<br><span class="item-sub-en">(-a Green, +a Red)</span>${targetSuffix}` };
+            if (key === 'color_b') return { groupKey: 'color', groupLabel: '색차', detailHtml: `△b<br><span class="item-sub-en">(-b Blue, +b Yellow)</span>${targetSuffix}` };
             if (key === 'gloss')   return { groupKey: 'gloss', groupLabel: '광택', detailHtml: 'G' };
             if (key === 'film_under') return { groupKey: 'film', groupLabel: '도막두께', detailHtml: '하도' };
             if (key === 'film_top')   return { groupKey: 'film', groupLabel: '도막두께', detailHtml: '상도' };
@@ -25333,6 +25337,7 @@ table{border-collapse:collapse;width:100%}
 .item-group-sub{display:block;font-size:9px;font-weight:700;line-height:1.05}
 .item-detail{font-size:13px;font-weight:700;line-height:1.15}
 .item-sub-en{display:block;font-size:9px;font-weight:700;line-height:1.1}
+.item-target{display:block;font-size:9px;font-weight:800;line-height:1.15;color:#a16207}
 .spec-upper{font-size:14px;font-weight:900}.spec-lower,.spec-text{font-size:12px;line-height:1.25;font-weight:900}
 .film-range-spec{text-align:center!important;vertical-align:middle!important;font-weight:900}
 .cycle-note{display:flex;align-items:center;gap:8px;min-height:7mm;margin:0 0 1.5mm;border:1.2px solid #111827;background:#f8fafc;padding:1mm 2mm;font-size:10.5px;font-weight:800;color:#0f172a;flex:0 0 auto}
@@ -25352,6 +25357,7 @@ table{border-collapse:collapse;width:100%}
 .main tr.color-row .item-group{font-size:13px}
 .main tr.color-row .item-detail{font-size:11px;line-height:1.02}
 .main tr.color-row .item-sub-en{font-size:8px}
+.main tr.color-row .item-target{font-size:8px}
 .main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:12px;line-height:1.05;font-weight:900}
 .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
 .main tr.color-row .measure-cell span{min-height:10mm;width:72%;font-size:0}
