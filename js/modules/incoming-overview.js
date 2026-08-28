@@ -980,12 +980,29 @@ var IncomingOverviewModule = (function () {
 })();
 
 /* ══════════════════════════════════════════════════════════════
-   수입검사 이력변경 관리 (삭제 감사 로그)
+   수입검사 이력변경 관리 (삭제·수정 감사 로그)
 ══════════════════════════════════════════════════════════════ */
 var IncomingDeleteLogModule = (function () {
     const LOG_STORE = DB.STORES.INSPECTION_DELETE_LOGS;
 
     function init() {}
+
+    function _isEditLog(l) {
+        return !!(l && (l.action === 'edit' || l.type === 'injection_edit'));
+    }
+
+    function _typeBadge(l) {
+        if (_isEditLog(l) || l.type === 'injection_edit') {
+            return `<span style="background:#ffedd5;color:#c2410c;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">사출 수정</span>`;
+        }
+        if (l.type === 'injection') {
+            return `<span style="background:#dbeafe;color:#2563eb;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">사출 삭제</span>`;
+        }
+        if (l.type === 'laser_work') {
+            return `<span style="background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">레이저</span>`;
+        }
+        return `<span style="background:#ede9fe;color:#7c3aed;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">도료</span>`;
+    }
 
     function render(container) {
         container.innerHTML = `
@@ -996,12 +1013,13 @@ var IncomingDeleteLogModule = (function () {
                     <div style="display:flex;align-items:center;gap:8px;">
                         <span class="material-symbols-outlined" style="color:var(--accent-red);">manage_history</span>
                         <strong>수입검사 이력변경 관리</strong>
-                        <span style="font-size:0.8rem;color:var(--text-muted);">삭제된 검사 기록의 감사 로그입니다.</span>
+                        <span style="font-size:0.8rem;color:var(--text-muted);">삭제·수정 감사 로그와 창고 반영 여부를 확인합니다.</span>
                     </div>
                     <div style="display:flex;gap:8px;align-items:center;">
-                        <select class="form-select" id="delLogTypeFilter" style="min-width:120px;">
+                        <select class="form-select" id="delLogTypeFilter" style="min-width:150px;">
                             <option value="">전체 유형</option>
-                            <option value="injection">사출 수입검사</option>
+                            <option value="injection">사출 수입검사 삭제</option>
+                            <option value="injection_edit">사출 수입검사 수정</option>
                             <option value="paint">도료 수입검사</option>
                             <option value="laser_work">레이저 작업(검사대기)</option>
                         </select>
@@ -1015,12 +1033,12 @@ var IncomingDeleteLogModule = (function () {
                         <table class="data-table">
                             <thead>
                                 <tr>
-                                    <th>삭제 일시</th>
+                                    <th>변경 일시</th>
                                     <th>유형</th>
-                                    <th>원본 요약</th>
-                                    <th>삭제자</th>
-                                    <th>삭제 사유</th>
-                                    <th>원본 보기</th>
+                                    <th>요약</th>
+                                    <th>처리자</th>
+                                    <th>사유</th>
+                                    <th>상세</th>
                                 </tr>
                             </thead>
                             <tbody id="delLogTableBody">
@@ -1037,44 +1055,64 @@ var IncomingDeleteLogModule = (function () {
     function search() {
         const typeFilter = (document.getElementById('delLogTypeFilter') || {}).value || '';
         let logs = (Storage.getAll(LOG_STORE) || [])
-            .sort((a, b) => (b.deletedAt || '').localeCompare(a.deletedAt || ''));
-        if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+            .sort((a, b) => (b.deletedAt || b.changedAt || '').localeCompare(a.deletedAt || a.changedAt || ''));
+        if (typeFilter === 'injection_edit') {
+            logs = logs.filter(l => _isEditLog(l));
+        } else if (typeFilter === 'injection') {
+            logs = logs.filter(l => l.type === 'injection' && !_isEditLog(l));
+        } else if (typeFilter) {
+            logs = logs.filter(l => l.type === typeFilter);
+        }
 
         const tbody = document.getElementById('delLogTableBody');
         if (!tbody) return;
         if (!logs.length) {
-            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">삭제 이력이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:40px;color:var(--text-muted);">변경 이력이 없습니다.</td></tr>`;
             return;
         }
         tbody.innerHTML = logs.map(l => {
-            const deletedAt = l.deletedAt ? l.deletedAt.replace('T', ' ').slice(0, 19) : '-';
-            const typeLabel = l.typeLabel || (l.type === 'injection' ? '사출 수입검사' : l.type === 'laser_work' ? '레이저 작업(검사대기)' : '도료 수입검사');
-            const typeBadge = l.type === 'injection'
-                ? `<span style="background:#dbeafe;color:#2563eb;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">사출</span>`
-                : l.type === 'laser_work'
-                ? `<span style="background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">레이저</span>`
-                : `<span style="background:#ede9fe;color:#7c3aed;border-radius:4px;padding:2px 8px;font-size:0.78rem;font-weight:700;">도료</span>`;
+            const deletedAt = (l.deletedAt || l.changedAt || '').replace('T', ' ').slice(0, 19) || '-';
+            const sync = l.warehouseSync || {};
+            const syncHint = _isEditLog(l)
+                ? (sync.applied
+                    ? ` <span style="font-size:0.72rem;color:#c2410c;font-weight:700;">창고 ${sync.type || '반영'} ${UIUtils.formatNumber(sync.qty || 0)}EA</span>`
+                    : (sync.requested
+                        ? ' <span style="font-size:0.72rem;color:var(--text-muted);">창고 미반영</span>'
+                        : ''))
+                : '';
             return `<tr>
                 <td style="font-size:0.82rem;color:var(--text-muted);">${deletedAt}</td>
-                <td>${typeBadge}</td>
-                <td style="font-size:0.85rem;">${l.summary || '-'}</td>
+                <td>${_typeBadge(l)}</td>
+                <td style="font-size:0.85rem;">${l.summary || '-'}${syncHint}</td>
                 <td style="font-size:0.85rem;">${l.deletedBy || '-'}</td>
-                <td style="font-size:0.85rem;color:var(--accent-red);">${l.reason || '-'}</td>
+                <td style="font-size:0.85rem;color:${_isEditLog(l) ? '#c2410c' : 'var(--accent-red)'};">${l.reason || '-'}</td>
                 <td>
                     <button class="btn btn-sm btn-outline" onclick="IncomingDeleteLogModule.viewOriginal('${l.id}')">
-                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">open_in_new</span> 원본
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">open_in_new</span> ${_isEditLog(l) ? '변경 전후' : '원본'}
                     </button>
                 </td>
             </tr>`;
         }).join('');
     }
 
+    function _lotText(d) {
+        const lots = (d && d.lots && d.lots.length)
+            ? d.lots
+            : (d && d.lotNo ? [{ lotNo: d.lotNo, qty: d.incomingQty || d.passQty }] : []);
+        if (!lots.length) return '-';
+        return lots.map(function (l) {
+            return String(l.lotNo || '-') + '(' + UIUtils.formatNumber(Number(l.qty) || 0) + ')';
+        }).join(', ');
+    }
+
     function viewOriginal(logId) {
         const log = Storage.getById(LOG_STORE, logId);
         if (!log) return;
         const d = log.originalData || {};
-        const typeLabel = log.typeLabel || (log.type === 'injection' ? '사출 수입검사' : log.type === 'laser_work' ? '레이저 작업(검사대기)' : '도료 수입검사');
-        const deletedAt = log.deletedAt ? log.deletedAt.replace('T', ' ').slice(0, 19) : '-';
+        const after = log.afterData || {};
+        const isEdit = _isEditLog(log);
+        const typeLabel = log.typeLabel || (log.type === 'injection' ? '사출 수입검사' : log.type === 'laser_work' ? '레이저 작업(검사대기)' : log.type === 'injection_edit' ? '사출 수입검사 수정' : '도료 수입검사');
+        const deletedAt = (log.deletedAt || log.changedAt || '').replace('T', ' ').slice(0, 19) || '-';
 
         const row = (label, value) =>
             `<div style="display:flex;gap:0;border-bottom:1px solid var(--border);">
@@ -1082,15 +1120,20 @@ var IncomingDeleteLogModule = (function () {
                 <div style="flex:1;padding:7px 14px;font-size:0.85rem;">${value !== undefined && value !== null && value !== '' ? value : '-'}</div>
             </div>`;
 
-        const fields = log.type === 'injection' ? [
-            row('검사일자', d.date), row('검사자', d.inspector), row('차종', d.carModel),
-            row('품명', d.partName), row('컬러', d.color), row('사출처', d.supplierName),
-            row('입고수량', UIUtils.formatNumber(d.incomingQty) + ' EA'),
-            row('검사수량', UIUtils.formatNumber(d.inspectionQty)),
-            row('합격수량', UIUtils.formatNumber(d.passQty)),
-            row('불합격수량', UIUtils.formatNumber(d.failQty)),
-            row('합격 판정', d.verdict), row('비고', d.note),
-        ] : log.type === 'laser_work' ? [
+        const injFields = function (src) {
+            return [
+                row('검사일자', src.date), row('검사자', src.inspector), row('차종', src.carModel),
+                row('품명', src.partName), row('컬러', src.color), row('사출처', src.supplierName),
+                row('LOT', _lotText(src)),
+                row('입고수량', UIUtils.formatNumber(src.incomingQty) + ' EA'),
+                row('검사수량', UIUtils.formatNumber(src.inspectionQty)),
+                row('합격수량', UIUtils.formatNumber(src.passQty)),
+                row('불합격수량', UIUtils.formatNumber(src.failQty)),
+                row('합격 판정', src.verdict), row('비고', src.note),
+            ];
+        };
+
+        const fields = (log.type === 'injection' || log.type === 'injection_edit') ? injFields(d) : log.type === 'laser_work' ? [
             row('작업일자', d.date), row('시작시간', d.startTime), row('종료시간', d.endTime),
             row('장비', d.machine),
             row('작업자', [d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ')),
@@ -1106,15 +1149,29 @@ var IncomingDeleteLogModule = (function () {
             row('성적서 접수', d.certCheck), row('최종 판정', d.verdict), row('비고', d.note),
         ];
 
-        UIUtils.showModal(`원본 데이터 — ${typeLabel}`, `
-            <div style="padding:4px 0 12px;display:flex;gap:16px;font-size:0.82rem;color:var(--text-muted);">
-                <span><strong>삭제 일시:</strong> ${deletedAt}</span>
-                <span><strong>삭제자:</strong> ${log.deletedBy || '-'}</span>
+        const sync = log.warehouseSync || {};
+        const afterBlock = isEdit ? `
+            <div style="margin-top:14px;font-size:0.82rem;font-weight:700;color:#c2410c;">변경 후</div>
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-top:6px;">
+                ${injFields(after).join('')}
+            </div>
+            <div style="margin-top:10px;font-size:0.82rem;color:var(--text-secondary);">
+                창고 반영: ${sync.applied
+                    ? ((sync.type || '반영') + ' ' + UIUtils.formatNumber(sync.qty || 0) + ' EA')
+                    : (sync.requested ? '요청했으나 미반영(검사만 수정)' : '없음')}
+            </div>` : '';
+
+        UIUtils.showModal(`${isEdit ? '변경 전후' : '원본 데이터'} — ${typeLabel}`, `
+            <div style="padding:4px 0 12px;display:flex;gap:16px;font-size:0.82rem;color:var(--text-muted);flex-wrap:wrap;">
+                <span><strong>${isEdit ? '수정' : '삭제'} 일시:</strong> ${deletedAt}</span>
+                <span><strong>처리자:</strong> ${log.deletedBy || '-'}</span>
                 <span><strong>사유:</strong> <span style="color:var(--accent-red);">${log.reason || '-'}</span></span>
             </div>
-            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
+            ${isEdit ? '<div style="font-size:0.82rem;font-weight:700;color:var(--text-muted);">변경 전</div>' : ''}
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;${isEdit ? 'margin-top:6px;' : ''}">
                 ${fields.join('')}
-            </div>`,
+            </div>
+            ${afterBlock}`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             '600px'
         );

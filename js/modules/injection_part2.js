@@ -1784,6 +1784,8 @@ var InjectionWarehouseModule = (function() {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#ede9fe;color:#7c3aed;border:1px solid #c4b5fd;padding:1px 7px;border-radius:10px;font-weight:700;">생산출고</span>`;
         } else if (src === '도장 입고') {
             detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#dbeafe;color:#2563eb;border:1px solid #93c5fd;padding:1px 7px;border-radius:10px;font-weight:700;">도장입고</span>`;
+        } else if (_isInspectionEditAdjustment(d) || d.outgoingType === '검사수정') {
+            detailBadge = `<span style="margin-left:4px;font-size:0.72rem;background:#ffedd5;color:#c2410c;border:1px solid #fdba74;padding:1px 7px;border-radius:10px;font-weight:700;">검사수정</span>`;
         }
 
         return `${UIUtils.badge('출고', 'danger')}${detailBadge}`;
@@ -1923,6 +1925,13 @@ var InjectionWarehouseModule = (function() {
      *  수입검사 합격수량과 비교하는 "초과 입고"가 아니다 — 실물을 센 결과다. */
     function _isStockCountAdjustmentRecord(d) {
         return !!(d && (d.isStockCountAdjustment || /재고실사 보정/.test(String(d.source || ''))));
+    }
+
+    /** 수입검사 수정 후 창고에 남긴 보정 입고/출고. 원 입고를 덮어쓰지 않고 이력으로 추적한다. */
+    function _isInspectionEditAdjustment(d) {
+        if (!d) return false;
+        if (d.fromInspectionEdit) return true;
+        return /수입검사 수량 수정/.test(String(d.source || ''));
     }
 
     /** 도장현장 반납 입고 — 이미 출고한 재고를 창고로 되돌린 건.
@@ -2153,13 +2162,21 @@ var InjectionWarehouseModule = (function() {
         };
         if (!d || d.type === '출고') return na;
         if (_isStockBaselineRecord(d) || _isStockErrorResetRecord(d) || _isSiteReturnInbound(d)) return na;
+        if (_isInspectionEditAdjustment(d)) {
+            return {
+                status: 'adjusted', label: '수정반영', color: '#c2410c',
+                inboundQty: inboundQty, inspQty: inboundQty, inspId: String(d.inspId || ''),
+                title: '수입검사 수량 수정으로 창고에 반영한 보정 입고'
+            };
+        }
         const route = _invRoute(d);
         const fromInsp = route.label === '수입검사' || route.label === '수입검사 없음';
         if (!fromInsp) return na;
 
         const inspId = _findLinkedInspectionId(d);
         const insp = inspId ? Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId) : null;
-        let inspQty = insp ? _inspLotsQtyFor(insp, _inboundLotNos(d)) : 0;
+
+        let inspQty = insp ? _inspQtyTruth(insp) : 0;
         if (!inspQty) inspQty = _lotNum(d.inspPassQty);
 
         if (!insp) {
@@ -2175,29 +2192,60 @@ var InjectionWarehouseModule = (function() {
             return {
                 status: 'missing', label: '수량없음', color: '#b45309',
                 inboundQty: inboundQty, inspQty: 0, inspId: inspId,
-                title: '연동된 수입검사에서 해당 LOT 합격수량을 찾을 수 없습니다'
+                title: '연동된 수입검사에서 합격수량을 찾을 수 없습니다'
             };
         }
-        if (inboundQty === inspQty) {
+
+        const adj = _linkedInspectionWarehouseNet(inspId);
+        const effective = adj.net;
+        const hasAdj = adj.editOut > 0 || adj.editIn > 0;
+
+        if (effective === inspQty) {
+            if (hasAdj) {
+                return {
+                    status: 'adjusted', label: '수정반영', color: '#c2410c',
+                    inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+                    title: '입고 합계 ' + UIUtils.formatNumber(adj.inbound) + ' EA'
+                        + (adj.editOut ? ' − 검사수정 차감 ' + UIUtils.formatNumber(adj.editOut) + ' EA' : '')
+                        + (adj.editIn ? ' + 검사수정 입고 ' + UIUtils.formatNumber(adj.editIn) + ' EA' : '')
+                        + ' = 검사 합격 ' + UIUtils.formatNumber(inspQty) + ' EA'
+                };
+            }
+            if (inboundQty === inspQty) {
+                return {
+                    status: 'match', label: '일치', color: '#16a34a',
+                    inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+                    title: '입고수량 = 검사 합격수량'
+                };
+            }
+            if (inboundQty < inspQty) {
+                return {
+                    status: 'partial', label: '분할', color: '#2563eb',
+                    inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
+                    title: '이 건 입고 ' + UIUtils.formatNumber(inboundQty) + ' EA < 검사 합격 '
+                        + UIUtils.formatNumber(inspQty) + ' EA (분할 입고 · 합계는 일치)'
+                };
+            }
             return {
                 status: 'match', label: '일치', color: '#16a34a',
                 inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
-                title: '입고수량 = 검사 합격수량'
+                title: '창고 입고 합계 = 검사 합격수량'
             };
         }
-        if (inboundQty > inspQty) {
+        if (effective > inspQty) {
             return {
                 status: 'excess', label: '초과', color: '#dc2626',
                 inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
-                title: '입고 ' + UIUtils.formatNumber(inboundQty) + ' EA > 검사 합격 '
+                title: '창고 입고 합계 ' + UIUtils.formatNumber(effective) + ' EA > 검사 합격 '
                     + UIUtils.formatNumber(inspQty) + ' EA'
+                    + (hasAdj ? ' (검사수정 차감 ' + UIUtils.formatNumber(adj.editOut) + ' EA 반영 후)' : '')
             };
         }
         return {
             status: 'partial', label: '분할', color: '#2563eb',
             inboundQty: inboundQty, inspQty: inspQty, inspId: inspId,
-            title: '이 건 입고 ' + UIUtils.formatNumber(inboundQty) + ' EA < 검사 합격 '
-                + UIUtils.formatNumber(inspQty) + ' EA (분할 입고)'
+            title: '창고 입고 합계 ' + UIUtils.formatNumber(effective) + ' EA < 검사 합격 '
+                + UIUtils.formatNumber(inspQty) + ' EA'
         };
     }
 
@@ -2281,6 +2329,9 @@ var InjectionWarehouseModule = (function() {
         if (route.label === '수입검사') {
             inspLine = `<div style="font-size:0.68rem;color:#2563eb;font-weight:600;margin-top:2px;">
                     수입검사 ${_escapeHtml(inspText || '일시 미등록')}</div>`;
+        } else if (route.label === '검사수정 차감' || route.label === '검사수정 입고') {
+            inspLine = `<div style="font-size:0.68rem;color:#c2410c;font-weight:600;margin-top:2px;">
+                    수입검사 수량 수정 반영</div>`;
         } else if (route.label === '수입검사 없음') {
             inspLine = `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;margin-top:2px;"
                     title="연결된 수입검사 기록을 찾을 수 없습니다">
@@ -3184,6 +3235,13 @@ var InjectionWarehouseModule = (function() {
             };
         }
         if (d && d.type === '출고') {
+            if (_isInspectionEditAdjustment(d)) {
+                return {
+                    label: '검사수정 차감',
+                    color: '#c2410c',
+                    detail: src || '수입검사 수량 수정 반영 · 원 입고는 유지'
+                };
+            }
             const paintLine = _resolveOutgoingPaintLine(d, null, _buildPaintLineFromInputMap());
             if (paintLine === '도장-A' || paintLine === '도장-B') {
                 return {
@@ -3196,6 +3254,13 @@ var InjectionWarehouseModule = (function() {
             return isProd
                 ? { label: '생산 차감', color: '#7c3aed', detail: src || oType || '도장 투입' }
                 : { label: '수동 차감', color: '#dc2626', detail: src || oType || '수기 출고' };
+        }
+        if (d && _isInspectionEditAdjustment(d)) {
+            return {
+                label: '검사수정 입고',
+                color: '#0369a1',
+                detail: src || '수입검사 수량 수정 반영 · 원 입고는 유지'
+            };
         }
         if (d && _isStockErrorResetRecord(d)) {
             return { label: '재고 오류 초기화', color: '#dc2626', detail: _formatResetHistoryDetail(d) };
@@ -3237,7 +3302,7 @@ var InjectionWarehouseModule = (function() {
     // 경로 배지의 이동 대상 — 수입검사 → 검사 이력, 생산 차감 → 작업 실적, 수동입고 → 입고 이력
     function _routeLinkFor(d, route) {
         if (!d || !route) return null;
-        if (route.label === '수입검사') {
+        if (route.label === '수입검사' || route.label === '검사수정 차감' || route.label === '검사수정 입고') {
             const inspId = _findLinkedInspectionId(d);
             if (!inspId) return null;
             return {
@@ -3397,15 +3462,23 @@ var InjectionWarehouseModule = (function() {
     }
 
     /** 입고 이력 LOT 표시용. 창고 레코드는 대표 lotNo만 있는 경우가 많아,
-     *  연결된 수입검사 lots[]가 있으면 그 LOT·수량을 모두 보여 검사 이력과 대조한다. */
+     *  연결된 수입검사 lots[]가 있으면 그 LOT·수량을 모두 보여 검사 이력과 대조한다.
+     *  창고에 LOT 분해가 이미 있거나 검사 수량과 어긋나면 원장 LOT을 그대로 보여
+     *  검사 수정 전후 차이를 가리지 않는다. */
     function _displayLotsForInbound(d) {
         const warehouseLots = _recordLotEntries(d);
         if (!d || d.type === '출고') return warehouseLots;
         if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) {
             return warehouseLots;
         }
+        if (_isInspectionEditAdjustment(d)) return warehouseLots;
         const inspLots = _inspLotEntries(_linkedInspectionRecord(d));
         if (!inspLots.length) return warehouseLots;
+        const whQty = warehouseLots.reduce(function (s, l) { return s + l.qty; }, 0) || _lotNum(d.quantity);
+        const inspQty = inspLots.reduce(function (s, l) { return s + l.qty; }, 0);
+        const warehouseHasBreakdown = Array.isArray(d.lots) && d.lots.length > 1;
+        if (warehouseHasBreakdown) return warehouseLots;
+        if (Array.isArray(d.lots) && d.lots.length && whQty !== inspQty) return warehouseLots;
         const seen = {};
         const out = inspLots.map(function (l) {
             seen[l.lotNo] = true;
@@ -3438,6 +3511,7 @@ var InjectionWarehouseModule = (function() {
     function _inboundDisplayGroupKey(d) {
         if (!d || d.type === '출고') return '';
         if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) return '';
+        if (_isInspectionEditAdjustment(d)) return '';
         if (typeof _isUnmatchedActionRecord === 'function' && _isUnmatchedActionRecord(d)) return '';
         const route = _invRoute(d);
         if (route.label !== '수입검사' && route.label !== '수입검사 없음') return '';
@@ -3553,6 +3627,26 @@ var InjectionWarehouseModule = (function() {
                     같은 수입검사 입고 기록 ${siblings.length}건을 한 화면으로 묶어 표시합니다. 원장에는 ${siblings.length}건이 남아 있습니다.
                </div>`
             : '';
+        const editAdj = listInspectionEditAdjustments(_findLinkedInspectionId(d) || d.inspId);
+        const editAdjHtml = editAdj.length
+            ? `<div style="margin-top:10px;padding:10px 12px;border-radius:8px;background:rgba(194,65,12,.06);border:1px solid rgba(194,65,12,.25);font-size:0.82rem;line-height:1.6;">
+                    <strong style="color:#c2410c;">수입검사 수정 반영 이력</strong>
+                    ${editAdj.map(function (r) {
+                        const lots = _recordLotEntries(r).map(function (l) {
+                            return _escapeHtml(l.lotNo) + ' (' + UIUtils.formatNumber(l.qty) + ')';
+                        }).join(', ');
+                        const q = (typeof InvCalc !== 'undefined' && InvCalc.qtyOf)
+                            ? (InvCalc.qtyOf(r) || _lotNum(r.quantity))
+                            : _lotNum(r.quantity);
+                        return '<div style="margin-top:6px;">'
+                            + _escapeHtml(String(r.date || '').replace('T', ' ').slice(0, 16))
+                            + ' · <strong>' + (r.type === '출고' ? '차감' : '입고') + ' '
+                            + UIUtils.formatNumber(q) + ' EA</strong>'
+                            + (lots ? ' · ' + lots : '')
+                            + '<div style="color:var(--text-muted);">' + _escapeHtml(r.note || r.source || '') + '</div></div>';
+                    }).join('')}
+               </div>`
+            : '';
         const row = (label, val) => `
             <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-color);">
                 <span style="min-width:96px;font-size:0.82rem;color:var(--text-muted);flex-shrink:0;">${label}</span>
@@ -3581,6 +3675,7 @@ var InjectionWarehouseModule = (function() {
                 ${_renderRouteBadge(d, path)}
                 ${path.detail ? `<div style="margin-top:6px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">${_escapeHtml(path.detail)}</div>` : ''}
                 ${groupNote}
+                ${editAdjHtml}
             </div>
             <div style="background:var(--bg-secondary);border-radius:10px;padding:12px 14px;">
                 ${resetRows}
@@ -5996,6 +6091,8 @@ var InjectionWarehouseModule = (function() {
 
                     const consumed = inventory.some(o =>
                         o.type === '출고' && o.partName === insp.partName &&
+                        !_isInspectionEditAdjustment(o) &&
+                        !_isStockErrorResetRecord(o) &&
                         (o.lotNo === lot.lotNo || (o.lots || []).some(l2 => l2.lotNo === lot.lotNo))
                     );
                     linked.push({ invId: inv.id, lotNo: lot.lotNo, qty: invQty, consumed });
@@ -6003,6 +6100,261 @@ var InjectionWarehouseModule = (function() {
             });
         });
         return linked;
+    }
+
+    function _inspQtyTruth(insp) {
+        if (!insp) return 0;
+        const fromLots = _inspLotEntries(insp).reduce(function (s, l) { return s + l.qty; }, 0);
+        if (fromLots > 0) return fromLots;
+        return _lotNum(insp.passQty) || _lotNum(insp.incomingQty);
+    }
+
+    function _formatLotSummary(lots) {
+        const list = Array.isArray(lots) ? lots : [];
+        if (!list.length) return '-';
+        return list.map(function (l) {
+            const n = String((l && l.lotNo) || '').trim() || '-';
+            return n + '(' + UIUtils.formatNumber(_lotNum(l && l.qty)) + ')';
+        }).join(', ');
+    }
+
+    function _lotQtyMapFromInsp(insp) {
+        const map = {};
+        _inspLotEntries(insp).forEach(function (l) {
+            map[l.lotNo] = (map[l.lotNo] || 0) + l.qty;
+        });
+        return map;
+    }
+
+    function _lotDiffs(beforeInsp, afterInsp) {
+        const a = _lotQtyMapFromInsp(beforeInsp);
+        const b = _lotQtyMapFromInsp(afterInsp);
+        const keys = {};
+        Object.keys(a).forEach(function (k) { keys[k] = true; });
+        Object.keys(b).forEach(function (k) { keys[k] = true; });
+        const dec = [];
+        const inc = [];
+        Object.keys(keys).forEach(function (lotNo) {
+            const diff = (b[lotNo] || 0) - (a[lotNo] || 0);
+            if (diff < 0) dec.push({ lotNo: lotNo, qty: -diff });
+            if (diff > 0) inc.push({ lotNo: lotNo, qty: diff });
+        });
+        return { dec: dec, inc: inc };
+    }
+
+    function _linkedInspectionWarehouseNet(inspId) {
+        const id = String(inspId || '').trim();
+        const empty = { inbound: 0, editOut: 0, editIn: 0, net: 0 };
+        if (!id) return empty;
+        let inbound = 0, editOut = 0, editIn = 0;
+        (Storage.getAll(STORE) || []).forEach(function (d) {
+            if (!d || String(d.inspId || '') !== id) return;
+            if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) return;
+            const q = (typeof InvCalc !== 'undefined' && InvCalc.qtyOf)
+                ? (InvCalc.qtyOf(d) || _lotNum(d.quantity))
+                : _lotNum(d.quantity);
+            if (d.type === '출고') {
+                if (_isInspectionEditAdjustment(d)) editOut += q;
+                return;
+            }
+            inbound += q;
+            if (_isInspectionEditAdjustment(d)) editIn += q;
+        });
+        return { inbound: inbound, editOut: editOut, editIn: editIn, net: inbound - editOut };
+    }
+
+    function getLinkedInboundRecordsForInspection(insp) {
+        if (!insp) return [];
+        const id = String(insp.id || '').trim();
+        const all = Storage.getAll(STORE) || [];
+        if (id) {
+            const byId = all.filter(function (inv) {
+                if (!inv || inv.type === '출고') return false;
+                if (_isSiteReturnInbound(inv) || _isStockBaselineRecord(inv) || _isStockErrorResetRecord(inv)) return false;
+                if (_isInspectionEditAdjustment(inv)) return false;
+                return String(inv.inspId || '') === id;
+            });
+            if (byId.length) return byId;
+        }
+        const linked = getLinkedInventoryForInspection(insp);
+        const seen = {};
+        const out = [];
+        linked.forEach(function (l) {
+            if (!l.invId || seen[l.invId]) return;
+            seen[l.invId] = true;
+            const rec = Storage.getById(STORE, l.invId);
+            if (rec) out.push(rec);
+        });
+        return out;
+    }
+
+    function listInspectionEditAdjustments(inspId) {
+        const id = String(inspId || '').trim();
+        if (!id) return [];
+        return (Storage.getAll(STORE) || []).filter(function (d) {
+            return d && _isInspectionEditAdjustment(d) && String(d.inspId || '') === id;
+        }).sort(function (a, b) {
+            return String(b.date || '').localeCompare(String(a.date || ''));
+        });
+    }
+
+    function previewInspectionWarehouseSync(beforeInsp, afterInsp) {
+        const inspId = String((afterInsp && afterInsp.id) || (beforeInsp && beforeInsp.id) || '').trim();
+        const beforeQty = _inspQtyTruth(beforeInsp);
+        const afterQty = _inspQtyTruth(afterInsp);
+        const inboundRecs = getLinkedInboundRecordsForInspection(beforeInsp || afterInsp);
+        const adj = _linkedInspectionWarehouseNet(inspId);
+        const delta = afterQty - adj.net;
+        const diffs = _lotDiffs(beforeInsp, afterInsp);
+        const remaining = _getLotBalancesForProduct(
+            (afterInsp && afterInsp.carModel) || (beforeInsp && beforeInsp.carModel) || '',
+            (afterInsp && afterInsp.partName) || (beforeInsp && beforeInsp.partName) || '',
+            (afterInsp && afterInsp.color) || (beforeInsp && beforeInsp.color) || ''
+        );
+        const remainMap = {};
+        (remaining.lots || []).forEach(function (l) {
+            remainMap[String(l.lotNo || '').trim()] = Number(l.qty) || 0;
+        });
+
+        const result = {
+            inspId: inspId,
+            beforeQty: beforeQty,
+            afterQty: afterQty,
+            warehouseNet: adj.net,
+            warehouseInbound: adj.inbound,
+            alreadyAdjustedOut: adj.editOut,
+            alreadyAdjustedIn: adj.editIn,
+            delta: delta,
+            diffs: diffs,
+            inboundCount: inboundRecs.length,
+            lots: delta < 0 ? diffs.dec.slice() : (delta > 0 ? diffs.inc.slice() : []),
+            blocked: false,
+            skipWarehouse: false,
+            blockReason: '',
+            insufficient: []
+        };
+
+        if (!inboundRecs.length) {
+            result.skipWarehouse = true;
+            result.blockReason = '창고 입고 기록이 없어 검사 기록만 수정됩니다.';
+            return result;
+        }
+        if (delta === 0) {
+            result.skipWarehouse = true;
+            result.blockReason = '창고 입고 합계가 이미 수정 후 합격수량과 같습니다.';
+            return result;
+        }
+        if (delta < 0) {
+            const alloc = diffs.dec.filter(function (l) { return l.qty > 0; }).map(function (l) {
+                return { lotNo: l.lotNo, qty: l.qty };
+            });
+            const allocSum = alloc.reduce(function (s, l) { return s + l.qty; }, 0);
+            if (allocSum < -delta) {
+                let need = -delta - allocSum;
+                const linkedLotNos = {};
+                inboundRecs.forEach(function (r) {
+                    _recordLotEntries(r).forEach(function (l) { linkedLotNos[l.lotNo] = true; });
+                });
+                Object.keys(remainMap).forEach(function (lotNo) {
+                    if (need <= 0) return;
+                    if (Object.keys(linkedLotNos).length && !linkedLotNos[lotNo]) return;
+                    const already = alloc.filter(function (a) { return a.lotNo === lotNo; })[0];
+                    const used = already ? already.qty : 0;
+                    const have = Math.max(0, (remainMap[lotNo] || 0) - used);
+                    if (have <= 0) return;
+                    const take = Math.min(have, need);
+                    if (already) already.qty += take;
+                    else alloc.push({ lotNo: lotNo, qty: take });
+                    need -= take;
+                });
+                if (need > 0) {
+                    result.blocked = true;
+                    result.blockReason = '창고 잔량이 부족하여 ' + UIUtils.formatNumber(need)
+                        + ' EA를 차감할 수 없습니다. 이미 출고된 수량이 있습니다.';
+                }
+            }
+            alloc.forEach(function (l) {
+                const have = remainMap[l.lotNo] || 0;
+                if (have < l.qty) {
+                    result.insufficient.push({ lotNo: l.lotNo, need: l.qty, have: have });
+                }
+            });
+            if (result.insufficient.length) {
+                result.blocked = true;
+                result.blockReason = result.insufficient.map(function (x) {
+                    return 'LOT ' + x.lotNo + ' 잔량 ' + UIUtils.formatNumber(x.have)
+                        + ' EA < 차감 ' + UIUtils.formatNumber(x.need) + ' EA';
+                }).join(' · ');
+            }
+            result.lots = alloc;
+        }
+        return result;
+    }
+
+    async function applyInspectionWarehouseSync(beforeInsp, afterInsp, meta) {
+        const preview = previewInspectionWarehouseSync(beforeInsp, afterInsp);
+        if (preview.skipWarehouse || preview.delta === 0) {
+            return { applied: false, skipped: true, preview: preview };
+        }
+        if (preview.blocked) {
+            return { applied: false, blocked: true, preview: preview };
+        }
+        const insp = afterInsp || beforeInsp;
+        const allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const sameCarPart = (allMats || []).filter(function (m) {
+            return m.injPartName === insp.partName && m.carModel === insp.carModel;
+        });
+        const matMatch = sameCarPart.find(function (m) {
+            return _splitMasterColors(m).some(function (mc) { return _colorsMatch(mc, insp.color || ''); });
+        }) || (sameCarPart.length === 1 ? sameCarPart[0] : null);
+        const resolvedColor = _resolveMasterColor(insp.carModel, insp.partName, insp.color, allMats);
+        const actorType = preview.delta < 0 ? '출고' : '입고';
+        const actorFields = _actorFieldsForRecord(actorType);
+        if (actorType === '입고' && !actorFields.receivedBy) {
+            return { applied: false, needLogin: true, preview: preview };
+        }
+        if (actorType === '출고' && !actorFields.outgoingBy) {
+            return { applied: false, needLogin: true, preview: preview };
+        }
+
+        const now = new Date();
+        const pad = function (v) { return (v < 10 ? '0' : '') + v; };
+        const today = (typeof UIUtils !== 'undefined' && UIUtils.today)
+            ? UIUtils.today()
+            : (now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate()));
+        const dateStamp = today + ' ' + pad(now.getHours()) + ':' + pad(now.getMinutes());
+        const lots = (preview.lots || []).filter(function (l) { return l.qty > 0; });
+        if (!lots.length) {
+            return { applied: false, skipped: true, preview: preview };
+        }
+        const totalQty = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        const reason = String((meta && meta.reason) || '').trim();
+        const note = '수입검사 합격수량 ' + UIUtils.formatNumber(preview.beforeQty)
+            + ' → ' + UIUtils.formatNumber(preview.afterQty) + ' EA'
+            + (reason ? ' · ' + reason : '');
+
+        await _addInventoryRecord({
+            date: dateStamp,
+            type: actorType,
+            carModel: insp.carModel || '',
+            partName: insp.partName || '',
+            color: resolvedColor || insp.color || '',
+            supplier: insp.supplierName || '',
+            lots: lots.map(function (l) { return { lotNo: l.lotNo, qty: l.qty }; }),
+            lotNo: lots[0].lotNo || '',
+            quantity: totalQty,
+            unit: 'EA',
+            source: '수입검사 수량 수정 반영',
+            outgoingType: actorType === '출고' ? '검사수정' : undefined,
+            fromInspectionEdit: true,
+            inspId: insp.id || undefined,
+            inspDate: insp.date || undefined,
+            inspectionEditLogId: meta && meta.logId ? meta.logId : undefined,
+            note: note,
+            injMaterialId: matMatch ? matMatch.id : undefined,
+            ...actorFields
+        });
+        return { applied: true, type: actorType, qty: totalQty, lots: lots, preview: preview };
     }
 
     // ── 검사 이력 없는 입고 감사 ────────────────────────────────────
@@ -6065,7 +6417,8 @@ var InjectionWarehouseModule = (function() {
         if (_isStockErrorResetRecord(d) || _isUnmatchedActionRecord(d) || _isStockBaselineRecord(d)) return false;
         const src = String(d.source || '').trim();
         const oType = String(d.outgoingType || '').trim();
-        if (/재고 수정 보정|일괄 현재고 보정|재고 오류|현재고 확정/.test(src)) return false;
+        if (/재고 수정 보정|일괄 현재고 보정|재고 오류|현재고 확정|수입검사 수량 수정/.test(src)) return false;
+        if (_isInspectionEditAdjustment(d) || oType === '검사수정') return false;
         return oType === '생산출고'
             || src === '사출 창고 생산출고'
             || src === '도장 작업 출고'
@@ -11948,6 +12301,10 @@ var InjectionWarehouseModule = (function() {
         openDismissedPendingModal,
         restoreDismissedPendingLot,
         getLinkedInventoryForInspection,
+        getLinkedInboundRecordsForInspection,
+        previewInspectionWarehouseSync,
+        applyInspectionWarehouseSync,
+        listInspectionEditAdjustments,
         removeLinkedInventoryRecords,
         markLinkedInventoryInspDeleted,
         findOrphanInspectionInbounds,

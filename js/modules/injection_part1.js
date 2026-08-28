@@ -1581,6 +1581,110 @@ var InjectionIncomingModule = (function() {
         onEditVerdictChange();
     }
 
+    function _inspLotsSnapshot(d) {
+        if (d && Array.isArray(d.lots) && d.lots.length) {
+            return d.lots.map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: Number(l && l.qty) || 0 };
+            }).filter(function (l) { return l.lotNo || l.qty > 0; });
+        }
+        if (d && d.lotNo) {
+            return [{ lotNo: String(d.lotNo).trim(), qty: Number(d.incomingQty || d.passQty) || 0 }];
+        }
+        return [];
+    }
+
+    function _inspQtyOf(d) {
+        const fromLots = _inspLotsSnapshot(d).reduce(function (s, l) { return s + l.qty; }, 0);
+        if (fromLots > 0) return fromLots;
+        return Number(d && (d.passQty || d.incomingQty)) || 0;
+    }
+
+    function _lotsEqual(a, b) {
+        const key = function (d) {
+            return _inspLotsSnapshot(d).map(function (l) { return l.lotNo + ':' + l.qty; }).sort().join('|');
+        };
+        return key(a) === key(b);
+    }
+
+    function _qtyFieldsChanged(prev, next) {
+        if (!_lotsEqual(prev, next)) return true;
+        if (Number(prev.incomingQty || 0) !== Number(next.incomingQty || 0)) return true;
+        if (Number(prev.passQty || 0) !== Number(next.passQty || 0)) return true;
+        if (Number(prev.failQty || 0) !== Number(next.failQty || 0)) return true;
+        if (String(prev.verdict || '') !== String(next.verdict || '')) return true;
+        return false;
+    }
+
+    function _formatLotSummary(lots) {
+        const list = Array.isArray(lots) ? lots : [];
+        if (!list.length) return '-';
+        return list.map(function (l) {
+            return String((l && l.lotNo) || '-') + '(' + UIUtils.formatNumber(Number(l && l.qty) || 0) + ')';
+        }).join(', ');
+    }
+
+    function _escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _inspectionChangeLogs(inspId) {
+        return (Storage.getAll(DB.STORES.INSPECTION_DELETE_LOGS) || [])
+            .filter(function (l) {
+                return String(l.originalId || '') === String(inspId)
+                    && (l.action === 'edit' || l.type === 'injection_edit');
+            })
+            .sort(function (a, b) {
+                return String(b.deletedAt || b.changedAt || '').localeCompare(String(a.deletedAt || a.changedAt || ''));
+            });
+    }
+
+    function _inspectionChangeLogsHtml(inspId) {
+        const logs = _inspectionChangeLogs(inspId);
+        const whAdj = (typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.listInspectionEditAdjustments === 'function')
+            ? InjectionWarehouseModule.listInspectionEditAdjustments(inspId)
+            : [];
+        if (!logs.length && !whAdj.length) {
+            return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg-secondary);font-size:0.82rem;color:var(--text-muted);">
+                수량 변경 이력이 없습니다. 수입검사 수정 후 창고 반영을 선택하면 여기에 남습니다.
+            </div>`;
+        }
+        const logRows = logs.map(function (l) {
+            const when = String(l.deletedAt || l.changedAt || '').replace('T', ' ').slice(0, 19);
+            const before = l.originalData || {};
+            const after = l.afterData || {};
+            const sync = l.warehouseSync || {};
+            const syncText = sync.applied
+                ? ('창고 ' + (sync.type || '반영') + ' ' + UIUtils.formatNumber(sync.qty || 0) + ' EA')
+                : (sync.requested ? '창고 미반영(검사만 수정)' : '창고 연동 없음');
+            return `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+                <div style="font-weight:700;color:#c2410c;">${_escHtml(when || '-')} · ${_escHtml(l.deletedBy || '-')}</div>
+                <div style="margin-top:4px;color:var(--text-secondary);">
+                    ${_escHtml(_formatLotSummary(_inspLotsSnapshot(before)))}
+                    → ${_escHtml(_formatLotSummary(_inspLotsSnapshot(after)))}
+                    (${UIUtils.formatNumber(_inspQtyOf(before))} → ${UIUtils.formatNumber(_inspQtyOf(after))} EA)
+                </div>
+                <div style="margin-top:2px;color:var(--text-muted);">사유: ${_escHtml(l.reason || '-')} · ${_escHtml(syncText)}</div>
+            </div>`;
+        }).join('');
+        const whRows = whAdj.map(function (r) {
+            const q = Number(r.quantity) || 0;
+            return `<div style="padding:6px 0;color:var(--text-secondary);">
+                ${_escHtml(String(r.date || '').replace('T', ' ').slice(0, 16))}
+                · ${r.type === '출고' ? '차감' : '입고'} ${UIUtils.formatNumber(q)} EA
+                · ${_escHtml(r.note || r.source || '')}
+            </div>`;
+        }).join('');
+        return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(194,65,12,.25);background:rgba(194,65,12,.05);font-size:0.82rem;line-height:1.55;">
+            <strong style="color:#c2410c;">수량 변경 이력</strong>
+            ${logRows || ''}
+            ${whRows ? '<div style="margin-top:8px;font-weight:700;color:#c2410c;">창고 반영</div>' + whRows : ''}
+        </div>`;
+    }
+
+    let _pendingEditCtx = null;
+
     async function saveEdit(id) {
         const dateVal = document.getElementById('editInjDate').value;
         const timeVal = document.getElementById('editInjTime').value;
@@ -1671,11 +1775,191 @@ var InjectionIncomingModule = (function() {
             UIUtils.toast('합격 판정을 선택하세요.', 'warning');
             return;
         }
-        await Storage.update(STORE, id, updateData);
-        await propagateCertReceived(updateData.lots);
+
+        const prev = Storage.getById(STORE, id);
+        if (!prev) {
+            UIUtils.toast('레코드를 찾을 수 없습니다.', 'error');
+            return;
+        }
+
+        if (!_qtyFieldsChanged(prev, updateData)) {
+            await Storage.update(STORE, id, updateData);
+            await propagateCertReceived(updateData.lots);
+            UIUtils.closeModal();
+            UIUtils.toast('수정되었습니다.', 'success');
+            search();
+            return;
+        }
+
+        const afterPreview = Object.assign({}, prev, updateData, { id: prev.id });
+        const preview = (typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.previewInspectionWarehouseSync === 'function')
+            ? InjectionWarehouseModule.previewInspectionWarehouseSync(prev, afterPreview)
+            : {
+                skipWarehouse: true,
+                inboundCount: 0,
+                beforeQty: _inspQtyOf(prev),
+                afterQty: _inspQtyOf(updateData),
+                delta: 0
+            };
+
+        _pendingEditCtx = { id: id, prev: prev, updateData: updateData, preview: preview };
+
+        if (!preview.inboundCount) {
+            await _finalizeSaveEdit(false);
+            return;
+        }
+
         UIUtils.closeModal();
-        UIUtils.toast('수정되었습니다.', 'success');
+        _showLinkedInventoryEditChoice();
+    }
+
+    function _showLinkedInventoryEditChoice() {
+        const ctx = _pendingEditCtx;
+        if (!ctx) return;
+        const p = ctx.preview || {};
+        const beforeLots = _formatLotSummary(_inspLotsSnapshot(ctx.prev));
+        const afterLots = _formatLotSummary(_inspLotsSnapshot(ctx.updateData));
+        const blocked = !!p.blocked;
+        const skipWh = !!p.skipWarehouse && !blocked;
+        const delta = Number(p.delta) || 0;
+        const deltaLabel = delta === 0
+            ? '창고 수량 변동 없음'
+            : (delta < 0
+                ? '창고에서 ' + UIUtils.formatNumber(-delta) + ' EA 차감 이력을 남김'
+                : '창고에 ' + UIUtils.formatNumber(delta) + ' EA 추가입고 이력을 남김');
+        const lotLines = (p.lots || []).map(function (l) {
+            return _escHtml(l.lotNo) + ' · ' + UIUtils.formatNumber(l.qty) + ' EA';
+        }).join('<br>');
+
+        UIUtils.showModal('수입검사 수량 수정 — 창고 반영',
+            `<div style="padding:8px 0;">
+                <div style="padding:12px 14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:14px;font-size:0.85rem;line-height:1.7;">
+                    이 수입검사는 이미 사출 창고에 입고되어 있습니다.<br>
+                    합격수량 <strong>${UIUtils.formatNumber(p.beforeQty)}</strong> EA →
+                    <strong style="color:#c2410c;">${UIUtils.formatNumber(p.afterQty)}</strong> EA<br>
+                    <div style="margin-top:6px;font-family:monospace;font-size:0.8rem;color:var(--text-secondary);">
+                        변경 전 LOT: ${_escHtml(beforeLots)}<br>
+                        변경 후 LOT: ${_escHtml(afterLots)}
+                    </div>
+                </div>
+                ${blocked
+                    ? `<div style="padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,.3);background:rgba(220,38,38,.06);font-size:0.85rem;line-height:1.55;margin-bottom:12px;">
+                            <strong style="color:var(--accent-red);">창고 반영 불가</strong> — ${_escHtml(p.blockReason || '이미 출고된 수량이 있습니다.')}<br>
+                            검사 기록만 수정할 수 있습니다. 창고 수량은 직접 출고/보정해야 합니다.
+                       </div>`
+                    : (skipWh
+                        ? `<div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;margin-bottom:12px;">
+                                창고 입고 합계는 이미 수정 후 합격수량과 같습니다. 검사 변경 이력만 남깁니다.
+                           </div>`
+                        : `<div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.6;margin-bottom:12px;">
+                                원 입고 기록은 그대로 두고, <strong>${_escHtml(deltaLabel)}</strong> 합니다.
+                                ${lotLines ? '<div style="margin-top:6px;font-family:monospace;">' + lotLines + '</div>' : ''}
+                                이 보정은 사출 창고 입출고 이력과 이력변경 관리에서 추적할 수 있습니다.
+                           </div>`)}
+                <div class="form-group">
+                    <label class="form-label">수정 사유 ${(!blocked && !skipWh) ? '<span style="color:var(--accent-red)">*</span>' : ''}</label>
+                    <input type="text" class="form-input" id="inspEditReasonInput" placeholder="예: 1박스 불량으로 합격수량 360 EA 감소">
+                </div>
+            </div>`,
+            blocked
+                ? `<button class="btn btn-secondary" onclick="UIUtils.closeModal();InjectionIncomingModule._cancelPendingEdit()">취소</button>
+                   <button class="btn" style="background:#dc2626;color:#fff;" onclick="InjectionIncomingModule._finalizeSaveEdit(false)">검사 기록만 수정</button>`
+                : (skipWh
+                    ? `<button class="btn btn-secondary" onclick="UIUtils.closeModal();InjectionIncomingModule._cancelPendingEdit()">취소</button>
+                       <button class="btn btn-primary" onclick="InjectionIncomingModule._finalizeSaveEdit(false)">변경 이력 남기고 저장</button>`
+                    : `<button class="btn btn-secondary" onclick="UIUtils.closeModal();InjectionIncomingModule._cancelPendingEdit()">취소</button>
+                       <button class="btn btn-outline" onclick="InjectionIncomingModule._finalizeSaveEdit(false)">검사 기록만 수정</button>
+                       <button class="btn btn-primary" onclick="InjectionIncomingModule._finalizeSaveEdit(true)">검사 수정 + 창고 반영</button>`),
+            '560px'
+        );
+    }
+
+    function _cancelPendingEdit() {
+        _pendingEditCtx = null;
+    }
+
+    async function _finalizeSaveEdit(syncWarehouse) {
+        const ctx = _pendingEditCtx;
+        if (!ctx) {
+            UIUtils.toast('수정 요청이 만료되었습니다. 다시 시도하세요.', 'error');
+            return;
+        }
+        const reasonEl = document.getElementById('inspEditReasonInput');
+        const reason = reasonEl ? String(reasonEl.value || '').trim() : '';
+        if (syncWarehouse && !reason) {
+            UIUtils.toast('창고 반영 사유를 입력하세요.', 'warning');
+            return;
+        }
+
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? AuthModule.getCurrentUser() : null;
+        const who = user ? (user.displayName || user.name || user.username) : '알 수 없음';
+        const logEntry = {
+            id: Storage.generateId(),
+            type: 'injection_edit',
+            typeLabel: '사출 수입검사 수정',
+            action: 'edit',
+            deletedAt: new Date().toISOString(),
+            changedAt: new Date().toISOString(),
+            deletedBy: who,
+            reason: reason || '수입검사 수량 수정',
+            originalId: ctx.id,
+            originalData: Object.assign({}, ctx.prev),
+            afterData: Object.assign({}, ctx.updateData),
+            summary: (ctx.prev.date || '') + ' / ' + (ctx.prev.carModel || '') + ' ' + (ctx.prev.partName || '')
+                + ' / ' + UIUtils.formatNumber(_inspQtyOf(ctx.prev)) + '→' + UIUtils.formatNumber(_inspQtyOf(ctx.updateData)) + 'EA',
+            warehouseSync: { requested: !!syncWarehouse }
+        };
+
+        if (syncWarehouse && typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.applyInspectionWarehouseSync === 'function') {
+            const synced = await InjectionWarehouseModule.applyInspectionWarehouseSync(
+                ctx.prev,
+                Object.assign({}, ctx.prev, ctx.updateData, { id: ctx.id }),
+                { logId: logEntry.id, reason: reason }
+            );
+            if (synced.needLogin) {
+                UIUtils.toast('로그인 후 창고 반영을 진행하세요.', 'warning');
+                return;
+            }
+            if (synced.blocked) {
+                UIUtils.toast((synced.preview && synced.preview.blockReason)
+                    ? synced.preview.blockReason
+                    : '창고 잔량이 부족하여 반영할 수 없습니다.', 'error');
+                return;
+            }
+            logEntry.warehouseSync = {
+                requested: true,
+                applied: !!synced.applied,
+                skipped: !!synced.skipped,
+                type: synced.type || '',
+                qty: synced.qty || 0,
+                lots: synced.lots || []
+            };
+        }
+
+        await Storage.add(DB.STORES.INSPECTION_DELETE_LOGS, logEntry);
+        await Storage.update(STORE, ctx.id, ctx.updateData);
+        await propagateCertReceived(ctx.updateData.lots);
+        UIUtils.closeModal();
+        _pendingEditCtx = null;
+        let syncMsg = '';
+        if (logEntry.warehouseSync && logEntry.warehouseSync.applied) {
+            syncMsg = logEntry.warehouseSync.type === '출고'
+                ? ' 창고에서 ' + UIUtils.formatNumber(logEntry.warehouseSync.qty) + ' EA 차감 이력을 남겼습니다.'
+                : ' 창고에 ' + UIUtils.formatNumber(logEntry.warehouseSync.qty) + ' EA 추가입고 이력을 남겼습니다.';
+        } else if (syncWarehouse === false && ctx.preview && ctx.preview.inboundCount) {
+            syncMsg = ' 창고 수량은 그대로 두었습니다.';
+        }
+        UIUtils.toast('수정되었습니다.' + syncMsg, 'success');
         search();
+        try { if (typeof InjectionWarehouseModule !== 'undefined') InjectionWarehouseModule.renderInspStandby(); } catch (e) {}
+        try {
+            if (typeof InjectionWarehouseModule !== 'undefined' && InjectionWarehouseModule.loadData) {
+                InjectionWarehouseModule.loadData();
+            }
+        } catch (e) {}
     }
 
     function view(id) {
@@ -1737,6 +2021,7 @@ var InjectionIncomingModule = (function() {
                 ${row('성적서 사진', certPhotoDisplay)}
                 ${row('합격 판정', `<strong style="color:${verdictColor};font-size:1rem;">${verdictText}</strong>`)}
             </div>
+            ${_inspectionChangeLogsHtml(id)}
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
             <button class="btn btn-outline" onclick="UIUtils.closeModal();InjectionIncomingModule.edit('${id}')">
@@ -2293,6 +2578,8 @@ var InjectionIncomingModule = (function() {
         view,
         edit,
         saveEdit,
+        _finalizeSaveEdit,
+        _cancelPendingEdit,
         remove,
         confirmDelete,
         _doDelete,
