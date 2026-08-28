@@ -3098,6 +3098,7 @@ var InjectionWarehouseModule = (function() {
         const inspCtx = _buildInspDateContext();
         const workLineMap = isIncoming ? {} : _buildPaintWorkLineMap();
         const inputMaps = isIncoming ? null : _buildPaintLineFromInputMap();
+        const splitMap = isIncoming ? _inboundSplitMap(data) : {};
 
         tbody.innerHTML = data.map(d => {
             const mat   = mats.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
@@ -3110,6 +3111,7 @@ var InjectionWarehouseModule = (function() {
             const qtyMatch = isIncoming ? _inspQtyMatchForInbound(d) : null;
             const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
             const outgoingActor = _outgoingActorLabel(d);
+            const splitInfo = splitMap[d.id] || null;
             const actionCell = isIncoming
                 ? `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openIncomingTxView('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
@@ -3132,7 +3134,10 @@ var InjectionWarehouseModule = (function() {
                     <td style="white-space:nowrap;"><strong>${d.partName || '-'}</strong></td>
                     <td style="white-space:nowrap;">${d.color || '-'}</td>
                     <td style="white-space:nowrap;">${d.supplier || '-'}</td>
-                    <td style="white-space:nowrap;">${d.lotNo || '-'}</td>
+                    <td style="min-width:160px;max-width:280px;">
+                        ${_lotBreakdownHtml(d)}
+                        ${isIncoming ? _inspSplitBadgeHtml(splitInfo, d) : ''}
+                    </td>
                     <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
                     ${isIncoming ? `<td style="text-align:right;white-space:nowrap;">${_inspQtyCellHtml(qtyMatch)}</td>
                     <td style="white-space:nowrap;">${_inspMatchBadgeHtml(qtyMatch)}</td>` : ''}
@@ -3378,18 +3383,70 @@ var InjectionWarehouseModule = (function() {
      *  (d.lotNo는 대표값으로 항상 채워져 있어 "d.lotNo || lots 목록" 같은 폴백이 절대 lots로
      *  안 넘어감). lots[]가 있으면 그걸 우선해서 LOT마다 수량을 같이 보여준다. */
     function _lotBreakdownHtml(d) {
-        if (Array.isArray(d.lots) && d.lots.length) {
-            if (d.lots.length === 1) {
-                return _escapeHtml(d.lots[0].lotNo || d.lotNo || '-');
-            }
-            return d.lots.map(function (l) {
-                return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;' +
-                    'padding:1px 8px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);' +
-                    'font-family:monospace;font-size:0.82rem;">' +
-                    _escapeHtml(l.lotNo || '-') + '<strong>(' + UIUtils.formatNumber(l.qty) + ')</strong></span>';
-            }).join('');
-        }
-        return _escapeHtml(d.lotNo || '-');
+        const lots = (Array.isArray(d && d.lots) && d.lots.length)
+            ? d.lots
+            : ((d && d.lotNo) ? [{ lotNo: d.lotNo, qty: d.quantity }] : []);
+        if (!lots.length) return '<span style="color:var(--text-muted);">-</span>';
+        return lots.map(function (l) {
+            const lotNo = String((l && l.lotNo) || '').trim() || '-';
+            const qtyNum = Number(l && l.qty) || 0;
+            const qtyText = qtyNum > 0 ? ' (' + UIUtils.formatNumber(qtyNum) + ')' : '';
+            return '<span style="display:inline-block;background:var(--bg-secondary);border:1px solid var(--border-color);' +
+                'border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:600;white-space:nowrap;">' +
+                _escapeHtml(lotNo) + qtyText + '</span>';
+        }).join('');
+    }
+
+    /** 같은 수입검사 1건이 창고 입고 여러 행으로 나뉜 경우 (현장 반납 LOT 충돌 분리 등) */
+    function _inboundSplitMap(data) {
+        const groups = {};
+        (data || []).forEach(function (d) {
+            if (!d || d.type === '출고') return;
+            if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) return;
+            const inspId = String(d.inspId || '').trim();
+            const key = inspId
+                ? ('id:' + inspId)
+                : ('dt:' + String(d.inspDate || d.date || '').slice(0, 16) + '||'
+                    + String(d.carModel || '') + '||' + String(d.partName || '') + '||' + String(d.color || ''));
+            if (!groups[key]) groups[key] = [];
+            groups[key].push(d);
+        });
+        const byId = {};
+        Object.keys(groups).forEach(function (key) {
+            const group = groups[key];
+            if (group.length < 2) return;
+            group.forEach(function (d, i) {
+                if (d && d.id) byId[d.id] = { n: i + 1, total: group.length };
+            });
+        });
+        return byId;
+    }
+
+    function _inspSplitBadgeHtml(info, d) {
+        if (!info || info.total < 2) return '';
+        const missing = _missingInspLotsOnRow(d);
+        const missingText = missing.length
+            ? ' · 나머지 검사 LOT ' + missing.map(function (l) { return l.lotNo; }).join(', ')
+            : '';
+        return '<div style="margin-top:3px;font-size:0.68rem;font-weight:700;color:#b45309;" title="' +
+            _escapeHtml('수입검사 1건이 창고 입고 ' + info.total + '건으로 나뉘었습니다. 같은 시각의 다른 입고 행과 합치면 검사 LOT 전체와 대조됩니다.') +
+            '">분할 ' + info.n + '/' + info.total + missingText + '</div>';
+    }
+
+    function _missingInspLotsOnRow(d) {
+        const inspId = _findLinkedInspectionId(d);
+        if (!inspId) return [];
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, String(inspId));
+        if (!insp) return [];
+        const inbound = {};
+        _inboundLotNos(d).forEach(function (n) { inbound[n] = true; });
+        const lots = (insp.lots && insp.lots.length)
+            ? insp.lots
+            : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
+        return lots.filter(function (l) {
+            const n = String(l.lotNo || '').trim();
+            return n && !inbound[n] && (Number(l.qty) || 0) > 0;
+        });
     }
 
     function openIncomingTxView(id) {
@@ -6768,6 +6825,10 @@ var InjectionWarehouseModule = (function() {
         const inventory = Storage.getAll(DB.STORES.INJECTION_INVENTORY) || [];
         for (const i of inventory) {
             if (i.type !== '입고' || i.inspId) continue;
+            // 현장 반납·재고확정·오류초기화는 "같은 실물의 선입고"가 아니다.
+            // 동일 LOT 번호가 새 수입검사로 다시 들어와도(T1XX LENS 260818 등) 전체입고에서
+            // 그 LOT만 쪼개 빼면 검사는 1건인데 창고 입고가 2건으로 보인다.
+            if (_isSiteReturnInbound(i) || _isStockBaselineRecord(i) || _isStockErrorResetRecord(i)) continue;
             if (String(i.partName || '').trim() !== part) continue;
             if (car && i.carModel && String(i.carModel).trim() !== car) continue;
             const lots = (i.lots && i.lots.length) ? i.lots : (i.lotNo ? [{ lotNo: i.lotNo, qty: i.quantity }] : []);
@@ -10997,14 +11058,19 @@ var InjectionWarehouseModule = (function() {
             UIUtils.toast('데이터가 없습니다.', 'warning');
             return;
         }
-        const headers = ['일자', '차종', '사출명', '컬러', '사출처', 'LOT번호', '단위', '수량', '유형', '비고'];
+        const headers = ['일자', '차종', '사출명', '컬러', '사출처', '사출 LOT', '단위', '수량', '유형', '비고'];
         const rows = data.map(d => [
             d.date || '',
             d.carModel || '',
             d.partName || '',
             d.color || '',
             d.supplier || '',
-            d.lotNo || '',
+            (Array.isArray(d.lots) && d.lots.length)
+                ? d.lots.map(function (l) {
+                    const qty = Number(l.qty) || 0;
+                    return (l.lotNo || '-') + (qty > 0 ? '(' + qty + ')' : '');
+                }).join(' / ')
+                : (d.lotNo || ''),
             d.unit || 'EA',
             d.quantity || 0,
             d.type || '입고',
