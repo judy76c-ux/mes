@@ -955,6 +955,36 @@ body.sidebar-hidden .sidebar-show-btn {
     white-space: normal;
 }
 
+/* 사출 자재 창고 입출고 이력 — 사출 LOT 열만 표 폭 %로 제한해 화면 밖으로 밀리지 않게 함.
+   --inj-lot-col-width 값만 바꿔 조절. max-width:0 은 auto 레이아웃에서 % 폭을 지키게 하는 처리. */
+.inj-tx-history-table {
+    --inj-lot-col-width: 18%;
+    width: 100%;
+    table-layout: auto;
+    border-collapse: collapse;
+}
+.inj-tx-history-table th:not(.col-inj-lot),
+.inj-tx-history-table td:not(.col-inj-lot) {
+    width: 1%;
+    white-space: nowrap;
+}
+.inj-tx-history-table th.col-inj-lot {
+    width: var(--inj-lot-col-width);
+    white-space: nowrap;
+}
+.inj-tx-history-table td.col-inj-lot {
+    width: var(--inj-lot-col-width);
+    max-width: 0;
+    white-space: normal;
+    vertical-align: middle;
+}
+.inj-lot-chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px;
+}
+
 /* 과거 입고/반납 조회 — 1% 열폭이 모달 가로를 채워 차종·품명·컬러·LOT이 벌어지지 않게 */
 .pw-mat-hist-table.data-table.data-table--content th,
 .pw-mat-hist-table.data-table.data-table--content td {
@@ -3060,6 +3090,19 @@ td.pq-overdue-date-cell {
     border-radius: 8px;
     overflow: hidden;
 }
+.pw-stock-board {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    width: 100%;
+}
+.pw-stock-col {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 48px;
+    display: flex;
+    flex-direction: column;
+}
 .pw-stock-head {
     display: flex;
     align-items: center;
@@ -3068,6 +3111,49 @@ td.pq-overdue-date-cell {
     padding: 0.54em 0.77em;
     color: #fff;
     white-space: nowrap;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+}
+.pw-stock-head:active {
+    cursor: grabbing;
+}
+.pw-stock-drag-handle {
+    font-size: 1.15em;
+    opacity: 0.85;
+    flex-shrink: 0;
+}
+.pw-stock-card.is-dragging {
+    display: none;
+}
+body.pw-stock-is-dragging {
+    cursor: grabbing;
+    user-select: none;
+}
+body.pw-stock-is-dragging .pw-stock-col {
+    min-height: 80px;
+    outline: 1px dashed rgba(37, 99, 235, 0.22);
+    border-radius: 8px;
+}
+.pw-stock-ghost {
+    position: fixed;
+    z-index: 12000;
+    margin: 0;
+    pointer-events: none;
+    box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+    transform: rotate(0.4deg);
+    will-change: left, top;
+}
+.pw-stock-ghost.is-snapped {
+    transform: none;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.55), 0 10px 24px rgba(37, 99, 235, 0.18);
+}
+.pw-stock-placeholder {
+    margin-bottom: 10px;
+    border: 2px dashed rgba(37, 99, 235, 0.45);
+    background: rgba(37, 99, 235, 0.08);
+    border-radius: 8px;
+    box-sizing: border-box;
 }
 .pw-stock-head-left {
     display: flex;
@@ -3098,6 +3184,29 @@ td.pq-overdue-date-cell {
     table-layout: auto;
     border-collapse: collapse;
     background: var(--bg-primary);
+}
+a.pw-trace-link,
+.pw-trace-link {
+    color: inherit;
+    font: inherit;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    text-decoration: underline dotted;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 3px;
+    text-decoration-color: rgba(15, 23, 42, 0.28);
+    cursor: pointer;
+}
+a.pw-trace-link:link,
+a.pw-trace-link:visited,
+a.pw-trace-link:hover,
+a.pw-trace-link:active,
+a.pw-trace-link:focus {
+    color: inherit;
+    text-decoration: underline dotted;
+    text-decoration-color: rgba(15, 23, 42, 0.28);
+}
+a.pw-trace-link:hover {
+    text-decoration-color: rgba(15, 23, 42, 0.48);
 }
 .pw-stock-table th,
 .pw-stock-table td {

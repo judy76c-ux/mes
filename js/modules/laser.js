@@ -4985,6 +4985,31 @@ var LaserInspectionModule = (function() {
         data.isPartial = isPartial;
         data.inspectionStatus = isPartial ? 'partial' : 'completed';
 
+        // ── 잔량 FIFO 사용 유도 가드 ─────────────────────────────────────
+        // 레이져 잔량이 남아 있는데 이번 포장에 하나도 사용하지 않았으면(0) 등록 전 한 번 더 확인한다.
+        const _stockEl = document.getElementById('liResidualStockQty');
+        const _savedResEl = document.getElementById('liPrevResidualSaved');
+        const _liveResidual = (parseInt((_stockEl && _stockEl.value) || 0, 10) || 0)
+            + (parseInt((_savedResEl && _savedResEl.value) || 0, 10) || 0);
+        const _usedResidual = Number(data.prevResidualQty) || 0;
+        const _didPack = (Number(data.packQty) || 0) > 0 || (Number(data.packBoxCount) || 0) > 0;
+        if (!existingId && _liveResidual > 0 && _usedResidual === 0 && _didPack) {
+            UIUtils.confirm(
+                '레이져 잔량 ' + UIUtils.formatNumber(_liveResidual) + ' EA가 남아 있는데 이번 포장에 잔량을 사용하지 않았습니다(0). '
+                + 'FIFO 원칙상 기존 잔량을 먼저 소진해야 합니다. 잔량을 사용하지 않은 것이 맞습니까?',
+                async function() { await _commitInspection(existingId, data, isPartial); },
+                function() {
+                    const el = document.getElementById('liPrevResidual');
+                    if (el) { el.focus(); if (el.select) el.select(); }
+                }
+            );
+            return;
+        }
+
+        await _commitInspection(existingId, data, isPartial);
+    }
+
+    async function _commitInspection(existingId, data, isPartial) {
         // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동 + 부분검사 진행상태 반영
         let syncResult = null;
         try {
@@ -5212,7 +5237,12 @@ var LaserInspectionModule = (function() {
         if (stockEl) stockEl.value = String(n);
         const saved = parseInt(savedEl?.value || 0, 10) || 0;
         if (maxEl) maxEl.value = String(n + saved);
-        if (wrap) wrap.style.display = 'flex';
+        if (wrap) wrap.style.display = (n + saved) > 0 ? 'flex' : 'none';
+        const useAllEl = document.getElementById('liResidualUseAll');
+        if (useAllEl && useAllEl.checked) {
+            const pv = document.getElementById('liPrevResidual');
+            if (pv) pv.value = String(n + saved);
+        }
         if (typeof _updatePackagingCalc === 'function') _updatePackagingCalc();
     }
 
@@ -5242,14 +5272,26 @@ var LaserInspectionModule = (function() {
         const savedUse = hasSavedPrev ? prevRes : 0;
         const useMax = liveResidual + savedUse;
         const afterUse = liveResidual + savedUse - prevRes;
+        const totalAvail = liveResidual + savedUse;
         const liveHintHtml = `
-            <div id="liLiveResidualHint" style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:9px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);font-size:0.8rem;line-height:1.5;color:var(--text-primary);">
-                <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-orange);flex-shrink:0;margin-top:1px;">inventory_2</span>
-                <div>
-                    레이져잔량이 <strong id="liResidualHoldDisp" style="font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(liveResidual)}</strong>
-                    <span style="display:none;" id="liLiveResidualHintQty">${UIUtils.formatNumber(liveResidual)}</span> EA 있습니다.
-                    이번 포장에 <strong>몇 개를 가져다 쓰시겠습니까?</strong>
-                    입력한 수량은 레이져 잔량에서 <strong>출고</strong> 처리됩니다. 쓰지 않으면 0으로 두세요.
+            <div id="liLiveResidualHint" style="${totalAvail > 0 ? 'display:flex' : 'display:none'};flex-direction:column;gap:8px;margin-bottom:10px;padding:11px 13px;border-radius:8px;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.45);font-size:0.8rem;line-height:1.5;color:var(--text-primary);">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-orange);flex-shrink:0;">inventory_2</span>
+                    <div style="flex:1 1 auto;min-width:11em;">
+                        <div style="font-size:0.72rem;color:var(--text-muted);font-weight:700;">현재 레이져 잔량 재고 · FIFO (먼저 소진)</div>
+                        <div>
+                            <strong id="liResidualHoldDisp" style="font-size:1.4rem;color:var(--accent-orange);font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(liveResidual)}</strong>
+                            <span style="font-size:0.78rem;color:var(--text-muted);">EA</span>
+                            <span style="display:none;" id="liLiveResidualHintQty">${UIUtils.formatNumber(liveResidual)}</span>
+                        </div>
+                    </div>
+                    <label style="display:inline-flex;align-items:center;gap:6px;font-size:0.85rem;font-weight:800;white-space:nowrap;cursor:pointer;padding:6px 10px;border:1px solid rgba(245,158,11,0.55);border-radius:6px;background:var(--bg-primary,#fff);">
+                        <input type="checkbox" id="liResidualUseAll" onchange="LaserInspectionModule._toggleResidualUseAll(this.checked)">
+                        잔량 전체 사용
+                    </label>
+                </div>
+                <div style="font-size:0.78rem;">
+                    기존 잔량을 <strong>이번 포장에 먼저 사용</strong>해야 합니다. 아래 <strong>'이번 사용할 잔량'</strong>에 입력한 수량만큼 레이져 잔량에서 <strong>출고</strong>됩니다.
                 </div>
             </div>
             <input type="hidden" id="liResidualStockQty" value="${liveResidual}">
@@ -5309,7 +5351,29 @@ var LaserInspectionModule = (function() {
         </div>`;
     }
 
+    function _toggleResidualUseAll(checked) {
+        const pv = document.getElementById('liPrevResidual');
+        const maxEl = document.getElementById('liResidualUseMax');
+        if (!pv) return;
+        if (checked) {
+            const max = maxEl ? (parseInt(maxEl.value || 0, 10) || 0) : 0;
+            pv.value = String(max);
+            pv.readOnly = true;
+            pv.style.opacity = '0.7';
+        } else {
+            pv.readOnly = false;
+            pv.style.opacity = '';
+        }
+        _autoBoxCount();
+    }
+
     function _autoBoxCount() {
+        const useAllEl = document.getElementById('liResidualUseAll');
+        if (useAllEl && useAllEl.checked) {
+            const maxEl = document.getElementById('liResidualUseMax');
+            const pv = document.getElementById('liPrevResidual');
+            if (pv && maxEl) pv.value = String(parseInt(maxEl.value || 0, 10) || 0);
+        }
         const prevRes  = parseInt(document.getElementById('liPrevResidual')?.value || 0, 10) || 0;
         const packUnit = parseInt(document.getElementById('liPackUnit')?.value || 0, 10) || 0;
         const goodQty  = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
@@ -5635,7 +5699,7 @@ var LaserInspectionModule = (function() {
         focusNonconformStandardPasteZone, handleNonconformStandardPaste, printNonconformStandardPage,
         _updateDefectTotal, _updateDefectQty, _updateGoodQty, _calculateInspectionTime,
         _enableWorkQtyEdit, confirmWorkQtyEdit, cancelWorkQtyEdit, _previewWorkQtyEdit, _recalcInspQuantities,
-        _updatePackagingCalc, _autoBoxCount,
+        _updatePackagingCalc, _autoBoxCount, _toggleResidualUseAll,
         _addInspectorField, _syncInspectorOptions,
         _togglePartialInspection, _saveInspectionDraft, _clearInspectionDraft,
     };

@@ -4243,8 +4243,36 @@ const ShippingInspectionModule = (function() {
 // ===================================================================
 const ProductWarehouseModule = (function() {
     const STORE = DB.STORES.PRODUCT_INVENTORY;
+    const PW_STOCK_ORDER_KEY = 'pw_stock_car_order_v1';
+    const PW_STOCK_SNAP_PX = 56;
     let _pwStockFitBound = false;
     let _pwStockFitRaf = 0;
+    let _pwStockOrder = _readPwStockOrder();
+    let _pwDrag = null;
+
+    function _emptyPwStockOrder() {
+        return { mass: { cols: [] }, as: { cols: [] }, dev: { cols: [] } };
+    }
+
+    function _readPwStockOrder() {
+        try {
+            const raw = localStorage.getItem(PW_STOCK_ORDER_KEY);
+            if (!raw) return _emptyPwStockOrder();
+            const parsed = JSON.parse(raw);
+            return Object.assign(_emptyPwStockOrder(), parsed);
+        } catch (e) {
+            return _emptyPwStockOrder();
+        }
+    }
+
+    function _savePwStockOrder() {
+        try { localStorage.setItem(PW_STOCK_ORDER_KEY, JSON.stringify(_pwStockOrder)); } catch (e) {}
+        try {
+            if (typeof Storage !== 'undefined' && typeof Storage.setConfigValue === 'function') {
+                Storage.setConfigValue(PW_STOCK_ORDER_KEY, _pwStockOrder);
+            }
+        } catch (e) {}
+    }
 
     function render(container) {
         const actionCards = `
@@ -4624,9 +4652,10 @@ const ProductWarehouseModule = (function() {
                 </tr>`;
             }).join('');
 
-            return `<div class="pw-stock-card">
+            return `<div class="pw-stock-card" data-car="${encodeURIComponent(car)}" data-section="${section}">
                 <div class="pw-stock-head" style="background:${headerColor};">
                     <span class="pw-stock-head-left">
+                        <span class="material-symbols-outlined pw-stock-drag-handle" title="드래그하여 위치 이동">drag_indicator</span>
                         <span class="material-symbols-outlined">directions_car</span>
                         ${_escapeHtml(car)}
                         <span class="pw-stock-head-meta">${group.length}종</span>
@@ -4657,26 +4686,58 @@ const ProductWarehouseModule = (function() {
         // 화면 너비에 맞춰 열 수를 정하고, 열 폭을 균등 분배(flex:1)한다.
         // 예전 columns:280px 는 남는 폭을 비워 두어 오른쪽이 휑했다.
         function _stockColCount(itemCount) {
-            const n = Math.max(1, itemCount || 1);
-            const host = blocksEl.parentElement || blocksEl;
-            const avail = Math.max(280, (host.clientWidth || window.innerWidth || 1200) - 24);
-            const byWidth = Math.max(1, Math.floor(avail / 260));
-            return Math.max(1, Math.min(n, byWidth, 6));
+            return _pwStockColCount(itemCount, blocksEl);
+        }
+
+        function _layoutCols(cars, section, colCount) {
+            const savedCols = (_pwStockOrder[section] && Array.isArray(_pwStockOrder[section].cols))
+                ? _pwStockOrder[section].cols : [];
+            const carSet = new Set(cars);
+            if (savedCols.length === colCount) {
+                const cols = savedCols.map(function(list) {
+                    return (list || []).filter(function(c) { return carSet.has(c); });
+                });
+                while (cols.length < colCount) cols.push([]);
+                const used = new Set();
+                cols.forEach(function(list) { list.forEach(function(c) { used.add(c); }); });
+                cars.forEach(function(car) {
+                    if (used.has(car)) return;
+                    const heights = cols.map(function(list) {
+                        return list.reduce(function(s, name) {
+                            return s + ((byCarModel[name] || []).length || 1);
+                        }, 0);
+                    });
+                    const minIdx = heights.indexOf(Math.min.apply(null, heights));
+                    cols[minIdx].push(car);
+                });
+                return cols;
+            }
+            const ordered = [];
+            savedCols.forEach(function(list) {
+                (list || []).forEach(function(c) {
+                    if (carSet.has(c) && ordered.indexOf(c) < 0) ordered.push(c);
+                });
+            });
+            cars.forEach(function(c) { if (ordered.indexOf(c) < 0) ordered.push(c); });
+            const cols = Array.from({ length: colCount }, function() { return []; });
+            const heights = Array(colCount).fill(0);
+            ordered.forEach(function(car) {
+                const size = (byCarModel[car] || []).length || 1;
+                const minIdx = heights.indexOf(Math.min.apply(null, heights));
+                cols[minIdx].push(car);
+                heights[minIdx] += size + 1;
+            });
+            return cols;
         }
 
         function _packCarBlocks(cars, section) {
             const colCount = _stockColCount(cars.length);
-            const cols = Array.from({ length: colCount }, () => []);
-            const heights = Array(colCount).fill(0);
-            cars.forEach(function(car) {
-                const size = (byCarModel[car] || []).length || 1;
-                const minIdx = heights.indexOf(Math.min.apply(null, heights));
-                cols[minIdx].push(renderCarBlock(car, section));
-                heights[minIdx] += size + 1;
-            });
-            return `<div style="display:flex;gap:10px;align-items:flex-start;width:100%;">
-                ${cols.map(function(colHtml) {
-                    return `<div style="flex:1 1 0;min-width:0;display:flex;flex-direction:column;">${colHtml.join('')}</div>`;
+            const cols = _layoutCols(cars, section, colCount);
+            return `<div class="pw-stock-board" data-section="${section}" data-cols="${colCount}">
+                ${cols.map(function(colCars, idx) {
+                    return `<div class="pw-stock-col" data-col="${idx}">${
+                        colCars.map(function(car) { return renderCarBlock(car, section); }).join('')
+                    }</div>`;
                 }).join('')}
             </div>`;
         }
@@ -4700,6 +4761,13 @@ const ProductWarehouseModule = (function() {
 
         blocksEl.innerHTML = html;
         _bindPwStockFit();
+        _bindPwStockDrag(blocksEl);
+        blocksEl.querySelectorAll('.pw-stock-board').forEach(function(board) {
+            const want = Number(board.dataset.cols) || 0;
+            const section = board.getAttribute('data-section') || 'mass';
+            const saved = (_pwStockOrder[section] && _pwStockOrder[section].cols) || [];
+            if (saved.length !== want) _pwCaptureBoardLayout(board);
+        });
         _scheduleFitPwStockPartNames();
     }
 
@@ -4776,10 +4844,227 @@ const ProductWarehouseModule = (function() {
     function _bindPwStockFit() {
         if (_pwStockFitBound) return;
         _pwStockFitBound = true;
-        window.addEventListener('resize', _scheduleFitPwStockPartNames);
+        window.addEventListener('resize', function() {
+            _pwMaybeReflowBoards();
+            _scheduleFitPwStockPartNames();
+        });
         if (window.visualViewport) {
-            window.visualViewport.addEventListener('resize', _scheduleFitPwStockPartNames);
+            window.visualViewport.addEventListener('resize', function() {
+                _pwMaybeReflowBoards();
+                _scheduleFitPwStockPartNames();
+            });
         }
+    }
+
+    function _pwStockColCount(itemCount, host) {
+        const n = Math.max(1, itemCount || 1);
+        const el = host || document.getElementById('pwBlocks');
+        const box = (el && (el.parentElement || el)) || document.body;
+        const avail = Math.max(280, (box.clientWidth || window.innerWidth || 1200) - 24);
+        const byWidth = Math.max(1, Math.floor(avail / 260));
+        return Math.max(1, Math.min(n, byWidth, 6));
+    }
+
+    function _pwMaybeReflowBoards() {
+        if (_pwDrag) return;
+        const root = document.getElementById('pwBlocks');
+        if (!root) return;
+        let changed = false;
+        root.querySelectorAll('.pw-stock-board').forEach(function(board) {
+            const n = board.querySelectorAll('.pw-stock-card').length;
+            const want = _pwStockColCount(n, root);
+            const have = Number(board.dataset.cols) || 0;
+            if (want !== have) changed = true;
+        });
+        if (changed) loadData();
+    }
+
+    function _pwCarName(card) {
+        try { return decodeURIComponent(card.getAttribute('data-car') || ''); }
+        catch (e) { return card.getAttribute('data-car') || ''; }
+    }
+
+    function _pwCaptureBoardLayout(board) {
+        if (!board) return;
+        const section = board.getAttribute('data-section') || 'mass';
+        const cols = Array.prototype.map.call(board.querySelectorAll('.pw-stock-col'), function(col) {
+            return Array.prototype.map.call(col.querySelectorAll('.pw-stock-card'), function(card) {
+                return _pwCarName(card);
+            }).filter(Boolean);
+        });
+        _pwStockOrder[section] = { cols: cols };
+        _savePwStockOrder();
+    }
+
+    function _pwMagnetTarget(board, x, y, draggingCard) {
+        const cols = Array.prototype.slice.call(board.querySelectorAll('.pw-stock-col'));
+        if (!cols.length) return null;
+        let bestCol = cols[0];
+        let bestDx = Infinity;
+        cols.forEach(function(col) {
+            const r = col.getBoundingClientRect();
+            const cx = r.left + r.width / 2;
+            const dx = Math.abs(x - cx);
+            if (dx < bestDx) {
+                bestDx = dx;
+                bestCol = col;
+            }
+        });
+        const cards = Array.prototype.filter.call(bestCol.querySelectorAll('.pw-stock-card'), function(c) {
+            return c !== draggingCard && !c.classList.contains('pw-stock-ghost');
+        });
+        let before = null;
+        for (let i = 0; i < cards.length; i++) {
+            const r = cards[i].getBoundingClientRect();
+            if (y < r.top + r.height / 2) {
+                before = cards[i];
+                break;
+            }
+        }
+        return { col: bestCol, before: before };
+    }
+
+    function _pwPlacePlaceholder(placeholder, target) {
+        if (!target || !placeholder) return;
+        if (target.before && target.before.parentNode === target.col) {
+            if (target.before.previousSibling === placeholder) return;
+            target.col.insertBefore(placeholder, target.before);
+        } else if (placeholder.parentNode !== target.col || placeholder.nextSibling) {
+            target.col.appendChild(placeholder);
+        }
+    }
+
+    function _endPwStockDrag(commit) {
+        const drag = _pwDrag;
+        _pwDrag = null;
+        if (!drag) return;
+        document.body.classList.remove('pw-stock-is-dragging');
+        window.removeEventListener('pointermove', _onPwStockDragMove);
+        window.removeEventListener('pointerup', _onPwStockDragUp);
+        window.removeEventListener('pointercancel', _onPwStockDragUp);
+        window.removeEventListener('keydown', _onPwStockDragKey);
+
+        const card = drag.card;
+        const ghost = drag.ghost;
+        const placeholder = drag.placeholder;
+        if (ghost && ghost.parentNode) ghost.parentNode.removeChild(ghost);
+        card.classList.remove('is-dragging');
+        card.style.width = '';
+        if (commit && placeholder && placeholder.parentNode) {
+            placeholder.parentNode.insertBefore(card, placeholder);
+            _pwCaptureBoardLayout(drag.board);
+            _pwSuppressNextClick();
+        }
+        if (placeholder && placeholder.parentNode) placeholder.parentNode.removeChild(placeholder);
+        _scheduleFitPwStockPartNames();
+    }
+
+    function _pwSuppressNextClick() {
+        const stop = function(e) {
+            e.stopPropagation();
+            e.preventDefault();
+            document.removeEventListener('click', stop, true);
+        };
+        document.addEventListener('click', stop, true);
+        setTimeout(function() {
+            document.removeEventListener('click', stop, true);
+        }, 400);
+    }
+
+    function _onPwStockDragMove(event) {
+        const drag = _pwDrag;
+        if (!drag) return;
+        if (!drag.started) {
+            const dist = Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY);
+            if (dist < 6) return;
+            drag.started = true;
+            const card = drag.card;
+            const rect = card.getBoundingClientRect();
+            drag.offsetX = event.clientX - rect.left;
+            drag.offsetY = event.clientY - rect.top;
+            drag.width = rect.width;
+            drag.height = rect.height;
+            const placeholder = document.createElement('div');
+            placeholder.className = 'pw-stock-placeholder';
+            placeholder.style.height = rect.height + 'px';
+            card.parentNode.insertBefore(placeholder, card);
+            drag.placeholder = placeholder;
+            const ghost = card.cloneNode(true);
+            ghost.classList.add('pw-stock-ghost');
+            ghost.style.width = rect.width + 'px';
+            ghost.style.left = rect.left + 'px';
+            ghost.style.top = rect.top + 'px';
+            document.body.appendChild(ghost);
+            drag.ghost = ghost;
+            card.classList.add('is-dragging');
+            document.body.classList.add('pw-stock-is-dragging');
+        }
+
+        const target = _pwMagnetTarget(drag.board, event.clientX, event.clientY, drag.card);
+        _pwPlacePlaceholder(drag.placeholder, target);
+
+        const followX = event.clientX - drag.offsetX;
+        const followY = event.clientY - drag.offsetY;
+        const ph = drag.placeholder.getBoundingClientRect();
+        const gx = followX + drag.width / 2;
+        const gy = followY + drag.height / 2;
+        const px = ph.left + ph.width / 2;
+        const py = ph.top + ph.height / 2;
+        const snapped = Math.hypot(gx - px, gy - py) <= PW_STOCK_SNAP_PX;
+        const ghost = drag.ghost;
+        if (snapped) {
+            ghost.style.left = ph.left + 'px';
+            ghost.style.top = ph.top + 'px';
+            ghost.style.width = ph.width + 'px';
+            ghost.classList.add('is-snapped');
+        } else {
+            ghost.style.left = followX + 'px';
+            ghost.style.top = followY + 'px';
+            ghost.style.width = drag.width + 'px';
+            ghost.classList.remove('is-snapped');
+        }
+    }
+
+    function _onPwStockDragUp(event) {
+        if (event) event.preventDefault();
+        _endPwStockDrag(!!(_pwDrag && _pwDrag.started));
+    }
+
+    function _onPwStockDragKey(event) {
+        if (event.key === 'Escape') _endPwStockDrag(false);
+    }
+
+    function _bindPwStockDrag(root) {
+        if (!root) return;
+        root.querySelectorAll('.pw-stock-card .pw-stock-head').forEach(function(head) {
+            if (head.dataset.pwDragBound === '1') return;
+            head.dataset.pwDragBound = '1';
+            head.addEventListener('pointerdown', function(event) {
+                if (event.button != null && event.button !== 0) return;
+                const card = head.closest('.pw-stock-card');
+                const board = head.closest('.pw-stock-board');
+                if (!card || !board) return;
+                event.preventDefault();
+                try { head.setPointerCapture(event.pointerId); } catch (e) {}
+                _pwDrag = {
+                    card: card,
+                    board: board,
+                    startX: event.clientX,
+                    startY: event.clientY,
+                    started: false,
+                    ghost: null,
+                    placeholder: null,
+                    offsetX: 0,
+                    offsetY: 0,
+                    width: 0,
+                    height: 0
+                };
+                window.addEventListener('pointermove', _onPwStockDragMove);
+                window.addEventListener('pointerup', _onPwStockDragUp);
+                window.addEventListener('pointercancel', _onPwStockDragUp);
+                window.addEventListener('keydown', _onPwStockDragKey);
+            });
+        });
     }
 
     function _productInvRoute(d) {
@@ -4877,17 +5162,34 @@ const ProductWarehouseModule = (function() {
             </div>`;
     }
 
+    function _pwQtyOrDash(n) {
+        const v = Number(n) || 0;
+        return v ? UIUtils.formatNumber(v) : '-';
+    }
+
+    function _pwInspPaintLot(d) {
+        return String((d && (d.paintLot || d.paintingDate)) || '').trim();
+    }
+
     function _buildDailyInspSection(dailyAll) {
-        const rows = dailyAll.length ? dailyAll.map(d => `
-            <tr>
+        const rows = dailyAll.length ? dailyAll.map(function(d) {
+            const paintLot = _pwInspPaintLot(d) || '-';
+            const click = d.id
+                ? `onclick="ProductWarehouseModule.openInspTracePopup('${_jsAttr(d.id)}')"`
+                : '';
+            return `
+            <tr ${click} style="cursor:${d.id ? 'pointer' : 'default'};"
+                onmouseover="this.style.background='var(--bg-secondary)'"
+                onmouseout="this.style.background=''">
                 <td style="white-space:nowrap;">${(d.date || '-').slice(0, 10)}</td>
-                <td style="font-family:monospace;font-size:0.82rem;">${_escapeHtml(d.lotNo || d.injectionLot || '-')}</td>
-                <td style="text-align:right;">${UIUtils.formatNumber(Number(d.lotSize) || 0)}</td>
-                <td style="text-align:center;">${UIUtils.formatNumber(Number(d.sampleQty) || 0)}</td>
-                <td style="text-align:center;">${UIUtils.formatNumber(Number(d.defectQty) || 0)}</td>
-                <td style="text-align:center;">${_shippingResultBadge(d.result)}</td>
-                <td>${_escapeHtml(d.inspector || '-')}</td>
-            </tr>`).join('')
+                <td style="white-space:nowrap;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.82rem;">${_escapeHtml(paintLot)}</td>
+                <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(Number(d.lotSize) || 0)}</td>
+                <td style="text-align:center;white-space:nowrap;">${_pwQtyOrDash(d.sampleQty)}</td>
+                <td style="text-align:center;white-space:nowrap;">${_pwQtyOrDash(d.defectQty)}</td>
+                <td style="text-align:center;white-space:nowrap;">${_shippingResultBadge(d.result)}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(d.inspector || '-')}</td>
+            </tr>`;
+        }).join('')
             : `<tr><td colspan="7" style="text-align:center;padding:20px;color:var(--text-muted);">출하검사(외관) 이력이 없습니다.</td></tr>`;
         return `
             <div style="margin-top:18px;margin-bottom:8px;display:flex;align-items:center;gap:6px;">
@@ -4896,14 +5198,15 @@ const ProductWarehouseModule = (function() {
                 <span style="font-size:0.75rem;color:var(--text-muted);">${dailyAll.length}건</span>
             </div>
             <div style="overflow-x:auto;margin-bottom:4px;">
-                <table class="data-table">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                     <thead><tr>
-                        <th>검사일</th><th>LOT</th>
-                        <th style="text-align:right;">LOT수량</th>
-                        <th style="text-align:center;">샘플</th>
-                        <th style="text-align:center;">불량</th>
-                        <th style="text-align:center;">판정</th>
-                        <th>검사자</th>
+                        <th style="white-space:nowrap;">출하검사일</th>
+                        <th style="white-space:nowrap;">도장 LOT</th>
+                        <th style="text-align:right;white-space:nowrap;">LOT 수량</th>
+                        <th style="text-align:center;white-space:nowrap;">샘플</th>
+                        <th style="text-align:center;white-space:nowrap;">불량</th>
+                        <th style="text-align:center;white-space:nowrap;">판정</th>
+                        <th style="white-space:nowrap;">검사자</th>
                     </tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
@@ -4994,11 +5297,10 @@ const ProductWarehouseModule = (function() {
         if (!text || text === '-') return _pwMutedDash();
         const html = _escapeHtml(text);
         if (!onclick) {
-            return `<span style="font-family:monospace;font-size:0.8rem;">${html}</span>`;
+            return `<span>${html}</span>`;
         }
-        return `<a href="javascript:void(0)"
+        return `<a href="javascript:void(0)" class="pw-trace-link"
             onclick="event.preventDefault();event.stopPropagation();${onclick}"
-            style="color:var(--accent-blue);text-decoration:underline;cursor:pointer;font-family:monospace;font-size:0.8rem;font-weight:600;"
             title="${_escapeHtml(title || '새창에서 해당 실적 보기')}">${html}</a>`;
     }
 

@@ -1677,12 +1677,27 @@ var InjectionIncomingModule = (function() {
         const warehouseShort = warehouseDeltas.filter(function (d) { return d && d.delta > 0; });
 
         async function _persistInspEdit(alsoAdjustWarehouse) {
+            const prevSnap = (function () {
+                try { return JSON.parse(JSON.stringify(Storage.getById(STORE, id) || {})); }
+                catch (e) { return Object.assign({}, Storage.getById(STORE, id) || {}); }
+            })();
             await Storage.update(STORE, id, updateData);
             await propagateCertReceived(updateData.lots);
             if (alsoAdjustWarehouse && warehouseExcess.length
                     && typeof InjectionWarehouseModule.applyInspectionQtyAdjustments === 'function') {
                 await InjectionWarehouseModule.applyInspectionQtyAdjustments(id, warehouseExcess);
             }
+            try {
+                if (typeof IncomingDeleteLogModule !== 'undefined' && IncomingDeleteLogModule.recordInspectionChange) {
+                    await IncomingDeleteLogModule.recordInspectionChange({
+                        type: 'injection',
+                        action: 'edit',
+                        originalId: id,
+                        originalData: prevSnap,
+                        changedData: updateData
+                    });
+                }
+            } catch (e) { console.warn('[InjectionIncoming] change log failed', e); }
             UIUtils.closeModal();
             UIUtils.toast(alsoAdjustWarehouse
                 ? '수입검사를 수정하고 사출 창고 과다 재고를 보정했습니다.'
@@ -1911,6 +1926,7 @@ var InjectionIncomingModule = (function() {
         const logEntry = {
             id: Storage.generateId(),
             type: 'injection',
+            action: 'delete',
             typeLabel: '사출 수입검사',
             deletedAt: new Date().toISOString(),
             deletedBy: user ? user.displayName : '알 수 없음',

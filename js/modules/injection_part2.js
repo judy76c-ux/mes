@@ -2384,7 +2384,7 @@ var InjectionWarehouseModule = (function() {
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
-                            <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
+                            <table class="data-table inj-tx-history-table">
                                 <thead>
                                     <tr>
                                         <th style="white-space:nowrap;">${isIn ? '창고 입고일' : '출고일시'}</th>
@@ -2393,7 +2393,7 @@ var InjectionWarehouseModule = (function() {
                                         <th style="white-space:nowrap;">품명</th>
                                         <th style="white-space:nowrap;">컬러</th>
                                         <th style="white-space:nowrap;">사출처</th>
-                                        <th style="white-space:nowrap;">사출 LOT(수량)</th>
+                                        <th class="col-inj-lot">사출 LOT(수량)</th>
                                         <th style="white-space:nowrap;text-align:right;">수량</th>
                                         ${isIn ? '<th style="white-space:nowrap;text-align:right;">검사수량</th><th style="white-space:nowrap;">대조</th>' : ''}
                                         <th style="white-space:nowrap;text-align:right;">금액</th>
@@ -3158,7 +3158,7 @@ var InjectionWarehouseModule = (function() {
                     <td style="white-space:nowrap;"><strong>${d.partName || '-'}</strong></td>
                     <td style="white-space:nowrap;">${d.color || '-'}</td>
                     <td style="white-space:nowrap;">${d.supplier || '-'}</td>
-                    <td>${_lotBreakdownHtml(d)}</td>
+                    <td class="col-inj-lot">${_lotBreakdownHtml(d)}</td>
                     <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
                     ${isIncoming ? `<td style="text-align:right;white-space:nowrap;">${_inspQtyCellHtml(qtyMatch)}</td>
                     <td style="white-space:nowrap;">${_inspMatchBadgeHtml(qtyMatch)}</td>` : ''}
@@ -3485,13 +3485,13 @@ var InjectionWarehouseModule = (function() {
                 ? [{ lotNo: d.lotNo, qty: d.quantity }]
                 : []);
         if (!lots.length) return '-';
-        return lots.map(function (l) {
-            return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;' +
+        return '<div class="inj-lot-chips">' + lots.map(function (l) {
+            return '<span style="display:inline-flex;align-items:center;gap:4px;' +
                 'padding:1px 8px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);' +
                 'font-family:monospace;font-size:0.82rem;white-space:nowrap;">' +
                 _escapeHtml((l && l.lotNo) || '-') +
                 '<strong>(' + UIUtils.formatNumber(Number(l && l.qty) || 0) + ')</strong></span>';
-        }).join('');
+        }).join('') + '</div>';
     }
 
     function openIncomingTxView(id) {
@@ -5690,6 +5690,7 @@ var InjectionWarehouseModule = (function() {
                 const logEntry = {
                     id: Storage.generateId(),
                     type: 'injection',
+                    action: 'delete',
                     typeLabel: '사출 수입검사 (입고 대기 일괄 삭제)',
                     deletedAt: new Date().toISOString(),
                     deletedBy: who,

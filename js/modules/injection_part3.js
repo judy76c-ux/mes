@@ -1574,6 +1574,10 @@ var PaintIncomingInspectionModule = (function() {
         const finalData = collectFormData();
         _applyCertExemptIfNeeded(finalData);
         const prev = Storage.getById(STORE, id) || {};
+        const prevSnap = (function () {
+            try { return JSON.parse(JSON.stringify(prev)); }
+            catch (e) { return Object.assign({}, prev); }
+        })();
         if (finalData.mfgDate) {
             const ageCat = _mfgAgeCategory(finalData.mfgDate, (finalData.date || '').split(' ')[0] || UIUtils.today());
             if (ageCat === 'under3') finalData.expDateCheck = '3개월 미만';
@@ -1625,6 +1629,17 @@ var PaintIncomingInspectionModule = (function() {
             }
         }
         await Storage.update(STORE, id, finalData);
+        try {
+            if (typeof IncomingDeleteLogModule !== 'undefined' && IncomingDeleteLogModule.recordInspectionChange) {
+                await IncomingDeleteLogModule.recordInspectionChange({
+                    type: 'paint',
+                    action: 'edit',
+                    originalId: id,
+                    originalData: prevSnap,
+                    changedData: finalData
+                });
+            }
+        } catch (e) { console.warn('[PaintIncoming] change log failed', e); }
         UIUtils.closeModal();
         UIUtils.toast('수정되었습니다.', 'success');
         search();
@@ -1747,6 +1762,7 @@ var PaintIncomingInspectionModule = (function() {
                 const logEntry = {
                     id: Storage.generateId(),
                     type: 'paint',
+                    action: 'delete',
                     typeLabel: '도료 수입검사',
                     deletedAt: new Date().toISOString(),
                     deletedBy: user ? user.displayName : '알 수 없음',
