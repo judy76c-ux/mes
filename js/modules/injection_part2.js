@@ -2229,9 +2229,7 @@ var InjectionWarehouseModule = (function() {
         const route = _invRoute(d);
         const lotText = isUnmatchedAct
             ? '—'
-            : ((Array.isArray(d.lots) && d.lots.length)
-                ? d.lots.map(l => l.lotNo).filter(Boolean).join(', ')
-                : (d.lotNo || '무표기'));
+            : _lotBreakdownHtml(d);
         const qty = isUnmatchedAct
             ? (Number(d.quantity) || 0)
             : InvCalc.qtyOf(d);
@@ -2370,7 +2368,7 @@ var InjectionWarehouseModule = (function() {
                                         <th style="white-space:nowrap;">품명</th>
                                         <th style="white-space:nowrap;">컬러</th>
                                         <th style="white-space:nowrap;">사출처</th>
-                                        <th style="white-space:nowrap;">사출 LOT</th>
+                                        <th style="white-space:nowrap;">사출 LOT(수량)</th>
                                         <th style="white-space:nowrap;text-align:right;">수량</th>
                                         ${isIn ? '<th style="white-space:nowrap;text-align:right;">검사수량</th><th style="white-space:nowrap;">대조</th>' : ''}
                                         <th style="white-space:nowrap;text-align:right;">금액</th>
@@ -3134,7 +3132,7 @@ var InjectionWarehouseModule = (function() {
                     <td style="white-space:nowrap;"><strong>${d.partName || '-'}</strong></td>
                     <td style="white-space:nowrap;">${d.color || '-'}</td>
                     <td style="white-space:nowrap;">${d.supplier || '-'}</td>
-                    <td style="white-space:nowrap;">${d.lotNo || '-'}</td>
+                    <td>${_lotBreakdownHtml(d)}</td>
                     <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
                     ${isIncoming ? `<td style="text-align:right;white-space:nowrap;">${_inspQtyCellHtml(qtyMatch)}</td>
                     <td style="white-space:nowrap;">${_inspMatchBadgeHtml(qtyMatch)}</td>` : ''}
@@ -3380,18 +3378,19 @@ var InjectionWarehouseModule = (function() {
      *  (d.lotNo는 대표값으로 항상 채워져 있어 "d.lotNo || lots 목록" 같은 폴백이 절대 lots로
      *  안 넘어감). lots[]가 있으면 그걸 우선해서 LOT마다 수량을 같이 보여준다. */
     function _lotBreakdownHtml(d) {
-        if (Array.isArray(d.lots) && d.lots.length) {
-            if (d.lots.length === 1) {
-                return _escapeHtml(d.lots[0].lotNo || d.lotNo || '-');
-            }
-            return d.lots.map(function (l) {
-                return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;' +
-                    'padding:1px 8px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);' +
-                    'font-family:monospace;font-size:0.82rem;">' +
-                    _escapeHtml(l.lotNo || '-') + '<strong>(' + UIUtils.formatNumber(l.qty) + ')</strong></span>';
-            }).join('');
-        }
-        return _escapeHtml(d.lotNo || '-');
+        const lots = (Array.isArray(d && d.lots) && d.lots.length)
+            ? d.lots
+            : ((d && String(d.lotNo || '').trim())
+                ? [{ lotNo: d.lotNo, qty: d.quantity }]
+                : []);
+        if (!lots.length) return '-';
+        return lots.map(function (l) {
+            return '<span style="display:inline-flex;align-items:center;gap:4px;margin:2px 6px 2px 0;' +
+                'padding:1px 8px;border-radius:999px;background:var(--bg-secondary);border:1px solid var(--border-color);' +
+                'font-family:monospace;font-size:0.82rem;white-space:nowrap;">' +
+                _escapeHtml((l && l.lotNo) || '-') +
+                '<strong>(' + UIUtils.formatNumber(Number(l && l.qty) || 0) + ')</strong></span>';
+        }).join('');
     }
 
     function openIncomingTxView(id) {

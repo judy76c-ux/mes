@@ -19632,6 +19632,12 @@ var ProdQualityModule = (function() {
         }
     }
 
+    /** 공차관리(색차 등) 항목의 선택적 기준값을 DOM에서 읽어 obj에 채운다. _composeRangeSpec보다 먼저 호출한다. */
+    function _applyDeviationTarget(obj, row, prefix) {
+        if (_specModeOf(obj) !== 'deviation') return;
+        obj.targetSpec = row.querySelector(`.${prefix}-dev-target`)?.value?.trim() || '';
+    }
+
     function _parseLegacyRangeSpec(spec = '') {
         const text = String(spec || '').trim();
         if (!text) return { upperSpec: '', lowerSpec: '' };
@@ -19669,16 +19675,22 @@ var ProdQualityModule = (function() {
         }
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
         const unit = String(item.unit || '').trim();
-        if (!upperSpec && !lowerSpec) return String(item.spec || '').trim();
+        const targetSpec = (item.targetSpec !== undefined && item.targetSpec !== null) ? String(item.targetSpec).trim() : '';
+        const isDev = _specModeOf(item) === 'deviation' || _isColorSpecItem(item);
+        if (!upperSpec && !lowerSpec) {
+            // 공차관리에서 기준값만 입력하고 ±공차는 아직 안 정한 경우도 기준값은 보여줘야 한다.
+            if (isDev && targetSpec) return `기준 ${targetSpec}`;
+            return String(item.spec || '').trim();
+        }
         if (_isFilmSpecItem(item)) {
             const lo = lowerSpec || '';
             const hi = upperSpec || '';
             return `하(${lo}) ~ 상(${hi}) ${unit}`.trim();
         }
-        if (_specModeOf(item) === 'deviation' || _isColorSpecItem(item)) {
+        if (isDev) {
             const plus  = upperSpec !== '' ? `+${upperSpec}` : '+?';
             const minus = lowerSpec !== '' ? `−${lowerSpec}` : '−?';
-            return `${plus} / ${minus}`;
+            return targetSpec ? `기준 ${targetSpec} (${plus} / ${minus})` : `${plus} / ${minus}`;
         }
         return `${lowerSpec || ''} ~ ${upperSpec || ''}`.trim();
     }
@@ -19818,8 +19830,17 @@ var ProdQualityModule = (function() {
         const cls2   = isDeviation ? `${prefix}-lower` : isFilm ? `${prefix}-upper` : `${prefix}-lower`;
         const color1 = isDeviation ? '#16a34a' : 'var(--text-muted)';
         const color2 = isDeviation ? '#dc2626' : 'var(--text-muted)';
+        // 공차관리(색차 △L 등)에 한해 기준값(예: 색상 마스터 L값)을 함께 표시·입력한다 —
+        // ±공차만으로는 실물 기준서(예: "기준 37.00 / 공차 ±2.0")를 그대로 옮길 수 없었다.
+        // 순수 참고값이며 SPC 상하한 계산(0 기준 ±공차)은 건드리지 않는다.
+        const targetHtml = isDeviation ? `
+                <div style="display:flex;align-items:center;gap:5px;flex:0 0 auto;">
+                    <span style="font-size:0.76rem;font-weight:700;color:#a16207;white-space:nowrap;flex-shrink:0;">기준값</span>
+                    <input type="text" class="form-input ${prefix}-dev-target" value="${_esc(item.targetSpec || '')}" placeholder="선택" ${readOnly ? 'disabled' : ''} style="width:76px;min-width:76px;height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;">
+                </div>` : '';
         return `
-            <div style="display:flex;gap:8px;flex-wrap:nowrap;align-items:center;max-width:380px;">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;max-width:380px;">
+                ${targetHtml}
                 <div style="display:flex;align-items:center;gap:5px;flex:0 0 auto;">
                     <span style="font-size:0.76rem;font-weight:700;color:${color1};white-space:nowrap;flex-shrink:0;">${label1}</span>
                     <input type="text" class="form-input ${cls1}" value="${_esc(val1)}" placeholder="${ph1}" ${readOnly ? 'disabled' : ''} style="width:88px;min-width:88px;height:40px;padding:6px 8px;font-size:1rem;font-weight:700;text-align:right;">
@@ -20604,7 +20625,7 @@ var ProdQualityModule = (function() {
                 selected: true
             };
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pqs');
-            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pqs'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(i => i.key);
 
@@ -20987,7 +21008,7 @@ var ProdQualityModule = (function() {
                 selected:  true
             };
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pqs');
-            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pqs'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(i => i.key);
 
@@ -23916,7 +23937,7 @@ var ProdQualityModule = (function() {
             obj.label = obj.label.trim();
             obj.selected = true;
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-master');
-            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pq-master'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(item => item.label);
         if (!items.length) {
@@ -24644,7 +24665,7 @@ var ProdQualityModule = (function() {
                 selected: true
             };
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-preset');
-            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pq-preset'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(i => i.label);
 
@@ -24696,7 +24717,7 @@ var ProdQualityModule = (function() {
                 selected: !!row.querySelector('.pq-tpl-selected')?.checked
             };
             if (_isGlossSpecItem(obj)) _applyGlossSpec(obj, row, 'pq-tpl');
-            else if (_isRangeSpecItem(obj)) obj.spec = _composeRangeSpec(obj);
+            else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pq-tpl'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(i => i.label);
 
