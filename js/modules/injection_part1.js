@@ -1912,7 +1912,10 @@ var InjectionIncomingModule = (function() {
             originalData: Object.assign({}, ctx.prev),
             afterData: Object.assign({}, ctx.updateData),
             summary: (ctx.prev.date || '') + ' / ' + (ctx.prev.carModel || '') + ' ' + (ctx.prev.partName || '')
-                + ' / ' + UIUtils.formatNumber(_inspQtyOf(ctx.prev)) + '→' + UIUtils.formatNumber(_inspQtyOf(ctx.updateData)) + 'EA',
+                + ' / 검사 ' + UIUtils.formatNumber(_inspQtyOf(ctx.prev)) + '→' + UIUtils.formatNumber(_inspQtyOf(ctx.updateData)) + 'EA'
+                + ((ctx.preview && ctx.preview.warehouseInbound)
+                    ? ' · 창고입고 ' + UIUtils.formatNumber(ctx.preview.warehouseInbound) + 'EA'
+                    : ''),
             warehouseSync: { requested: !!syncWarehouse }
         };
 
