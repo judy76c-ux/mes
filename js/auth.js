@@ -76,6 +76,7 @@ const AuthModule = (function () {
         { id:'inj-incoming-std',          label:'사출 수입검사 기준서', group:'수입검사' },
         { id:'paint-incoming-std',        label:'도료 수입검사 기준서', group:'수입검사' },
         { id:'inj-insp-std-photo',        label:'수입검사 사진 기준',   group:'수입검사' },
+        { id:'incoming-delete-log',       label:'수입검사 이력변경 관리', group:'수입검사' },
         { id:'warehouse-overview',        label:'자재 창고 현황',     group:'창고' },
         { id:'injection-warehouse',       label:'사출 창고',          group:'창고' },
         { id:'paint-inventory',           label:'도료 창고',          group:'창고' },
@@ -173,7 +174,7 @@ const AuthModule = (function () {
     const PAGE_GROUPS = [
         { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'] },
         { key:'board',            label:'\uac8c\uc2dc\ud310',            pages:['board'] },
-        { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'] },
+        { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo','incoming-delete-log'] },
         { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'] },
         { key:'product_wh',       label:'\uc644\uc81c\ud488 \ucc3d\uace0', pages:['product-warehouse','product-outgoing','injection-layout'] },
         { key:'shipping',         label:'\ucd9c\ud558\uac80\uc0ac',      pages:['shipping-overview','shipping-standby','shipping-inspection','shipping-reliability','shipping-certificate','shipping-standard','shipping-std-photo'] },
@@ -204,7 +205,7 @@ const AuthModule = (function () {
         'board': ['board'],
         'sales-delivery-plan': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
         'sales-today-shipment': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
-        'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo'],
+        'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo','incoming-delete-log'],
         'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'],
         'product-warehouse': ['product-warehouse','product-outgoing','injection-layout'],
         'injection-process': ['injection-process','injection-work','injection-wip','injection-room-layout'],
@@ -327,7 +328,7 @@ const AuthModule = (function () {
         const rw = pages => ({ access: pages, write: pages });  // 접근+입력 동일
         const prodWorkerPages = [
             'dashboard',
-            'incoming-overview','injection-incoming','paint-incoming-inspection',
+            'incoming-overview','injection-incoming','paint-incoming-inspection','incoming-delete-log',
             'warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory',
             'injection-process','injection-work',
             'production-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
@@ -347,7 +348,7 @@ const AuthModule = (function () {
             /* 물류작업자 — 입고/창고/출하/제품 이동 전담 */
             logistics_worker: rw([
                 'dashboard',
-                'incoming-overview','injection-incoming','paint-incoming-inspection',
+                'incoming-overview','injection-incoming','paint-incoming-inspection','incoming-delete-log',
                 'warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory',
                 'shipping-standby','shipping-inspection',
                 'product-warehouse','product-outgoing',
@@ -362,7 +363,7 @@ const AuthModule = (function () {
             /* 품질 관리자 — 검사·품질 관련 전체 + 입고·출하 */
             quality_manager: rw([
                 'dashboard',
-                'incoming-overview','injection-incoming','paint-incoming-inspection',
+                'incoming-overview','injection-incoming','paint-incoming-inspection','incoming-delete-log',
                 'warehouse-overview',
                 'painting-inspection','painting-rework-wip','laser-inspection',
                 'shipping-overview','shipping-standby','shipping-reliability','product-warehouse',
@@ -376,13 +377,13 @@ const AuthModule = (function () {
                 'production-plan',
                 'shipping-standby','product-warehouse',
                 'sales-delivery','sales-outsourcing',
-                'incoming-overview','warehouse-overview',
+                'incoming-overview','incoming-delete-log','warehouse-overview',
             ]),
 
             /* 도장라인운영자 — 도장 공정 전담 */
             paint_line_op: rw([
                 'dashboard',
-                'incoming-overview','paint-incoming-inspection',
+                'incoming-overview','paint-incoming-inspection','incoming-delete-log',
                 'warehouse-overview','paint-inventory','paint-demand-plan',
                 'production-plan','painting-process','painting-work-a','painting-work-b','painting-inspection','painting-rework-wip','paint-mix',
             ]),
@@ -413,7 +414,7 @@ const AuthModule = (function () {
             /* 사출운영자 — 사출 공정 전담 */
             injection_op: rw([
                 'dashboard',
-                'incoming-overview','injection-incoming',
+                'incoming-overview','injection-incoming','incoming-delete-log',
                 'warehouse-overview','injection-warehouse','raw-material-inventory',
                 'injection-process','injection-work',
             ]),
@@ -514,7 +515,7 @@ const AuthModule = (function () {
                 result[key] = { access: [], write: [] };
             }
         });
-        return _backfillAdjustPerms(_syncPageWritePolicies(_syncMenuAccessPages(_expandLegacyPaintingWorkPages(result))));
+        return _backfillAdjustPerms(_syncPageWritePolicies(_syncMenuAccessPages(_expandIncomingDeleteLogPage(_expandLegacyPaintingWorkPages(result)))));
     }
 
     /* "수량 보정" 3단계 권한 도입 — 기존에 저장된 권한엔 adjust 배열이 없으므로, write를
@@ -527,6 +528,29 @@ const AuthModule = (function () {
             if (!Array.isArray(rp.adjust)) {
                 rp.adjust = Array.isArray(rp.write) ? [...rp.write] : [];
             }
+        });
+        return perms;
+    }
+
+    /* 수입검사 그룹에 속한 역할은 이력변경 관리(incoming-delete-log)도 함께 연다.
+       페이지가 나중에 추가돼 저장된 권한에 빠져 있으면 품질 검사자가 허브 버튼을 눌러도
+       접근 거부 화면만 보게 된다. */
+    function _expandIncomingDeleteLogPage(perms) {
+        const incomingPages = [
+            'incoming-overview', 'injection-incoming', 'paint-incoming-inspection',
+            'inj-incoming-std', 'paint-incoming-std', 'inj-insp-std-photo'
+        ];
+        Object.keys(perms || {}).forEach(function (roleKey) {
+            if (roleKey === 'admin') return;
+            const rp = perms[roleKey];
+            if (!rp || rp === null || Array.isArray(rp)) return;
+            ['access', 'write', 'adjust'].forEach(function (field) {
+                if (!Array.isArray(rp[field])) return;
+                const hasIncoming = incomingPages.some(function (id) { return rp[field].indexOf(id) !== -1; });
+                if (hasIncoming && rp[field].indexOf('incoming-delete-log') === -1) {
+                    rp[field].push('incoming-delete-log');
+                }
+            });
         });
         return perms;
     }

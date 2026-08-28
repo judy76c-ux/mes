@@ -79,6 +79,7 @@ const Router = (function() {
         'inj-incoming-std': '사출 수입검사 기준서',
         'paint-incoming-std': '도료 수입검사 기준서',
         'inj-insp-std-photo': '수입검사 표준서',
+        'incoming-delete-log': '수입검사 이력변경 관리',
         'warehouse-overview': '자재 창고',
         'injection-process': '사출 공정',
         'injection-work': '사출 작업일지',
@@ -180,6 +181,7 @@ const Router = (function() {
         'inj-incoming-std':          { target: 'incoming-overview', label: '수입검사로 돌아가기' },
         'paint-incoming-std':        { target: 'incoming-overview', label: '수입검사로 돌아가기' },
         'inj-insp-std-photo':        { target: 'incoming-overview', label: '수입검사로 돌아가기' },
+        'incoming-delete-log':       { target: 'incoming-overview', label: '수입검사로 돌아가기' },
 
         'injection-warehouse': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
         'paint-inventory': { target: 'warehouse-overview', label: '자재 창고로 돌아가기' },
@@ -274,7 +276,13 @@ const Router = (function() {
         const lastPage = (() => {
             try { return sessionStorage.getItem(PAGE_STATE_KEY) || 'dashboard'; } catch (e) { return 'dashboard'; }
         })();
-        navigate(user ? lastPage : 'dashboard');
+        const intent = _readOpenIntent();
+        if (intent && intent.page) {
+            _pendingOpenIntent = intent;
+            navigate(intent.page);
+        } else {
+            navigate(user ? lastPage : 'dashboard');
+        }
     }
 
     function registerModule(name, moduleObj) {
@@ -505,6 +513,13 @@ const Router = (function() {
         } else {
             injectTopbarPermissionInspector();
         }
+
+        if (_pendingOpenIntent && (!_pendingOpenIntent.page || _pendingOpenIntent.page === pageName)) {
+            const intent = _pendingOpenIntent;
+            _pendingOpenIntent = null;
+            _applyOpenIntent(intent);
+            _clearOpenIntentFromUrl();
+        }
     }
 
     // 접근(access) 권한 정의: 로그인한 사용자의 역할이 이 페이지에 접근 권한이 없으면
@@ -708,6 +723,88 @@ const Router = (function() {
         return currentPage;
     }
 
+    let _pendingOpenIntent = null;
+
+    function _readOpenIntent() {
+        try {
+            const params = new URLSearchParams(window.location.search || '');
+            const page = String(params.get('page') || '').trim();
+            const open = String(params.get('open') || '').trim();
+            const id = String(params.get('id') || '').trim();
+            if (!page && !open) return null;
+            return { page: page, open: open, id: id };
+        } catch (e) {
+            return null;
+        }
+    }
+
+    function _clearOpenIntentFromUrl() {
+        try {
+            const url = new URL(window.location.href);
+            if (!url.searchParams.has('page') && !url.searchParams.has('open') && !url.searchParams.has('id')) return;
+            url.searchParams.delete('page');
+            url.searchParams.delete('open');
+            url.searchParams.delete('id');
+            const next = url.pathname + url.search + url.hash;
+            history.replaceState({}, '', next);
+        } catch (e) { /* file:// 등에서 무시 */ }
+    }
+
+    function _applyOpenIntent(intent) {
+        if (!intent || !intent.open || !intent.id) return;
+        setTimeout(function() {
+            const id = intent.id;
+            const kind = intent.open;
+            try {
+                if (kind === 'injIncoming' && typeof InjectionIncomingModule !== 'undefined' && InjectionIncomingModule.view) {
+                    InjectionIncomingModule.view(id);
+                    return;
+                }
+                if (kind === 'paintIncoming' && typeof PaintIncomingInspectionModule !== 'undefined' && PaintIncomingInspectionModule.view) {
+                    PaintIncomingInspectionModule.view(id);
+                    return;
+                }
+                if (kind === 'paintWork' && typeof PaintingWorkModule !== 'undefined' && PaintingWorkModule.openWorkViewPage) {
+                    PaintingWorkModule.openWorkViewPage(id);
+                    return;
+                }
+                if (kind === 'laserWork' && typeof LaserWorkModule !== 'undefined' && LaserWorkModule.edit) {
+                    LaserWorkModule.edit(id);
+                }
+            } catch (e) {
+                console.warn('[Router] 새창 실적 열기 실패:', e);
+            }
+        }, 220);
+    }
+
+    function openInNewWindow(pageName, opts) {
+        opts = opts || {};
+        let href = '';
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', pageName);
+            if (opts.open) url.searchParams.set('open', opts.open);
+            else url.searchParams.delete('open');
+            if (opts.id) url.searchParams.set('id', opts.id);
+            else url.searchParams.delete('id');
+            href = url.toString();
+        } catch (e) {
+            const base = String(window.location.href).split('#')[0].split('?')[0];
+            href = base + '?page=' + encodeURIComponent(pageName)
+                + (opts.open ? '&open=' + encodeURIComponent(opts.open) : '')
+                + (opts.id ? '&id=' + encodeURIComponent(opts.id) : '');
+        }
+        const win = window.open(href, '_blank');
+        if (!win) {
+            if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
+                UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.', 'warning');
+            }
+            return null;
+        }
+        try { win.focus(); } catch (e) {}
+        return win;
+    }
+
     function hasModule(pageName) {
         return !!modules[pageName];
     }
@@ -737,6 +834,7 @@ const Router = (function() {
         registerLazy: registerLazy,
         ensureLazyLoaded: ensureLazyLoaded,
         navigate: navigate,
+        openInNewWindow: openInNewWindow,
         renderModule: renderModule,
         getCurrentPage: getCurrentPage,
         hasModule: hasModule,

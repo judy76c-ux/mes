@@ -1537,7 +1537,13 @@ var LaserWipModule = (function() {
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">inventory_2</span> 잔량 재고 현황</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">포장단위 미달로 출하 제외된 잔량</span>
+                    <div style="display:flex;align-items:center;gap:10px;">
+                        <span style="font-size:0.75rem;color:var(--text-muted);">포장단위 미달로 출하 제외된 잔량</span>
+                        ${_canAdjustWip() && rows.length ? `<button class="btn btn-sm btn-outline" style="font-size:0.76rem;white-space:nowrap;"
+                            onclick="LaserWipModule.openResidualBulkCleanup()">
+                            <span class="material-symbols-outlined" style="font-size:0.95rem;">cleaning_services</span> 잔량 일괄 정리
+                        </button>` : ''}
+                    </div>
                 </div>
                 <div class="card-body" id="resInvBody" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
                     ${_residualInventoryHtml(filtered)}
@@ -1546,7 +1552,7 @@ var LaserWipModule = (function() {
             <div class="card">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(잔량 발생·수동입고) · 출고(수동출고) 내역을 분리 표시</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(잔량 발생·수동입고) · 출고(외관검사 포장출고·수동출고) 내역을 분리 표시</span>
                 </div>
                 <div class="card-body" id="resFlowBody" style="padding:0;">
                     ${_residualFlowHistHtml({ car: _resFilterCar, part: _resFilterPart })}
@@ -1678,9 +1684,11 @@ var LaserWipModule = (function() {
                 <tbody>
                     ${entries.map(w => {
                         const isOut = !!w.isResidualManualOut;
-                        const badge = isOut
-                            ? `<span style="color:var(--accent-red);font-weight:700;">출고</span>`
-                            : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`;
+                        const badge = w.isInspectionResidualOut
+                            ? `<span style="color:#7c3aed;font-weight:700;">포장출고</span>`
+                            : (isOut
+                                ? `<span style="color:var(--accent-red);font-weight:700;">출고</span>`
+                                : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`);
                         return `<tr>
                             <td style="white-space:nowrap;">${_esc(w.date || '-')}</td>
                             <td>${badge}</td>
@@ -2519,6 +2527,95 @@ var LaserWipModule = (function() {
         refresh();
     }
 
+    function _findInspectionResidualOut(inspectionId) {
+        if (!inspectionId) return null;
+        const all = Storage.getAll(STORE_LASER) || [];
+        for (let i = 0; i < all.length; i++) {
+            const w = all[i];
+            if (w && w.isInspectionResidualOut && String(w.sourceInspectionId || '') === String(inspectionId)) return w;
+        }
+        return null;
+    }
+
+    async function _upsertInspectionResidualOut(opts) {
+        const inspectionId = String(opts.inspectionId || '').trim();
+        const qty = Math.max(0, Math.floor(Number(opts.qty) || 0));
+        if (!inspectionId) return null;
+        const existing = _findInspectionResidualOut(inspectionId);
+        if (qty <= 0) {
+            if (existing && existing.id) {
+                await Storage.remove(STORE_LASER, existing.id);
+            }
+            return null;
+        }
+        const record = {
+            date: opts.date || UIUtils.today(),
+            carModel: opts.carModel || '',
+            partName: opts.partName || '',
+            color: opts.color || '',
+            quantity: qty,
+            note: opts.note || '외관검사 포장 사용',
+            isManual: true,
+            isResidualManualOut: true,
+            isInspectionResidualOut: true,
+            sourceInspectionId: inspectionId,
+            sourceWorkLogId: opts.workLogId || '',
+            author: _currentUserName(),
+            machine: opts.machine || ''
+        };
+        if (existing && existing.id) {
+            await Storage.update(STORE_LASER, existing.id, Object.assign({}, existing, record));
+            return existing.id;
+        }
+        const added = await Storage.add(STORE_LASER, record);
+        return added && added.id ? added.id : null;
+    }
+
+    /** 외관검사에서 잔량을 가져다 쓴 수량만큼 레이져 잔량 출고 이력을 맞춘다. */
+    async function syncInspectionResidualOut(opts) {
+        opts = opts || {};
+        const inspectionId = String(opts.inspectionId || '').trim();
+        const workLogId = String(opts.workLogId || '').trim();
+        if (!inspectionId && !workLogId) return null;
+
+        // 작업일지 prevResidualQty 장부 차감을 먼저 끄고, 검사별 출고 기록으로 대체한다.
+        // (출고 기록보다 플래그를 나중에 켜면 잠깐 이중 차감이 생긴다)
+        if (workLogId) {
+            const work = Storage.getById(STORE_LASER, workLogId);
+            if (work && !work.residualPackOutRecorded) {
+                await Storage.update(STORE_LASER, workLogId, Object.assign({}, work, { residualPackOutRecorded: true }));
+            }
+            const insps = (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).filter(function(i) {
+                return i && String(i.workLogId || '') === workLogId;
+            });
+            const seen = {};
+            for (let i = 0; i < insps.length; i++) {
+                const insp = insps[i];
+                if (!insp || !insp.id) continue;
+                seen[String(insp.id)] = true;
+                const isCurrent = inspectionId && String(insp.id) === inspectionId;
+                await _upsertInspectionResidualOut({
+                    inspectionId: insp.id,
+                    workLogId: workLogId,
+                    carModel: insp.carModel || opts.carModel || '',
+                    partName: insp.partName || opts.partName || '',
+                    color: insp.color || opts.color || '',
+                    qty: isCurrent ? (Number(opts.qty) || 0) : (Number(insp.prevResidualQty) || 0),
+                    date: isCurrent ? (opts.date || insp.date || '') : (insp.date || ''),
+                    note: isCurrent ? (opts.note || '외관검사 포장 사용') : '외관검사 포장 사용',
+                    machine: opts.machine || ''
+                });
+            }
+            if (inspectionId && !seen[inspectionId]) {
+                await _upsertInspectionResidualOut(opts);
+            }
+            return true;
+        }
+
+        await _upsertInspectionResidualOut(opts);
+        return true;
+    }
+
     // ── 상세 모달 공통 ───────────────────────────────────────────────────
     function _closeDetailPopup() {
         UIUtils.closeModal();
@@ -2780,7 +2877,7 @@ var LaserWipModule = (function() {
             // (consume 이벤트를 delta 이벤트보다 먼저 push해 같은 시각 동률일 때도 항상
             //  "옛 LOT부터 소진 → 그다음 새 LOT 적립" 순서로 재생되게 한다)
             const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
-            if (prevUsed > 0) {
+            if (prevUsed > 0 && !w.residualPackOutRecorded) {
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
@@ -4583,13 +4680,34 @@ var LaserWipModule = (function() {
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const residualQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
-            if (residualQty <= 0) return;
             const lotKeys = _workResidualLotKeys(w);
             const firstKey = lotKeys[0] || '';
             const pipeIdx = firstKey.indexOf('|');
             const paintLot = pipeIdx >= 0 ? firstKey.slice(0, pipeIdx) : (w.paintDate || '-');
             const injLot = pipeIdx >= 0 ? firstKey.slice(pipeIdx + 1) : (w.lotNo || '-');
             const machine = _resolveResidualMachine(carModel, partName, color, paintLot, injLot, w.date, w.machine);
+            const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
+            if (prevUsed > 0 && !w.residualPackOutRecorded) {
+                histItems.push({
+                    date: w.date || '-',
+                    isOut: true,
+                    routeLabel: '외관검사 포장출고',
+                    routeColor: '#7c3aed',
+                    routeDetail: machine || '잔량 사용',
+                    lot: injLot || '-',
+                    paintLot: paintLot || '-',
+                    injLot: injLot || '-',
+                    lotKey: firstKey || ('__PACKOUT__|' + (w.id || '')),
+                    qty: prevUsed,
+                    author: w.author || w.operator || '-',
+                    note: '잔량 사용',
+                    _seq: (w.createdAt || w.id || '') + '_packout',
+                    createdAt: w.createdAt || '',
+                    sourceId: w.id || '',
+                    editKind: 'laser_work'
+                });
+            }
+            if (residualQty <= 0) return;
             histItems.push({
                 date: w.date || '-',
                 isOut: false,
@@ -4633,8 +4751,11 @@ var LaserWipModule = (function() {
                 routeLabel = '수기 입고';
                 routeColor = '#16a34a';
                 routeDetail = machine || w.note || '잔량 수기 입고';
+            } else if (w.isInspectionResidualOut) {
+                routeLabel = '외관검사 포장출고';
+                routeColor = '#7c3aed';
+                routeDetail = machine || w.note || '외관검사 포장 사용';
             } else {
-                // 잔량 차감은 레이져 작업(포장·검사) 소진 — 수기 출고로 표기하지 않는다
                 routeLabel = '레이져 작업출고';
                 routeColor = '#7c3aed';
                 routeDetail = machine || w.note || '레이져 작업';
@@ -5211,7 +5332,7 @@ function _num(value) {
                         <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.95rem;">
                             <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">output</span>
                             출고현황
-                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(도장 투입 · 수동출고)</span>
+                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(외관검사 포장출고 · 수동출고)</span>
                         </h4>
                         <span style="font-size:0.75rem;color:var(--text-muted);">${outgoingRows.length}건</span>
                     </div>
@@ -5267,7 +5388,7 @@ function _num(value) {
                 if (qty <= 0) return;
                 outgoingRows.push(Object.assign({}, base, {
                     qty: qty,
-                    route: w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고',
+                    route: w.isInspectionResidualOut ? '외관검사 포장출고' : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고'),
                     note: w.note || w.machine || w.author || ''
                 }));
                 return;
@@ -5291,6 +5412,14 @@ function _num(value) {
             const resQty = Number(w.laserResidualQty) || (packUnit > 0
                 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit)
                 : 0);
+            const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
+            if (prevUsed > 0 && !w.residualPackOutRecorded) {
+                outgoingRows.push(Object.assign({}, base, {
+                    qty: prevUsed,
+                    route: '외관검사 포장출고',
+                    note: '잔량 사용'
+                }));
+            }
             if (resQty <= 0) return;
             incomingRows.push(Object.assign({}, base, {
                 qty: resQty,
@@ -6598,13 +6727,195 @@ function _num(value) {
         );
     }
 
+    // ── 레이져 잔량 일괄 정리 ────────────────────────────────────────────
+    // 과거에 포장 시 잔량이 자동 소진됐지만 출고 기록이 남지 않아 유령 잔량이 누적된 경우,
+    // 품목별로 "정리 후 잔량"(기본 0)을 입력해 한 번에 LOT 절대보정으로 맞춘다.
+    // 각 건은 일반 'LOT 보정' 이력으로 남아 개별 수정·삭제로 되돌릴 수 있다.
+    function openResidualBulkCleanup() {
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 사용할 수 있습니다.', 'warning'); return; }
+        const rows = _calcLaserResidualWip().filter(function(r) { return (Number(r.residualQty) || 0) > 0; });
+        if (!rows.length) { UIUtils.toast('정리할 잔량이 없습니다.', 'info'); return; }
+        const today = new Date().toISOString().slice(0, 10);
+        const totalNow = rows.reduce(function(s, r) { return s + (Number(r.residualQty) || 0); }, 0);
+
+        const bodyRows = rows.map(function(r, i) {
+            const key = _productKey(r.carModel, r.partName, r.color || '');
+            const cur = Math.round(Number(r.residualQty) || 0);
+            return `<tr data-key="${_esc(key)}" data-cur="${cur}" data-pack="${Number(r.packUnit) || 0}"
+                        data-cm="${_esc(r.carModel || '')}" data-pn="${_esc(r.partName || '')}" data-cl="${_esc(r.color || '')}">
+                <td style="text-align:center;"><input type="checkbox" id="lwBulkChk${i}" checked></td>
+                <td style="white-space:nowrap;">${_esc(r.carModel || '-')}</td>
+                <td>${_esc(r.partName || '-')}</td>
+                <td style="white-space:nowrap;">${_esc(r.color || '-')}</td>
+                <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(cur)}</td>
+                <td style="text-align:right;">
+                    <input type="number" id="lwBulkTgt${i}" value="0" min="0" max="${cur}"
+                        style="width:90px;text-align:right;" class="form-input">
+                </td>
+            </tr>`;
+        }).join('');
+
+        UIUtils.showModal('레이져 잔량 일괄 정리', `
+            <div style="background:rgba(239,68,68,0.06);border:1px solid rgba(239,68,68,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">
+                포장 시 소진됐지만 출고 기록이 없어 <strong>누적된 유령 잔량</strong>을 정리합니다.
+                품목별 <strong>정리 후 잔량</strong>(실제 창고 수량)을 입력하세요. 기본값은 <strong>0</strong>입니다.<br>
+                각 건은 <strong>LOT 보정</strong> 이력으로 남으며, 잔량 상세에서 개별 수정·삭제할 수 있습니다.
+                현재보다 큰 값으로는 정리할 수 없습니다(그 품목은 건너뜁니다).
+            </div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label class="form-label">정리 기준일</label>
+                    <input type="date" class="form-input" id="lwBulkResetDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lwBulkResetNote" placeholder="잔량 일괄 정리 (유령 잔량 제거)">
+                </div>
+            </div>
+            <div style="max-height:46vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table class="data-table" style="margin:0;font-size:0.82rem;">
+                    <thead><tr>
+                        <th style="width:36px;text-align:center;"><input type="checkbox" id="lwBulkChkAll" checked onclick="document.querySelectorAll('#lwBulkResetRows input[type=checkbox]').forEach(function(c){c.checked=this.checked;}, this);"></th>
+                        <th>차종</th><th>품명</th><th>컬러</th>
+                        <th style="text-align:right;">현재 잔량</th>
+                        <th style="text-align:right;">정리 후 잔량</th>
+                    </tr></thead>
+                    <tbody id="lwBulkResetRows">${bodyRows}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:10px;font-size:0.8rem;color:var(--text-muted);">
+                대상 ${rows.length}개 품목 · 현재 잔량 합계 <strong style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(totalNow)}</strong> EA
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);" onclick="LaserWipModule.saveResidualBulkCleanup()">일괄 정리 실행</button>
+        `, 'lg');
+    }
+
+    async function saveResidualBulkCleanup() {
+        if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 사용할 수 있습니다.', 'warning'); return; }
+        const date = (document.getElementById('lwBulkResetDate') || {}).value || new Date().toISOString().slice(0, 10);
+        const note = ((document.getElementById('lwBulkResetNote') || {}).value || '').trim() || '잔량 일괄 정리';
+        const author = _currentUserName();
+
+        const trs = Array.prototype.slice.call(document.querySelectorAll('#lwBulkResetRows tr[data-key]'));
+        const targets = [];
+        let skipped = 0;
+        trs.forEach(function(tr, i) {
+            const chk = document.getElementById('lwBulkChk' + i);
+            if (!chk || !chk.checked) return;
+            const cur = Math.round(Number(tr.getAttribute('data-cur')) || 0);
+            const tgt = Math.round(Number((document.getElementById('lwBulkTgt' + i) || {}).value) || 0);
+            if (tgt < 0 || tgt > cur) { skipped++; return; }
+            if (tgt === cur) return;
+            targets.push({
+                carModel: tr.getAttribute('data-cm') || '',
+                partName: tr.getAttribute('data-pn') || '',
+                color: tr.getAttribute('data-cl') || '',
+                packUnit: Number(tr.getAttribute('data-pack')) || 0,
+                cur: cur,
+                target: tgt
+            });
+        });
+
+        if (!targets.length) {
+            UIUtils.toast(skipped ? '정리할 품목이 없습니다. (현재보다 큰 값은 건너뜁니다)' : '변경된 값이 없습니다.', 'info');
+            return;
+        }
+
+        const totalCut = targets.reduce(function(s, t) { return s + (t.cur - t.target); }, 0);
+        const msg = `${targets.length}개 품목의 잔량을 정리합니다. 합계 ${UIUtils.formatNumber(totalCut)} EA 감소.`
+            + (skipped ? ` (입력값이 현재보다 큰 ${skipped}개 품목은 제외)` : '')
+            + ` 각 건은 'LOT 보정' 이력으로 남아 되돌릴 수 있습니다. 실행할까요?`;
+
+        UIUtils.confirm(msg, async function() {
+            await _applyResidualBulkCleanup(targets, totalCut, date, note, author);
+        });
+    }
+
+    async function _applyResidualBulkCleanup(targets, totalCut, date, note, author) {
+        let done = 0;
+        try {
+            for (let i = 0; i < targets.length; i++) {
+                const t = targets[i];
+                const detail = _calcResidualLotDetail(t.carModel, t.partName, t.color);
+                const lots = (detail.lots || [])
+                    .filter(function(l) { return (Number(l.qty) || 0) > 0; })
+                    .map(function(l) { return { paintLot: l.paintLot, injLot: l.injLot, qty: Math.max(0, Number(l.qty) || 0) }; })
+                    .sort(function(a, b) {
+                        return String(a.paintLot).localeCompare(String(b.paintLot)) ||
+                               String(a.injLot).localeCompare(String(b.injLot));
+                    });
+                const manualAdj = Math.max(0, Number(detail.manualAdj) || 0);
+                const capacity = lots.reduce(function(s, l) { return s + l.qty; }, 0);
+
+                // 지정 LOT부터 목표 수량을 채우고, 나머지는 미지정(LOT 미지정)에 배정한다.
+                let remainForLots = Math.min(t.target, capacity);
+                for (let j = 0; j < lots.length; j++) {
+                    const lot = lots[j];
+                    const keep = Math.min(lot.qty, remainForLots);
+                    remainForLots -= keep;
+                    if (keep === lot.qty) continue;
+                    await _neutralizePriorLotAdjustRecords(t.carModel, t.partName, t.color, lot.paintLot, lot.injLot);
+                    await Storage.add(STORE_LASER, {
+                        date: date,
+                        carModel: t.carModel,
+                        partName: t.partName,
+                        color: t.color,
+                        lotNo: lot.injLot,
+                        residualPaintLot: lot.paintLot,
+                        note: note,
+                        packUnit: t.packUnit,
+                        isManual: true,
+                        isResidualLotAdjust: true,
+                        residualLotAbsoluteQty: keep,
+                        quantity: (lot.qty - keep) || keep,
+                        isResidualManualIn: false,
+                        isResidualManualOut: true,
+                        author: author
+                    });
+                }
+
+                // LOT 미지정 잔량 초과분 출고
+                const keepUnassigned = Math.max(0, t.target - Math.min(t.target, capacity));
+                const cutUnassigned = manualAdj - keepUnassigned;
+                if (cutUnassigned > 0) {
+                    await Storage.add(STORE_LASER, {
+                        date: date,
+                        carModel: t.carModel,
+                        partName: t.partName,
+                        color: t.color,
+                        quantity: cutUnassigned,
+                        note: note + ' (LOT 미지정)',
+                        packUnit: t.packUnit,
+                        isManual: true,
+                        isResidualManualOut: true,
+                        author: author
+                    });
+                }
+                done++;
+            }
+        } catch (e) {
+            console.error('[LaserWip] saveResidualBulkCleanup failed:', e);
+            UIUtils.toast('일괄 정리 중 오류가 발생했습니다. ' + done + '건까지 반영됨: ' + (e && e.message ? e.message : '오류'), 'error');
+            refresh();
+            return;
+        }
+
+        UIUtils.closeModal();
+        UIUtils.toast(`레이져 잔량 ${done}개 품목 정리 완료 — 합계 ${UIUtils.formatNumber(totalCut)} EA 감소`, 'success');
+        refresh();
+    }
+
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
+             openResidualBulkCleanup, saveResidualBulkCleanup,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
              openEditManualEntry, saveEditManualEntry, removeManualEntry,
              onEditManualCarChange, onEditManualPartChange,
              openResidualInput, onResidualInCarChange, onResidualInPartChange, saveResidualInput,
              openResidualOut, onResidualOutCarChange, onResidualOutPartChange, onResidualOutColorChange, onResidualOutLotPick, saveResidualOut,
+             syncInspectionResidualOut,
              openEditResidualManualEntry, saveEditResidualManualEntry, removeResidualManualEntry,
              onEditResidualCarChange, onEditResidualPartChange,
              openEditLaserWorkIdentity, saveEditLaserWorkIdentity,

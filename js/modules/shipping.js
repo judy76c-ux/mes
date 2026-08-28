@@ -40,7 +40,7 @@ const ShippingStandbyModule = (function() {
             .ss-wait-table th,.ss-wait-table td{padding:clamp(6px,0.55vw,10px) clamp(6px,0.7vw,12px);vertical-align:middle;}
             .ss-wait-table th{white-space:nowrap;line-height:1.25;}
             .ss-wait-table .col-date{min-width:5.5em;white-space:nowrap;}
-            .ss-wait-table .col-src{min-width:3.8em;white-space:nowrap;}
+            .ss-wait-table .col-src{min-width:5.5em;white-space:nowrap;}
             .ss-wait-table .col-car{min-width:4.5em;white-space:nowrap;}
             .ss-wait-table .col-part{min-width:10em;white-space:nowrap;}
             .ss-wait-table .col-color{min-width:4em;white-space:nowrap;}
@@ -241,6 +241,16 @@ const ShippingStandbyModule = (function() {
         const srcLabel = s => s === 'laser_inspection' ? '레이져' : '도장';
         const srcColor = s => s === 'laser_inspection'
             ? 'var(--accent-purple,#a855f7)' : 'var(--accent-blue)';
+        const laserMissing = d => {
+            if (!d) return false;
+            if (d.laserMatchMissing) return true;
+            if (d.laserInspectionId && !Storage.getById(DB.STORES.LASER_INSPECTIONS, d.laserInspectionId)) return true;
+            if (d.laserWorkId && !Storage.getById(DB.STORES.LASER_WORK_LOG, d.laserWorkId)
+                && !d.laserInspectionId) return true;
+            return false;
+        };
+        waiting.sort((a, b) => Number(laserMissing(b)) - Number(laserMissing(a))
+            || String(b.laserWorkDate || b.date || '').localeCompare(String(a.laserWorkDate || a.date || '')));
 
         const waitingBody = document.getElementById('ssWaitingBody');
         if (!waitingBody) return;
@@ -261,10 +271,15 @@ const ShippingStandbyModule = (function() {
             const cntHtml = sum.found
                 ? `<span title="${_esc(tip)}" style="display:inline-block;min-width:2.2em;padding:2px 8px;border-radius:999px;font-size:0.78rem;font-weight:800;background:${sum.count ? '#dbeafe' : '#fef3c7'};color:${sum.count ? '#1d4ed8' : '#b45309'};">${sum.count}</span>`
                 : `<span title="기준서 미등록" style="display:inline-block;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;background:#fee2e2;color:#b91c1c;">없음</span>`;
+            const missing = laserMissing(d);
+            const srcHtml = missing
+                ? `<span style="font-size:0.78rem;font-weight:600;color:var(--accent-purple,#a855f7);">레이져</span>
+                   <span title="연결된 레이져 작업/검사 실적이 없습니다" style="display:inline-block;margin-top:3px;padding:1px 6px;border-radius:999px;font-size:0.68rem;font-weight:800;background:#fee2e2;color:#b91c1c;white-space:nowrap;">실적 없음</span>`
+                : `<span style="font-size:0.78rem;font-weight:600;color:${srcColor(d.source)};">${srcLabel(d.source)}</span>`;
             return `
-            <tr>
+            <tr${missing ? ' style="background:#fff7ed;"' : ''}>
                 <td class="col-date">${d.date || '-'}</td>
-                <td class="col-src"><span style="font-size:0.78rem;font-weight:600;color:${srcColor(d.source)};">${srcLabel(d.source)}</span></td>
+                <td class="col-src">${srcHtml}</td>
                 <td class="col-car">${_esc(d.carModel || '-')}</td>
                 <td class="col-part"><strong>${_esc(d.partName || '-')}</strong></td>
                 <td class="col-color">${_esc(d.color || '-')}</td>
@@ -518,12 +533,15 @@ const ShippingStandbyModule = (function() {
     function removeStandby(id) {
         const item = Storage.getById(SB_STORE, id);
         const isPaintingSource = item && item.source === 'painting_inspection' && item.paintingWorkId;
+        const isUnmatchedLaser = !!(item && item.laserMatchMissing);
         const confirmMsg = isPaintingSource
             ? '삭제하면 도장 검사 일지가 외관 검사 대기 상태로 복원됩니다. 삭제하시겠습니까?'
-            : '대기 항목을 삭제하시겠습니까?';
+            : isUnmatchedLaser
+                ? '레이져 실적이 없는 대기 항목입니다. 삭제하시겠습니까?'
+                : '대기 항목을 삭제하시겠습니까?';
 
         UIUtils.confirm(confirmMsg, async () => {
-            if (isPaintingSource) {
+            if (isPaintingSource && !isUnmatchedLaser) {
                 // 도장 작업 inspectionStatus 초기화 → 외관 검사 대기로 복원
                 await Storage.update(DB.STORES.PAINTING_WORK, item.paintingWorkId, {
                     inspectionStatus: null,
@@ -553,6 +571,10 @@ const ShippingStandbyModule = (function() {
     }
 
     function removeHistory(id) {
+        if (typeof ShippingInspectionModule !== 'undefined' && ShippingInspectionModule.deleteHistory) {
+            ShippingInspectionModule.deleteHistory(id);
+            return;
+        }
         UIUtils.confirm('검사 이력을 삭제하시겠습니까?', async () => {
             await Storage.remove(SI_STORE, id);
             UIUtils.toast('삭제되었습니다.', 'success');
@@ -3438,6 +3460,45 @@ const ShippingInspectionModule = (function() {
         return AuthModule.canWritePage('shipping-standby');
     }
 
+    function _isHistoryAdmin() {
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            return AuthModule.isAdminUser();
+        }
+        if (typeof AuthModule === 'undefined' || !AuthModule.getCurrentUser) return true;
+        const user = AuthModule.getCurrentUser();
+        if (!user) return false;
+        const roles = [...(Array.isArray(user.roles) ? user.roles : []), user.role].filter(Boolean).map(String);
+        return roles.includes('admin');
+    }
+
+    // 삭제는 관리자, 또는 이 화면 입력 권한이 있는 사용자
+    function _canDeleteHistoryPerm() {
+        return _isHistoryAdmin() || _canEditHistoryPerm();
+    }
+
+    function _sameText(a, b) {
+        return String(a || '').trim() === String(b || '').trim();
+    }
+
+    function _linkedInbound(rec) {
+        if (!rec) return [];
+        const inv = Storage.getAll(DB.STORES.PRODUCT_INVENTORY) || [];
+        const byStandby = rec.standbyId
+            ? inv.filter(d => (d.type || '입고') === '입고'
+                && String(d.source || '') === '출하검사 합격'
+                && String(d.standbyId || '') === String(rec.standbyId))
+            : [];
+        if (byStandby.length) return byStandby;
+        return inv.filter(d => (d.type || '입고') === '입고'
+            && String(d.source || '') === '출하검사 합격'
+            && _sameText(d.date, rec.date)
+            && _sameText(d.carModel, rec.carModel)
+            && _sameText(d.partName, rec.partName)
+            && _sameText(d.color, rec.color)
+            && _sameText(d.lotNo, rec.lotNo)
+            && Number(d.quantity || 0) === Number(rec.lotSize || rec.quantity || 0));
+    }
+
     function _historyItemsBodyHtml(items, readOnly) {
         const list = (items && items.length) ? items : [{}];
         const method = _siSharedField(list, 'method', '육안');
@@ -3640,7 +3701,11 @@ const ShippingInspectionModule = (function() {
             </div></div>
 
             <!-- 버튼 -->
-            <div style="display:flex;gap:8px;justify-content:flex-end;padding-top:4px;">
+            <div style="display:flex;gap:8px;justify-content:flex-end;align-items:center;padding-top:4px;flex-wrap:wrap;">
+                ${_canDeleteHistoryPerm()
+                    ? `<button class="btn btn-danger" style="margin-right:auto;" onclick="ShippingInspectionModule.deleteHistory('${rec.id}')">
+                        <span class="material-symbols-outlined">delete</span> 삭제</button>`
+                    : ''}
                 ${readOnly
                     ? (`<button class="btn btn-secondary" onclick="ShippingInspectionModule._closeModal()">닫기</button>`
                         + (_canEditHistoryPerm()
@@ -3700,12 +3765,446 @@ const ShippingInspectionModule = (function() {
         search();
     }
 
-    function remove(id) {
-        UIUtils.confirm('삭제하시겠습니까?', async () => {
-            await Storage.remove(STORE, id);
-            UIUtils.toast('삭제되었습니다.', 'success');
-            search();
+    function _tokenSet(value) {
+        return new Set(String(value == null ? '' : value)
+            .split(/[,/|]/)
+            .map(s => String(s || '').trim())
+            .filter(Boolean));
+    }
+
+    function _tokensOverlap(a, b) {
+        const sa = a instanceof Set ? a : _tokenSet(a);
+        const sb = b instanceof Set ? b : _tokenSet(b);
+        if (!sa.size || !sb.size) return false;
+        for (const x of sa) {
+            for (const y of sb) {
+                if (x === y) return true;
+                if (x.length >= 6 && y.length >= 6 && (x.includes(y) || y.includes(x))) return true;
+            }
+        }
+        return false;
+    }
+
+    function _normDate(v) {
+        const s = String(v || '').trim();
+        if (!s) return '';
+        let m = s.match(/(\d{4})-(\d{2})-(\d{2})/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+        m = s.match(/(\d{4})(\d{2})(\d{2})/);
+        if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+        m = s.match(/^(\d{2})(\d{2})(\d{2})$/);
+        if (m) return `20${m[1]}-${m[2]}-${m[3]}`;
+        return s.slice(0, 10);
+    }
+
+    function _normTime(v) {
+        const s = String(v || '').trim();
+        const m = s.match(/(\d{1,2}):(\d{2})/);
+        if (!m) return '';
+        return `${String(Number(m[1])).padStart(2, '0')}:${m[2]}`;
+    }
+
+    function _timeDiffMin(a, b) {
+        const ta = _normTime(a);
+        const tb = _normTime(b);
+        if (!ta || !tb) return null;
+        const toMin = t => {
+            const p = t.split(':').map(Number);
+            return p[0] * 60 + p[1];
+        };
+        return Math.abs(toMin(ta) - toMin(tb));
+    }
+
+    function _uniqNormDates(values) {
+        return [...new Set((values || []).map(_normDate).filter(Boolean))];
+    }
+
+    function _uniqNormTimes(values) {
+        return [...new Set((values || []).map(_normTime).filter(Boolean))];
+    }
+
+    function _bestTimeDiff(times, values) {
+        let best = null;
+        (values || []).forEach(v => {
+            (times || []).forEach(t => {
+                const diff = _timeDiffMin(t, v);
+                if (diff == null) return;
+                if (best == null || diff < best) best = diff;
+            });
         });
+        return best;
+    }
+
+    function _laserLotInfoFromInsp(insp) {
+        const work = insp && insp.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, insp.workLogId) : null;
+        const source = work || insp || {};
+        const paintLots = Array.isArray(source.paintLots) ? source.paintLots : [];
+        const paintDates = paintLots.length
+            ? [...new Set(paintLots.map(lot => lot && (lot.paintDate || lot.paintLot)).filter(Boolean))]
+            : [source.paintDate || source.paintingDate || insp.paintDate || insp.paintingDate].filter(Boolean);
+        const injectionLots = paintLots.length
+            ? [...new Set(paintLots.map(lot => lot && lot.lotNo).filter(Boolean))]
+            : [source.paintLot || source.lotNo || insp.lotNo || insp.injectionLot].filter(Boolean);
+        return {
+            work,
+            laserDate: source.date || insp.date || '',
+            laserTime: source.startTime || source.inspectionStartTime || insp.inspectionStartTime || insp.startTime || '',
+            paintDates,
+            injectionLots
+        };
+    }
+
+    function _shouldRematchLaser(rec, sb) {
+        const src = String((sb && sb.source) || rec.source || '').trim();
+        if (src === 'laser_inspection') return true;
+        if (src === 'painting_inspection' || src === '도장품 출고') return false;
+        if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.isAfterLaserDrainProduct === 'function'
+            && LaserWipModule.isAfterLaserDrainProduct(rec.carModel || '', rec.partName || '')) {
+            return false;
+        }
+        return true;
+    }
+
+    function _findMatchingLaserRecord(rec, existingSb) {
+        const recCar = String(rec.carModel || '').trim();
+        const recPart = String(rec.partName || '').trim();
+        const recColor = String(rec.color || '').trim();
+        const recInj = _tokenSet(rec.injectionLot || rec.lotNo);
+        const recPaint = _tokenSet(rec.paintLot || rec.paintingDate);
+        const recQty = Number(rec.lotSize || rec.quantity || rec.goodQty || 0);
+        const candDates = _uniqNormDates([
+            rec.laserWorkDate, rec.laserLot, rec.date,
+            existingSb && existingSb.laserWorkDate, existingSb && existingSb.laserLot, existingSb && existingSb.date
+        ]);
+        const candTimes = _uniqNormTimes([
+            rec.startTime, rec.endTime,
+            existingSb && existingSb.laserStartTime, existingSb && existingSb.laserEndTime,
+            existingSb && existingSb.startTime, existingSb && existingSb.endTime
+        ]);
+
+        const linkedInspId = (existingSb && existingSb.laserInspectionId) || rec.laserInspectionId || '';
+        if (linkedInspId) {
+            const byId = Storage.getById(DB.STORES.LASER_INSPECTIONS, linkedInspId);
+            if (byId) {
+                const work = byId.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, byId.workLogId) : null;
+                return { inspection: byId, work: work || null, score: 100 };
+            }
+        }
+        const linkedWorkId = (existingSb && existingSb.laserWorkId) || rec.laserWorkId || rec.workLogId || '';
+        if (linkedWorkId) {
+            const work = Storage.getById(DB.STORES.LASER_WORK_LOG, linkedWorkId);
+            if (work) {
+                const insp = (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [])
+                    .find(i => String(i.workLogId || '') === String(work.id));
+                return { inspection: insp || null, work, score: 90 };
+            }
+        }
+
+        function scoreRow(row, kind) {
+            if (!row) return null;
+            if (String(row.carModel || '').trim() !== recCar) return null;
+            if (String(row.partName || '').trim() !== recPart) return null;
+            const rowColor = String(row.color || '').trim();
+            if (recColor && rowColor && recColor !== rowColor) return null;
+
+            const work = kind === 'work'
+                ? row
+                : (row.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, row.workLogId) : null);
+            const lot = _laserLotInfoFromInsp(kind === 'work' ? Object.assign({}, row, { workLogId: row.id }) : row);
+            const rowDates = _uniqNormDates([row.date, work && work.date, lot.laserDate]);
+            const rowTimes = _uniqNormTimes([
+                row.inspectionStartTime, row.inspectionEndTime, row.startTime, row.endTime,
+                work && work.startTime, work && work.endTime, lot.laserTime
+            ]);
+            const dateHit = rowDates.some(d => candDates.includes(d));
+            const timeDiff = _bestTimeDiff(candTimes, rowTimes);
+            const timeHit = timeDiff != null && timeDiff <= 30;
+
+            let score = 10;
+            if (rowColor && recColor && rowColor === recColor) score += 3;
+            if (dateHit) score += 15;
+            if (timeDiff === 0) score += 12;
+            else if (timeHit) score += 8;
+            if (_tokensOverlap(recInj, lot.injectionLots.join(','))) score += 6;
+            if (_tokensOverlap(recPaint, lot.paintDates.join(','))) score += 4;
+            const qty = kind === 'work'
+                ? (Number(row.shippingEligibleQty) || Number(row.quantity) || 0)
+                : Number(row.packQty || 0);
+            if (kind === 'inspection' && !(qty > 0)) return null;
+            if (recQty && qty && recQty === qty) score += 4;
+            else if (recQty && qty && Math.abs(recQty - qty) <= Math.max(1, recQty * 0.02)) score += 2;
+
+            // 차종·품명 + (날짜 또는 시간)이 있어야 매칭으로 인정
+            if (!dateHit && !timeHit) return null;
+            return { score, dateHit, timeHit, work: work || (kind === 'work' ? row : null) };
+        }
+
+        let best = null;
+        (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).forEach(insp => {
+            const scored = scoreRow(insp, 'inspection');
+            if (!scored) return;
+            if (!best || scored.score > best.score) {
+                best = { inspection: insp, work: scored.work, score: scored.score };
+            }
+        });
+        (Storage.getAll(DB.STORES.LASER_WORK_LOG) || []).forEach(work => {
+            const scored = scoreRow(work, 'work');
+            if (!scored) return;
+            if (best && best.work && String(best.work.id) === String(work.id) && scored.score <= best.score) return;
+            if (!best || scored.score > best.score) {
+                const insp = (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [])
+                    .find(i => String(i.workLogId || '') === String(work.id));
+                best = { inspection: insp || null, work, score: scored.score };
+            }
+        });
+        return best;
+    }
+
+    function _customerOf(carModel, partName, color) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const prod = products.find(p =>
+            String(p.carModel || '') === String(carModel || '') &&
+            String(p.partName || '') === String(partName || '') &&
+            String(p.color || '') === String(color || ''))
+            || products.find(p =>
+                String(p.carModel || '') === String(carModel || '') &&
+                String(p.partName || '') === String(partName || ''));
+        return prod ? (prod.customer || '') : '';
+    }
+
+    function _standbyPayloadFromLaser(insp, rec) {
+        const lot = _laserLotInfoFromInsp(insp);
+        const paintingDate = lot.paintDates.join(', ');
+        const lotNo = lot.injectionLots.join(', ');
+        const laserLot = lot.laserDate || insp.date || rec.laserLot || '';
+        const packQty = Number(insp.packQty) || Number(rec.lotSize) || 0;
+        const packUnit = Number(insp.packUnit) || 0;
+        const boxCount = Number(insp.packBoxCount) || (packUnit > 0 ? Math.floor(packQty / packUnit) : 0);
+        return {
+            date: insp.date || rec.date || (typeof UIUtils !== 'undefined' ? UIUtils.today() : ''),
+            source: 'laser_inspection',
+            laserInspectionId: insp.id || '',
+            laserWorkId: insp.workLogId || '',
+            laserStartTime: insp.inspectionStartTime || (lot.work && lot.work.startTime) || '',
+            laserEndTime: insp.inspectionEndTime || (lot.work && lot.work.endTime) || '',
+            laserMatchMissing: false,
+            carModel: insp.carModel || rec.carModel || '',
+            partName: insp.partName || rec.partName || '',
+            color: insp.color || rec.color || '',
+            paintingDate,
+            paintLot: paintingDate,
+            lotNo,
+            injectionLot: lotNo,
+            laserLot,
+            laserWorkDate: lot.laserDate || '',
+            inspectionQty: packQty,
+            goodQty: packQty,
+            packUnit,
+            boxCount,
+            laserResidualQty: Number(insp.residualQty) || 0,
+            customer: _customerOf(insp.carModel || rec.carModel, insp.partName || rec.partName, insp.color || rec.color),
+            status: '대기',
+            inspectionDate: null
+        };
+    }
+
+    function _standbyPayloadFromWork(work, rec) {
+        const lot = _laserLotInfoFromInsp(Object.assign({}, work, { workLogId: work.id }));
+        const paintingDate = lot.paintDates.join(', ');
+        const lotNo = lot.injectionLots.join(', ');
+        const laserLot = lot.laserDate || work.date || rec.laserLot || '';
+        const packQty = Number(work.shippingEligibleQty) || Number(work.quantity) || Number(rec.lotSize) || 0;
+        const packUnit = Number(rec.packUnit) || 0;
+        const boxCount = Number(rec.boxCount) || (packUnit > 0 ? Math.floor(packQty / packUnit) : 0);
+        return {
+            date: work.date || rec.date || (typeof UIUtils !== 'undefined' ? UIUtils.today() : ''),
+            source: 'laser_inspection',
+            laserInspectionId: '',
+            laserWorkId: work.id || '',
+            laserStartTime: work.startTime || '',
+            laserEndTime: work.endTime || '',
+            laserMatchMissing: false,
+            carModel: work.carModel || rec.carModel || '',
+            partName: work.partName || rec.partName || '',
+            color: work.color || rec.color || '',
+            paintingDate,
+            paintLot: paintingDate,
+            lotNo,
+            injectionLot: lotNo,
+            laserLot,
+            laserWorkDate: lot.laserDate || work.date || '',
+            inspectionQty: packQty,
+            goodQty: packQty,
+            packUnit,
+            boxCount,
+            laserResidualQty: 0,
+            customer: _customerOf(work.carModel || rec.carModel, work.partName || rec.partName, work.color || rec.color),
+            status: '대기',
+            inspectionDate: null
+        };
+    }
+
+    function _standbyPayloadFromRec(rec) {
+        const lots = _lotFields(rec);
+        const qty = Number(rec.lotSize || rec.quantity || rec.goodQty || 0);
+        return {
+            date: rec.date || (typeof UIUtils !== 'undefined' ? UIUtils.today() : ''),
+            source: rec.source || '',
+            carModel: rec.carModel || '',
+            partName: rec.partName || '',
+            color: rec.color || '',
+            paintingDate: lots.paintLot,
+            paintLot: lots.paintLot,
+            lotNo: lots.injectionLot,
+            injectionLot: lots.injectionLot,
+            laserLot: lots.laserLot,
+            laserWorkDate: rec.laserWorkDate || lots.laserLot,
+            inspectionQty: qty,
+            goodQty: qty,
+            customer: rec.customer || _customerOf(rec.carModel, rec.partName, rec.color),
+            laserMatchMissing: true,
+            status: '대기',
+            inspectionDate: null
+        };
+    }
+
+    function _findExistingStandbyForLaser(insp, excludeId) {
+        if (!insp) return null;
+        const rows = Storage.getAll(SB_STORE) || [];
+        const lot = _laserLotInfoFromInsp(insp);
+        const packQty = Number(insp.packQty) || 0;
+        return rows.find(sb => {
+            if (excludeId && sb.id === excludeId) return false;
+            if (sb.laserInspectionId && insp.id && String(sb.laserInspectionId) === String(insp.id)) return true;
+            if (String(sb.source || '') !== 'laser_inspection') return false;
+            if (String(sb.carModel || '').trim() !== String(insp.carModel || '').trim()) return false;
+            if (String(sb.partName || '').trim() !== String(insp.partName || '').trim()) return false;
+            const sbColor = String(sb.color || '').trim();
+            const inspColor = String(insp.color || '').trim();
+            if (sbColor && inspColor && sbColor !== inspColor) return false;
+            const sameLot = _tokensOverlap(sb.lotNo || sb.injectionLot, lot.injectionLots.join(','))
+                || _tokensOverlap(sb.laserLot || sb.laserWorkDate, lot.laserDate);
+            const sameQty = packQty > 0 && Number(sb.goodQty || sb.inspectionQty || 0) === packQty;
+            return sameLot && sameQty;
+        }) || null;
+    }
+
+    async function _restoreStandbyAfterDelete(rec) {
+        const existing = rec.standbyId ? Storage.getById(SB_STORE, rec.standbyId) : null;
+        const tryLaser = _shouldRematchLaser(rec, existing);
+        const matched = tryLaser ? _findMatchingLaserRecord(rec, existing) : null;
+        const now = new Date().toISOString();
+
+        if (matched && (matched.inspection || matched.work)) {
+            const payload = Object.assign(
+                matched.inspection
+                    ? _standbyPayloadFromLaser(matched.inspection, rec)
+                    : _standbyPayloadFromWork(matched.work, rec),
+                { updatedAt: now, laserMatchMissing: false }
+            );
+            if (existing) {
+                await Storage.update(SB_STORE, existing.id, payload);
+                return { id: existing.id, rematched: true, missing: false };
+            }
+            const dup = matched.inspection ? _findExistingStandbyForLaser(matched.inspection, null) : null;
+            if (dup) {
+                await Storage.update(SB_STORE, dup.id, payload);
+                return { id: dup.id, rematched: true, missing: false };
+            }
+            const added = await Storage.add(SB_STORE, payload);
+            return { id: added && added.id, rematched: true, missing: false };
+        }
+
+        if (tryLaser) {
+            const payload = Object.assign(_standbyPayloadFromRec(rec), {
+                updatedAt: now,
+                laserMatchMissing: true,
+                source: (existing && existing.source) || rec.source || 'laser_inspection'
+            });
+            if (existing) {
+                await Storage.update(SB_STORE, existing.id, payload);
+                return { id: existing.id, rematched: false, missing: true };
+            }
+            const added = await Storage.add(SB_STORE, payload);
+            return { id: added && added.id, rematched: false, missing: true };
+        }
+
+        if (existing) {
+            await Storage.update(SB_STORE, existing.id, {
+                status: '대기',
+                inspectionDate: null,
+                laserMatchMissing: false,
+                updatedAt: now
+            });
+            return { id: existing.id, rematched: false, missing: false };
+        }
+
+        const added = await Storage.add(SB_STORE, Object.assign(_standbyPayloadFromRec(rec), {
+            updatedAt: now,
+            laserMatchMissing: false
+        }));
+        return { id: added && added.id, rematched: false, missing: false };
+    }
+
+    async function deleteHistory(id) {
+        if (!_canDeleteHistoryPerm()) {
+            UIUtils.toast('삭제 권한이 없습니다.', 'warning');
+            return;
+        }
+        const rec = Storage.getById(STORE, id);
+        if (!rec) { UIUtils.toast('검사 이력을 찾을 수 없습니다.', 'error'); return; }
+
+        const inbound = _linkedInbound(rec);
+        let reliCnt = 0;
+        try {
+            const reli = (await Storage.getConfigValue('shipping_reliability_records_v1').catch(() => [])) || [];
+            reliCnt = (Array.isArray(reli) ? reli : []).filter(r => String(r.inspectionId || '') === String(id)).length;
+        } catch (e) { /* ignore */ }
+
+        const previewSb = rec.standbyId ? Storage.getById(SB_STORE, rec.standbyId) : null;
+        const tryLaser = _shouldRematchLaser(rec, previewSb);
+        const previewMatch = tryLaser ? _findMatchingLaserRecord(rec, previewSb) : null;
+        const parts = ['이 출하검사(외관) 이력을 삭제하시겠습니까?', '해당 품목은 출하검사 대기로 복원됩니다.'];
+        if (inbound.length) parts.push(`제품 창고 입고 ${inbound.length}건이 함께 취소됩니다.`);
+        if (reliCnt) parts.push(`연결된 신뢰성 검사 ${reliCnt}건은 그대로 남습니다.`);
+        if (tryLaser && !(previewMatch && (previewMatch.inspection || previewMatch.work))) {
+            parts.push('연결된 레이져 실적(작업/검사)이 없습니다. 검사 대기에 「레이져 실적 없음」으로 표시되며, 대기에서 삭제할 수 있습니다.');
+        } else if (tryLaser) {
+            parts.push('레이져 실적을 차종·품명·날짜·시간으로 다시 맞춰 검사 대기로 복원합니다.');
+        }
+
+        UIUtils.confirm(parts.join(' '), async () => {
+            let restore = { rematched: false };
+            try {
+                restore = await _restoreStandbyAfterDelete(rec) || restore;
+            } catch (e) {
+                console.error('[ShippingInspection] standby restore failed:', e);
+                UIUtils.toast('출하검사 대기 복원에 실패했습니다. 이력을 삭제하지 않았습니다.', 'error');
+                return;
+            }
+            for (const row of inbound) {
+                if (row && row.id) await Storage.remove(DB.STORES.PRODUCT_INVENTORY, row.id);
+            }
+            await Storage.remove(STORE, id);
+            _closeModal();
+            UIUtils.toast(
+                restore && restore.rematched
+                    ? '삭제되었습니다. 레이져 실적(차종·품명·날짜·시간)과 매칭하여 출하검사 대기로 복원되었습니다.'
+                    : restore && restore.missing
+                        ? '삭제되었습니다. 레이져 실적이 없어 대기에 「실적 없음」으로 표시했습니다. 대기 목록에서 삭제할 수 있습니다.'
+                        : '삭제되었습니다. 출하검사 대기로 복원되었습니다.',
+                restore && restore.missing ? 'warning' : 'success'
+            );
+            if (typeof ShippingStandbyModule !== 'undefined') {
+                ShippingStandbyModule.loadData();
+                ShippingStandbyModule.loadHistory();
+            }
+            if (document.getElementById('siStats') && document.getElementById('siTableBody')) search();
+        });
+    }
+
+    function remove(id) {
+        deleteHistory(id);
     }
 
     function exportData() {
@@ -3733,7 +4232,7 @@ const ShippingInspectionModule = (function() {
         _save,
         remove,
         exportData,
-        openHistoryView, openHistoryEdit, saveHistoryEdit,
+        openHistoryView, openHistoryEdit, saveHistoryEdit, deleteHistory,
         addHistoryItemRow, removeHistoryItemRow
     };
 })();
@@ -3831,28 +4330,52 @@ const ProductWarehouseModule = (function() {
             .filter(d => d.type !== '출고')
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
-        const rows = data.length ? data.map(d => `
+        const geneRows = data.map(function(d) { return { d: d, g: _pwGenealogy(d) }; });
+        const showLaser = geneRows.some(function(row) { return row.g.isLaser || row.g.laserDate; });
+        const colCount = showLaser ? 12 : 11;
+
+        const rows = geneRows.length ? geneRows.map(function(row) {
+            const d = row.d;
+            const g = row.g;
+            const laserCell = showLaser
+                ? `<td style="white-space:nowrap;">${_pwLaserLotLink(g)}</td>`
+                : '';
+            return `
             <tr>
-                <td style="white-space:nowrap;">${d.date || '-'}</td>
-                <td>${d.carModel || '-'}</td>
-                <td><strong>${d.partName || '-'}</strong></td>
-                <td>${d.color || '-'}</td>
-                <td style="text-align:right;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
-                <td style="font-family:monospace;font-size:0.8rem;">${d.lotNo || '-'}</td>
-                <td style="font-family:monospace;font-size:0.8rem;">${d.paintingDate || '-'}</td>
-                <td style="font-size:0.82rem;color:var(--text-secondary);">${d.source || '-'}</td>
-            </tr>`).join('')
-            : `<tr><td colspan="8" style="text-align:center;padding:40px;color:var(--text-muted);">입고 이력이 없습니다.</td></tr>`;
+                <td style="white-space:nowrap;">${_escapeHtml(d.date || '-')}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(d.carModel || '-')}</td>
+                <td style="white-space:nowrap;"><strong>${_escapeHtml(d.partName || '-')}</strong></td>
+                <td style="white-space:nowrap;">${_escapeHtml(d.color || '-')}</td>
+                <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
+                ${laserCell}
+                <td style="white-space:nowrap;font-size:0.82rem;color:var(--text-secondary);">${_escapeHtml(d.source || '-')}</td>
+            </tr>`;
+        }).join('')
+            : `<tr><td colspan="${colCount}" style="text-align:center;padding:40px;color:var(--text-muted);">입고 이력이 없습니다.</td></tr>`;
 
         el.innerHTML = `
             <div class="card">
                 <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
+                    <div class="data-table-wrapper" style="overflow-x:auto;">
+                        <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                             <thead><tr>
-                                <th>날짜</th><th>차종</th><th>품명</th><th>컬러</th>
-                                <th style="text-align:right;">수량</th>
-                                <th>사출 LOT</th><th>도장 LOT</th><th>출처</th>
+                                <th style="white-space:nowrap;">날짜</th>
+                                <th style="white-space:nowrap;">차종</th>
+                                <th style="white-space:nowrap;">품명</th>
+                                <th style="white-space:nowrap;">컬러</th>
+                                <th style="text-align:right;white-space:nowrap;">수량</th>
+                                <th style="white-space:nowrap;">사출 LOT</th>
+                                <th style="white-space:nowrap;">수입검사일</th>
+                                <th style="white-space:nowrap;">도장 LOT</th>
+                                <th style="white-space:nowrap;">도료 LOT</th>
+                                <th style="white-space:nowrap;">도료수입검사일</th>
+                                ${showLaser ? '<th style="white-space:nowrap;">레이져Lot</th>' : ''}
+                                <th style="white-space:nowrap;">출처</th>
                             </tr></thead>
                             <tbody>${rows}</tbody>
                         </table>
@@ -4454,6 +4977,341 @@ const ProductWarehouseModule = (function() {
         return out;
     }
 
+    function _pwSplitLots(value) {
+        return String(value || '').split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+    }
+
+    function _jsAttr(value) {
+        return String(value || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    }
+
+    function _pwMutedDash() {
+        return '<span style="color:var(--text-muted);">-</span>';
+    }
+
+    function _pwClickLink(label, onclick, title) {
+        const text = String(label || '').trim();
+        if (!text || text === '-') return _pwMutedDash();
+        const html = _escapeHtml(text);
+        if (!onclick) {
+            return `<span style="font-family:monospace;font-size:0.8rem;">${html}</span>`;
+        }
+        return `<a href="javascript:void(0)"
+            onclick="event.preventDefault();event.stopPropagation();${onclick}"
+            style="color:var(--accent-blue);text-decoration:underline;cursor:pointer;font-family:monospace;font-size:0.8rem;font-weight:600;"
+            title="${_escapeHtml(title || '새창에서 해당 실적 보기')}">${html}</a>`;
+    }
+
+    function _pwJoinLinks(parts) {
+        const list = (parts || []).filter(Boolean);
+        return list.length ? list.join(', ') : _pwMutedDash();
+    }
+
+    function _pwIsLaserProcessName(value) {
+        return /레이[저져]|laser/i.test(String(value || ''));
+    }
+
+    function _pwIsLaserProduct(car, part, color) {
+        if (_pwIsLaserProcessName(part)) return true;
+        const carN = String(car || '').trim();
+        const partN = String(part || '').trim();
+        const colorN = String(color || '').trim();
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.some(function(p) {
+            if (String(p.carModel || '').trim() !== carN) return false;
+            if (String(p.partName || '').trim() !== partN) return false;
+            if (colorN && p.color && String(p.color || '').trim() !== colorN) return false;
+            return [p.process1, p.process2, p.process3, p.process4].some(_pwIsLaserProcessName);
+        });
+    }
+
+    function _injectionInspHitsForLot(injPartName, carModel, lotNo) {
+        if (!lotNo) return [];
+        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const lot = String(lotNo).trim();
+        function collect(requirePart) {
+            const hits = [];
+            inspections.forEach(function(d) {
+                if (requirePart && injPartName && String(d.partName || '') !== String(injPartName)) return;
+                if (carModel && d.carModel && String(d.carModel) !== String(carModel)) return;
+                const lotList = (Array.isArray(d.lots) && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo }] : []);
+                if (lotList.some(function(l) { return String(l.lotNo || '').trim() === lot; })) {
+                    hits.push({ id: d.id, date: d.date || '' });
+                }
+            });
+            hits.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
+            return hits;
+        }
+        const exact = collect(true);
+        if (exact.length || !injPartName) return exact;
+        return collect(false);
+    }
+
+    function _findPaintingWorkByLot(rec) {
+        if (!rec) return null;
+        const day = String(rec.paintingDate || rec.paintLot || '').slice(0, 10);
+        const car = String(rec.carModel || '').trim();
+        const color = String(rec.color || '').trim();
+        const lots = _pwSplitLots(rec.lotNo || rec.injectionLot);
+        const works = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        const cands = works.filter(function(w) {
+            if (car && String(w.carModel || '').trim() && String(w.carModel || '').trim() !== car) return false;
+            if (day && String(w.date || '').slice(0, 10) !== day) return false;
+            if (color && String(w.color || '').trim() && String(w.color || '').trim() !== color) return false;
+            if (lots.length && Array.isArray(w.lots) && w.lots.length) {
+                return w.lots.some(function(l) { return lots.indexOf(String(l.lotNo || '').trim()) >= 0; });
+            }
+            return !!day;
+        });
+        if (!cands.length) return null;
+        cands.sort(function(a, b) {
+            return String(b.registeredAt || b.date || '').localeCompare(String(a.registeredAt || a.date || ''));
+        });
+        return cands[0];
+    }
+
+    function _paintLotDetailsForWork(work) {
+        const out = [];
+        const seen = {};
+        function push(name, prodLot, inspDate, inspId) {
+            const lot = String(prodLot || '').trim();
+            if (!lot) return;
+            const key = String(name || '') + '|' + lot;
+            if (seen[key]) return;
+            seen[key] = true;
+            out.push({
+                name: String(name || '').trim(),
+                prodLot: lot,
+                inspDate: String(inspDate || '').slice(0, 10),
+                inspId: String(inspId || '').trim()
+            });
+        }
+        const t = (typeof Trace !== 'undefined') ? Trace.of(work) : {};
+        const mats = (t.paint && Array.isArray(t.paint.materials)) ? t.paint.materials : [];
+        mats.forEach(function(m) { push(m.name, m.prodLot, m.inspDate, m.inspId); });
+        if (out.length) return out;
+        const workId = work && work.id;
+        if (!workId) return out;
+        const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
+            .filter(function(m) { return m._docKind === 'paint_mix' && m.workId === workId; });
+        mixes.forEach(function(m) {
+            (m.usages || []).forEach(function(u) {
+                const lot = u.prodLot || u.lotNo || '';
+                let inspDate = '';
+                let inspId = String(u.sourceInspectionId || '').trim();
+                if (typeof Trace !== 'undefined' && Trace.resolvePaintInspection) {
+                    const insp = Trace.resolvePaintInspection(u.materialId, lot);
+                    inspDate = insp.inspDate || '';
+                    inspId = insp.inspId || inspId;
+                }
+                push(u.paintName, lot, inspDate, inspId);
+            });
+        });
+        return out;
+    }
+
+    function _findLaserWorkForInv(rec, sb) {
+        const linkedWorkId = (sb && sb.laserWorkId) || rec.laserWorkId || rec.workLogId || '';
+        if (linkedWorkId) {
+            const byId = Storage.getById(DB.STORES.LASER_WORK_LOG, linkedWorkId);
+            if (byId) return byId;
+        }
+        const linkedInspId = (sb && sb.laserInspectionId) || rec.laserInspectionId || '';
+        if (linkedInspId) {
+            const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, linkedInspId);
+            if (insp && insp.workLogId) {
+                const byInsp = Storage.getById(DB.STORES.LASER_WORK_LOG, insp.workLogId);
+                if (byInsp) return byInsp;
+            }
+        }
+        const car = String(rec.carModel || '').trim();
+        const part = String(rec.partName || '').trim();
+        const color = String(rec.color || '').trim();
+        const lots = _pwSplitLots(rec.lotNo || rec.injectionLot);
+        const works = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        const cands = works.filter(function(w) {
+            if (car && String(w.carModel || '').trim() !== car) return false;
+            if (part && String(w.partName || '').trim() !== part) return false;
+            if (color && String(w.color || '').trim() && String(w.color || '').trim() !== color) return false;
+            if (!lots.length) return true;
+            const wLots = _pwSplitLots(w.paintLot || w.lotNo || w.injectionLot);
+            if (!wLots.length) return true;
+            return lots.some(function(lot) { return wLots.indexOf(lot) >= 0; });
+        });
+        if (!cands.length) return null;
+        cands.sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+        return cands[0];
+    }
+
+    function _pwGenealogy(rec) {
+        const car = rec.carModel || '';
+        const part = rec.partName || '';
+        const color = rec.color || '';
+        const injLotsRaw = _pwSplitLots(rec.lotNo || rec.injectionLot);
+        const paintingDate = String(rec.paintingDate || rec.paintLot || '').trim();
+        const sb = rec.standbyId ? Storage.getById(DB.STORES.SHIPPING_STANDBY, rec.standbyId) : null;
+        const work = _findPaintingWorkForInv(rec) || _findPaintingWorkByLot(rec);
+        const injPartName = work ? (work.injPartName || work.partName || part) : part;
+        const t = (typeof Trace !== 'undefined') ? Trace.of(work || rec) : {};
+
+        const injLots = injLotsRaw.map(function(lot) {
+            let inspId = '';
+            let inspDate = '';
+            if (Array.isArray(t.injLots)) {
+                const hit = t.injLots.find(function(r) { return String(r.lot || '') === lot; });
+                if (hit) {
+                    inspId = hit.inspId || '';
+                    inspDate = hit.inspDate || '';
+                }
+            }
+            if (!inspDate && t.inj && t.inj.lot === lot) {
+                inspId = t.inj.inspId || inspId;
+                inspDate = t.inj.inspDate || inspDate;
+            }
+            if (!inspId || !inspDate) {
+                const hits = _injectionInspHitsForLot(injPartName, car, lot);
+                if (hits[0]) {
+                    inspId = inspId || hits[0].id;
+                    inspDate = inspDate || hits[0].date;
+                }
+            }
+            return { lot: lot, inspId: inspId, inspDate: String(inspDate || '').slice(0, 10) };
+        });
+
+        const paintMats = _paintLotDetailsForWork(work);
+        const isLaser = _pwIsLaserProduct(car, part, color)
+            || !!(sb && (sb.laserWorkId || sb.laserLot || sb.laserWorkDate));
+        const laserWork = isLaser ? _findLaserWorkForInv(rec, sb || {}) : null;
+        const laserDate = String(
+            (laserWork && laserWork.date)
+            || (sb && (sb.laserWorkDate || sb.laserLot))
+            || rec.laserWorkDate
+            || rec.laserLot
+            || ''
+        ).slice(0, 10);
+
+        return {
+            injPartName: injPartName,
+            injLots: injLots,
+            paintingDate: paintingDate,
+            paintWorkId: work && work.id ? work.id : '',
+            paintMats: paintMats,
+            isLaser: isLaser,
+            laserDate: laserDate,
+            laserWorkId: laserWork && laserWork.id ? laserWork.id : ''
+        };
+    }
+
+    function _pwInjLotLinks(g) {
+        return _pwJoinLinks((g.injLots || []).map(function(row) {
+            const onclick = row.inspId
+                ? `ProductWarehouseModule.openInjIncoming('${_jsAttr(row.inspId)}')`
+                : '';
+            return _pwClickLink(row.lot, onclick, '사출 수입검사 보기');
+        }));
+    }
+
+    function _pwInjInspDateLinks(g) {
+        const seen = {};
+        return _pwJoinLinks((g.injLots || []).map(function(row) {
+            if (!row.inspDate || seen[row.inspId || row.inspDate]) return '';
+            seen[row.inspId || row.inspDate] = true;
+            const onclick = row.inspId
+                ? `ProductWarehouseModule.openInjIncoming('${_jsAttr(row.inspId)}')`
+                : '';
+            return _pwClickLink(row.inspDate, onclick, '사출 수입검사 보기');
+        }));
+    }
+
+    function _pwPaintWorkLink(g) {
+        if (!g.paintingDate) return _pwMutedDash();
+        const onclick = g.paintWorkId
+            ? `ProductWarehouseModule.openPaintWork('${_jsAttr(g.paintWorkId)}')`
+            : '';
+        return _pwJoinLinks(_pwSplitLots(g.paintingDate).map(function(day) {
+            return _pwClickLink(day, onclick, '도장 작업 실적 보기');
+        }));
+    }
+
+    function _pwPaintLotLinks(g) {
+        return _pwJoinLinks((g.paintMats || []).map(function(m) {
+            const label = m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot;
+            const onclick = m.inspId
+                ? `ProductWarehouseModule.openPaintIncoming('${_jsAttr(m.inspId)}')`
+                : '';
+            return _pwClickLink(label, onclick, '도료 수입검사 보기');
+        }));
+    }
+
+    function _pwPaintInspDateLinks(g) {
+        const seen = {};
+        return _pwJoinLinks((g.paintMats || []).map(function(m) {
+            if (!m.inspDate || seen[m.inspId || m.inspDate]) return '';
+            seen[m.inspId || m.inspDate] = true;
+            const onclick = m.inspId
+                ? `ProductWarehouseModule.openPaintIncoming('${_jsAttr(m.inspId)}')`
+                : '';
+            return _pwClickLink(m.inspDate, onclick, '도료 수입검사 보기');
+        }));
+    }
+
+    function _pwLaserLotLink(g) {
+        if (!g.isLaser && !g.laserDate) return _pwMutedDash();
+        if (!g.laserDate) return _pwMutedDash();
+        const onclick = g.laserWorkId
+            ? `ProductWarehouseModule.openLaserWork('${_jsAttr(g.laserWorkId)}')`
+            : '';
+        return _pwClickLink(g.laserDate, onclick, '레이져 작업 실적 보기');
+    }
+
+    function _pwOpenNewWindow(pageId, openKind, recordId) {
+        if (typeof Router !== 'undefined' && typeof Router.openInNewWindow === 'function') {
+            Router.openInNewWindow(pageId, { open: openKind, id: recordId });
+            return;
+        }
+        UIUtils.toast('새창을 열 수 없습니다.', 'error');
+    }
+
+    function openInjIncoming(inspId) {
+        const id = String(inspId || '').trim();
+        if (!id) { UIUtils.toast('연결된 사출 수입검사가 없습니다.', 'warning'); return; }
+        if (!Storage.getById(DB.STORES.INJECTION_INSPECTIONS, id)) {
+            UIUtils.toast('사출 수입검사 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        _pwOpenNewWindow('injection-incoming', 'injIncoming', id);
+    }
+
+    function openPaintIncoming(inspId) {
+        const id = String(inspId || '').trim();
+        if (!id) { UIUtils.toast('연결된 도료 수입검사가 없습니다.', 'warning'); return; }
+        if (!Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, id)) {
+            UIUtils.toast('도료 수입검사 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        _pwOpenNewWindow('paint-incoming-inspection', 'paintIncoming', id);
+    }
+
+    function openPaintWork(workId) {
+        const id = String(workId || '').trim();
+        if (!id) { UIUtils.toast('연결된 도장 작업 실적이 없습니다.', 'warning'); return; }
+        const work = Storage.getById(DB.STORES.PAINTING_WORK, id);
+        if (!work) { UIUtils.toast('도장 작업 실적을 찾을 수 없습니다.', 'warning'); return; }
+        const line = String(work.line || '');
+        const pageId = /도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(line) ? 'painting-work-b' : 'painting-work-a';
+        _pwOpenNewWindow(pageId, 'paintWork', id);
+    }
+
+    function openLaserWork(workId) {
+        const id = String(workId || '').trim();
+        if (!id) { UIUtils.toast('연결된 레이져 작업 실적이 없습니다.', 'warning'); return; }
+        if (!Storage.getById(DB.STORES.LASER_WORK_LOG, id)) {
+            UIUtils.toast('레이져 작업 실적을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        _pwOpenNewWindow('laser-work', 'laserWork', id);
+    }
+
     // ── 품목 상세 모달 (사출 창고 패턴) ─────────────────────────────────
     async function _showHistory(keyEnc, event) {
         if (event) event.stopPropagation();
@@ -4483,6 +5341,16 @@ const ProductWarehouseModule = (function() {
             if (!incomingByLot[lot] || String(r.date || '') > String(incomingByLot[lot].date || '')) incomingByLot[lot] = r;
         });
 
+        const lotGene = {};
+        currentLots.forEach(function(l) {
+            const srcRec = incomingByLot[l.lotNo] || {
+                carModel: car, partName: part, color: color, lotNo: l.lotNo, paintingDate: ''
+            };
+            lotGene[l.lotNo] = _pwGenealogy(srcRec);
+        });
+        const showLaserCol = _pwIsLaserProduct(car, part, color)
+            || Object.keys(lotGene).some(function(k) { return lotGene[k].isLaser || lotGene[k].laserDate; });
+
         const lotRows = currentLots.map(l => {
             const lotNoAttr = _escapeHtml(l.lotNo || '').replace(/'/g, "\\'");
             const dateAttr = _escapeHtml(l.date || '').replace(/'/g, "\\'");
@@ -4492,33 +5360,20 @@ const ProductWarehouseModule = (function() {
                         onclick="event.stopPropagation();ProductWarehouseModule._openLotAdjust('${keyEnc}','${lotNoAttr}','${dateAttr}',${Number(l.qty) || 0})">수량 보정</button>`
                 : '';
 
-            const srcRec = incomingByLot[l.lotNo] || {};
-            const work = _findPaintingWorkForInv(srcRec);
-            const injPartName = work ? (work.injPartName || work.partName || part) : part;
-            // 계보(trace)에 확정 저장된 검사일을 1순위로 쓴다 — 상위 기록이 삭제·수정돼도
-            // 이미 생산된 제품의 이력은 그대로 유지되어야 한다. 없으면 기존 조회로 폴백.
-            let inspDates = [];
-            if (typeof Trace !== 'undefined') {
-                const t = Trace.of(work) || {};
-                const fromTrace = (t.injLots || [])
-                    .filter(function (r) { return r.lot === l.lotNo && r.inspDate; })
-                    .map(function (r) { return r.inspDate; });
-                if (fromTrace.length) inspDates = [...new Set(fromTrace)];
-                else if (t.inj && t.inj.lot === l.lotNo && t.inj.inspDate) inspDates = [t.inj.inspDate];
-            }
-            if (!inspDates.length) inspDates = _injectionInspDatesForLot(injPartName, car, l.lotNo);
-            // 도료도 동일 — 확정 저장된 계보에는 도료명·제조LOT·수입검사일이 함께 들어 있다
-            let paintLots = (typeof Trace !== 'undefined') ? Trace.paintMaterialLabels(work) : [];
-            if (!paintLots.length) paintLots = _paintLotsForPaintingWork(work && work.id);
-            const paintLotsText = paintLots.length ? paintLots.join(', ') : '-';
+            const g = lotGene[l.lotNo] || _pwGenealogy({ carModel: car, partName: part, color: color, lotNo: l.lotNo });
+            const laserCell = showLaserCol
+                ? `<td style="white-space:nowrap;">${_pwLaserLotLink(g)}</td>`
+                : '';
 
             return `
             <tr>
                 <td style="white-space:nowrap;">${l.date || '-'}</td>
-                <td style="white-space:nowrap;">${_escapeHtml(srcRec.paintingDate || '-')}</td>
-                <td style="font-family:monospace;">${l.lotNo || '-'}</td>
-                <td style="white-space:nowrap;">${inspDates.length ? _escapeHtml(inspDates.join(', ')) : '-'}</td>
-                <td style="white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis;" title="${_escapeHtml(paintLotsText)}">${_escapeHtml(paintLotsText)}</td>
+                <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
+                ${laserCell}
                 <td style="text-align:right;white-space:nowrap;">
                     <span style="font-weight:600;color:var(--accent-green);">${UIUtils.formatNumber(l.qty)}</span>
                     ${adjustBtn}
@@ -4526,9 +5381,13 @@ const ProductWarehouseModule = (function() {
             </tr>`;
         }).join('');
 
+        const lotHeaders = ['입고일', '도장 LOT', '사출 LOT', '수입검사일', '도료 LOT', '도료수입검사일']
+            .concat(showLaserCol ? ['레이져Lot'] : [])
+            .concat(['현재 수량']);
+
         const lotSection = StockDetailUI.buildLotTableSection({
-            headers: ['입고일', '도장 LOT', '사출 LOT', '수입검사일', '사용 도료 LOT', '현재 수량'],
-            colSpan: 6,
+            headers: lotHeaders,
+            colSpan: lotHeaders.length,
             rowsHtml: lotRows
         });
 
@@ -5700,7 +6559,11 @@ const ProductWarehouseModule = (function() {
         renderAdjustPartOptions,
         renderAdjustRows,
         saveStockAdjustment,
-        exportData
+        exportData,
+        openInjIncoming,
+        openPaintIncoming,
+        openPaintWork,
+        openLaserWork
     };
 })();
 

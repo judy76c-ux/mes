@@ -483,6 +483,7 @@ var ShippingReliabilityModule = (function () {
                     <input class="form-input" id="reliNote" value="${rec ? _esc(rec.note || '') : ''}" placeholder="비고"></div>
             </div>
         `, `
+            ${id ? `<button class="btn btn-danger" onclick="ShippingReliabilityModule.remove('${_esc(id)}')">삭제</button>` : ''}
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ShippingReliabilityModule.saveTest('${id || ''}')">저장</button>
         `, 'xl');
@@ -681,8 +682,9 @@ var ShippingReliabilityModule = (function () {
             </div>
             ${r.note ? `<div style="margin-top:12px;font-size:0.85rem;"><strong>비고:</strong> ${_esc(r.note)}</div>` : ''}
         `, `
+            <button class="btn btn-danger" onclick="ShippingReliabilityModule.remove('${_esc(r.id)}')">삭제</button>
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
-            <button class="btn btn-primary" onclick="UIUtils.closeModal();ShippingReliabilityModule.openTest('${r.id}')">수정</button>
+            <button class="btn btn-primary" onclick="UIUtils.closeModal();ShippingReliabilityModule.openTest('${_esc(r.id)}')">수정</button>
         `, 'xl');
     }
 
@@ -691,6 +693,7 @@ var ShippingReliabilityModule = (function () {
             await _load();
             _records = _records.filter(r => r.id !== id);
             await _save();
+            UIUtils.closeModal();
             UIUtils.toast('삭제되었습니다.', 'success');
             _renderAll();
         });

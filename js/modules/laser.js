@@ -2798,6 +2798,25 @@ var LaserInspectionModule = (function() {
             </div>`;
     }
 
+    // 사출 LOT → 수입검사일 매핑 (검사 이력 표시용)
+    function _injIncomingDateMap() {
+        const map = {};
+        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(rec => {
+            if (!rec) return;
+            const date = rec.date || '';
+            if (!date) return;
+            const lots = (rec.lots && rec.lots.length > 0)
+                ? rec.lots
+                : (rec.lotNo ? [{ lotNo: rec.lotNo }] : []);
+            lots.forEach(l => {
+                const lotNo = String((l && l.lotNo) || '').trim();
+                if (!lotNo) return;
+                if (!map[lotNo] || date < map[lotNo]) map[lotNo] = date;
+            });
+        });
+        return map;
+    }
+
     function _lotInfo(row) {
         const work = row && row.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, row.workLogId) : row;
         const source = work || row || {};
@@ -2808,12 +2827,17 @@ var LaserInspectionModule = (function() {
         const injectionLots = paintLots.length > 0
             ? [...new Set(paintLots.map(lot => lot && lot.lotNo).filter(Boolean))]
             : [source.paintLot || source.lotNo || row?.paintLot].filter(Boolean);
+        const injDateMap = _injIncomingDateMap();
+        const incomingDates = [...new Set(
+            injectionLots.map(lot => injDateMap[String(lot || '').trim()]).filter(Boolean)
+        )].sort();
         return {
             work,
             laserDate: source.date || row?.date || '',
             laserTime: source.startTime || row?.inspectionStartTime || '',
             paintDates,
-            injectionLots
+            injectionLots,
+            incomingDates
         };
     }
 
@@ -2983,9 +3007,24 @@ var LaserInspectionModule = (function() {
                         <label class="form-label">종료일</label>
                         <input type="date" class="form-input" id="liFilterEnd" value="${UIUtils.today()}">
                     </div>
+                    <div class="form-group">
+                        <label class="form-label">차종</label>
+                        <select class="form-select" id="liFilterCar" onchange="LaserInspectionModule.onFilterCarModelChange()" style="min-width:120px;">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">품명</label>
+                        <select class="form-select" id="liFilterPart" onchange="LaserInspectionModule.search()" style="min-width:160px;">
+                            <option value="">전체</option>
+                        </select>
+                    </div>
                     <div class="form-group" style="align-self:flex-end;">
                         <button class="btn btn-outline" onclick="LaserInspectionModule.search()">
                             <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                        <button class="btn btn-secondary" onclick="LaserInspectionModule.resetInspFilter()" style="margin-left:6px;">
+                            <span class="material-symbols-outlined">refresh</span> 초기화
                         </button>
                     </div>
                 </div>
@@ -2999,7 +3038,7 @@ var LaserInspectionModule = (function() {
                     <div class="card-body" style="padding:0;">
                         <style>
                             .li-hist-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;}
-                            .li-hist-table{width:100%;min-width:1180px;table-layout:auto;border-collapse:collapse;font-size:clamp(0.72rem,0.65rem + 0.35vw,0.88rem);}
+                            .li-hist-table{width:max-content;min-width:0;table-layout:auto;border-collapse:collapse;font-size:clamp(0.72rem,0.65rem + 0.35vw,0.88rem);}
                             .li-hist-table th,.li-hist-table td{padding:clamp(6px,0.55vw,10px) clamp(6px,0.7vw,12px);vertical-align:middle;word-break:keep-all;}
                             .li-hist-table th{white-space:nowrap;line-height:1.25;}
                             .li-hist-table .col-date{min-width:5.5em;width:6%;}
@@ -3010,15 +3049,17 @@ var LaserInspectionModule = (function() {
                             .li-hist-table .col-num{min-width:4.2em;width:5%;text-align:right;white-space:nowrap;}
                             .li-hist-table .col-rate{min-width:3.8em;width:4.5%;text-align:center;white-space:nowrap;}
                             .li-hist-table .col-def{min-width:4em;width:4.5%;text-align:center;white-space:nowrap;}
-                            .li-hist-table .col-pack{min-width:5em;width:6%;text-align:right;white-space:nowrap;color:var(--accent-blue);}
-                            .li-hist-table .col-resid{min-width:4.2em;width:5%;text-align:right;white-space:nowrap;color:var(--accent-orange);}
+                            .li-hist-table .col-pack{min-width:5em;width:5%;text-align:right;white-space:nowrap;color:var(--accent-blue);}
+                            .li-hist-table .col-prev{min-width:5em;width:5%;text-align:right;white-space:nowrap;color:var(--accent-orange);}
+                            .li-hist-table .col-box{min-width:3.8em;width:4%;text-align:right;white-space:nowrap;}
+                            .li-hist-table .col-var{min-width:4.5em;width:5%;text-align:right;white-space:nowrap;}
+                            .li-hist-table .col-resid{min-width:4.2em;width:4.5%;text-align:right;white-space:nowrap;color:var(--accent-orange);}
                             .li-hist-table .col-note{min-width:5em;width:7%;}
                             .li-hist-table .col-act{min-width:7.5em;width:8%;white-space:nowrap;}
                             @media (max-width:1400px){
-                                .li-hist-table{min-width:1080px;font-size:clamp(0.7rem,0.62rem + 0.3vw,0.82rem);}
+                                .li-hist-table{font-size:clamp(0.7rem,0.62rem + 0.3vw,0.82rem);}
                             }
                             @media (max-width:1100px){
-                                .li-hist-table{min-width:980px;}
                                 .li-hist-table .col-part{min-width:8em;}
                             }
                         </style>
@@ -3032,6 +3073,7 @@ var LaserInspectionModule = (function() {
                                         <th class="col-part">품명</th>
                                         <th class="col-lot">도장LOT</th>
                                         <th class="col-inj">사출LOT</th>
+                                        <th class="col-date">수입검사일</th>
                                         <th class="col-num">검사수량</th>
                                         <th class="col-num">양품</th>
                                         <th class="col-num">불량<br><small style="font-weight:400;">(계)</small></th>
@@ -3039,7 +3081,10 @@ var LaserInspectionModule = (function() {
                                         <th class="col-def">사출불량</th>
                                         <th class="col-def">도장불량</th>
                                         <th class="col-def">레이져불량</th>
+                                        <th class="col-prev">잔량 사용</th>
                                         <th class="col-pack">포장수량</th>
+                                        <th class="col-box">박스 수</th>
+                                        <th class="col-var">오차 수량</th>
                                         <th class="col-resid">잔량</th>
                                         <th class="col-note">비고</th>
                                         <th class="col-act">작업</th>
@@ -3165,10 +3210,67 @@ var LaserInspectionModule = (function() {
             </div>`;
     }
 
+    function _populateFilterCarModel(allData) {
+        const el = document.getElementById('liFilterCar');
+        if (!el) return;
+        const prev = el.value;
+        const models = (UIUtils.sortCarModels
+            ? UIUtils.sortCarModels(allData.map(d => d.carModel))
+            : [...new Set(allData.map(d => d.carModel).filter(Boolean))].sort());
+        el.innerHTML = '<option value="">전체</option>' +
+            models.map(m => `<option value="${m}" ${m === prev ? 'selected' : ''}>${m}</option>`).join('');
+    }
+
+    function _populateFilterPart(allData, carModel) {
+        const el = document.getElementById('liFilterPart');
+        if (!el) return;
+        const prev = el.value;
+        const parts = [...new Set(
+            allData.filter(d => !carModel || d.carModel === carModel)
+                .map(d => d.partName).filter(Boolean)
+        )].sort();
+        el.innerHTML = '<option value="">전체</option>' +
+            parts.map(p => `<option value="${p}" ${p === prev ? 'selected' : ''}>${p}</option>`).join('');
+    }
+
+    function onFilterCarModelChange() {
+        const start = document.getElementById('liFilterStart').value;
+        const end   = document.getElementById('liFilterEnd').value;
+        const carModel = (document.getElementById('liFilterCar') || {}).value || '';
+        _populateFilterPart(Storage.getByDateRange(STORE, start, end), carModel);
+        search();
+    }
+
+    function resetInspFilter() {
+        const startEl = document.getElementById('liFilterStart');
+        const endEl   = document.getElementById('liFilterEnd');
+        const carEl   = document.getElementById('liFilterCar');
+        const partEl  = document.getElementById('liFilterPart');
+        if (startEl) startEl.value = UIUtils.monthAgo();
+        if (endEl)   endEl.value = UIUtils.today();
+        if (carEl)   carEl.value = '';
+        if (partEl)  partEl.innerHTML = '<option value="">전체</option>';
+        search();
+    }
+
     function search() {
         const start = document.getElementById('liFilterStart').value;
         const end   = document.getElementById('liFilterEnd').value;
-        let data = Storage.getByDateRange(STORE, start, end);
+        const carModel = (document.getElementById('liFilterCar') || {}).value || '';
+        const partName = (document.getElementById('liFilterPart') || {}).value || '';
+
+        const inRange = Storage.getByDateRange(STORE, start, end);
+        _populateFilterCarModel(inRange);
+        _populateFilterPart(inRange, carModel);
+        const carEl = document.getElementById('liFilterCar');
+        if (carEl && carModel) carEl.value = carModel;
+        const partEl = document.getElementById('liFilterPart');
+        if (partEl && partName) partEl.value = partName;
+
+        let data = inRange;
+        if (carModel) data = data.filter(d => d.carModel === carModel);
+        if (partName) data = data.filter(d => d.partName === partName);
+        data = data.slice();
         data.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.startTime || '').localeCompare(a.startTime || ''));
         renderStats(data);
         renderTable(data);
@@ -3315,7 +3417,7 @@ var LaserInspectionModule = (function() {
     function renderTable(data) {
         const tbody = document.getElementById('liTableBody');
         if (data.length === 0) {
-            tbody.innerHTML = `<tr><td colspan="17" style="text-align:center;padding:30px;color:var(--text-muted);">검사 기록이 없습니다.</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="21" style="text-align:center;padding:30px;color:var(--text-muted);">검사 기록이 없습니다.</td></tr>`;
             return;
         }
         const canEdit = _canEditInspection();
@@ -3333,6 +3435,13 @@ var LaserInspectionModule = (function() {
                 else if (t === 'laser') laserBad += Number(cnt) || 0;
                 else injBad += Number(cnt) || 0;
             });
+            const pack = _packMetrics(d);
+            const varHtml = pack.overQty > 0
+                ? `<span style="color:var(--accent-red);font-weight:800;">+${UIUtils.formatNumber(pack.overQty)}</span>`
+                : '-';
+            const boxHtml = pack.boxes > 0
+                ? UIUtils.formatNumber(pack.boxes)
+                : '-';
             return `
                 <tr style="cursor:pointer;" onclick="LaserInspectionModule._showDetail('${d.id}', event)">
                     <td class="col-date">${_dateStack(d.date, d.inspectionStartTime)}</td>
@@ -3341,6 +3450,7 @@ var LaserInspectionModule = (function() {
                     <td class="col-part" style="font-weight:600;line-height:1.35;">${d.partName || '-'}</td>
                     <td class="col-lot">${_dateListHtml(lotInfo.paintDates)}</td>
                     <td class="col-inj">${_lotListHtml(lotInfo.injectionLots)}</td>
+                    <td class="col-date">${_dateListHtml(lotInfo.incomingDates)}</td>
                     <td class="col-num">${UIUtils.formatNumber(d.inspQty)}</td>
                     <td class="col-num" style="color:var(--accent-green);font-weight:600;">${UIUtils.formatNumber(d.goodQty)}</td>
                     <td class="col-num" style="color:var(--accent-red);font-weight:700;">${UIUtils.formatNumber(d.failQty)}</td>
@@ -3348,8 +3458,11 @@ var LaserInspectionModule = (function() {
                     <td class="col-def">${injBad > 0 ? `<span style="color:var(--accent-red);">${UIUtils.formatNumber(injBad)}</span>` : '-'}</td>
                     <td class="col-def">${paintBad > 0 ? `<span style="color:var(--accent-red);">${UIUtils.formatNumber(paintBad)}</span>` : '-'}</td>
                     <td class="col-def">${laserBad > 0 ? `<span style="color:var(--accent-red);">${UIUtils.formatNumber(laserBad)}</span>` : '-'}</td>
-                    <td class="col-pack" style="font-weight:700;">${(d.packQty > 0) ? UIUtils.formatNumber(d.packQty) : '-'}</td>
-                    <td class="col-resid" style="font-weight:600;">${(d.residualQty > 0) ? UIUtils.formatNumber(d.residualQty) : '-'}</td>
+                    <td class="col-prev" style="font-weight:700;">${(Number(d.prevResidualQty) > 0) ? UIUtils.formatNumber(d.prevResidualQty) : '-'}</td>
+                    <td class="col-pack" style="font-weight:700;">${(pack.packQty > 0) ? UIUtils.formatNumber(pack.packQty) : '-'}</td>
+                    <td class="col-box" style="font-weight:700;">${boxHtml}</td>
+                    <td class="col-var">${varHtml}</td>
+                    <td class="col-resid" style="font-weight:600;">${(Number(d.residualQty) > 0) ? UIUtils.formatNumber(d.residualQty) : '-'}</td>
                     <td class="col-note">${d.note || '-'}</td>
                     <td class="col-act" onclick="event.stopPropagation()">
                         <button class="btn btn-sm btn-outline" onclick="LaserInspectionModule.view('${d.id}')">보기</button>
@@ -3365,6 +3478,7 @@ var LaserInspectionModule = (function() {
         if (!d) return;
 
         const lotInfo = _lotInfo(d);
+        const pack = _packMetrics(d);
 
         // 불량 유형 분류
         const allDefectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
@@ -3450,7 +3564,7 @@ var LaserInspectionModule = (function() {
             </div>
 
             <!-- 공정/LOT 정보 -->
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">
+            <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">레이져 작업일</div>
                     <div>${_dateStack(lotInfo.laserDate, lotInfo.laserTime)}</div>
@@ -3462,6 +3576,10 @@ var LaserInspectionModule = (function() {
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">사출 LOT</div>
                     <div>${_lotListHtml(lotInfo.injectionLots)}</div>
+                </div>
+                <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
+                    <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">수입검사일</div>
+                    <div>${_dateListHtml(lotInfo.incomingDates)}</div>
                 </div>
             </div>
 
@@ -3496,16 +3614,24 @@ var LaserInspectionModule = (function() {
             </div>` : ''}
 
             <!-- 포장 정보 -->
-            ${(d.packQty > 0 || d.residualQty > 0) ? `
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:10px;text-align:center;border-top:1px solid var(--border);padding-top:8px;">
+            ${(d.packQty > 0 || d.residualQty > 0 || d.packBoxCount > 0 || Number(d.prevResidualQty) > 0) ? `
+            <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:10px;text-align:center;border-top:1px solid var(--border);padding-top:8px;">
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:7px 4px;">
-                    <div style="font-size:0.64rem;color:var(--text-muted);">기존 잔량</div>
+                    <div style="font-size:0.64rem;color:var(--text-muted);">잔량 사용</div>
                     <div style="font-weight:600;font-size:0.9rem;margin-top:2px;">${UIUtils.formatNumber(d.prevResidualQty || 0)}</div>
                 </div>
                 <div style="background:rgba(59,130,246,0.08);border-radius:8px;padding:7px 4px;">
                     <div style="font-size:0.64rem;color:var(--text-muted);">포장수량</div>
                     <div style="font-weight:700;font-size:0.98rem;color:var(--accent-blue);margin-top:2px;">${UIUtils.formatNumber(d.packQty || 0)}</div>
-                    ${d.packBoxCount ? `<div style="font-size:0.62rem;color:var(--text-muted);">${UIUtils.formatNumber(d.packBoxCount)}박스 × ${UIUtils.formatNumber(d.packUnit)}</div>` : ''}
+                    ${d.packUnit ? `<div style="font-size:0.62rem;color:var(--text-muted);">박스당 ${UIUtils.formatNumber(d.packUnit)}</div>` : ''}
+                </div>
+                <div style="background:var(--bg-secondary);border-radius:8px;padding:7px 4px;">
+                    <div style="font-size:0.64rem;color:var(--text-muted);">박스 수</div>
+                    <div style="font-weight:700;font-size:0.98rem;margin-top:2px;">${UIUtils.formatNumber(pack.boxes || 0)}</div>
+                </div>
+                <div style="background:${pack.overQty > 0 ? 'rgba(220,38,38,0.08)' : 'var(--bg-secondary)'};border-radius:8px;padding:7px 4px;">
+                    <div style="font-size:0.64rem;color:var(--text-muted);">오차 수량</div>
+                    <div style="font-weight:700;font-size:0.98rem;margin-top:2px;color:${pack.overQty > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${pack.overQty > 0 ? '+' + UIUtils.formatNumber(pack.overQty) : '-'}</div>
                 </div>
                 <div style="background:rgba(245,158,11,0.08);border-radius:8px;padding:7px 4px;">
                     <div style="font-size:0.64rem;color:var(--text-muted);">신규 잔량</div>
@@ -3923,8 +4049,10 @@ var LaserInspectionModule = (function() {
         setV('liDate',      draft.date);
         setV('liStartTime', draft.startTime);
         setV('liEndTime',   draft.endTime);
-        // 기존 잔량(레이져잔량)은 임시저장 값이 아니라 항상 최신 WIP 잔량을 쓴다.
-        // (draft.prevResidual 복원 시 120처럼 과거 값이 덮어써지는 문제 방지)
+        // 기존 잔량은 WIP를 자동 주입하지 않는다. 사용자가 임시저장에 넣은 값만 복원.
+        if (draft.prevResidual != null && draft.prevResidual !== '') {
+            setV('liPrevResidual', draft.prevResidual);
+        }
         setV('liPackUnit',     draft.packUnit);
         setV('liPackBoxCount', draft.packBoxCount);
         _initInspectorFields(draft.inspectors || []);
@@ -4309,14 +4437,15 @@ var LaserInspectionModule = (function() {
         });
     }
 
-    // 상단: 좌측 정보 + 우측 불량 / 하단: 저장+검사자
-    function _build2Col(leftContent, rightContent, footerContent) {
+    // 상단: 좌측 정보 + 우측 불량 / 중단: 포장(전폭) / 하단: 저장+검사자
+    function _build2Col(leftContent, rightContent, footerContent, belowContent) {
         return `
         <div style="display:flex;flex-direction:column;gap:10px;">
-            <div style="display:grid;grid-template-columns:260px 1fr;gap:10px;align-items:start;">
+            <div style="display:grid;grid-template-columns:minmax(280px,340px) 1fr;gap:10px;align-items:start;">
                 <div style="display:flex;flex-direction:column;gap:10px;">${leftContent}</div>
                 <div style="min-width:0;align-self:start;">${rightContent}</div>
             </div>
+            ${belowContent || ''}
             ${footerContent || ''}
         </div>`;
     }
@@ -4324,15 +4453,17 @@ var LaserInspectionModule = (function() {
     function buildFormHTML(d) {
         d = d || {};
         const left = _buildSelectCard(d) + _buildInspInfoCard(d) + _buildQtyCard(d);
-        return _build2Col(left, _buildDefectCard(d.defectDetails || {}), _buildActionBar('LaserInspectionModule._saveInspection()'));
+        return _build2Col(left, _buildDefectCard(d.defectDetails || {}),
+            _buildActionBar('LaserInspectionModule._saveInspection()'), _buildPackagingCard(d));
     }
 
     // ─ 모달 열기 ─────────────────────────────────────────────────────
     function openAddModal() {
         _liCarModel = ''; _liPartName = ''; _liColor = ''; _liWorkId = null;
-        const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard() + _buildPackagingCard();
+        const left = _buildSelectCard() + _buildInspInfoCard() + _buildQtyCard();
         _openModal('레이져 검사 등록',
-            _build2Col(left, _buildDefectCard(), _buildActionBar('LaserInspectionModule._saveInspection()')));
+            _build2Col(left, _buildDefectCard(), _buildActionBar('LaserInspectionModule._saveInspection()'),
+                _buildPackagingCard()));
         setTimeout(function() { _initInspectorFields(); }, 50);
     }
 
@@ -4341,7 +4472,7 @@ var LaserInspectionModule = (function() {
         if (!w) { UIUtils.toast('작업 정보를 찾을 수 없습니다.', 'error'); return; }
         _liCarModel = w.carModel || ''; _liPartName = w.partName || '';
         _liColor    = w.color    || ''; _liWorkId   = w.id;
-        // 이력 리셋 로드 후 WIP 잔량(122)을 우선 사용 — 직전 검사 120 폴백 방지
+        // 현재 레이져잔량(재고)은 안내만 표시. 포장 기존 잔량 입력에는 넣지 않는다.
         const prevResidualQty = await _resolvePrevResidualQty(w.carModel, w.partName, w.color);
         const packUnit = _parsePackNum(w.packUnit) || _findProductPackUnit(w.carModel, w.partName, w.color);
         // ✓ 부분검사 이어하기: 남은 수량(remainingQty)을 이번 회차 검사 기준으로 삼는다.
@@ -4361,15 +4492,18 @@ var LaserInspectionModule = (function() {
                 <button type="button" class="btn btn-sm btn-outline" onclick="LaserInspectionModule._clearInspectionDraft('${workId}')">삭제</button>
             </div>`;
         const left = draftNoticeHtml + _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
-            _buildQtyCard({}, w, inspBase) +
-            _buildPackagingCard({}, prevResidualQty, packUnit, inspBase);
+            _buildQtyCard({}, w, inspBase);
+        // 기존 잔량은 WIP를 자동 입력하지 않음(기본 0). 레이져잔량은 안내만 표시.
+        const packCard = _buildPackagingCard({}, 0, packUnit, inspBase, { liveResidual: prevResidualQty });
         _openModal(`레이져 검사 등록 — ${w.partName || ''}`,
             partialBannerHtml + _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(),
-                _buildActionBar('LaserInspectionModule._saveInspection()', { draftAction: `LaserInspectionModule._saveInspectionDraft('${workId}')` })));
+                _buildActionBar('LaserInspectionModule._saveInspection()', { draftAction: `LaserInspectionModule._saveInspectionDraft('${workId}')` }),
+                packCard));
         setTimeout(async function() {
             _calculateInspectionTime();
             _initInspectorFields();
             _recalcInspQuantities();
+            let restoredDraft = false;
             // ✓ 부분검사 이어하기는 항상 새 라운드로 취급 — 임시저장을 불러오지 않는다.
             if (!isPartialWork) {
                 try {
@@ -4377,8 +4511,7 @@ var LaserInspectionModule = (function() {
                     const draft = drafts[workId];
                     if (draft) {
                         _applyInspectionDraft(draft);
-                        // 임시저장 복원 후에도 기존 잔량은 최신 WIP 값 유지
-                        _setPrevResidualInput(prevResidualQty);
+                        restoredDraft = true;
                         const notice = document.getElementById('liDraftNotice');
                         const timeEl = document.getElementById('liDraftNoticeTime');
                         if (notice) notice.style.display = 'flex';
@@ -4386,11 +4519,12 @@ var LaserInspectionModule = (function() {
                     }
                 } catch (e) { /* 무시 */ }
             }
-            // 모달 연 직후 한 번 더 WIP 잔량 동기화 (리셋 로드 타이밍 보강)
             try {
                 const livePrev = await _resolvePrevResidualQty(w.carModel, w.partName, w.color);
-                _setPrevResidualInput(livePrev);
+                _setLiveResidualHint(livePrev);
             } catch (e) { /* ignore */ }
+            // 임시저장이 없으면 양품만으로 박스 수 재계산 (기존 잔량 기본 0)
+            if (!restoredDraft) _autoBoxCount();
         }, 0);
     }
 
@@ -4406,26 +4540,32 @@ var LaserInspectionModule = (function() {
         _liCarModel = d.carModel || ''; _liPartName = d.partName || '';
         _liColor    = d.color    || ''; _liWorkId   = d.workLogId || null;
         const workRef = d.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, d.workLogId) : null;
-        const prevResidualQty = d.prevResidualQty !== undefined
+        const savedPrev = (d.prevResidualQty !== undefined && d.prevResidualQty !== null && d.prevResidualQty !== '')
             ? Number(d.prevResidualQty)
-            : _getPrevResidualQty(d.carModel, d.partName, d.color, id);
+            : 0;
+        const liveResidualHint = _getPrevResidualQty(d.carModel, d.partName, d.color, id);
         const packUnit = d.packUnit || (workRef && workRef.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
         const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
             _buildInspInfoCard(d) +
-            _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0) +
-            _buildPackagingCard(d, prevResidualQty, packUnit);
+            _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0);
+        const packCard = _buildPackagingCard(d, savedPrev, packUnit, Number(d.goodQty) || 0, { liveResidual: liveResidualHint });
         const footer = isEdit
             ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`,
                 d.workLogId ? { draftAction: `LaserInspectionModule._saveInspectionDraft('${d.workLogId}')` } : {})
             : _buildActionBar('', { readonly: true, editId: canEdit ? id : null });
         _openModal(isEdit ? '레이져 검사 수정' : '레이져 검사 보기',
             (workRef ? _buildWorkBanner(workRef) : '') +
-            _build2Col(left, _buildDefectCard(d.defectDetails || {}), footer));
-        setTimeout(function() {
+            _build2Col(left, _buildDefectCard(d.defectDetails || {}), footer, packCard));
+        setTimeout(async function() {
             _initInspectorFields(d.inspectors || []);
             if (!workRef) onCarModelChange(d.partName);
             if (!isEdit) _setInspectionFormReadonly(true);
             if (workRef) _recalcInspQuantities();
+            _updatePackagingCalc();
+            try {
+                const livePrev = await _resolvePrevResidualQty(d.carModel, d.partName, d.color, id);
+                _setLiveResidualHint(livePrev);
+            } catch (e) { /* ignore */ }
         }, 50);
     }
 
@@ -4621,6 +4761,108 @@ var LaserInspectionModule = (function() {
         _openInspectionDetail(id, 'edit');
     }
 
+    function _packMetrics(d) {
+        const good = Number(d && d.goodQty) || 0;
+        const prev = Number(d && d.prevResidualQty) || 0;
+        const unit = Number(d && d.packUnit) || 0;
+        let boxes = Number(d && d.packBoxCount);
+        if (!isFinite(boxes) || boxes < 0) boxes = 0;
+        let packQty = Number(d && d.packQty) || 0;
+        if (!packQty && unit > 0) packQty = unit * boxes;
+        if (!boxes && unit > 0 && packQty > 0 && packQty % unit === 0) boxes = packQty / unit;
+        const available = good + prev;
+        const maxBoxes = unit > 0 ? Math.floor(available / unit) : 0;
+        const overQty = Number(d && d.packVarianceQty);
+        const over = (isFinite(overQty) && overQty > 0) ? overQty : Math.max(0, packQty - available);
+        const residual = available - packQty;
+        return {
+            good: good, prev: prev, unit: unit, boxes: boxes, packQty: packQty,
+            available: available, maxBoxes: maxBoxes, overQty: over, residual: residual
+        };
+    }
+
+    /** 양품(+기존 잔량)으로 채울 수 있는 온전한 박스만 허용. 초과 포장·소수점 박스 저장 차단. */
+    function _validatePackaging(data) {
+        const m = _packMetrics(data);
+        if (m.packQty <= 0 && m.boxes <= 0) return true;
+        if (m.unit <= 0) {
+            UIUtils.toast('박스당 수량을 입력하세요.', 'warning');
+            const el = document.getElementById('liPackUnit');
+            if (el) el.focus();
+            return false;
+        }
+        const boxInput = document.getElementById('liPackBoxCount');
+        const rawBoxes = boxInput ? Number(boxInput.value) : m.boxes;
+        if (rawBoxes !== Math.floor(rawBoxes)) {
+            UIUtils.toast('박스 수는 정수만 입력할 수 있습니다. (예: 3박스, 3.64 불가)', 'error');
+            if (boxInput) boxInput.focus();
+            return false;
+        }
+        if (m.packQty % m.unit !== 0) {
+            UIUtils.toast(
+                '포장 단위가 맞지 않습니다. 포장수량은 박스당 수량(' + UIUtils.formatNumber(m.unit) + ' EA)의 배수여야 합니다.',
+                'error'
+            );
+            return false;
+        }
+        if (m.boxes > m.maxBoxes || m.overQty > 0) {
+            const leftover = m.available - (m.maxBoxes * m.unit);
+            UIUtils.toast(
+                '포장 단위가 맞지 않습니다. 양품 '
+                + UIUtils.formatNumber(m.good)
+                + (m.prev > 0 ? ' + 잔량 사용 ' + UIUtils.formatNumber(m.prev) : ' (잔량 사용 없음)')
+                + ' = ' + UIUtils.formatNumber(m.available) + ' EA ÷ 박스당 '
+                + UIUtils.formatNumber(m.unit) + ' = 최대 '
+                + UIUtils.formatNumber(m.maxBoxes) + '박스('
+                + UIUtils.formatNumber(m.maxBoxes * m.unit) + ' EA), 잔량 '
+                + UIUtils.formatNumber(leftover) + ' EA. 입력 박스 수 '
+                + UIUtils.formatNumber(m.boxes) + '('
+                + UIUtils.formatNumber(m.packQty) + ' EA)는 '
+                + UIUtils.formatNumber(m.overQty) + ' EA 초과입니다.',
+                'error'
+            );
+            const boxEl = document.getElementById('liPackBoxCount');
+            if (boxEl) boxEl.focus();
+            return false;
+        }
+        return true;
+    }
+
+    function _validateResidualUse(data) {
+        const used = Math.max(0, parseInt(data && data.prevResidualQty, 10) || 0);
+        const maxEl = document.getElementById('liResidualUseMax');
+        const maxUse = maxEl ? (parseInt(maxEl.value || 0, 10) || 0) : used;
+        if (used > maxUse) {
+            UIUtils.toast(
+                '잔량 사용 수량(' + UIUtils.formatNumber(used) + ' EA)이 보유 레이져잔량('
+                + UIUtils.formatNumber(maxUse) + ' EA)을 초과합니다.',
+                'error'
+            );
+            const el = document.getElementById('liPrevResidual');
+            if (el) el.focus();
+            return false;
+        }
+        return true;
+    }
+
+    async function _syncInspectionResidualOut(inspId, data) {
+        if (!inspId) return;
+        if (typeof LaserWipModule === 'undefined' || typeof LaserWipModule.syncInspectionResidualOut !== 'function') return;
+        await LaserWipModule.syncInspectionResidualOut({
+            inspectionId: inspId,
+            workLogId: data.workLogId || '',
+            carModel: data.carModel || '',
+            partName: data.partName || '',
+            color: data.color || '',
+            qty: Number(data.prevResidualQty) || 0,
+            date: data.date || '',
+            note: '외관검사 포장 사용'
+        });
+        if (typeof LaserWipModule.refresh === 'function') {
+            try { LaserWipModule.refresh(); } catch (e) { /* ignore */ }
+        }
+    }
+
     function _validateFailQty(data) {
         const inspBase = Number(data.inspBaseQty) || Number(data.inspQty) || 0;
         const failQty = Number(data.failQty) || 0;
@@ -4683,9 +4925,7 @@ var LaserInspectionModule = (function() {
             shippingEligibleQty: Number(data.packQty) || 0,
             laserResidualQty: Number(data.residualQty) || 0,
             laserResidualStatus: (Number(data.residualQty) || 0) > 0 ? '잔량' : '',
-            // 이번 포장이 소진한 "기존 잔량" — LaserWipModule의 LOT 원장이 이 값을 읽어
-            // 옛 LOT 잔량을 실제로 차감한다. 저장 안 하면 신규 잔량만 계속 더해지고
-            // 기존 잔량은 영구히 남아 누적되는 버그가 생긴다.
+            // 이번 포장이 사용한 잔량(표시/호환). 실제 출고 차감은 검사별 잔량출고 기록.
             prevResidualQty: Number(data.prevResidualQty) || 0
         };
 
@@ -4732,6 +4972,8 @@ var LaserInspectionModule = (function() {
             return;
         }
         if (!_validateFailQty(data)) return;
+        if (!_validatePackaging(data)) return;
+        if (!_validateResidualUse(data)) return;
 
         // ✓ 부분검사: 이번 회차 검사수량이 검사 대상 수량(검사 기준)을 넘지 않는지 확인
         const isPartial = _isPartialInspectionMode();
@@ -4759,6 +5001,7 @@ var LaserInspectionModule = (function() {
                 : '부분검사로 전량 소진되어 검사 완료 처리되었습니다.')
             : null;
 
+        let inspId = existingId || '';
         if (existingId) {
             await Storage.update(STORE, existingId, data);
             UIUtils.toast(
@@ -4768,7 +5011,8 @@ var LaserInspectionModule = (function() {
                 'success'
             );
         } else {
-            await Storage.add(STORE, data);
+            const added = await Storage.add(STORE, data);
+            inspId = added && added.id ? added.id : '';
             UIUtils.toast(
                 partialMsg || (syncResult && syncResult.qtyChanged
                     ? `검사 등록되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
@@ -4801,6 +5045,8 @@ var LaserInspectionModule = (function() {
                 await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                     date         : data.date || UIUtils.today(),
                     source       : 'laser_inspection',
+                    laserInspectionId: inspId || '',
+                    laserWorkId  : data.workLogId || '',
                     carModel     : data.carModel     || '',
                     partName     : data.partName     || '',
                     color        : data.color        || '',
@@ -4819,6 +5065,12 @@ var LaserInspectionModule = (function() {
                     status       : '대기'
                 });
             }
+        }
+        try {
+            await _syncInspectionResidualOut(inspId, data);
+        } catch (e) {
+            console.error('[LaserInspection] residual out sync failed:', e);
+            UIUtils.toast('검사는 저장됐지만 레이져 잔량 출고 반영에 실패했습니다: ' + (e && e.message ? e.message : '오류'), 'error');
         }
         // 검사 저장(부분검사 포함) 완료 시 임시 저장 내용은 정리
         if (data.workLogId) await _clearInspectionDraft(data.workLogId, true);
@@ -4852,7 +5104,9 @@ var LaserInspectionModule = (function() {
         const packUnit        = parseInt(document.getElementById('liPackUnit')?.value || 0);
         const packBoxCount    = parseInt(document.getElementById('liPackBoxCount')?.value || 0);
         const packQty         = packUnit * packBoxCount;
-        const residualQty     = Math.max(0, prevResidualQty + goodQty - packQty);
+        const available       = prevResidualQty + goodQty;
+        const residualQty     = available - packQty;
+        const packVarianceQty = Math.max(0, packQty - available);
         return {
             date               : document.getElementById('liDate')?.value || UIUtils.today(),
             carModel           : carModelEl ? carModelEl.value : _liCarModel,
@@ -4865,7 +5119,7 @@ var LaserInspectionModule = (function() {
             failRate           : inspQty > 0 ? (failQty / inspQty * 100) : 0,
             defectDetails,
             inspectors         : _collectInspectors(),
-            prevResidualQty, packUnit, packBoxCount, packQty, residualQty
+            prevResidualQty, packUnit, packBoxCount, packQty, residualQty: Math.max(0, residualQty), packVarianceQty
         };
     }
 
@@ -4945,65 +5199,120 @@ var LaserInspectionModule = (function() {
         if (typeof _updatePackagingCalc === 'function') _updatePackagingCalc();
     }
 
-    function _buildPackagingCard(d = {}, prevResQty = 0, packUnitDef = 0, initGoodQty = 0) {
-        const prevRes  = d.prevResidualQty !== undefined ? Number(d.prevResidualQty) : prevResQty;
-        const packUnit = d.packUnit !== undefined ? Number(d.packUnit) : Number(packUnitDef) || 0;
+    function _setLiveResidualHint(qty) {
+        const wrap = document.getElementById('liLiveResidualHint');
+        const el = document.getElementById('liLiveResidualHintQty');
+        const holdEl = document.getElementById('liResidualHoldDisp');
+        const stockEl = document.getElementById('liResidualStockQty');
+        const maxEl = document.getElementById('liResidualUseMax');
+        const savedEl = document.getElementById('liPrevResidualSaved');
+        const n = Math.max(0, Number(qty) || 0);
+        if (el) el.textContent = UIUtils.formatNumber(n);
+        if (holdEl) holdEl.textContent = UIUtils.formatNumber(n);
+        if (stockEl) stockEl.value = String(n);
+        const saved = parseInt(savedEl?.value || 0, 10) || 0;
+        if (maxEl) maxEl.value = String(n + saved);
+        if (wrap) wrap.style.display = 'flex';
+        if (typeof _updatePackagingCalc === 'function') _updatePackagingCalc();
+    }
+
+    function _syncPrevResidualShown() {
+        const shown = document.getElementById('liPrevResidualShown');
+        if (!shown) return;
+        const n = parseInt(document.getElementById('liPrevResidual')?.value || 0, 10) || 0;
+        shown.textContent = UIUtils.formatNumber(n) + ' EA';
+        shown.style.color = n > 0 ? 'var(--accent-orange)' : 'var(--text-muted)';
+    }
+
+    function _buildPackagingCard(d = {}, prevResQty = 0, packUnitDef = 0, initGoodQty = 0, opts = {}) {
+        opts = opts || {};
+        const hasSavedPrev = d && d.prevResidualQty !== undefined && d.prevResidualQty !== null && d.prevResidualQty !== '';
+        const prevRes = hasSavedPrev ? (Number(d.prevResidualQty) || 0) : (Number(prevResQty) || 0);
+        const packUnit = d.packUnit !== undefined && d.packUnit !== null && d.packUnit !== ''
+            ? Number(d.packUnit)
+            : Number(packUnitDef) || 0;
         const goodHint = Number(d.goodQty) || initGoodQty;
-        // 박스 수: 기존 저장값 우선, 없으면 (기존잔량+양품) ÷ 박스단위 자동계산
-        const boxCount = d.packBoxCount !== undefined
+        // 박스 수: 저장값 우선. 신규는 양품÷박스단위 (기존 잔량은 사용자가 입력한 뒤에만 합산)
+        const boxCount = d.packBoxCount !== undefined && d.packBoxCount !== null && d.packBoxCount !== ''
             ? Number(d.packBoxCount)
             : (packUnit > 0 ? Math.floor((prevRes + goodHint) / packUnit) : 0);
         const packQty  = Number(d.packQty) || packUnit * boxCount;
-        const newResid = d.residualQty !== undefined
-            ? Number(d.residualQty)
-            : Math.max(0, prevRes + goodHint - packQty);
+        const newResid = prevRes + goodHint - packQty;
+        const liveResidual = opts.liveResidual != null ? Math.max(0, Number(opts.liveResidual) || 0) : 0;
+        const savedUse = hasSavedPrev ? prevRes : 0;
+        const useMax = liveResidual + savedUse;
+        const afterUse = liveResidual + savedUse - prevRes;
+        const liveHintHtml = `
+            <div id="liLiveResidualHint" style="display:flex;align-items:flex-start;gap:8px;margin-bottom:10px;padding:9px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);font-size:0.8rem;line-height:1.5;color:var(--text-primary);">
+                <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-orange);flex-shrink:0;margin-top:1px;">inventory_2</span>
+                <div>
+                    레이져잔량이 <strong id="liResidualHoldDisp" style="font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(liveResidual)}</strong>
+                    <span style="display:none;" id="liLiveResidualHintQty">${UIUtils.formatNumber(liveResidual)}</span> EA 있습니다.
+                    이번 포장에 <strong>몇 개를 가져다 쓰시겠습니까?</strong>
+                    입력한 수량은 레이져 잔량에서 <strong>출고</strong> 처리됩니다. 쓰지 않으면 0으로 두세요.
+                </div>
+            </div>
+            <input type="hidden" id="liResidualStockQty" value="${liveResidual}">
+            <input type="hidden" id="liResidualUseMax" value="${useMax}">
+            <input type="hidden" id="liPrevResidualSaved" value="${savedUse}">`;
         return `
         <div class="card">
-            <div class="card-body" style="padding:12px;">
+            <div class="card-body" style="padding:12px 14px;">
                 <h5 style="margin:0 0 10px 0;font-size:0.85rem;color:var(--text-primary);display:flex;align-items:center;gap:5px;">
                     <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">inventory_2</span>
                     포장
                 </h5>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:6px;">
+                ${liveHintHtml}
+                <div style="display:grid;grid-template-columns:minmax(16em,1.6fr) minmax(8em,1fr) minmax(8em,1fr);gap:10px;margin-bottom:8px;align-items:end;">
                     <div class="form-group" style="margin:0;">
-                        <label class="form-label" style="font-size:0.72rem;">기존 잔량 <span style="font-weight:400;color:var(--text-muted);font-size:0.65rem;">(레이져잔량)</span></label>
-                        <input type="number" class="form-input" id="liPrevResidual" value="${prevRes}" min="0"
-                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
-                            oninput="LaserInspectionModule._updatePackagingCalc()">
+                        <label class="form-label" style="font-size:0.72rem;">이번 사용할 잔량 <span style="font-weight:400;color:var(--text-muted);font-size:0.65rem;">(최대 <span id="liResidualMaxLabel">${UIUtils.formatNumber(useMax)}</span> EA)</span></label>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <input type="number" class="form-input" id="liPrevResidual" value="${prevRes}" min="0" max="${useMax}" step="1"
+                                style="text-align:right;font-weight:700;font-size:1.05rem;padding:7px 10px;min-width:8em;flex:1 1 auto;"
+                                oninput="LaserInspectionModule._autoBoxCount()">
+                            <span id="liPrevResidualShown" style="flex:0 0 auto;font-weight:800;font-size:1.05rem;white-space:nowrap;font-variant-numeric:tabular-nums;color:${prevRes > 0 ? 'var(--accent-orange)' : 'var(--text-muted)'};">${UIUtils.formatNumber(prevRes)} EA</span>
+                        </div>
+                        <div style="margin-top:4px;font-size:0.72rem;color:var(--text-muted);">사용 후 남을 잔량 <strong id="liResidualAfterUseDisp" style="color:${afterUse < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(afterUse)} EA</strong></div>
                     </div>
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:0.72rem;">박스당 수량</label>
-                        <input type="number" class="form-input" id="liPackUnit" value="${packUnit || ''}" min="1" placeholder="-"
-                            style="text-align:right;font-weight:600;font-size:0.9rem;padding:5px 6px;"
+                        <input type="number" class="form-input" id="liPackUnit" value="${packUnit || ''}" min="1" step="1" placeholder="-"
+                            style="text-align:right;font-weight:600;font-size:0.95rem;padding:7px 10px;min-width:6em;"
                             oninput="LaserInspectionModule._autoBoxCount()">
                     </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:0.72rem;">박스 수 <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(정수, 조정 가능)</span></label>
+                        <input type="number" class="form-input" id="liPackBoxCount" value="${boxCount || 0}" min="0" step="1" placeholder="0"
+                            style="text-align:right;font-weight:700;font-size:1.05rem;padding:7px 10px;min-width:6em;"
+                            oninput="LaserInspectionModule._updatePackagingCalc()">
+                    </div>
                 </div>
-                <div class="form-group" style="margin:0 0 8px 0;">
-                    <label class="form-label" style="font-size:0.72rem;">박스 수 <span style="font-weight:400;color:var(--text-muted);font-size:0.68rem;">(조정 가능)</span></label>
-                    <input type="number" class="form-input" id="liPackBoxCount" value="${boxCount || ''}" min="0" placeholder="0"
-                        style="text-align:right;font-weight:700;font-size:0.95rem;padding:5px 6px;"
-                        oninput="LaserInspectionModule._updatePackagingCalc()">
-                </div>
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;background:var(--bg-secondary);border-radius:6px;padding:8px;">
+                <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;background:var(--bg-secondary);border-radius:6px;padding:10px 8px;">
                     <div style="text-align:center;">
                         <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">포장수량</div>
-                        <div id="liPackQtyDisp" style="font-weight:700;font-size:1.05rem;color:var(--accent-blue);">${UIUtils.formatNumber(packQty)}</div>
+                        <div id="liPackQtyDisp" style="font-weight:700;font-size:1.15rem;color:var(--accent-blue);font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(packQty)}</div>
                         <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
                     </div>
                     <div style="text-align:center;">
                         <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">신규 잔량</div>
-                        <div id="liNewResidDisp" style="font-weight:700;font-size:1.05rem;color:${newResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};">${UIUtils.formatNumber(Math.max(0, newResid))}</div>
+                        <div id="liNewResidDisp" style="font-weight:700;font-size:1.15rem;font-variant-numeric:tabular-nums;color:${newResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)'};">${newResid < 0 ? '-' : UIUtils.formatNumber(newResid)}</div>
+                        <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
+                    </div>
+                    <div style="text-align:center;">
+                        <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">오차 수량</div>
+                        <div id="liPackVarDisp" style="font-weight:700;font-size:1.15rem;font-variant-numeric:tabular-nums;color:${newResid < 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${newResid < 0 ? '+' + UIUtils.formatNumber(-newResid) : '-'}</div>
                         <div style="font-size:0.65rem;color:var(--text-muted);">EA</div>
                     </div>
                 </div>
+                <div id="liPackErr" style="display:none;margin-top:8px;padding:7px 10px;border-radius:6px;border:1px solid rgba(220,38,38,.35);background:rgba(220,38,38,.07);font-size:0.75rem;color:#b91c1c;line-height:1.45;"></div>
             </div>
         </div>`;
     }
 
     function _autoBoxCount() {
-        const prevRes  = parseInt(document.getElementById('liPrevResidual')?.value || 0);
-        const packUnit = parseInt(document.getElementById('liPackUnit')?.value || 0);
-        const goodQty  = parseInt(document.getElementById('liGoodQty')?.value || 0);
+        const prevRes  = parseInt(document.getElementById('liPrevResidual')?.value || 0, 10) || 0;
+        const packUnit = parseInt(document.getElementById('liPackUnit')?.value || 0, 10) || 0;
+        const goodQty  = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
         const boxCountEl = document.getElementById('liPackBoxCount');
         if (boxCountEl && packUnit > 0) {
             boxCountEl.value = Math.floor((prevRes + goodQty) / packUnit);
@@ -5012,18 +5321,60 @@ var LaserInspectionModule = (function() {
     }
 
     function _updatePackagingCalc() {
-        const prevRes  = parseInt(document.getElementById('liPrevResidual')?.value || 0);
-        const packUnit = parseInt(document.getElementById('liPackUnit')?.value || 0);
-        const boxCount = parseInt(document.getElementById('liPackBoxCount')?.value || 0);
-        const goodQty  = parseInt(document.getElementById('liGoodQty')?.value || 0);
+        _syncPrevResidualShown();
+        const prevRes  = parseInt(document.getElementById('liPrevResidual')?.value || 0, 10) || 0;
+        const stockQty = parseInt(document.getElementById('liResidualStockQty')?.value || 0, 10) || 0;
+        const savedUse = parseInt(document.getElementById('liPrevResidualSaved')?.value || 0, 10) || 0;
+        const afterUse = stockQty + savedUse - prevRes;
+        const afterEl = document.getElementById('liResidualAfterUseDisp');
+        if (afterEl) {
+            afterEl.textContent = UIUtils.formatNumber(afterUse) + ' EA';
+            afterEl.style.color = afterUse < 0 ? 'var(--accent-red)' : 'var(--accent-orange)';
+        }
+        const maxLabel = document.getElementById('liResidualMaxLabel');
+        const maxEl = document.getElementById('liResidualUseMax');
+        if (maxLabel && maxEl) maxLabel.textContent = UIUtils.formatNumber(parseInt(maxEl.value || 0, 10) || 0);
+        const packUnit = parseInt(document.getElementById('liPackUnit')?.value || 0, 10) || 0;
+        const boxCount = parseInt(document.getElementById('liPackBoxCount')?.value || 0, 10) || 0;
+        const goodQty  = parseInt(document.getElementById('liGoodQty')?.value || 0, 10) || 0;
         const packQty  = packUnit * boxCount;
-        const newResid = prevRes + goodQty - packQty;
+        const available = prevRes + goodQty;
+        const newResid = available - packQty;
+        const maxBoxes = packUnit > 0 ? Math.floor(available / packUnit) : 0;
+        const leftover = available - (maxBoxes * packUnit);
+        const overQty  = Math.max(0, packQty - available);
         const packDisp  = document.getElementById('liPackQtyDisp');
         const residDisp = document.getElementById('liNewResidDisp');
+        const varDisp   = document.getElementById('liPackVarDisp');
+        const errEl     = document.getElementById('liPackErr');
         if (packDisp) packDisp.textContent = UIUtils.formatNumber(packQty);
         if (residDisp) {
-            residDisp.textContent = UIUtils.formatNumber(Math.max(0, newResid));
+            residDisp.textContent = newResid < 0 ? '-' : UIUtils.formatNumber(newResid);
             residDisp.style.color = newResid < 0 ? 'var(--accent-red)' : 'var(--accent-orange)';
+        }
+        if (varDisp) {
+            varDisp.textContent = overQty > 0 ? '+' + UIUtils.formatNumber(overQty) : '-';
+            varDisp.style.color = overQty > 0 ? 'var(--accent-red)' : 'var(--text-muted)';
+        }
+        if (errEl) {
+            const invalid = (boxCount > 0 || packQty > 0) && packUnit > 0 && (boxCount > maxBoxes || overQty > 0);
+            if (invalid) {
+                errEl.style.display = '';
+                errEl.textContent = '포장 단위 불일치 — 양품 '
+                    + UIUtils.formatNumber(goodQty)
+                    + (prevRes > 0 ? ' + 잔량 사용 ' + UIUtils.formatNumber(prevRes) : ' (잔량 사용 없음)')
+                    + ' = ' + UIUtils.formatNumber(available) + ' ÷ '
+                    + UIUtils.formatNumber(packUnit) + ' = 최대 '
+                    + UIUtils.formatNumber(maxBoxes) + '박스('
+                    + UIUtils.formatNumber(maxBoxes * packUnit) + ' EA), 잔량 '
+                    + UIUtils.formatNumber(leftover) + ' EA. 지금은 '
+                    + UIUtils.formatNumber(boxCount) + '박스('
+                    + UIUtils.formatNumber(packQty) + ' EA)로 '
+                    + UIUtils.formatNumber(overQty) + ' EA 초과입니다.';
+            } else {
+                errEl.style.display = 'none';
+                errEl.textContent = '';
+            }
         }
     }
 
@@ -5146,6 +5497,23 @@ var LaserInspectionModule = (function() {
             return;
         }
         UIUtils.confirm('해당 검사 기록을 삭제하시겠습니까?', async () => {
+            const rec = Storage.getById(STORE, id);
+            try {
+                if (rec && typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.syncInspectionResidualOut === 'function') {
+                    await LaserWipModule.syncInspectionResidualOut({
+                        inspectionId: id,
+                        workLogId: rec.workLogId || '',
+                        carModel: rec.carModel || '',
+                        partName: rec.partName || '',
+                        color: rec.color || '',
+                        qty: 0,
+                        date: rec.date || '',
+                        note: '외관검사 삭제 — 잔량 출고 취소'
+                    });
+                }
+            } catch (e) {
+                console.error('[LaserInspection] residual out cancel failed:', e);
+            }
             await Storage.remove(STORE, id);
             UIUtils.toast('삭제되었습니다.', 'success');
             renderStandby();
@@ -5258,7 +5626,8 @@ var LaserInspectionModule = (function() {
     }
 
     return {
-        render, openAddModal, openInspFromWork, search, renderStandby, onCarModelChange, view, edit, remove,
+        render, openAddModal, openInspFromWork, search, renderStandby, onCarModelChange,
+        onFilterCarModelChange, resetInspFilter, view, edit, remove,
         _deleteStandbyWork, _confirmDeleteStandbyWork,
         _closeModal, _saveInspection, _showDetail,
         showDefectTypeView, closeDefectTypeView,
@@ -5288,8 +5657,13 @@ var LaserStandbyModule = (function() {
     const CONFIRM_CUTOVER_KEY = 'laser_standby_confirm_cutover_v1';
     // 입고 오차 발생 시 통보할 도장 담당자 — 매번 선택하지 않도록 고정 목록으로 저장해 둔다.
     const NOTIFY_RECIPIENTS_KEY = 'laser_standby_notify_recipients_v1';
+    // 주기적 실사 이력 — _manualOverrides(현재 상태)와 별개의 append-only 로그.
+    // 이후 다른 보정이 값을 다시 바꿔도 "언제 누가 실사했는지" 추세가 남아야 하므로 절대 수정하지 않고 추가만 한다.
+    const STOCKTAKE_LOG_KEY = 'laser_standby_stocktake_log_v1';
     let _manualOverrides = [];
     let _manualOverridesLoaded = false;
+    let _stocktakeLog = [];
+    let _stocktakeLogLoaded = false;
     let _historyResets = [];
     let _historyResetsLoaded = false;
     let _unmatchedActions = [];
@@ -5403,6 +5777,7 @@ var LaserStandbyModule = (function() {
             await _ensureUnmatchedActionsLoaded();
             await _ensureConfirmCutoverLoaded();
             await _ensureInboundConfirmLoaded();
+            await _ensureStocktakeLogLoaded();
         } catch (e) {
             console.warn('[LaserStandbyModule] CONFIG 수기조정/리셋/미차감/입고확인 로드 실패:', e);
         }
@@ -5668,6 +6043,31 @@ var LaserStandbyModule = (function() {
 
     async function _saveManualOverrides() {
         await Storage.setConfigValue(MANUAL_OVERRIDE_KEY, _manualOverrides);
+    }
+
+    async function _ensureStocktakeLogLoaded(forceReload = false) {
+        if (_stocktakeLogLoaded && !forceReload) return _stocktakeLog;
+        const rows = await Storage.getConfigValue(STOCKTAKE_LOG_KEY);
+        _stocktakeLog = Array.isArray(rows) ? rows : [];
+        _stocktakeLogLoaded = true;
+        return _stocktakeLog;
+    }
+
+    async function _saveStocktakeLog() {
+        await Storage.setConfigValue(STOCKTAKE_LOG_KEY, _stocktakeLog);
+    }
+
+    // 품목별 마지막 실사일 — 실사 게시판 정렬(오래된/미실시 순)에 사용.
+    function _lastStocktakeByKey() {
+        const map = {};
+        (_stocktakeLog || []).forEach(function(row) {
+            if (!row || !row.key) return;
+            const prev = map[row.key];
+            if (!prev || String(row.at || row.date || '') > String(prev.at || prev.date || '')) {
+                map[row.key] = row;
+            }
+        });
+        return map;
     }
 
     async function _ensureHistoryResetsLoaded(forceReload = false) {
@@ -7717,6 +8117,134 @@ var LaserStandbyModule = (function() {
         `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
     }
 
+    // 미기록 소진(레이저 작업은 했지만 MES에 로그를 남기지 않은 경우)은 시스템 이력만으로는
+    // 감지할 수 없다 — 물리적 실사만이 잡아낼 수 있다. 실사 게시판은 "어느 품목을 언제 마지막으로
+    // 셌는지"를 보여줘 실사를 빠짐없이 순환시키기 위한 체크리스트다.
+    async function openStocktakeBoard() {
+        await _ensureStocktakeLogLoaded();
+        const { stockItems } = _buildInventorySnapshot();
+        const lastByKey = _lastStocktakeByKey();
+        // 실사 이력 없는 품목이 최우선(맨 위)에 오도록 어떤 실제 날짜보다도 앞서는 값을 쓴다.
+        const NEVER = '0000-00-00';
+        const rows = stockItems.map(function(item) {
+            const key = item.key || _itemKey(item.carModel, item.partName, item.color);
+            const last = lastByKey[key] || null;
+            const lastDate = last ? String(last.date || (last.at || '').slice(0, 10)) : '';
+            const daysAgo = lastDate ? Math.floor((Date.now() - new Date(lastDate + 'T00:00:00').getTime()) / 86400000) : null;
+            return {
+                key,
+                carModel: item.carModel || '',
+                partName: item.partName || '',
+                color: item.color || '',
+                stock: item.stockQty != null ? item.stockQty : ((item.inQty || 0) - (item.outQty || 0)),
+                lastDate,
+                sortDate: lastDate || NEVER,
+                daysAgo,
+                lastDiff: last ? (Number(last.diff) || 0) : null
+            };
+        }).sort(function(a, b) {
+            return a.sortDate.localeCompare(b.sortDate)
+                || String(a.carModel).localeCompare(String(b.carModel))
+                || String(a.partName).localeCompare(String(b.partName));
+        });
+
+        const rowsHtml = rows.length ? rows.map(function(r) {
+            const label = [r.carModel, r.partName, r.color && r.color !== '-' ? r.color : ''].filter(Boolean).join(' · ');
+            const enc = encodeURIComponent(r.key);
+            const lastCell = r.lastDate
+                ? `${_escapeHtml(r.lastDate)} <span style="color:var(--text-muted);">(${r.daysAgo}일 전)</span>`
+                : `<span style="color:var(--accent-red,#dc2626);font-weight:700;">실사 이력 없음</span>`;
+            const diffCell = (r.lastDiff != null && r.lastDiff !== 0)
+                ? `<span style="color:${r.lastDiff < 0 ? 'var(--accent-red,#dc2626)' : 'var(--accent-blue)'};font-weight:700;">${r.lastDiff > 0 ? '+' : ''}${_fmtStockQty(r.lastDiff)}</span>`
+                : (r.lastDate ? '<span style="color:var(--text-muted);">일치</span>' : '-');
+            return `<tr>
+                <td style="padding:8px 10px;font-weight:600;white-space:nowrap;">${_escapeHtml(label)}</td>
+                <td style="text-align:right;padding:8px 10px;white-space:nowrap;">${_fmtStockQty(r.stock)}</td>
+                <td style="padding:8px 10px;white-space:nowrap;font-size:0.82rem;">${lastCell}</td>
+                <td style="text-align:right;padding:8px 10px;white-space:nowrap;font-size:0.82rem;">${diffCell}</td>
+                <td style="padding:8px 10px;white-space:nowrap;">
+                    <button type="button" class="btn btn-sm btn-primary"
+                        onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openAdjustModal('${enc}', false, true),80);">실사 입력</button>
+                </td>
+            </tr>`;
+        }).join('') : `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">재공 재고가 있는 품목이 없습니다.</td></tr>`;
+
+        const neverCount = rows.filter(function(r) { return !r.lastDate; }).length;
+
+        UIUtils.showModal('레이저 대기품 재고실사', `
+            <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">
+                레이저 작업이 MES 기록 없이 진행되면(미기록 소진) 시스템 재고는 시간이 지날수록 실제보다 부풀어 오르며,
+                이는 이력 대사만으로는 잡히지 않습니다. 실사 이력이 없거나 오래된 품목부터 정기적으로 세어
+                아래 목록에 반영하세요.
+                ${neverCount > 0 ? `<strong style="color:var(--accent-red,#dc2626);"> 실사 이력 없는 품목 ${neverCount}종.</strong>` : ''}
+            </div>
+            <div class="data-table-wrapper" style="overflow-x:auto;max-height:60vh;overflow-y:auto;">
+                <table class="data-table" style="width:max-content;min-width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th style="white-space:nowrap;">품목</th>
+                            <th style="text-align:right;white-space:nowrap;">전산 재고</th>
+                            <th style="white-space:nowrap;">마지막 실사일</th>
+                            <th style="text-align:right;white-space:nowrap;">직전 실사 차이</th>
+                            <th style="white-space:nowrap;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openStocktakeHistory(),80);">실사 이력 전체보기</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+        `, 'lg');
+    }
+
+    async function openStocktakeHistory() {
+        await _ensureStocktakeLogLoaded();
+        const entries = [..._stocktakeLog].sort(function(a, b) {
+            return String(b.at || b.date || '').localeCompare(String(a.at || a.date || ''));
+        });
+        const rows = entries.length ? entries.map(function(e) {
+            const label = [e.carModel, e.partName, e.color && e.color !== '-' ? e.color : ''].filter(Boolean).join(' · ');
+            const diff = Number(e.diff) || 0;
+            const diffColor = diff < 0 ? 'var(--accent-red,#dc2626)' : (diff > 0 ? 'var(--accent-blue)' : 'var(--text-muted)');
+            return `<tr>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;">${_escapeHtml(e.date || (e.at || '').slice(0, 10) || '-')}</td>
+                <td style="padding:8px 10px;font-weight:600;">${_escapeHtml(label)}</td>
+                <td style="text-align:right;padding:8px 10px;white-space:nowrap;">${_fmtStockQty(e.before)}</td>
+                <td style="text-align:right;padding:8px 10px;white-space:nowrap;">${_fmtStockQty(e.after)}</td>
+                <td style="text-align:right;padding:8px 10px;font-weight:700;white-space:nowrap;color:${diffColor};">${diff > 0 ? '+' : ''}${_fmtStockQty(diff)}</td>
+                <td style="padding:8px 10px;font-size:0.82rem;color:var(--text-secondary);">${_escapeHtml(e.reason || '(사유 미입력)')}</td>
+                <td style="padding:8px 10px;font-size:0.8rem;color:var(--text-muted);white-space:nowrap;">${_escapeHtml(e.author || '-')}</td>
+            </tr>`;
+        }).join('') : `<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">실사 이력이 없습니다.</td></tr>`;
+
+        UIUtils.showModal('레이저 대기품 재고실사 이력', `
+            <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:10px;">
+                실사 입력으로 기록된 전체 이력입니다. 특정 품목이 반복적으로 (−) 차이가 난다면
+                해당 라인·작업조의 레이저 작업 기록 누락을 의심해 보세요.
+            </div>
+            <div class="data-table-wrapper" style="overflow-x:auto;max-height:60vh;overflow-y:auto;">
+                <table class="data-table" style="width:max-content;min-width:100%;border-collapse:collapse;">
+                    <thead>
+                        <tr>
+                            <th style="white-space:nowrap;">실사일</th>
+                            <th style="white-space:nowrap;">품목</th>
+                            <th style="text-align:right;white-space:nowrap;">실사 전</th>
+                            <th style="text-align:right;white-space:nowrap;">실사 후</th>
+                            <th style="text-align:right;white-space:nowrap;">차이</th>
+                            <th style="white-space:nowrap;">사유</th>
+                            <th style="white-space:nowrap;">작성자</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openStocktakeBoard(),80);">← 실사 게시판</button>
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+        `, 'lg');
+    }
+
     function _collectStandbyMismatch(stockItems) {
         const result = [];
         (stockItems || []).forEach(function(item) {
@@ -8154,6 +8682,10 @@ var LaserStandbyModule = (function() {
         const unmatchedList = _collectStandbyUnmatched(allItems);
         const unmatchedQty = unmatchedList.reduce(function(s, i) { return s + (Number(i.unmatchedQty) || 0); }, 0);
         const manualAdjustEntries = _collectManualAdjustEntries(allItems);
+        const lastByKey = _lastStocktakeByKey();
+        const neverCounted = stockItems.filter(function(i) {
+            return !lastByKey[i.key || _itemKey(i.carModel, i.partName, i.color)];
+        }).length;
 
         el.innerHTML = `
             <div class="stat-card blue">
@@ -8180,6 +8712,11 @@ var LaserStandbyModule = (function() {
                  ${manualAdjustEntries.length ? 'onclick="LaserStandbyModule.openManualAdjustList()"' : ''}>
                 <div class="stat-card-value" style="${manualAdjustEntries.length ? 'color:#ea580c;' : ''}">${manualAdjustEntries.length}</div>
                 <div class="stat-card-label">수기조정 건수${manualAdjustEntries.length ? ' · 클릭' : ''}</div>
+            </div>
+            <div class="stat-card" style="cursor:pointer;${neverCounted > 0 ? 'border-color:rgba(22,163,74,.45);background:rgba(22,163,74,.06);' : ''}"
+                 onclick="LaserStandbyModule.openStocktakeBoard()">
+                <div class="stat-card-value" style="${neverCounted > 0 ? 'color:var(--accent-green,#16a34a);' : ''}">${neverCounted > 0 ? neverCounted : '✓'}</div>
+                <div class="stat-card-label">${neverCounted > 0 ? '실사 미실시 품목 · 클릭' : '재고실사 · 클릭'}</div>
             </div>
         `;
     }
@@ -8793,7 +9330,7 @@ var LaserStandbyModule = (function() {
             });
     }
 
-    async function openAdjustModal(keyEnc = '', isAddMode = false) {
+    async function openAdjustModal(keyEnc = '', isAddMode = false, isStocktake = false) {
         const key = keyEnc ? decodeURIComponent(keyEnc) : '';
         const addMode = isAddMode || !key;
         // 신규 추가는 "입력" 권한, 기존 항목 수량 보정은 "수정/보정" 권한으로 구분한다.
@@ -8905,8 +9442,20 @@ var LaserStandbyModule = (function() {
                 </div>
             </div>`;
 
-        UIUtils.showModal(addMode ? '레이저 대기 재공품 추가' : '레이저 대기 수량 보정', `
+        const stocktakeBanner = isStocktake ? `
+            <div style="background:rgba(22,163,74,0.07);border:1px solid rgba(22,163,74,0.3);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;line-height:1.5;">
+                <strong style="color:var(--accent-green,#16a34a);display:flex;align-items:center;gap:4px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;">fact_check</span> 재고실사 입력
+                </strong>
+                <div style="margin-top:5px;color:var(--text-secondary);">
+                    실제로 세어본 수량을 그대로 입력하세요. 전산 재고와의 차이는 자동 계산되어 실사 이력에 남습니다.
+                </div>
+            </div>` : '';
+
+        UIUtils.showModal(isStocktake ? '레이저 대기 재고실사' : (addMode ? '레이저 대기 재공품 추가' : '레이저 대기 수량 보정'), `
             ${unmatchedBanner}
+            ${stocktakeBanner}
+            <input type="hidden" id="lsbAdjustIsStocktake" value="${isStocktake ? '1' : ''}">
             <div style="background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.15);border-radius:8px;padding:12px 14px;margin-bottom:14px;">
                 <div style="font-size:0.82rem;color:var(--text-secondary);">
                     현재 전산 재고 <strong style="color:var(--accent-blue);">${UIUtils.formatNumber(currentStock)} EA</strong>
@@ -8915,7 +9464,7 @@ var LaserStandbyModule = (function() {
             ${identityFieldsHtml}
             <div class="form-row" style="margin-bottom:12px;">
                 <div class="form-group">
-                    <label class="form-label">${addMode ? '추가 수량' : '수정 후 총수량'}</label>
+                    <label class="form-label">${isStocktake ? '실사 수량 (실제 카운트)' : (addMode ? '추가 수량' : '수정 후 총수량')}</label>
                     <input type="number" class="form-input" id="lsbAdjustQty" value="${currentStock}" min="0" placeholder="0" oninput="LaserStandbyModule.onAdjustTotalQtyInput(this.value)">
                 </div>
             </div>
@@ -9043,10 +9592,11 @@ var LaserStandbyModule = (function() {
         const color = document.getElementById('lsbAdjustColor')?.value || '';
         let actualQty = _normalizeQty(document.getElementById('lsbAdjustQty')?.value || 0);
         const adjustReason = String(document.getElementById('lsbAdjustReason')?.value || '').trim();
+        const isStocktake = (document.getElementById('lsbAdjustIsStocktake')?.value || '') === '1';
+        const beforeStockForLog = originalKey ? _getDetailSnapshot(originalKey).stock : 0;
         // 재고를 낮추는 보정(실사 손실)은 사유 없이 조용히 사라지면 추적이 안 되므로 필수 입력으로 막는다.
         if (!addMode) {
-            const beforeStock = originalKey ? _getDetailSnapshot(originalKey).stock : 0;
-            if (actualQty < beforeStock && !adjustReason) {
+            if (actualQty < beforeStockForLog && !adjustReason) {
                 UIUtils.toast('재고를 낮추는 보정은 사유를 입력해야 합니다. (실사 결과·출고 오류 등)', 'warning');
                 return;
             }
@@ -9232,6 +9782,28 @@ var LaserStandbyModule = (function() {
             });
         }
 
+        // 재고실사로 진입한 보정은 _manualOverrides(현재 상태)와 별개로 append-only 실사 이력에도 남긴다.
+        // _manualOverrides는 이후 다른 보정이 다시 값을 바꾸면 "현재값"만 남지만, 실사 이력은
+        // 언제 얼마나 차이가 났는지 추세를 보기 위한 것이므로 절대 덮어쓰지 않고 매번 추가한다.
+        if (isStocktake) {
+            await _ensureStocktakeLogLoaded();
+            _stocktakeLog.push({
+                id: Storage.generateId(),
+                key: nextKey,
+                carModel: normalizedCarModel,
+                partName: normalizedPartName,
+                color: normalizedColor,
+                before: addMode ? 0 : beforeStockForLog,
+                after: actualQty,
+                diff: actualQty - (addMode ? 0 : beforeStockForLog),
+                reason: adjustReason || '',
+                author,
+                date: UIUtils.today ? UIUtils.today() : effectiveAt.slice(0, 10),
+                at: effectiveAt
+            });
+            await _saveStocktakeLog();
+        }
+
         UIUtils.closeModal();
         renderAll();
         UIUtils.toast(
@@ -9274,6 +9846,7 @@ var LaserStandbyModule = (function() {
         await _ensureUnmatchedActionsLoaded(true);
         await _ensureConfirmCutoverLoaded();
         await _ensureInboundConfirmLoaded(true);
+        await _ensureStocktakeLogLoaded(true);
         renderAll();
         UIUtils.toast('재고 현황을 새로고침했습니다.', 'info');
     }
@@ -10702,6 +11275,8 @@ var LaserStandbyModule = (function() {
         resolveInboundConfirmDiff,
         getStockSnapshotSync,
         openManualAdjustList,
+        openStocktakeBoard,
+        openStocktakeHistory,
         getWorkLotSnapshotSync,
         normalizeStandbyRecord: function(row, products, injectionMaterials) {
             return _canonicalStandbyRecord(
