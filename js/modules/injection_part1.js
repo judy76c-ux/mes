@@ -1782,15 +1782,6 @@ var InjectionIncomingModule = (function() {
             return;
         }
 
-        if (!_qtyFieldsChanged(prev, updateData)) {
-            await Storage.update(STORE, id, updateData);
-            await propagateCertReceived(updateData.lots);
-            UIUtils.closeModal();
-            UIUtils.toast('수정되었습니다.', 'success');
-            search();
-            return;
-        }
-
         const afterPreview = Object.assign({}, prev, updateData, { id: prev.id });
         const preview = (typeof InjectionWarehouseModule !== 'undefined'
             && typeof InjectionWarehouseModule.previewInspectionWarehouseSync === 'function')
@@ -1802,6 +1793,17 @@ var InjectionIncomingModule = (function() {
                 afterQty: _inspQtyOf(updateData),
                 delta: 0
             };
+        const qtyChanged = _qtyFieldsChanged(prev, updateData);
+        const needsWarehouse = !!(preview.inboundCount && !preview.skipWarehouse && preview.delta);
+
+        if (!qtyChanged && !needsWarehouse) {
+            await Storage.update(STORE, id, updateData);
+            await propagateCertReceived(updateData.lots);
+            UIUtils.closeModal();
+            UIUtils.toast('수정되었습니다.', 'success');
+            search();
+            return;
+        }
 
         _pendingEditCtx = { id: id, prev: prev, updateData: updateData, preview: preview };
 
@@ -1838,6 +1840,8 @@ var InjectionIncomingModule = (function() {
                     이 수입검사는 이미 사출 창고에 입고되어 있습니다.<br>
                     합격수량 <strong>${UIUtils.formatNumber(p.beforeQty)}</strong> EA →
                     <strong style="color:#c2410c;">${UIUtils.formatNumber(p.afterQty)}</strong> EA<br>
+                    창고 입고 합계 <strong>${UIUtils.formatNumber(p.warehouseInbound || p.warehouseNet || 0)}</strong> EA
+                    ${p.delta ? (' · 차이 <strong>' + (p.delta > 0 ? '+' : '') + UIUtils.formatNumber(p.delta) + ' EA</strong>') : ''}<br>
                     <div style="margin-top:6px;font-family:monospace;font-size:0.8rem;color:var(--text-secondary);">
                         변경 전 LOT: ${_escHtml(beforeLots)}<br>
                         변경 후 LOT: ${_escHtml(afterLots)}
