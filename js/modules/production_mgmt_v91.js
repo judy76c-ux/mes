@@ -21367,33 +21367,101 @@ var ProdQualityModule = (function() {
         return _dedupePlansBySlot(raw);
     }
 
+    function _isIssuePrinted(issue) {
+        if (!issue) return false;
+        const status = String(issue.status || '').replace(/\s/g, '');
+        return !!issue.printedAt || status === '발행완료' || status.indexOf('발행완료') !== -1;
+    }
+
+    function _issueStamp(issue) {
+        return String((issue && (issue.updatedAt || issue.createdAt || issue.printedAt || issue.id)) || '');
+    }
+
+    function _preferIssue(prev, next) {
+        if (!prev) return next || null;
+        if (!next) return prev;
+        const p = _isIssuePrinted(prev) ? 1 : 0;
+        const n = _isIssuePrinted(next) ? 1 : 0;
+        if (n !== p) return n > p ? next : prev;
+        return _issueStamp(next) > _issueStamp(prev) ? next : prev;
+    }
+
+    function _qualityDateKey(v) {
+        const s = String(v || '').trim().replace('T', ' ');
+        if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+        return '';
+    }
+
+    function _normQualityKey(v) {
+        return String(v || '').trim().toUpperCase().replace(/\s+/g, '').replace(/[()[\]\-_/.,]/g, '');
+    }
+
+    function _normQualityPart(car, part) {
+        let p = _normQualityKey(part);
+        const c = _normQualityKey(car);
+        if (c && p.indexOf(c) === 0) p = p.slice(c.length);
+        return p;
+    }
+
+    function _colorsCompatible(a, b) {
+        const c1 = _normQualityKey(a);
+        const c2 = _normQualityKey(b);
+        if (!c1 || !c2) return true;
+        return c1 === c2 || c1.indexOf(c2) !== -1 || c2.indexOf(c1) !== -1;
+    }
+
+    function _qualityFieldsMatch(a, b) {
+        if (!a || !b) return false;
+        if (_normQualityKey(a.carModel) !== _normQualityKey(b.carModel)) return false;
+        const p1 = _normQualityPart(a.carModel, a.partName);
+        const p2 = _normQualityPart(b.carModel, b.partName);
+        if (!p1 || !p2) return false;
+        if (p1 !== p2 && p1.indexOf(p2) === -1 && p2.indexOf(p1) === -1) return false;
+        return _colorsCompatible(a.color, b.color);
+    }
+
+    function _issueDateKeys(issue) {
+        const keys = [];
+        [_qualityDateKey(issue && issue.date), _qualityDateKey(issue && issue.printedAt)].forEach(function(d) {
+            if (d && keys.indexOf(d) === -1) keys.push(d);
+        });
+        return keys;
+    }
+
+    function _issueMatchesSource(issue, source) {
+        if (!issue || !source) return false;
+        if (issue.workId && source.id && !source._fromPlan && String(issue.workId) === String(source.id)) return true;
+        if (issue.planId && source.planId && String(issue.planId) === String(source.planId)) return true;
+        if (!_qualityFieldsMatch(issue, source)) return false;
+        const sdate = _qualityDateKey(source.date);
+        const idates = _issueDateKeys(issue);
+        if (sdate && idates.indexOf(sdate) !== -1) return true;
+        const ilot = String(issue.lotNo || '').replace(/\s+/g, '').toUpperCase();
+        const slot = String(source.lotNo || '').replace(/\s+/g, '').toUpperCase();
+        if (ilot && slot && (ilot === slot || ilot.indexOf(slot) !== -1 || slot.indexOf(ilot) !== -1)) return true;
+        return !!( _isIssuePrinted(issue) && sdate && !idates.length );
+    }
+
     function _issueForSource(source, issueByWork, issueByPlan) {
         if (!source) return null;
-        if (source.planId && issueByPlan && issueByPlan.get(String(source.planId))) {
-            return issueByPlan.get(String(source.planId));
-        }
-        if (!source._fromPlan && source.id && issueByWork) {
-            return issueByWork.get(source.id) || null;
-        }
-        return null;
+        let found = null;
+        if (source.planId && issueByPlan) found = _preferIssue(found, issueByPlan.get(String(source.planId)));
+        if (!source._fromPlan && source.id && issueByWork) found = _preferIssue(found, issueByWork.get(source.id));
+        if (_isIssuePrinted(found)) return found;
+        _issues().forEach(function(issue) {
+            if (_issueMatchesSource(issue, source)) found = _preferIssue(found, issue);
+        });
+        return found;
     }
 
     function _buildIssueMaps() {
         const issueByWork = new Map();
         const issueByPlan = new Map();
         _issues().forEach(function(i) {
-            if (i.workId) {
-                const prev = issueByWork.get(i.workId);
-                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
-                    issueByWork.set(i.workId, i);
-                }
-            }
+            if (i.workId) issueByWork.set(i.workId, _preferIssue(issueByWork.get(i.workId), i));
             if (i.planId) {
                 const key = String(i.planId);
-                const prev = issueByPlan.get(key);
-                if (!prev || String(i.createdAt || i.updatedAt || i.id || '') > String(prev.createdAt || prev.updatedAt || prev.id || '')) {
-                    issueByPlan.set(key, i);
-                }
+                issueByPlan.set(key, _preferIssue(issueByPlan.get(key), i));
             }
         });
         return { issueByWork, issueByPlan };
@@ -21466,15 +21534,12 @@ var ProdQualityModule = (function() {
 
     function _existingIssueForPlan(planId, workId) {
         const issues = _issues();
-        if (planId) {
-            const byPlan = issues.find(i => String(i.planId || '') === String(planId));
-            if (byPlan) return byPlan;
-        }
-        if (workId) {
-            const byWork = issues.find(i => String(i.workId || '') === String(workId));
-            if (byWork) return byWork;
-        }
-        return null;
+        let found = null;
+        issues.forEach(function(i) {
+            if (planId && String(i.planId || '') === String(planId)) found = _preferIssue(found, i);
+            else if (workId && String(i.workId || '') === String(workId)) found = _preferIssue(found, i);
+        });
+        return found;
     }
 
     function _startQualityPlanTimer() {
@@ -21899,7 +21964,7 @@ var ProdQualityModule = (function() {
             const record = issue ? recordMap.get(issue.id) : null;
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
-            const printed = !!(issue && issue.printedAt);
+            const printed = _isIssuePrinted(issue);
             const sortKey = String(w.date || '') + ' ' + String(w.startTime || '') + '|' + String(w.id || '');
             const sourceId = w._fromPlan ? _planSourceId(w.planId) : w.id;
 
@@ -21957,7 +22022,7 @@ var ProdQualityModule = (function() {
             if (d.planId && shownPlanIds.has(String(d.planId))) return;
 
             const record = recordMap.get(d.id);
-            const printed = !!d.printedAt;
+            const printed = _isIssuePrinted(d);
             const sortKey = String(d.createdAt || d.updatedAt || d.id || d.date || '');
             const statusCell = printed
                 ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(d.printedAt))}</div>`
