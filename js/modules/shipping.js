@@ -4377,11 +4377,11 @@ const ProductWarehouseModule = (function() {
                 <td style="white-space:nowrap;"><strong>${_escapeHtml(d.partName || '-')}</strong></td>
                 <td style="white-space:nowrap;">${_escapeHtml(d.color || '-')}</td>
                 <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
-                <td style="white-space:nowrap;">${_pwInjLotCell(g, d.carModel)}</td>
-                <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintLotCell(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotWithInspCell(g, d.carModel)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, true)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, false)}</td>
+                <td style="white-space:nowrap;">${_pwPaintUsageCell(g)}</td>
                 ${laserCell}
                 <td style="white-space:nowrap;font-size:0.82rem;color:var(--text-secondary);">${_escapeHtml(d.source || '-')}</td>
             </tr>`;
@@ -4399,11 +4399,11 @@ const ProductWarehouseModule = (function() {
                                 <th style="white-space:nowrap;">품명</th>
                                 <th style="white-space:nowrap;">컬러</th>
                                 <th style="text-align:right;white-space:nowrap;">수량</th>
-                                <th style="white-space:nowrap;">사출 LOT</th>
-                                <th style="white-space:nowrap;">수입검사일</th>
                                 <th style="white-space:nowrap;">도장 LOT</th>
-                                <th style="white-space:nowrap;">도료 LOT</th>
-                                <th style="white-space:nowrap;">도료수입검사일</th>
+                                <th style="white-space:nowrap;">사출 LOT / 수입검사일</th>
+                                <th style="white-space:nowrap;">P 도료 LOT / 수입검사일</th>
+                                <th style="white-space:nowrap;">C 도료 LOT / 수입검사일</th>
+                                <th style="white-space:nowrap;">P/C 사용량</th>
                                 ${showLaser ? '<th style="white-space:nowrap;">레이져Lot</th>' : ''}
                                 <th style="white-space:nowrap;">출처</th>
                             </tr></thead>
@@ -5455,19 +5455,41 @@ const ProductWarehouseModule = (function() {
         return cands[0];
     }
 
+    function _pwResolvePaintSpec(name, materialId, hint) {
+        const h = String(hint || '').trim();
+        if (h === 'Primer' || h === 'Color' || h === 'Clear') return h;
+        if (materialId && typeof Storage !== 'undefined') {
+            const mat = Storage.getById(DB.STORES.PAINT_MATERIALS, materialId);
+            const spec = String((mat && (mat.paintSpec || mat.spec)) || '').trim();
+            if (spec === 'Primer' || spec === 'Color' || spec === 'Clear') return spec;
+        }
+        const n = String(name || '').toLowerCase();
+        if (/primer|프라이머|하도/.test(n)) return 'Primer';
+        if (/clear|클리어|상도/.test(n)) return 'Clear';
+        return 'Color';
+    }
+
     function _paintLotDetailsForWork(work) {
         const out = [];
         const seen = {};
-        function push(name, prodLot, inspDate, inspId, materialId) {
+        function push(name, prodLot, inspDate, inspId, materialId, extra) {
+            extra = extra || {};
             const lot = String(prodLot || '').trim();
             if (!lot) return;
             const key = String(name || '') + '|' + lot;
             if (seen[key]) {
                 const prev = out.find(function(m) { return (m.name || '') + '|' + m.prodLot === key; });
-                if (prev && !prev.inspId && inspId) {
-                    prev.inspId = String(inspId || '').trim();
-                    prev.inspDate = prev.inspDate || String(inspDate || '').slice(0, 10);
-                    prev.materialId = prev.materialId || String(materialId || '').trim();
+                if (prev) {
+                    if (!prev.inspId && inspId) {
+                        prev.inspId = String(inspId || '').trim();
+                        prev.inspDate = prev.inspDate || String(inspDate || '').slice(0, 10);
+                    }
+                    if (!prev.materialId && materialId) prev.materialId = String(materialId || '').trim();
+                    if (!prev.paintSpec && extra.paintSpec) prev.paintSpec = extra.paintSpec;
+                    if (!prev.mixDate && extra.mixDate) prev.mixDate = String(extra.mixDate || '').slice(0, 10);
+                    if (!prev.mixId && extra.mixId) prev.mixId = String(extra.mixId || '').trim();
+                    if (!prev.role && extra.role) prev.role = extra.role;
+                    if (extra.usageG) prev.usageG = (Number(prev.usageG) || 0) + (Number(extra.usageG) || 0);
                 }
                 return;
             }
@@ -5477,17 +5499,29 @@ const ProductWarehouseModule = (function() {
                 prodLot: lot,
                 inspDate: String(inspDate || '').slice(0, 10),
                 inspId: String(inspId || '').trim(),
-                materialId: String(materialId || '').trim()
+                materialId: String(materialId || '').trim(),
+                paintSpec: extra.paintSpec || '',
+                mixDate: String(extra.mixDate || '').slice(0, 10),
+                mixId: String(extra.mixId || '').trim(),
+                role: extra.role || '',
+                usageG: Number(extra.usageG) || 0
             });
         }
         const t = (typeof Trace !== 'undefined') ? Trace.of(work) : {};
         const mats = (t.paint && Array.isArray(t.paint.materials)) ? t.paint.materials : [];
-        mats.forEach(function(m) { push(m.name, m.prodLot, m.inspDate, m.inspId, m.materialId); });
+        mats.forEach(function(m) {
+            push(m.name, m.prodLot, m.inspDate, m.inspId, m.materialId, {
+                paintSpec: m.paintSpec,
+                mixId: t.paint && t.paint.mixId,
+                role: m.role
+            });
+        });
         const workId = work && work.id;
         if (workId) {
             const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
                 .filter(function(m) { return m._docKind === 'paint_mix' && m.workId === workId; });
             mixes.forEach(function(m) {
+                const mixDate = String(m.date || m.registeredAt || '').slice(0, 10);
                 (m.usages || []).forEach(function(u) {
                     const lot = u.prodLot || u.lotNo || '';
                     let inspDate = '';
@@ -5497,11 +5531,18 @@ const ProductWarehouseModule = (function() {
                         inspDate = insp.inspDate || '';
                         inspId = insp.inspId || inspId;
                     }
-                    push(u.paintName, lot, inspDate, inspId, u.materialId);
+                    push(u.paintName, lot, inspDate, inspId, u.materialId, {
+                        paintSpec: u.paintSpec,
+                        mixDate: mixDate,
+                        mixId: m.id,
+                        role: u.role,
+                        usageG: Number(u.usageG) || Number(u.residualUseG) || 0
+                    });
                 });
             });
         }
         out.forEach(function(m) {
+            m.paintSpec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
             if (m.inspId && m.inspDate) return;
             const found = _pwLookupPaintIncoming(m.name, m.prodLot, m.materialId);
             if (found.inspId) m.inspId = m.inspId || found.inspId;
@@ -5634,8 +5675,10 @@ const ProductWarehouseModule = (function() {
     }
 
     function _pwPaintLotLinks(g) {
-        return _pwJoinLinks((g.paintMats || []).map(function(m) {
-            const label = m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot;
+        return _pwStackCell((g.paintMats || []).map(function(m) {
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            const tag = spec === 'Primer' ? 'P ' : spec === 'Color' ? 'C ' : spec === 'Clear' ? 'Cl ' : '';
+            const label = tag + (m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot);
             const onclick = m.inspId
                 ? `ProductWarehouseModule.openPaintIncoming('${_jsAttr(m.inspId)}')`
                 : '';
@@ -5671,6 +5714,127 @@ const ProductWarehouseModule = (function() {
         return ` <button type="button" class="btn btn-sm btn-outline"
             style="margin-left:4px;font-size:0.7rem;padding:1px 7px;line-height:1.35;vertical-align:middle;"
             onclick="event.preventDefault();event.stopPropagation();ProductWarehouseModule.traceIncoming('${kind}','${carEnc}','${partEnc}','${lotsEnc}')">추적</button>`;
+    }
+
+    function _pwStackCell(parts) {
+        const list = (parts || []).filter(Boolean);
+        if (!list.length) return _pwMutedDash();
+        if (list.length === 1) return list[0];
+        return '<div style="display:flex;flex-direction:column;gap:3px;align-items:flex-start;">'
+            + list.map(function(p) {
+                return '<div style="white-space:nowrap;">' + p + '</div>';
+            }).join('')
+            + '</div>';
+    }
+
+    function _pwInjLotWithInspCell(g, car) {
+        const rows = (g.injLots || []).map(function(row) {
+            if (!row.lot) return '';
+            const onclick = row.inspId
+                ? `ProductWarehouseModule.openInjIncoming('${_jsAttr(row.inspId)}')`
+                : '';
+            const lotLink = _pwClickLink(row.lot, onclick, '사출 수입검사 보기');
+            const datePart = row.inspDate
+                ? _pwClickLink(row.inspDate, onclick, '사출 수입검사 보기')
+                : '<span style="color:var(--text-muted);font-size:0.75rem;">검사일 없음</span>';
+            return lotLink + ' <span style="color:var(--text-muted);">/</span> ' + datePart;
+        }).filter(Boolean);
+        let html = _pwStackCell(rows);
+        const missing = (g.injLots || []).filter(function(r) {
+            return r.lot && r.lot !== '무표기' && r.lot !== '(미차감 출고)' && !r.inspId;
+        });
+        if (missing.length) {
+            html += _pwTraceBtn('inj', car || '', g.injPartName || '', missing.map(function(r) { return r.lot; }).join(','));
+        }
+        return html;
+    }
+
+    function _pwPaintWorkWithMixDatesCell(g) {
+        const workLine = g.paintingDate ? _pwPaintWorkLink(g) : '';
+        const bySpec = {};
+        (g.paintMats || []).forEach(function(m) {
+            if (!m.mixDate) return;
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            if (!bySpec[spec]) bySpec[spec] = m;
+        });
+        const extra = [];
+        [['Primer', 'P'], ['Color', 'C'], ['Clear', 'Cl']].forEach(function(pair) {
+            const m = bySpec[pair[0]];
+            if (!m) return;
+            const onclick = m.mixId
+                ? `ProductWarehouseModule.openPaintMix('${_jsAttr(m.mixId)}')`
+                : (g.paintWorkId ? `ProductWarehouseModule.openPaintWork('${_jsAttr(g.paintWorkId)}')` : '');
+            extra.push(_pwClickLink(pair[1] + ' 사용 ' + m.mixDate, onclick, '도료사용 등록 보기'));
+        });
+        return _pwStackCell([workLine].concat(extra));
+    }
+
+    function _pwPaintInspDateBySpecCell(g, primerOnly) {
+        const mats = (g.paintMats || []).filter(function(m) {
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            return primerOnly ? spec === 'Primer' : spec !== 'Primer';
+        });
+        const seen = {};
+        const parts = mats.map(function(m) {
+            if (!m.inspDate) return '';
+            const key = m.inspId || (m.name + '|' + m.inspDate);
+            if (seen[key]) return '';
+            seen[key] = true;
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            const prefix = spec === 'Clear' ? 'Cl ' : '';
+            const onclick = m.inspId
+                ? `ProductWarehouseModule.openPaintIncoming('${_jsAttr(m.inspId)}')`
+                : '';
+            return _pwClickLink(prefix + m.inspDate, onclick, primerOnly ? '프라이머 수입검사 보기' : '컬러 수입검사 보기');
+        }).filter(Boolean);
+        return _pwStackCell(parts);
+    }
+
+    function _pwPaintMatsForSpec(g, primerOnly) {
+        return (g.paintMats || []).filter(function(m) {
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            return primerOnly ? spec === 'Primer' : spec !== 'Primer';
+        });
+    }
+
+    function _pwPaintLotWithInspBySpecCell(g, primerOnly) {
+        const mats = _pwPaintMatsForSpec(g, primerOnly);
+        const tag = primerOnly ? 'P' : 'C';
+        const title = primerOnly ? '프라이머 수입검사 보기' : '컬러 수입검사 보기';
+        const rows = mats.map(function(m) {
+            if (!m.prodLot && !m.name) return '';
+            const lotLabel = m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot;
+            const onclick = m.inspId
+                ? `ProductWarehouseModule.openPaintIncoming('${_jsAttr(m.inspId)}')`
+                : '';
+            const lotLink = _pwClickLink(tag + ' ' + lotLabel, onclick, title);
+            const datePart = m.inspDate
+                ? _pwClickLink(m.inspDate, onclick, title)
+                : '<span style="color:var(--text-muted);font-size:0.75rem;">검사일 없음</span>';
+            return lotLink + ' <span style="color:var(--text-muted);">/</span> ' + datePart;
+        }).filter(Boolean);
+        let html = _pwStackCell(rows);
+        const missing = mats.filter(function(m) { return m.prodLot && !m.inspId; });
+        if (missing.length) {
+            html += _pwTraceBtn('paint', '', '', missing.map(function(m) {
+                return (m.name || '') + '|' + m.prodLot;
+            }).join(';;'));
+        }
+        return html;
+    }
+
+    function _pwPaintUsageCell(g) {
+        const pQty = _pwPaintMatsForSpec(g, true).reduce(function(s, m) { return s + (Number(m.usageG) || 0); }, 0);
+        const cQty = _pwPaintMatsForSpec(g, false).reduce(function(s, m) { return s + (Number(m.usageG) || 0); }, 0);
+        if (!pQty && !cQty) return _pwMutedDash();
+        const mixId = ((g.paintMats || []).find(function(m) { return m.mixId; }) || {}).mixId || '';
+        const onclick = mixId
+            ? `ProductWarehouseModule.openPaintMix('${_jsAttr(mixId)}')`
+            : (g.paintWorkId ? `ProductWarehouseModule.openPaintWork('${_jsAttr(g.paintWorkId)}')` : '');
+        const lines = [];
+        if (pQty) lines.push(_pwClickLink('P ' + UIUtils.formatNumber(pQty) + ' g', onclick, '도료사용 등록 보기'));
+        if (cQty) lines.push(_pwClickLink('C ' + UIUtils.formatNumber(cQty) + ' g', onclick, '도료사용 등록 보기'));
+        return _pwStackCell(lines);
     }
 
     function _pwInjLotCell(g, car) {
@@ -5885,12 +6049,27 @@ const ProductWarehouseModule = (function() {
         const paintLots = (g.paintMats || []).map(function(m) {
             return m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot;
         }).filter(Boolean).join(', ') || '-';
-        const paintDates = [];
+        const primerDates = [];
+        const colorDates = [];
+        const mixDates = [];
         const seenP = {};
+        const seenC = {};
+        const seenM = {};
         (g.paintMats || []).forEach(function(m) {
-            if (!m.inspDate || seenP[m.inspDate]) return;
-            seenP[m.inspDate] = true;
-            paintDates.push(m.inspDate);
+            const spec = _pwResolvePaintSpec(m.name, m.materialId, m.paintSpec);
+            if (m.inspDate) {
+                const bucket = spec === 'Primer' ? primerDates : colorDates;
+                const seen = spec === 'Primer' ? seenP : seenC;
+                if (!seen[m.inspDate]) {
+                    seen[m.inspDate] = true;
+                    bucket.push(m.inspDate);
+                }
+            }
+            if (m.mixDate && !seenM[spec + m.mixDate]) {
+                seenM[spec + m.mixDate] = true;
+                const tag = spec === 'Primer' ? 'P' : spec === 'Color' ? 'C' : spec === 'Clear' ? 'Cl' : '';
+                mixDates.push((tag ? tag + ' ' : '') + m.mixDate);
+            }
         });
         const paintLot = _pwInspPaintLot(rec) || rec.lotNo || '-';
         const win = window.open('', 'pwInspTrace_' + String(rec.id || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40),
@@ -5922,16 +6101,66 @@ const ProductWarehouseModule = (function() {
                     ${row('품명', rec.partName || '-')}
                     ${row('컬러', rec.color || '-')}
                     ${row('도장 LOT', paintLot)}
+                    ${row('도료사용 등록일', mixDates.join(', ') || '-')}
                     ${row('사출 LOT', injLots)}
                     ${row('사출수입검사일', injDates.join(', ') || '-')}
                     ${row('도료 LOT', paintLots)}
-                    ${row('도료수입검사일', paintDates.join(', ') || '-')}
+                    ${row('프라이머 수입검사일', primerDates.join(', ') || '-')}
+                    ${row('컬러 수입검사일', colorDates.join(', ') || '-')}
                     ${row('레이져 LOT', g.laserDate || '-')}
                 </table>
             </div>
             </body></html>`);
         win.document.close();
         try { win.focus(); } catch (e) {}
+    }
+
+    function openPaintMix(mixId) {
+        const id = String(mixId || '').trim();
+        if (!id) { UIUtils.toast('연결된 도료사용 등록이 없습니다.', 'warning'); return; }
+        const mix = Storage.getById(DB.STORES.PROD_CONDITIONS, id);
+        if (!mix || mix._docKind !== 'paint_mix') {
+            UIUtils.toast('도료사용 등록 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const usages = (mix.usages || []).filter(function(u) {
+            return u.paintName || u.prodLot || u.lotNo || u.residualProdLot;
+        });
+        const bodyRows = usages.length ? usages.map(function(u) {
+            const spec = _pwResolvePaintSpec(u.paintName, u.materialId, u.paintSpec);
+            const specLabel = spec === 'Primer' ? '프라이머' : spec === 'Color' ? '컬러' : spec === 'Clear' ? '클리어' : (spec || '-');
+            const lot = u.prodLot || u.lotNo || u.residualProdLot || '-';
+            const qty = Number(u.usageG) || Number(u.residualUseG) || 0;
+            return `<tr>
+                <td style="white-space:nowrap;">${_escapeHtml(specLabel)}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(u.paintName || '-')}</td>
+                <td style="white-space:nowrap;font-family:monospace;">${_escapeHtml(lot)}</td>
+                <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(qty)} g</td>
+            </tr>`;
+        }).join('') : `<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted);">사용 도료가 없습니다.</td></tr>`;
+        const workBtn = mix.workId
+            ? `<button class="btn btn-outline" onclick="UIUtils.closeModal();ProductWarehouseModule.openPaintWork('${_jsAttr(mix.workId)}')">도장 실적 보기</button>`
+            : '';
+        UIUtils.showModal('도료사용 등록', `
+            <div style="display:flex;gap:16px;flex-wrap:wrap;font-size:0.82rem;color:var(--text-muted);margin-bottom:12px;">
+                <span><strong>등록일:</strong> ${_escapeHtml(String(mix.date || '-').slice(0, 10))}</span>
+                <span><strong>라인:</strong> ${_escapeHtml(mix.line || '-')}</span>
+                <span><strong>차종:</strong> ${_escapeHtml(mix.carModel || '-')}</span>
+                <span><strong>품명:</strong> ${_escapeHtml(mix.partName || '-')}</span>
+                <span><strong>컬러:</strong> ${_escapeHtml(mix.color || '-')}</span>
+            </div>
+            <div class="data-table-wrapper">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
+                    <thead><tr>
+                        <th style="white-space:nowrap;">구분</th>
+                        <th style="white-space:nowrap;">도료명</th>
+                        <th style="white-space:nowrap;">제조 LOT</th>
+                        <th style="white-space:nowrap;text-align:right;">사용량</th>
+                    </tr></thead>
+                    <tbody>${bodyRows}</tbody>
+                </table>
+            </div>
+        `, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>${workBtn}`, 'md');
     }
 
     function openInjIncoming(inspId) {
@@ -6032,10 +6261,10 @@ const ProductWarehouseModule = (function() {
             <tr>
                 <td style="white-space:nowrap;">${l.date || '-'}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
-                <td style="white-space:nowrap;">${_pwInjLotCell(g, car)}</td>
-                <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintLotCell(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotWithInspCell(g, car)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, true)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, false)}</td>
+                <td style="white-space:nowrap;">${_pwPaintUsageCell(g)}</td>
                 ${laserCell}
                 <td style="text-align:right;white-space:nowrap;">
                     <span style="font-weight:600;color:var(--accent-green);">${UIUtils.formatNumber(l.qty)}</span>
@@ -6044,7 +6273,7 @@ const ProductWarehouseModule = (function() {
             </tr>`;
         }).join('');
 
-        const lotHeaders = ['입고일', '도장 LOT', '사출 LOT', '수입검사일', '도료 LOT', '도료수입검사일']
+        const lotHeaders = ['입고일', '도장 LOT', '사출 LOT / 수입검사일', 'P 도료 LOT / 수입검사일', 'C 도료 LOT / 수입검사일', 'P/C 사용량']
             .concat(showLaserCol ? ['레이져Lot'] : [])
             .concat(['현재 수량']);
 
@@ -6053,6 +6282,9 @@ const ProductWarehouseModule = (function() {
             colSpan: lotHeaders.length,
             rowsHtml: lotRows
         });
+        const lotHint = `<div style="font-size:0.75rem;color:var(--text-muted);margin:-4px 0 14px;line-height:1.45;">
+            도장 LOT를 기준으로 사출 LOT/수입검사, P·C 도료 LOT/수입검사일, 사용량, 레이져 LOT를 조회합니다. 항목을 클릭하면 해당 이력이 열립니다.
+        </div>`;
 
         const historySection = StockDetailUI.buildInvHistorySection(records, {
             routeFn: _productInvRoute,
@@ -6101,6 +6333,7 @@ const ProductWarehouseModule = (function() {
             </div>
             ${shippingStatusSection}
             ${lotSection}
+            ${lotHint}
             ${dailyInspSection}
             ${reliSection}
             ${historySection}
@@ -7226,6 +7459,7 @@ const ProductWarehouseModule = (function() {
         openInjIncoming,
         openPaintIncoming,
         openPaintWork,
+        openPaintMix,
         openLaserWork,
         openInspTracePopup,
         traceIncoming
