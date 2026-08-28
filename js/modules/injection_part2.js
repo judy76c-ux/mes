@@ -3098,9 +3098,9 @@ var InjectionWarehouseModule = (function() {
         const inspCtx = _buildInspDateContext();
         const workLineMap = isIncoming ? {} : _buildPaintWorkLineMap();
         const inputMaps = isIncoming ? null : _buildPaintLineFromInputMap();
-        const splitMap = isIncoming ? _inboundSplitMap(data) : {};
+        const rows = isIncoming ? _groupIncomingDisplayRows(data) : data;
 
-        tbody.innerHTML = data.map(d => {
+        tbody.innerHTML = rows.map(d => {
             const mat   = mats.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
             const price = Number(mat ? mat.unitPrice : 0) || 0;
             const value = (Number(d.quantity) || 0) * price;
@@ -3111,7 +3111,6 @@ var InjectionWarehouseModule = (function() {
             const qtyMatch = isIncoming ? _inspQtyMatchForInbound(d) : null;
             const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
             const outgoingActor = _outgoingActorLabel(d);
-            const splitInfo = splitMap[d.id] || null;
             const actionCell = isIncoming
                 ? `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.openIncomingTxView('${d.id}')">
                         <span class="material-symbols-outlined" style="font-size:0.9rem;">visibility</span> 보기
@@ -3136,7 +3135,7 @@ var InjectionWarehouseModule = (function() {
                     <td style="white-space:nowrap;">${d.supplier || '-'}</td>
                     <td style="min-width:160px;max-width:280px;">
                         ${_lotBreakdownHtml(d)}
-                        ${isIncoming ? _inspSplitBadgeHtml(splitInfo, d) : ''}
+                        ${isIncoming ? _inspGroupBadgeHtml(d) : ''}
                     </td>
                     <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(d.quantity)}</td>
                     ${isIncoming ? `<td style="text-align:right;white-space:nowrap;">${_inspQtyCellHtml(qtyMatch)}</td>
@@ -3397,61 +3396,108 @@ var InjectionWarehouseModule = (function() {
         }).join('');
     }
 
-    /** 같은 수입검사 1건이 창고 입고 여러 행으로 나뉜 경우 (현장 반납 LOT 충돌 분리 등) */
-    function _inboundSplitMap(data) {
-        const groups = {};
-        (data || []).forEach(function (d) {
-            if (!d || d.type === '출고') return;
-            if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) return;
-            const inspId = String(d.inspId || '').trim();
-            const key = inspId
-                ? ('id:' + inspId)
-                : ('dt:' + String(d.inspDate || d.date || '').slice(0, 16) + '||'
-                    + String(d.carModel || '') + '||' + String(d.partName || '') + '||' + String(d.color || ''));
-            if (!groups[key]) groups[key] = [];
-            groups[key].push(d);
-        });
-        const byId = {};
-        Object.keys(groups).forEach(function (key) {
-            const group = groups[key];
-            if (group.length < 2) return;
-            group.forEach(function (d, i) {
-                if (d && d.id) byId[d.id] = { n: i + 1, total: group.length };
+    /** 입고 이력에서 같은 수입검사·같은 날을 한 행으로 묶을 키.
+     *  원장은 그대로 두고 화면만 검사 1건과 맞춰 대조한다. */
+    function _inboundDisplayGroupKey(d) {
+        if (!d || d.type === '출고') return '';
+        if (_isSiteReturnInbound(d) || _isStockBaselineRecord(d) || _isStockErrorResetRecord(d)) return '';
+        if (typeof _isUnmatchedActionRecord === 'function' && _isUnmatchedActionRecord(d)) return '';
+        const route = _invRoute(d);
+        if (route.label !== '수입검사' && route.label !== '수입검사 없음') return '';
+        const day = String(_txRecordStamp(d) || d.date || '').slice(0, 10);
+        const car = String(d.carModel || '').trim();
+        const part = String(d.partName || '').trim();
+        const color = String(d.color || '').trim();
+        const inspId = String(d.inspId || '').trim();
+        if (inspId) return 'insp:' + inspId + '||' + day;
+        const inspDay = String(d.inspDate || '').slice(0, 10);
+        if (!inspDay || !part || !day) return '';
+        return 'fb:' + inspDay + '||' + day + '||' + car + '||' + part + '||' + color;
+    }
+
+    function _recordLotEntries(d) {
+        if (Array.isArray(d && d.lots) && d.lots.length) {
+            return d.lots.map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: _lotNum(l && l.qty) };
+            }).filter(function (l) { return l.lotNo; });
+        }
+        const lotNo = String((d && d.lotNo) || '').trim();
+        if (!lotNo) return [];
+        const qty = (typeof InvCalc !== 'undefined' && InvCalc.qtyOf)
+            ? (InvCalc.qtyOf(d) || _lotNum(d.quantity))
+            : _lotNum(d && d.quantity);
+        return [{ lotNo: lotNo, qty: qty }];
+    }
+
+    function _mergeInboundDisplayRow(records) {
+        const primary = records[0];
+        const lotMap = {};
+        records.forEach(function (d) {
+            _recordLotEntries(d).forEach(function (l) {
+                lotMap[l.lotNo] = (lotMap[l.lotNo] || 0) + l.qty;
             });
         });
-        return byId;
-    }
-
-    function _inspSplitBadgeHtml(info, d) {
-        if (!info || info.total < 2) return '';
-        const missing = _missingInspLotsOnRow(d);
-        const missingText = missing.length
-            ? ' · 나머지 검사 LOT ' + missing.map(function (l) { return l.lotNo; }).join(', ')
-            : '';
-        return '<div style="margin-top:3px;font-size:0.68rem;font-weight:700;color:#b45309;" title="' +
-            _escapeHtml('수입검사 1건이 창고 입고 ' + info.total + '건으로 나뉘었습니다. 같은 시각의 다른 입고 행과 합치면 검사 LOT 전체와 대조됩니다.') +
-            '">분할 ' + info.n + '/' + info.total + missingText + '</div>';
-    }
-
-    function _missingInspLotsOnRow(d) {
-        const inspId = _findLinkedInspectionId(d);
-        if (!inspId) return [];
-        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, String(inspId));
-        if (!insp) return [];
-        const inbound = {};
-        _inboundLotNos(d).forEach(function (n) { inbound[n] = true; });
-        const lots = (insp.lots && insp.lots.length)
-            ? insp.lots
-            : (insp.lotNo ? [{ lotNo: insp.lotNo, qty: insp.passQty }] : []);
-        return lots.filter(function (l) {
-            const n = String(l.lotNo || '').trim();
-            return n && !inbound[n] && (Number(l.qty) || 0) > 0;
+        const lots = Object.keys(lotMap).sort().map(function (lotNo) {
+            return { lotNo: lotNo, qty: lotMap[lotNo] };
         });
+        const quantity = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        return Object.assign({}, primary, {
+            lots: lots,
+            lotNo: lots[0] ? lots[0].lotNo : primary.lotNo,
+            quantity: quantity,
+            _groupIds: records.map(function (r) { return r.id; }),
+            _groupCount: records.length
+        });
+    }
+
+    function _groupIncomingDisplayRows(data) {
+        const seen = {};
+        const out = [];
+        const list = data || [];
+        list.forEach(function (d, idx) {
+            const key = _inboundDisplayGroupKey(d);
+            if (!key) {
+                out.push(d);
+                return;
+            }
+            if (seen[key]) return;
+            const siblings = [];
+            for (let i = idx; i < list.length; i++) {
+                if (_inboundDisplayGroupKey(list[i]) === key) siblings.push(list[i]);
+            }
+            seen[key] = true;
+            out.push(siblings.length > 1 ? _mergeInboundDisplayRow(siblings) : siblings[0]);
+        });
+        return out;
+    }
+
+    function _inspGroupBadgeHtml(d) {
+        const n = Number(d && d._groupCount) || 0;
+        if (n < 2) return '';
+        return '<div style="margin-top:3px;font-size:0.68rem;font-weight:700;color:#2563eb;" title="' +
+            _escapeHtml('같은 수입검사·같은 입고일의 창고 기록 ' + n + '건을 한 행으로 묶어 검사 이력과 대조합니다. 원장 기록은 그대로 둡니다.') +
+            '">검사 1건 · 입고기록 ' + n + '건 묶음</div>';
+    }
+
+    function _siblingsForIncomingView(d) {
+        if (!d) return [];
+        const key = _inboundDisplayGroupKey(d);
+        if (!key) return [d];
+        const all = (Storage.getAll(STORE) || []).filter(function (r) {
+            return r && r.type !== '출고' && _inboundDisplayGroupKey(r) === key;
+        });
+        if (!all.length) return [d];
+        all.sort(function (a, b) {
+            return String(_txRecordStamp(b) || '').localeCompare(String(_txRecordStamp(a) || ''));
+        });
+        return all;
     }
 
     function openIncomingTxView(id) {
-        const d = Storage.getById(STORE, id);
-        if (!d) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
+        const raw = Storage.getById(STORE, id);
+        if (!raw) { UIUtils.toast('기록을 찾을 수 없습니다.', 'error'); return; }
+        const siblings = _siblingsForIncomingView(raw);
+        const d = siblings.length > 1 ? _mergeInboundDisplayRow(siblings) : raw;
 
         const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const mat = mats.find(m => m.carModel === d.carModel && m.injPartName === d.partName);
@@ -3465,6 +3511,11 @@ var InjectionWarehouseModule = (function() {
 
         const who = d.resetBy || _formatActorLabel(d.receivedBy || d.outgoingBy || '');
         const isReset = _isStockErrorResetRecord(d);
+        const groupNote = siblings.length > 1
+            ? `<div style="margin-top:8px;padding:8px 10px;border-radius:8px;background:rgba(37,99,235,.06);border:1px solid rgba(37,99,235,.2);font-size:0.8rem;line-height:1.5;color:#1d4ed8;">
+                    같은 수입검사 입고 기록 ${siblings.length}건을 한 화면으로 묶어 표시합니다. 원장에는 ${siblings.length}건이 남아 있습니다.
+               </div>`
+            : '';
         const row = (label, val) => `
             <div style="display:flex;gap:8px;padding:6px 0;border-bottom:1px solid var(--border-color);">
                 <span style="min-width:96px;font-size:0.82rem;color:var(--text-muted);flex-shrink:0;">${label}</span>
@@ -3492,6 +3543,7 @@ var InjectionWarehouseModule = (function() {
             `<div style="margin-bottom:12px;">
                 ${_renderRouteBadge(d, path)}
                 ${path.detail ? `<div style="margin-top:6px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">${_escapeHtml(path.detail)}</div>` : ''}
+                ${groupNote}
             </div>
             <div style="background:var(--bg-secondary);border-radius:10px;padding:12px 14px;">
                 ${resetRows}
