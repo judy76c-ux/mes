@@ -6737,6 +6737,8 @@ function _num(value) {
         if (!rows.length) { UIUtils.toast('정리할 잔량이 없습니다.', 'info'); return; }
         const today = new Date().toISOString().slice(0, 10);
         const totalNow = rows.reduce(function(s, r) { return s + (Number(r.residualQty) || 0); }, 0);
+        const cars = [...new Set(rows.map(function(r) { return r.carModel || ''; }).filter(Boolean))]
+            .sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
 
         const bodyRows = rows.map(function(r, i) {
             const key = _productKey(r.carModel, r.partName, r.color || '');
@@ -6768,6 +6770,13 @@ function _num(value) {
                     <input type="date" class="form-input" id="lwBulkResetDate" value="${today}">
                 </div>
                 <div class="form-group">
+                    <label class="form-label">차종 필터</label>
+                    <select class="form-select" id="lwBulkFilterCar" onchange="LaserWipModule.filterResidualBulkCleanup()">
+                        <option value="">전체 차종</option>
+                        ${cars.map(function(c) { return `<option value="${_esc(c)}">${_esc(c)}</option>`; }).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
                     <label class="form-label">비고</label>
                     <input type="text" class="form-input" id="lwBulkResetNote" placeholder="잔량 일괄 정리 (유령 잔량 제거)">
                 </div>
@@ -6775,7 +6784,7 @@ function _num(value) {
             <div style="max-height:46vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">
                 <table class="data-table" style="margin:0;font-size:0.82rem;">
                     <thead><tr>
-                        <th style="width:36px;text-align:center;"><input type="checkbox" id="lwBulkChkAll" checked onclick="document.querySelectorAll('#lwBulkResetRows input[type=checkbox]').forEach(function(c){c.checked=this.checked;}, this);"></th>
+                        <th style="width:36px;text-align:center;"><input type="checkbox" id="lwBulkChkAll" checked onclick="LaserWipModule.toggleAllResidualBulk(this)"></th>
                         <th>차종</th><th>품명</th><th>컬러</th>
                         <th style="text-align:right;">현재 잔량</th>
                         <th style="text-align:right;">정리 후 잔량</th>
@@ -6784,12 +6793,40 @@ function _num(value) {
                 </table>
             </div>
             <div style="margin-top:10px;font-size:0.8rem;color:var(--text-muted);">
-                대상 ${rows.length}개 품목 · 현재 잔량 합계 <strong style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(totalNow)}</strong> EA
+                대상 <span id="lwBulkCount">${rows.length}</span>개 품목 · 현재 잔량 합계 <strong id="lwBulkSum" style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(totalNow)}</strong> EA
             </div>
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" style="background:var(--accent-red);border-color:var(--accent-red);" onclick="LaserWipModule.saveResidualBulkCleanup()">일괄 정리 실행</button>
         `, 'lg');
+    }
+
+    function filterResidualBulkCleanup() {
+        const car = (document.getElementById('lwBulkFilterCar') || {}).value || '';
+        const trs = document.querySelectorAll('#lwBulkResetRows tr[data-key]');
+        let shown = 0;
+        let sum = 0;
+        trs.forEach(function(tr) {
+            const match = !car || (tr.getAttribute('data-cm') || '') === car;
+            tr.style.display = match ? '' : 'none';
+            if (match) { shown++; sum += Math.round(Number(tr.getAttribute('data-cur')) || 0); }
+        });
+        const cntEl = document.getElementById('lwBulkCount');
+        if (cntEl) cntEl.textContent = String(shown);
+        const sumEl = document.getElementById('lwBulkSum');
+        if (sumEl) sumEl.textContent = UIUtils.formatNumber(sum);
+        const allEl = document.getElementById('lwBulkChkAll');
+        if (allEl) allEl.checked = true;
+        toggleAllResidualBulk(allEl);
+    }
+
+    function toggleAllResidualBulk(src) {
+        const on = !!(src && src.checked);
+        document.querySelectorAll('#lwBulkResetRows tr[data-key]').forEach(function(tr) {
+            if (tr.style.display === 'none') return;
+            const cb = tr.querySelector('input[type=checkbox]');
+            if (cb) cb.checked = on;
+        });
     }
 
     async function saveResidualBulkCleanup() {
@@ -6802,6 +6839,7 @@ function _num(value) {
         const targets = [];
         let skipped = 0;
         trs.forEach(function(tr, i) {
+            if (tr.style.display === 'none') return;
             const chk = document.getElementById('lwBulkChk' + i);
             if (!chk || !chk.checked) return;
             const cur = Math.round(Number(tr.getAttribute('data-cur')) || 0);
@@ -6908,7 +6946,7 @@ function _num(value) {
     }
 
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct, openManualInput,
-             openResidualBulkCleanup, saveResidualBulkCleanup,
+             openResidualBulkCleanup, saveResidualBulkCleanup, filterResidualBulkCleanup, toggleAllResidualBulk,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
              openEditManualEntry, saveEditManualEntry, removeManualEntry,

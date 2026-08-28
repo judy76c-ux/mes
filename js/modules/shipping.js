@@ -4249,6 +4249,7 @@ const ProductWarehouseModule = (function() {
     let _pwStockFitRaf = 0;
     let _pwStockOrder = _readPwStockOrder();
     let _pwDrag = null;
+    let _pwPaintInspCache = Object.create(null);
 
     function _emptyPwStockOrder() {
         return { mass: { cols: [] }, as: { cols: [] }, dev: { cols: [] } };
@@ -4354,6 +4355,7 @@ const ProductWarehouseModule = (function() {
     function _loadIncoming() {
         const el = document.getElementById('pwTabIncoming');
         if (!el) return;
+        _pwPaintInspCache = Object.create(null);
         const data = (Storage.getAll(STORE) || [])
             .filter(d => d.type !== '출고')
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
@@ -4375,10 +4377,10 @@ const ProductWarehouseModule = (function() {
                 <td style="white-space:nowrap;"><strong>${_escapeHtml(d.partName || '-')}</strong></td>
                 <td style="white-space:nowrap;">${_escapeHtml(d.color || '-')}</td>
                 <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
-                <td style="white-space:nowrap;">${_pwInjLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotCell(g, d.carModel)}</td>
                 <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotCell(g)}</td>
                 <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
                 ${laserCell}
                 <td style="white-space:nowrap;font-size:0.82rem;color:var(--text-secondary);">${_escapeHtml(d.source || '-')}</td>
@@ -5327,26 +5329,107 @@ const ProductWarehouseModule = (function() {
         });
     }
 
+    function _pwLotEquals(a, b) {
+        const na = String(a || '').replace(/\s+/g, '');
+        const nb = String(b || '').replace(/\s+/g, '');
+        if (!na || !nb) return false;
+        if (na === nb) return true;
+        const da = na.replace(/\D/g, '');
+        const db = nb.replace(/\D/g, '');
+        return !!(da && db && da.length >= 4 && da === db);
+    }
+
+    function _pwNormPaintName(value) {
+        return String(value || '').replace(/\s+/g, '').toLowerCase();
+    }
+
+    function _pwInspLotList(d) {
+        if (Array.isArray(d.lots) && d.lots.length) {
+            return d.lots.map(function(l) { return String(l.lotNo || '').trim(); }).filter(Boolean);
+        }
+        if (d.lotNo) return _pwSplitLots(d.lotNo);
+        return [];
+    }
+
     function _injectionInspHitsForLot(injPartName, carModel, lotNo) {
         if (!lotNo) return [];
         const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
-        const lot = String(lotNo).trim();
-        function collect(requirePart) {
-            const hits = [];
-            inspections.forEach(function(d) {
-                if (requirePart && injPartName && String(d.partName || '') !== String(injPartName)) return;
-                if (carModel && d.carModel && String(d.carModel) !== String(carModel)) return;
-                const lotList = (Array.isArray(d.lots) && d.lots.length) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo }] : []);
-                if (lotList.some(function(l) { return String(l.lotNo || '').trim() === lot; })) {
-                    hits.push({ id: d.id, date: d.date || '' });
-                }
-            });
-            hits.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
-            return hits;
+        const hits = [];
+        inspections.forEach(function(d) {
+            const lotList = _pwInspLotList(d);
+            if (!lotList.some(function(l) { return _pwLotEquals(l, lotNo); })) return;
+            let score = 10;
+            if (carModel && String(d.carModel || '').trim() === String(carModel).trim()) score += 6;
+            if (injPartName && String(d.partName || '').trim() === String(injPartName).trim()) score += 4;
+            hits.push({ id: d.id, date: d.date || '', score: score, rec: d });
+        });
+        hits.sort(function(a, b) { return b.score - a.score || String(b.date).localeCompare(String(a.date)); });
+        const tight = hits.filter(function(h) { return h.score >= 16; });
+        return (tight.length ? tight : hits).map(function(h) { return { id: h.id, date: h.date }; });
+    }
+
+    function _pwLookupPaintIncoming(name, prodLot, materialId) {
+        const lot = String(prodLot || '').trim();
+        const res = { inspId: '', inspDate: '' };
+        if (!lot) return res;
+        const cacheKey = String(materialId || '') + '|' + _pwNormPaintName(name) + '|' + lot;
+        if (_pwPaintInspCache[cacheKey]) return _pwPaintInspCache[cacheKey];
+        if (_pwPaintInspCache[lot] && _pwPaintInspCache[lot].inspId) {
+            const cached = _pwPaintInspCache[lot];
+            _pwPaintInspCache[cacheKey] = cached;
+            return cached;
         }
-        const exact = collect(true);
-        if (exact.length || !injPartName) return exact;
-        return collect(false);
+
+        if (materialId && typeof Trace !== 'undefined' && Trace.resolvePaintInspection) {
+            const insp = Trace.resolvePaintInspection(materialId, lot);
+            if (insp && (insp.inspId || insp.inspDate)) {
+                res.inspId = String(insp.inspId || '').trim();
+                res.inspDate = String(insp.inspDate || '').slice(0, 10);
+            }
+        }
+
+        if (!res.inspId) {
+            const inbounds = (Storage.getAll(DB.STORES.PAINT_INVENTORY) || []).filter(function(r) {
+                if (!r || r.type === '출고') return false;
+                const rk = String(r.prodLot || '').trim();
+                const rLot = String(r.lotNo || '').trim();
+                if (!_pwLotEquals(rk, lot) && !_pwLotEquals(rLot, lot)) return false;
+                if (materialId && r.materialId && String(r.materialId) !== String(materialId)) return false;
+                return !!(r.sourceInspectionId || r.inspDate);
+            }).sort(function(a, b) {
+                return String(b.date || '').localeCompare(String(a.date || ''));
+            });
+            if (inbounds[0]) {
+                res.inspDate = res.inspDate || String(inbounds[0].inspDate || '').slice(0, 10);
+                res.inspId = String(inbounds[0].sourceInspectionId || '').trim();
+                if (res.inspId && !res.inspDate) {
+                    const linked = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, res.inspId);
+                    if (linked) res.inspDate = String(linked.date || '').slice(0, 10);
+                }
+            }
+        }
+
+        if (!res.inspId) {
+            const nameN = _pwNormPaintName(name);
+            const inspections = (Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || []).filter(function(insp) {
+                const inspLot = String(insp.lotNo || insp.prodLot || '').trim();
+                if (!_pwLotEquals(inspLot, lot)) return false;
+                if (!nameN) return true;
+                const inspName = _pwNormPaintName(insp.paintName);
+                if (!inspName) return true;
+                return inspName === nameN || inspName.indexOf(nameN) >= 0 || nameN.indexOf(inspName) >= 0;
+            }).sort(function(a, b) {
+                return String(b.date || '').localeCompare(String(a.date || ''));
+            });
+            if (inspections[0]) {
+                res.inspId = String(inspections[0].id || '').trim();
+                res.inspDate = String(inspections[0].date || '').slice(0, 10);
+            }
+        }
+
+        _pwPaintInspCache[cacheKey] = res;
+        if (res.inspId) _pwPaintInspCache[lot] = res;
+        return res;
     }
 
     function _findPaintingWorkByLot(rec) {
@@ -5375,39 +5458,54 @@ const ProductWarehouseModule = (function() {
     function _paintLotDetailsForWork(work) {
         const out = [];
         const seen = {};
-        function push(name, prodLot, inspDate, inspId) {
+        function push(name, prodLot, inspDate, inspId, materialId) {
             const lot = String(prodLot || '').trim();
             if (!lot) return;
             const key = String(name || '') + '|' + lot;
-            if (seen[key]) return;
+            if (seen[key]) {
+                const prev = out.find(function(m) { return (m.name || '') + '|' + m.prodLot === key; });
+                if (prev && !prev.inspId && inspId) {
+                    prev.inspId = String(inspId || '').trim();
+                    prev.inspDate = prev.inspDate || String(inspDate || '').slice(0, 10);
+                    prev.materialId = prev.materialId || String(materialId || '').trim();
+                }
+                return;
+            }
             seen[key] = true;
             out.push({
                 name: String(name || '').trim(),
                 prodLot: lot,
                 inspDate: String(inspDate || '').slice(0, 10),
-                inspId: String(inspId || '').trim()
+                inspId: String(inspId || '').trim(),
+                materialId: String(materialId || '').trim()
             });
         }
         const t = (typeof Trace !== 'undefined') ? Trace.of(work) : {};
         const mats = (t.paint && Array.isArray(t.paint.materials)) ? t.paint.materials : [];
-        mats.forEach(function(m) { push(m.name, m.prodLot, m.inspDate, m.inspId); });
-        if (out.length) return out;
+        mats.forEach(function(m) { push(m.name, m.prodLot, m.inspDate, m.inspId, m.materialId); });
         const workId = work && work.id;
-        if (!workId) return out;
-        const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
-            .filter(function(m) { return m._docKind === 'paint_mix' && m.workId === workId; });
-        mixes.forEach(function(m) {
-            (m.usages || []).forEach(function(u) {
-                const lot = u.prodLot || u.lotNo || '';
-                let inspDate = '';
-                let inspId = String(u.sourceInspectionId || '').trim();
-                if (typeof Trace !== 'undefined' && Trace.resolvePaintInspection) {
-                    const insp = Trace.resolvePaintInspection(u.materialId, lot);
-                    inspDate = insp.inspDate || '';
-                    inspId = insp.inspId || inspId;
-                }
-                push(u.paintName, lot, inspDate, inspId);
+        if (workId) {
+            const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
+                .filter(function(m) { return m._docKind === 'paint_mix' && m.workId === workId; });
+            mixes.forEach(function(m) {
+                (m.usages || []).forEach(function(u) {
+                    const lot = u.prodLot || u.lotNo || '';
+                    let inspDate = '';
+                    let inspId = String(u.sourceInspectionId || '').trim();
+                    if (typeof Trace !== 'undefined' && Trace.resolvePaintInspection) {
+                        const insp = Trace.resolvePaintInspection(u.materialId, lot);
+                        inspDate = insp.inspDate || '';
+                        inspId = insp.inspId || inspId;
+                    }
+                    push(u.paintName, lot, inspDate, inspId, u.materialId);
+                });
             });
+        }
+        out.forEach(function(m) {
+            if (m.inspId && m.inspDate) return;
+            const found = _pwLookupPaintIncoming(m.name, m.prodLot, m.materialId);
+            if (found.inspId) m.inspId = m.inspId || found.inspId;
+            if (found.inspDate) m.inspDate = m.inspDate || found.inspDate;
         });
         return out;
     }
@@ -5566,12 +5664,274 @@ const ProductWarehouseModule = (function() {
         return _pwClickLink(g.laserDate, onclick, '레이져 작업 실적 보기');
     }
 
+    function _pwTraceBtn(kind, car, part, lots) {
+        const carEnc = encodeURIComponent(car || '');
+        const partEnc = encodeURIComponent(part || '');
+        const lotsEnc = encodeURIComponent(lots || '');
+        return ` <button type="button" class="btn btn-sm btn-outline"
+            style="margin-left:4px;font-size:0.7rem;padding:1px 7px;line-height:1.35;vertical-align:middle;"
+            onclick="event.preventDefault();event.stopPropagation();ProductWarehouseModule.traceIncoming('${kind}','${carEnc}','${partEnc}','${lotsEnc}')">추적</button>`;
+    }
+
+    function _pwInjLotCell(g, car) {
+        const html = _pwInjLotLinks(g);
+        const missing = (g.injLots || []).filter(function(r) {
+            return r.lot && r.lot !== '무표기' && r.lot !== '(미차감 출고)' && !r.inspId;
+        });
+        if (!missing.length) return html;
+        return html + _pwTraceBtn('inj', car || '', g.injPartName || '', missing.map(function(r) { return r.lot; }).join(','));
+    }
+
+    function _pwPaintLotCell(g) {
+        const html = _pwPaintLotLinks(g);
+        const missing = (g.paintMats || []).filter(function(m) { return m.prodLot && !m.inspId; });
+        if (!missing.length) return html;
+        const payload = missing.map(function(m) {
+            return (m.name || '') + '|' + m.prodLot;
+        }).join(';;');
+        return html + _pwTraceBtn('paint', '', '', payload);
+    }
+
     function _pwOpenNewWindow(pageId, openKind, recordId) {
-        if (typeof Router !== 'undefined' && typeof Router.openInNewWindow === 'function') {
-            Router.openInNewWindow(pageId, { open: openKind, id: recordId });
+        let href = '';
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('page', pageId);
+            if (openKind) url.searchParams.set('open', openKind);
+            else url.searchParams.delete('open');
+            if (recordId) url.searchParams.set('id', recordId);
+            else url.searchParams.delete('id');
+            href = url.toString();
+        } catch (e) {
+            const base = String(window.location.href).split('#')[0].split('?')[0];
+            href = base + '?page=' + encodeURIComponent(pageId)
+                + (openKind ? '&open=' + encodeURIComponent(openKind) : '')
+                + (recordId ? '&id=' + encodeURIComponent(recordId) : '');
+        }
+        const name = ('mes_' + String(openKind || pageId) + '_' + String(recordId || ''))
+            .replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64);
+        const win = window.open(href, name, 'popup=yes,width=1280,height=860,scrollbars=yes,resizable=yes');
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.', 'warning');
+            return null;
+        }
+        try { win.focus(); } catch (e) {}
+        return win;
+    }
+
+    function _pwSearchInjIncoming(lots, car, part) {
+        const wanted = (lots || []).map(function(s) { return String(s || '').trim(); })
+            .filter(function(l) { return l && l !== '무표기' && l !== '(미차감 출고)'; });
+        if (!wanted.length) return [];
+        const inspections = Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || [];
+        const hits = [];
+        inspections.forEach(function(d) {
+            const inspLots = _pwInspLotList(d);
+            const matched = wanted.filter(function(w) {
+                return inspLots.some(function(il) { return _pwLotEquals(w, il); });
+            });
+            if (!matched.length) return;
+            let score = 10;
+            if (car && String(d.carModel || '').trim() === String(car).trim()) score += 6;
+            if (part && String(d.partName || '').trim() === String(part).trim()) score += 4;
+            hits.push({
+                id: d.id,
+                date: String(d.date || '').slice(0, 10),
+                carModel: d.carModel || '',
+                partName: d.partName || '',
+                color: d.color || '',
+                lots: inspLots.join(', '),
+                matched: matched.join(', '),
+                verdict: d.verdict || '',
+                score: score
+            });
+        });
+        hits.sort(function(a, b) { return b.score - a.score || String(b.date).localeCompare(String(a.date)); });
+        return hits;
+    }
+
+    function _pwSearchPaintIncoming(items) {
+        const hits = [];
+        const seen = {};
+        (items || []).forEach(function(item) {
+            const name = item.name || '';
+            const lot = item.lot || '';
+            if (!lot) return;
+            const found = _pwLookupPaintIncoming(name, lot, item.materialId || '');
+            if (!found.inspId) {
+                const inspections = Storage.getAll(DB.STORES.PAINT_INCOMING_INSPECTIONS) || [];
+                inspections.filter(function(insp) {
+                    return _pwLotEquals(insp.lotNo || insp.prodLot, lot);
+                }).forEach(function(insp) {
+                    if (seen[insp.id]) return;
+                    seen[insp.id] = true;
+                    hits.push({
+                        id: insp.id,
+                        date: String(insp.date || '').slice(0, 10),
+                        name: insp.paintName || name,
+                        lot: String(insp.lotNo || insp.prodLot || lot),
+                        matched: lot,
+                        supplier: insp.supplier || ''
+                    });
+                });
+                return;
+            }
+            if (seen[found.inspId]) return;
+            seen[found.inspId] = true;
+            const insp = Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, found.inspId) || {};
+            hits.push({
+                id: found.inspId,
+                date: found.inspDate || String(insp.date || '').slice(0, 10),
+                name: insp.paintName || name,
+                lot: lot,
+                matched: lot,
+                supplier: insp.supplier || ''
+            });
+        });
+        return hits;
+    }
+
+    function _pwShowTraceHits(kind, queryLabel, hits) {
+        const isInj = kind === 'inj';
+        const openFn = isInj ? 'openInjIncoming' : 'openPaintIncoming';
+        const rows = hits.length ? hits.map(function(h) {
+            return `<tr>
+                <td style="white-space:nowrap;">${_escapeHtml(h.date || '-')}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(isInj ? (h.carModel || '-') : (h.name || '-'))}</td>
+                <td style="white-space:nowrap;">${_escapeHtml(isInj ? (h.partName || '-') : (h.supplier || '-'))}</td>
+                <td style="white-space:nowrap;font-family:ui-monospace,Menlo,Consolas,monospace;">${_escapeHtml(isInj ? (h.lots || h.matched) : (h.lot || h.matched))}</td>
+                <td style="white-space:nowrap;">${isInj ? _escapeHtml(h.verdict || '-') : _escapeHtml(h.matched || '-')}</td>
+                <td style="white-space:nowrap;">
+                    <button type="button" class="btn btn-sm btn-primary" style="font-size:0.75rem;padding:2px 8px;"
+                        onclick="ProductWarehouseModule.${openFn}('${_jsAttr(h.id)}')">새창</button>
+                </td>
+            </tr>`;
+        }).join('') : `<tr><td colspan="6" style="text-align:center;padding:20px;color:var(--text-muted);">수입검사에서 해당 LOT를 찾지 못했습니다.</td></tr>`;
+        const headers = isInj
+            ? ['검사일', '차종', '품명', '사출 LOT', '판정', '열기']
+            : ['검사일', '도료명', '도료사', '도료 LOT', '검색 LOT', '열기'];
+        const opener = (typeof UIUtils.openChildModal === 'function') ? UIUtils.openChildModal.bind(UIUtils) : UIUtils.showModal;
+        opener({
+            title: (isInj ? '사출 수입검사 추적' : '도료 수입검사 추적') + ' — ' + queryLabel,
+            size: 'lg',
+            body: `<div style="overflow-x:auto;">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
+                    <thead><tr>${headers.map(function(h) { return '<th style="white-space:nowrap;">' + h + '</th>'; }).join('')}</tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>`,
+            footer: '<button type="button" class="btn btn-secondary" onclick="UIUtils.closeChildModal ? UIUtils.closeChildModal() : UIUtils.closeModal()">닫기</button>'
+        });
+    }
+
+    function traceIncoming(kind, carEnc, partEnc, lotsEnc) {
+        const car = decodeURIComponent(carEnc || '');
+        const part = decodeURIComponent(partEnc || '');
+        const raw = decodeURIComponent(lotsEnc || '');
+        if (kind === 'paint') {
+            const items = raw.split(';;').map(function(s) {
+                const idx = s.lastIndexOf('|');
+                if (idx < 0) return { name: '', lot: s };
+                return { name: s.slice(0, idx), lot: s.slice(idx + 1) };
+            }).filter(function(it) { return it.lot; });
+            const hits = _pwSearchPaintIncoming(items);
+            if (hits.length === 1) {
+                openPaintIncoming(hits[0].id);
+                return;
+            }
+            _pwShowTraceHits('paint', items.map(function(it) { return it.lot; }).join(', '), hits);
             return;
         }
-        UIUtils.toast('새창을 열 수 없습니다.', 'error');
+        const lots = raw.split(',').map(function(s) { return s.trim(); }).filter(Boolean);
+        if (!lots.length) {
+            UIUtils.toast('추적할 사출 LOT가 없습니다.', 'warning');
+            return;
+        }
+        const hits = _pwSearchInjIncoming(lots, car, part);
+        if (hits.length === 1) {
+            openInjIncoming(hits[0].id);
+            return;
+        }
+        _pwShowTraceHits('inj', lots.join(', '), hits);
+    }
+
+    function openInspTracePopup(inspId) {
+        const rec = Storage.getById(DB.STORES.SHIPPING_INSPECTIONS, String(inspId || '').trim());
+        if (!rec) {
+            UIUtils.toast('출하검사 이력을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        const g = _pwGenealogy({
+            carModel: rec.carModel || '',
+            partName: rec.partName || '',
+            color: rec.color || '',
+            lotNo: rec.injectionLot || rec.lotNo || '',
+            injectionLot: rec.injectionLot || rec.lotNo || '',
+            paintingDate: _pwInspPaintLot(rec),
+            paintLot: _pwInspPaintLot(rec),
+            standbyId: rec.standbyId,
+            laserWorkId: rec.laserWorkId,
+            laserLot: rec.laserLot,
+            laserWorkDate: rec.laserWorkDate
+        });
+        const injLots = (g.injLots || []).map(function(r) { return r.lot; }).filter(Boolean).join(', ') || '-';
+        const injDates = [];
+        const seenD = {};
+        (g.injLots || []).forEach(function(r) {
+            if (!r.inspDate || seenD[r.inspDate]) return;
+            seenD[r.inspDate] = true;
+            injDates.push(r.inspDate);
+        });
+        const paintLots = (g.paintMats || []).map(function(m) {
+            return m.name ? (m.name + '(' + m.prodLot + ')') : m.prodLot;
+        }).filter(Boolean).join(', ') || '-';
+        const paintDates = [];
+        const seenP = {};
+        (g.paintMats || []).forEach(function(m) {
+            if (!m.inspDate || seenP[m.inspDate]) return;
+            seenP[m.inspDate] = true;
+            paintDates.push(m.inspDate);
+        });
+        const paintLot = _pwInspPaintLot(rec) || rec.lotNo || '-';
+        const win = window.open('', 'pwInspTrace_' + String(rec.id || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 40),
+            'width=920,height=560,scrollbars=yes,resizable=yes,menubar=no,toolbar=no,location=no,status=no');
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.', 'warning');
+            return;
+        }
+        const row = function(label, value) {
+            return `<tr>
+                <th style="white-space:nowrap;text-align:left;padding:8px 12px;background:#f1f5f9;color:#64748b;font-weight:600;">${label}</th>
+                <td style="white-space:nowrap;padding:8px 12px;">${_escapeHtml(value)}</td>
+            </tr>`;
+        };
+        win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>출하검사 LOT 추적</title>
+            <style>
+                body{margin:0;font-family:'Malgun Gothic','맑은 고딕',sans-serif;background:#f1f5f9;color:#0f172a;}
+                .bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;background:#1e3a5f;color:#fff;}
+                .bar button{font-size:13px;padding:6px 12px;border-radius:6px;border:1px solid rgba(255,255,255,.35);background:#fff;color:#1e3a5f;cursor:pointer;font-weight:700;}
+                .wrap{padding:16px;}
+                table{width:max-content;max-width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;}
+                td,th{border-bottom:1px solid #e2e8f0;font-size:13px;}
+            </style></head><body>
+            <div class="bar"><strong>출하검사 LOT 추적</strong><button type="button" onclick="window.close()">닫기</button></div>
+            <div class="wrap">
+                <table>
+                    ${row('출하검사일', String(rec.date || '-').slice(0, 10))}
+                    ${row('차종', rec.carModel || '-')}
+                    ${row('품명', rec.partName || '-')}
+                    ${row('컬러', rec.color || '-')}
+                    ${row('도장 LOT', paintLot)}
+                    ${row('사출 LOT', injLots)}
+                    ${row('사출수입검사일', injDates.join(', ') || '-')}
+                    ${row('도료 LOT', paintLots)}
+                    ${row('도료수입검사일', paintDates.join(', ') || '-')}
+                    ${row('레이져 LOT', g.laserDate || '-')}
+                </table>
+            </div>
+            </body></html>`);
+        win.document.close();
+        try { win.focus(); } catch (e) {}
     }
 
     function openInjIncoming(inspId) {
@@ -5620,6 +5980,7 @@ const ProductWarehouseModule = (function() {
 
         const key   = decodeURIComponent(keyEnc);
         const [car, part, color] = key.split('||');
+        _pwPaintInspCache = Object.create(null);
 
         const records = (Storage.getAll(STORE) || [])
             .filter(d => {
@@ -5671,9 +6032,9 @@ const ProductWarehouseModule = (function() {
             <tr>
                 <td style="white-space:nowrap;">${l.date || '-'}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
-                <td style="white-space:nowrap;">${_pwInjLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwInjLotCell(g, car)}</td>
                 <td style="white-space:nowrap;">${_pwInjInspDateLinks(g)}</td>
-                <td style="white-space:nowrap;">${_pwPaintLotLinks(g)}</td>
+                <td style="white-space:nowrap;">${_pwPaintLotCell(g)}</td>
                 <td style="white-space:nowrap;">${_pwPaintInspDateLinks(g)}</td>
                 ${laserCell}
                 <td style="text-align:right;white-space:nowrap;">
@@ -6865,7 +7226,9 @@ const ProductWarehouseModule = (function() {
         openInjIncoming,
         openPaintIncoming,
         openPaintWork,
-        openLaserWork
+        openLaserWork,
+        openInspTracePopup,
+        traceIncoming
     };
 })();
 
