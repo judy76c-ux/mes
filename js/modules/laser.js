@@ -4493,8 +4493,11 @@ var LaserInspectionModule = (function() {
             </div>`;
         const left = draftNoticeHtml + _buildWorkQtyCard(w) + _buildInspInfoCard({}, w) +
             _buildQtyCard({}, w, inspBase);
-        // 기존 잔량은 WIP를 자동 입력하지 않음(기본 0). 레이져잔량은 안내만 표시.
-        const packCard = _buildPackagingCard({}, 0, packUnit, inspBase, { liveResidual: prevResidualQty });
+        // 레이져 → 도장-B 재공품은 포장 공정이 없다 → 포장 카드 대신 안내만 표시(잔량 미발생).
+        // 그 외 제품: 기존 잔량은 자동 입력하지 않고(기본 0) 레이져잔량은 안내만 표시.
+        const packCard = _isNoPackProduct(w.carModel, w.partName)
+            ? _buildNoPackNoticeCard()
+            : _buildPackagingCard({}, 0, packUnit, inspBase, { liveResidual: prevResidualQty });
         _openModal(`레이져 검사 등록 — ${w.partName || ''}`,
             partialBannerHtml + _buildWorkBanner(w) + _build2Col(left, _buildDefectCard(),
                 _buildActionBar('LaserInspectionModule._saveInspection()', { draftAction: `LaserInspectionModule._saveInspectionDraft('${workId}')` }),
@@ -4548,7 +4551,9 @@ var LaserInspectionModule = (function() {
         const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
             _buildInspInfoCard(d) +
             _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0);
-        const packCard = _buildPackagingCard(d, savedPrev, packUnit, Number(d.goodQty) || 0, { liveResidual: liveResidualHint });
+        const packCard = _isNoPackProduct(d.carModel, d.partName)
+            ? _buildNoPackNoticeCard()
+            : _buildPackagingCard(d, savedPrev, packUnit, Number(d.goodQty) || 0, { liveResidual: liveResidualHint });
         const footer = isEdit
             ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`,
                 d.workLogId ? { draftAction: `LaserInspectionModule._saveInspectionDraft('${d.workLogId}')` } : {})
@@ -5254,6 +5259,31 @@ var LaserInspectionModule = (function() {
         shown.style.color = n > 0 ? 'var(--accent-orange)' : 'var(--text-muted)';
     }
 
+    // 레이져 → 도장-B 재공품(T1XX LENS/PARK 등): 포장 공정이 없어 레이져 잔량이 발생하지 않는다.
+    function _isNoPackProduct(carModel, partName) {
+        try {
+            return typeof LaserWipModule !== 'undefined'
+                && typeof LaserWipModule.isResidualExemptProduct === 'function'
+                && LaserWipModule.isResidualExemptProduct(carModel, partName);
+        } catch (e) { return false; }
+    }
+
+    function _buildNoPackNoticeCard() {
+        return `
+        <div class="card">
+            <div class="card-body" style="padding:12px 14px;">
+                <h5 style="margin:0 0 8px 0;font-size:0.85rem;color:var(--text-primary);display:flex;align-items:center;gap:5px;">
+                    <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">conveyor_belt</span>
+                    포장 없음 · 도장-B 재공품
+                </h5>
+                <div style="font-size:0.8rem;color:var(--text-secondary);line-height:1.5;">
+                    이 제품은 레이져 후 <strong>도장-B 공정으로 넘어가는 재공품</strong>입니다.
+                    포장·레이져 잔량이 발생하지 않으며, 검사 양품 수량이 그대로 재공품으로 반영됩니다.
+                </div>
+            </div>
+        </div>`;
+    }
+
     function _buildPackagingCard(d = {}, prevResQty = 0, packUnitDef = 0, initGoodQty = 0, opts = {}) {
         opts = opts || {};
         const hasSavedPrev = d && d.prevResidualQty !== undefined && d.prevResidualQty !== null && d.prevResidualQty !== '';
@@ -5860,9 +5890,20 @@ var LaserStandbyModule = (function() {
         const color = String(w.color || '').trim();
         const match = (p) => String(p.carModel || '').trim() === car && String(p.partName || '').trim() === part;
         if (color) {
-            return products.find(p => match(p) && String(p.color || '').trim() === color) || null;
+            const exact = products.find(p => match(p) && String(p.color || '').trim() === color);
+            if (exact) return exact;
+        } else {
+            const exact = products.find(p => match(p));
+            if (exact) return exact;
         }
-        return products.find(p => match(p)) || null;
+        if (!part) return null;
+        const hits = products.filter(function(p) {
+            if (String(p.carModel || '').trim() !== car) return false;
+            if (color && String(p.color || '').trim() !== color) return false;
+            const pn = String(p.partName || '').trim();
+            return pn.length > part.length && pn.indexOf(part) === 0;
+        });
+        return hits.length === 1 ? hits[0] : null;
     }
 
     function _sameText(a, b) {

@@ -3239,8 +3239,11 @@ const SettingsModule = (function() {
         }
 
         // ── 품명이 변경된 경우 → 전체 이력 일괄 변경 질의 ───────────
+        // 제품 수정 모달을 닫은 뒤 띄워야 확인창이 가려지지 않는다.
         if (partNameChanged) {
-            _askCascadeRename(oldPartName, newPartName, data.color || '');
+            setTimeout(function() {
+                _askCascadeRename(oldPartName, newPartName, data.color || '', 'product');
+            }, 80);
         }
     }
 
@@ -4378,16 +4381,20 @@ const SettingsModule = (function() {
 
         // ── 사출부품명(injPartName) 변경 → 전체 이력 일괄 변경 질의 ─
         if (injPartChanged) {
-            _askCascadeRename(oldInjPartName, newInjPartName, data.injColor || '', 'inj');
+            setTimeout(function() {
+                _askCascadeRename(oldInjPartName, newInjPartName, data.injColor || '', 'inj');
+            }, 80);
         }
         // ── 제작품목(mfgProductName) 변경 → 전체 이력 일괄 변경 질의 ─
         if (!injPartChanged && mfgChanged) {
             const pairs = [];
             if (oldMfgName  && newMfgName  && oldMfgName  !== newMfgName)  pairs.push([oldMfgName,  newMfgName]);
             if (oldMfgName2 && newMfgName2 && oldMfgName2 !== newMfgName2) pairs.push([oldMfgName2, newMfgName2]);
-            for (const [on, nn] of pairs) {
-                _askCascadeRename(on, nn, data.injColor || '', 'mfg');
-            }
+            setTimeout(function() {
+                for (const [on, nn] of pairs) {
+                    _askCascadeRename(on, nn, data.injColor || '', 'mfg');
+                }
+            }, 80);
         }
     }
 
@@ -12828,13 +12835,66 @@ const SettingsModule = (function() {
 
     // ── 전체 이력 품명 일괄 변경 (내부 헬퍼) ────────────────────────────
     // context: 'product' | 'inj' | 'mfg'
+    // 레이져 잔량/대기·사출 작업·납품 등도 partName 텍스트로 묶이므로 반드시 포함.
+    function _partNameHistoryStores() {
+        const S = DB.STORES || {};
+        return [
+            [S.PRODUCTION_PLANS, '생산계획'],
+            [S.INJECTION_INVENTORY, '사출창고 재고'],
+            [S.INJECTION_INSPECTIONS, '사출 수입검사'],
+            [S.INJECTION_WORK_LOG, '사출 작업일지'],
+            [S.INJECTION_WIP, '사출 재공'],
+            [S.PAINTING_INCOMING, '도장 입고'],
+            [S.PAINTING_INPUT_INVENTORY, '도장 투입 자재'],
+            [S.PAINTING_WORK, '도장 작업'],
+            [S.PAINTING_INSPECTIONS, '도장 검사'],
+            [S.PAINTING_OUTGOING, '도장 출고'],
+            [S.REWORK_WIP, '리워크 재공'],
+            [S.LASER_WORK_LOG, '레이져 작업/잔량'],
+            [S.LASER_INSPECTIONS, '레이져 검사'],
+            [S.SHIPPING_STANDBY, '출하 대기'],
+            [S.SHIPPING_INSPECTIONS, '출하 검사'],
+            [S.PRODUCT_INVENTORY, '제품창고 재고'],
+            [S.PRODUCT_OUTGOING, '제품 출고'],
+            [S.SALES_DELIVERY, '납품 관리'],
+            [S.SALES_DELIVERY_PLAN, '납품 계획'],
+            [S.JIG_USAGE_HISTORY, 'JIG 사용 이력'],
+            [S.JIG_MASTER, 'JIG 마스터'],
+            [S.PROD_STANDARDS, '제조 표준'],
+            [S.PROD_CONDITIONS, '작업조건'],
+            [S.PROD_QUALITY_CHECK, '초중종물'],
+            [S.INJ_INSP_STANDARDS, '사출 검사기준'],
+            [S.WORK_STANDARDS, '작업 표준서'],
+            [S.INJ_INCOMING_STD, '사출 수입검사 기준서']
+        ].filter(function(row) { return !!row[0]; });
+    }
+
+    function _recHasOldPartName(rec, nameMatch) {
+        return nameMatch(rec.partName)
+            || nameMatch(rec.standbySourcePartName)
+            || nameMatch(rec.sourcePartName);
+    }
+
+    function _applyPartNameRename(rec, oldName, newName, nameMatch) {
+        let changed = false;
+        if (nameMatch(rec.partName)) { rec.partName = newName; changed = true; }
+        if (nameMatch(rec.standbySourcePartName)) { rec.standbySourcePartName = newName; changed = true; }
+        if (nameMatch(rec.sourcePartName)) { rec.sourcePartName = newName; changed = true; }
+        if (typeof rec.displayName === 'string' && rec.displayName.indexOf(oldName) >= 0) {
+            rec.displayName = rec.displayName.split(oldName).join(newName);
+            changed = true;
+        }
+        return changed;
+    }
+
     function _askCascadeRename(oldName, newName, colorHint, context) {
+        context = context || 'product';
         const ctxLabel = context === 'inj'  ? '사출부품명(injPartName)'
                        : context === 'mfg'  ? '제작품목(mfgProductName)'
                        : '제품 품명(partName)';
 
         // 변경 대상 건수 미리 집계
-        const cf = colorHint.trim().toLowerCase();
+        const cf = (colorHint || '').trim().toLowerCase();
         function nameMatch(val) { return (val || '').trim() === oldName; }
         function colorMatch(rec) {
             if (!cf) return true;
@@ -12842,19 +12902,9 @@ const SettingsModule = (function() {
         }
         const getAll = s => Storage.getAll(s) || [];
 
-        const storesToCheck = [
-            { store: DB.STORES.PRODUCTION_PLANS,        label: '생산계획',       field: 'partName' },
-            { store: DB.STORES.INJECTION_INVENTORY,     label: '사출창고 재고',   field: 'partName' },
-            { store: DB.STORES.INJECTION_INSPECTIONS,   label: '사출 수입검사',   field: 'partName' },
-            { store: DB.STORES.PAINTING_INCOMING,       label: '도장 입고',       field: 'partName' },
-            { store: DB.STORES.PAINTING_WORK,           label: '도장 작업',       field: 'partName' },
-            { store: DB.STORES.PAINTING_INSPECTIONS,    label: '도장 검사',       field: 'partName' },
-            { store: DB.STORES.PAINTING_OUTGOING,       label: '도장 출고',       field: 'partName' },
-            { store: DB.STORES.SHIPPING_STANDBY,        label: '출하 대기',       field: 'partName' },
-            { store: DB.STORES.SHIPPING_INSPECTIONS,    label: '출하 검사',       field: 'partName' },
-            { store: DB.STORES.PRODUCT_INVENTORY,       label: '제품창고 재고',   field: 'partName' },
-            { store: DB.STORES.PRODUCT_OUTGOING,        label: '제품 출고',       field: 'partName' },
-        ];
+        const storesToCheck = _partNameHistoryStores().map(function(row) {
+            return { store: row[0], label: row[1], field: 'partName' };
+        });
         // 사출자재 관련
         if (context === 'product' || context === 'mfg') {
             storesToCheck.push(
@@ -12876,7 +12926,7 @@ const SettingsModule = (function() {
             } else if (field === '_inj') {
                 cnt = recs.filter(m => colorMatch(m) && nameMatch(m.injPartName)).length;
             } else {
-                cnt = recs.filter(r => nameMatch(r[field]) && colorMatch(r)).length;
+                cnt = recs.filter(r => colorMatch(r) && _recHasOldPartName(r, nameMatch)).length;
             }
             totalCount += cnt;
             return { label, cnt };
@@ -12944,7 +12994,6 @@ const SettingsModule = (function() {
             if (!colorHint) return true;
             return (rec.color || rec.injColor || '').toLowerCase().includes(colorHint);
         }
-        function shouldUpdate(rec, field) { return nameMatch(rec[field]) && colorMatch(rec); }
 
         const getAll = s => Storage.getAll(s) || [];
         let total = 0;
@@ -12961,31 +13010,18 @@ const SettingsModule = (function() {
             if (cnt > 0) { report.push({ label, cnt }); total += cnt; }
         }
 
-        // 공통 partName 스토어
-        const partNameStores = [
-            [DB.STORES.PRODUCTION_PLANS,      '생산계획'],
-            [DB.STORES.INJECTION_INVENTORY,   '사출창고 재고'],
-            [DB.STORES.INJECTION_INSPECTIONS, '사출 수입검사'],
-            [DB.STORES.PAINTING_INCOMING,     '도장 입고'],
-            [DB.STORES.PAINTING_WORK,         '도장 작업'],
-            [DB.STORES.PAINTING_INSPECTIONS,  '도장 검사'],
-            [DB.STORES.PAINTING_OUTGOING,     '도장 출고'],
-            [DB.STORES.SHIPPING_STANDBY,      '출하 대기'],
-            [DB.STORES.SHIPPING_INSPECTIONS,  '출하 검사'],
-            [DB.STORES.PRODUCT_INVENTORY,     '제품창고 재고'],
-            [DB.STORES.PRODUCT_OUTGOING,      '제품 출고'],
-        ];
-        for (const [storeName, label] of partNameStores) {
+        // 공통 partName 스토어 (레이져 잔량/대기 포함)
+        for (const [storeName, label] of _partNameHistoryStores()) {
             await processStore(storeName, label, rec => {
-                if (!shouldUpdate(rec, 'partName')) return false;
-                rec.partName = newName; return true;
+                if (!colorMatch(rec)) return false;
+                return _applyPartNameRename(rec, oldName, newName, nameMatch);
             });
         }
 
-        // 제품 마스터 partName (context === 'product' 시만)
+        // 제품 마스터 partName (context === 'product' 시만 — 같은 옛 품명·컬러의 다른 제품도 맞춤)
         if (context === 'product') {
             await processStore(DB.STORES.PRODUCTS, '제품 마스터', rec => {
-                if (!shouldUpdate(rec, 'partName')) return false;
+                if (!colorMatch(rec) || !nameMatch(rec.partName)) return false;
                 rec.partName = newName;
                 if ((rec.displayName || '').includes(oldName)) rec.displayName = rec.displayName.replace(oldName, newName);
                 return true;
