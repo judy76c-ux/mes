@@ -2760,6 +2760,7 @@ var LaserWorkModule = (function() {
         exportData,
         isWorkQcFullyEntered,
         getWorkQcGapInfo,
+        isInventoryCorrectionRecord: _isInventoryCorrectionRecord,
         _qcRequiredStages
     };
 })();
@@ -2911,10 +2912,13 @@ var LaserInspectionModule = (function() {
             ? LaserWorkModule.isWorkQcFullyEntered
             : (w) => w && w.status !== 'in_progress';
         return works
-            // 작업중(in_progress)은 검사 대기 대상이 아니므로 제외.
-            // QC 미완료: 과거(QC_GAP_VISIBLE_FROM 미만)는 숨기고, 이후 작업일만 목록에 남겨
-            // "QC 입력 필요"로 관리한다. (수량 수정으로 요구 단계가 오른 건의 유실 방지)
+            // 재고 실사·수기 입출고는 생산 작업이 아니므로 검사 대기에 올리지 않는다.
             .filter(w => {
+                if (typeof LaserWorkModule !== 'undefined' && typeof LaserWorkModule.isInventoryCorrectionRecord === 'function') {
+                    if (LaserWorkModule.isInventoryCorrectionRecord(w)) return false;
+                } else if (w && (w.isManual || w.isResidualManualIn || w.isResidualManualOut || w.isManualOut || w.isResidualStocktake)) {
+                    return false;
+                }
                 if (!w.id || w.status === 'in_progress') return false;
                 if (inspectedIds.has(w.id) && w.inspectionStatus !== 'partial') return false;
                 if (qcReady(w)) return true;

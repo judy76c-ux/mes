@@ -200,7 +200,12 @@ var LaserHubModule = (function () {
         // ── 데이터 수집 ────────────────────────────────────────────────────
         const today    = _today();
         const thisMonth = today.slice(0, 7);
-        const works     = Storage.getAll(DB.STORES.LASER_WORK_LOG) || [];
+        const works     = (Storage.getAll(DB.STORES.LASER_WORK_LOG) || []).filter(function(w) {
+            if (typeof LaserWorkModule !== 'undefined' && typeof LaserWorkModule.isInventoryCorrectionRecord === 'function') {
+                return !LaserWorkModule.isInventoryCorrectionRecord(w);
+            }
+            return !(w && (w.isManual || w.isResidualManualIn || w.isResidualManualOut || w.isManualOut || w.isResidualStocktake));
+        });
         const insps     = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
         const paintWorks = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
         const equipRows = await _loadList(EQUIP_KEY);

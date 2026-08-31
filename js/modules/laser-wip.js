@@ -26,6 +26,7 @@ var LaserWipModule = (function() {
     let _alFilterPart = '';
     let _resFilterCar = '';
     let _resFilterPart = '';
+    let _stocktakeHistWin = null;
 
     function _matchCarPartFilter(row, carFilter, partFilter) {
         if (!row) return false;
@@ -477,9 +478,57 @@ var LaserWipModule = (function() {
         const aDay = String((a && a.date) || '').slice(0, 10);
         const bDay = String((b && b.date) || '').slice(0, 10);
         if (aDay !== bDay) return aDay.localeCompare(bDay);
+        // 재고 실사는 그날의 작업·입출고를 다 반영한 뒤 '실사 수량'으로 맞춘다.
+        const aBias = (a && a.type === 'stocktake_set') ? 1 : 0;
+        const bBias = (b && b.type === 'stocktake_set') ? 1 : 0;
+        if (aBias !== bBias) return aBias - bBias;
         const aSeq = String((a && (a._seq || a.createdAt || a.date)) || '');
         const bSeq = String((b && (b._seq || b.createdAt || b.date)) || '');
         return aSeq.localeCompare(bSeq);
+    }
+
+    function _stocktakeCountedQty(w) {
+        if (!w) return 0;
+        if (w.stocktakeCountedQty != null && w.stocktakeCountedQty !== '') {
+            return Math.max(0, Math.round(Number(w.stocktakeCountedQty) || 0));
+        }
+        const cut = Math.max(0, Math.round(Number(w.quantity) || 0));
+        const book = w.stocktakeBookQty != null
+            ? Math.max(0, Math.round(Number(w.stocktakeBookQty) || 0))
+            : 0;
+        return Math.max(0, book - cut);
+    }
+
+    function _latestResidualStocktake(carModel, partName, color) {
+        return (_getLaserWorks()).filter(function(w) {
+            if (!w || !w.isResidualStocktake || w.isResidualAuditOnly) return false;
+            if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
+            return !color || (w.color || '') === color;
+        }).sort(_compareEventOccurrence).pop() || null;
+    }
+
+    // 실사 이후에 잔량을 바꾸는 작업·입출고가 있으면, 실사 수량을 그대로 쓰지 않는다.
+    function _hasResidualMovementAfter(carModel, partName, color, stocktake) {
+        if (!stocktake) return false;
+        const stEv = {
+            date: stocktake.date || '',
+            createdAt: stocktake.createdAt || stocktake.id || '',
+            type: 'stocktake_set'
+        };
+        return (_getLaserWorks()).some(function(w) {
+            if (!w || w === stocktake || String(w.id || '') === String(stocktake.id || '')) return false;
+            if (w.isResidualAuditOnly || w.isResidualStocktake) return false;
+            if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
+            if (color && (w.color || '') !== color) return false;
+            const related = !!(w.isResidualManualIn || w.isResidualManualOut || w.isResidualLotAdjust
+                || w.isInspectionResidualOut
+                || (!w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut));
+            if (!related) return false;
+            return _compareEventOccurrence({
+                date: w.date || '',
+                createdAt: w.createdAt || w.id || ''
+            }, stEv) > 0;
+        });
     }
 
     function _getAfterWipHistoryReset(carModel, partName, color) {
@@ -1610,6 +1659,10 @@ var LaserWipModule = (function() {
                             onclick="LaserWipModule.openResidualBulkCleanup()">
                             <span class="material-symbols-outlined" style="font-size:0.95rem;">fact_check</span> 재고 실사
                         </button>` : ''}
+                        <button class="btn btn-sm btn-outline" style="font-size:0.76rem;white-space:nowrap;"
+                            onclick="LaserWipModule.openResidualStocktakeHistWindow()">
+                            <span class="material-symbols-outlined" style="font-size:0.95rem;">open_in_new</span> 실사 이력
+                        </button>
                     </div>
                 </div>
                 <div class="card-body" id="resInvBody" style="padding:16px;display:flex;flex-direction:column;gap:14px;">
@@ -1727,6 +1780,186 @@ var LaserWipModule = (function() {
         if (invEl) invEl.innerHTML = _residualInventoryHtml(filtered);
         const flowEl = document.getElementById('resFlowBody');
         if (flowEl) flowEl.innerHTML = _residualFlowHistHtml({ car: _resFilterCar, part: _resFilterPart });
+        _syncResidualStocktakeHistWindow();
+    }
+
+    function _residualStocktakeEntries() {
+        return (_getLaserWorks())
+            .filter(function(w) { return !!(w && w.isResidualStocktake); })
+            .sort(function(a, b) {
+                const da = String(b.date || '').localeCompare(String(a.date || ''));
+                if (da) return da;
+                return String(b.createdAt || b.id || '').localeCompare(String(a.createdAt || a.id || ''));
+            });
+    }
+
+    function _residualStocktakeHistHtml(filter) {
+        filter = filter || {};
+        const popup = !!filter.popup;
+        const entries = _residualStocktakeEntries().filter(function(w) {
+            return _matchCarPartFilter(w, filter.car || '', filter.part || '');
+        });
+        if (!entries.length) {
+            return `<div style="text-align:center;padding:28px;color:var(--text-muted,#64748b);font-size:0.84rem;">
+                ${filter.car || filter.part ? '검색 조건에 맞는 재고 실사 이력이 없습니다.' : '재고 실사 이력이 없습니다.'}
+            </div>`;
+        }
+        const canDel = _isAdmin();
+        const rows = entries.map(function(w) {
+            const book = w.stocktakeBookQty != null ? Math.round(Number(w.stocktakeBookQty) || 0) : null;
+            const counted = w.stocktakeCountedQty != null ? Math.round(Number(w.stocktakeCountedQty) || 0) : null;
+            const cut = Math.round(Number(w.quantity) || 0);
+            const encKey = _productKey(w.carModel || '', w.partName || '', w.color || '');
+            const safeId = String(w.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+            const detailFn = popup
+                ? `lwStDetail('${encKey}')`
+                : `LaserWipModule.showResidualDetail('${encKey}')`;
+            const deleteFn = popup
+                ? `lwStDelete('${safeId}')`
+                : `LaserWipModule.removeResidualManualEntry('${safeId}')`;
+            return `<tr data-search="${_esc((w.date || '') + ' ' + (w.carModel || '') + ' ' + (w.partName || '') + ' ' + (w.color || '') + ' ' + (w.note || '') + ' ' + (w.author || ''))}">
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.date || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;"><strong>${_esc(w.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.partName || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">${_esc(w.color && w.color !== '-' ? w.color : '-')}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${book != null ? UIUtils.formatNumber(book) : '-'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:var(--accent-orange,#f59e0b);">${counted != null ? UIUtils.formatNumber(counted) : '-'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:var(--accent-red);">${cut ? '−' + UIUtils.formatNumber(cut) : '-'}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;color:var(--text-muted,#64748b);">${_esc(w.note || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;color:var(--text-secondary,#475569);">${_esc(w.author || '-')}</td>
+                <td style="white-space:nowrap;padding:8px 10px;">
+                    <button type="button" class="btn btn-sm btn-outline" onclick="event.stopPropagation();${detailFn}">품목</button>
+                    ${canDel ? `<button type="button" class="btn btn-sm btn-danger" onclick="event.stopPropagation();${deleteFn}">삭제</button>` : ''}
+                </td>
+            </tr>`;
+        }).join('');
+        return `
+        <div class="data-table-wrapper" style="overflow-x:auto;">
+            <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:0.84rem;">
+                <thead>
+                    <tr>
+                        <th style="white-space:nowrap;padding:8px 10px;">실사일</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">차종</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">품명</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">컬러</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">장부</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">실사</th>
+                        <th style="text-align:right;white-space:nowrap;padding:8px 10px;">조정</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">비고</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">작성자</th>
+                        <th style="white-space:nowrap;padding:8px 10px;">관리</th>
+                    </tr>
+                </thead>
+                <tbody>${rows}</tbody>
+            </table>
+        </div>
+        <div style="padding:8px 12px;font-size:0.75rem;color:var(--text-muted,#64748b);">${entries.length}건 · 최신순</div>`;
+    }
+
+    function _residualStocktakeHistWindowHtml() {
+        const cssHref = (function() {
+            const link = document.querySelector('link[rel="stylesheet"][href*="style.css"]');
+            return link && link.href ? link.href : 'css/style.css';
+        })();
+        const iconHref = 'https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@24,400,0,0&display=swap';
+        const tableHtml = _residualStocktakeHistHtml({ popup: true });
+        const count = _residualStocktakeEntries().length;
+        return `<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8">
+<title>레이져 잔량 재고 실사 이력</title>
+<link rel="stylesheet" href="${_esc(iconHref)}">
+<link rel="stylesheet" href="${_esc(cssHref)}">
+<style>
+  body{margin:0;padding:16px 18px 24px;background:var(--bg-primary,#f1f5f9);color:var(--text-primary,#0f172a);
+    font-family:Inter,'Malgun Gothic',sans-serif;}
+  .lw-st-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px;}
+  .lw-st-head h1{margin:0;font-size:1.15rem;display:flex;align-items:center;gap:8px;}
+  .lw-st-head p{margin:4px 0 0;font-size:0.8rem;color:var(--text-muted,#64748b);}
+  .lw-st-search{min-width:220px;}
+  .card{background:var(--bg-secondary,#fff);border:1px solid var(--border-color,#e2e8f0);border-radius:10px;}
+</style>
+</head><body>
+  <div class="lw-st-head">
+    <div>
+      <h1><span class="material-symbols-outlined">fact_check</span> 재고 실사 이력</h1>
+      <p>현장 카운트·미출고 보정 내역 · 삭제 시 잔량이 복원됩니다 · ${count}건</p>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <input type="search" id="lwStFilter" class="form-input lw-st-search" placeholder="차종·품명·컬러 검색"
+        oninput="lwStFilterRows(this.value)">
+      <button type="button" class="btn btn-outline btn-sm" onclick="window.print()">인쇄</button>
+    </div>
+  </div>
+  <div class="card" id="lwStBody">${tableHtml}</div>
+<script>
+function lwStOpener(){
+  try{
+    return (window.opener && !window.opener.closed && window.opener.LaserWipModule)
+      ? window.opener.LaserWipModule : null;
+  }catch(e){ return null; }
+}
+function lwStDetail(key){
+  var m = lwStOpener();
+  if(!m || !m.showResidualDetail){ alert('원본 MES 창이 닫혀 있습니다.'); return; }
+  m.showResidualDetail(key);
+  try{ window.opener.focus(); }catch(e){}
+}
+function lwStDelete(id){
+  var m = lwStOpener();
+  if(!m || !m.removeResidualManualEntry){ alert('원본 MES 창이 닫혀 있습니다.'); return; }
+  m.removeResidualManualEntry(id);
+}
+function lwStFilterRows(q){
+  q = String(q||'').toLowerCase().trim();
+  var rows = document.querySelectorAll('#lwStBody tbody tr');
+  var shown = 0;
+  for(var i=0;i<rows.length;i++){
+    var hay = (rows[i].getAttribute('data-search')||rows[i].textContent||'').toLowerCase();
+    var ok = !q || hay.indexOf(q)>=0;
+    rows[i].style.display = ok ? '' : 'none';
+    if(ok) shown++;
+  }
+}
+<\/script>
+</body></html>`;
+    }
+
+    function _syncResidualStocktakeHistWindow() {
+        if (!_stocktakeHistWin || _stocktakeHistWin.closed) return;
+        try {
+            _stocktakeHistWin.document.open();
+            _stocktakeHistWin.document.write(_residualStocktakeHistWindowHtml());
+            _stocktakeHistWin.document.close();
+        } catch (e) { /* ignore */ }
+    }
+
+    function openResidualStocktakeHistWindow() {
+        const html = _residualStocktakeHistWindowHtml();
+        if (_stocktakeHistWin && !_stocktakeHistWin.closed) {
+            try {
+                _stocktakeHistWin.document.open();
+                _stocktakeHistWin.document.write(html);
+                _stocktakeHistWin.document.close();
+                _stocktakeHistWin.focus();
+                return;
+            } catch (e) {
+                _stocktakeHistWin = null;
+            }
+        }
+        const win = window.open('', 'lwResidualStocktakeHist', 'width=1280,height=820,scrollbars=yes,resizable=yes');
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용해 주세요.', 'warning');
+            return;
+        }
+        _stocktakeHistWin = win;
+        win.document.write(html);
+        win.document.close();
+        win.focus();
+    }
+
+    function scrollToResidualStocktakeHist() {
+        openResidualStocktakeHistWindow();
     }
 
     // ── 레이져 잔량 수기 입출고 내역 관리 (관리자 전용) ────────────────
@@ -1751,11 +1984,13 @@ var LaserWipModule = (function() {
                 <tbody>
                     ${entries.map(w => {
                         const isOut = !!w.isResidualManualOut;
-                        const badge = w.isInspectionResidualOut
+                        const badge = w.isResidualStocktake
+                            ? `<span style="color:#0369a1;font-weight:700;">재고 실사</span>`
+                            : (w.isInspectionResidualOut
                             ? `<span style="color:#7c3aed;font-weight:700;">포장출고</span>`
                             : (isOut
                                 ? `<span style="color:var(--accent-red);font-weight:700;">출고</span>`
-                                : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`);
+                                : `<span style="color:var(--accent-green);font-weight:700;">입고</span>`));
                         return `<tr>
                             <td style="white-space:nowrap;">${_esc(w.date || '-')}</td>
                             <td>${badge}</td>
@@ -2051,7 +2286,11 @@ var LaserWipModule = (function() {
 
     function removeResidualManualEntry(id) {
         if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
-        UIUtils.confirm('이 수기 등록 내역을 삭제하시겠습니까?', async () => {
+        const entry = (_getLaserWorks()).find(w => w.id === id);
+        const msg = entry && entry.isResidualStocktake
+            ? '이 재고 실사 이력을 삭제하시겠습니까? 삭제하면 해당 조정 수량만큼 잔량이 복원됩니다.'
+            : '이 수기 등록 내역을 삭제하시겠습니까?';
+        UIUtils.confirm(msg, async () => {
             await Storage.remove(STORE_LASER, id);
             UIUtils.toast('삭제되었습니다.', 'success');
             refresh();
@@ -2140,7 +2379,15 @@ var LaserWipModule = (function() {
                     else unassignedQty += Math.max(0, Number(l.qty) || 0);
                 });
                 if (unassignedQty > 0) paintLotLabels.push('LOT 미지정');
-                const residualQty = _residualQtyFromLotDetail(detail);
+                let residualQty = _residualQtyFromLotDetail(detail);
+                const lastSt = _latestResidualStocktake(r.carModel, r.partName, r.color);
+                const counted = lastSt ? _stocktakeCountedQty(lastSt) : 0;
+                if (counted > 0 && residualQty <= 0
+                    && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt)) {
+                    residualQty = counted;
+                    unassignedQty += counted;
+                    if (paintLotLabels.indexOf('LOT 미지정') < 0) paintLotLabels.push('LOT 미지정');
+                }
                 return Object.assign({}, r, {
                     residualQty: residualQty,
                     residualLotCount: (detail.lots || []).length + ((Number(detail.manualAdj) || 0) > 0 ? 1 : 0),
@@ -2992,6 +3239,18 @@ var LaserWipModule = (function() {
             const rawInjLot = w.lotNo || '';
             const paintLot = rawPaintLot ? _normalizePaintLot(rawPaintLot) : '';
             const injLot = rawInjLot ? _normalizeInjLot(rawInjLot) : '';
+            if (w.isResidualStocktake) {
+                events.push({
+                    date: w.date || '',
+                    createdAt: w.createdAt || w.id || '',
+                    type: 'stocktake_set',
+                    qty: _stocktakeCountedQty(w),
+                    sourceId: w.id || '',
+                    author: w.author || '',
+                    skipFifoTrace: true
+                });
+                return;
+            }
             if (absQty != null && w.isResidualLotAdjust && paintLot && injLot) {
                 events.push({
                     date: w.date || '',
@@ -3047,20 +3306,51 @@ var LaserWipModule = (function() {
                     if (used > 0) {
                         lot.qty -= used;
                         remaining -= used;
-                        fifoTrace.push({
-                            date: sourceEvent.date || '',
-                            createdAt: sourceEvent.createdAt || '',
-                            sourceId: sourceEvent.sourceId || '',
-                            author: sourceEvent.author || '',
-                            paintLot: lot.paintLot,
-                            injLot: lot.injLot,
-                            key: String(lot.paintLot) + '|' + String(lot.injLot),
-                            qty: used
-                        });
+                        if (!sourceEvent || !sourceEvent.skipFifoTrace) {
+                            fifoTrace.push({
+                                date: sourceEvent.date || '',
+                                createdAt: sourceEvent.createdAt || '',
+                                sourceId: sourceEvent.sourceId || '',
+                                author: sourceEvent.author || '',
+                                paintLot: lot.paintLot,
+                                injLot: lot.injLot,
+                                key: String(lot.paintLot) + '|' + String(lot.injLot),
+                                qty: used
+                            });
+                        }
                     }
                 });
             if (trackUnmatched && remaining > 0) unmatched += remaining;
             return remaining;
+        }
+
+        function currentResidualTotal() {
+            return Object.values(lotMap).reduce(function(s, l) {
+                return s + Math.max(0, Number(l.qty) || 0);
+            }, 0) + Math.max(0, manualAdj);
+        }
+
+        // 실사 수량 = 그 시점의 실물 잔량. FIFO 부족·미차감으로 0이 되지 않게 목표값으로 맞춘다.
+        function applyStocktakeSet(target, sourceEvent) {
+            target = Math.max(0, Math.round(Number(target) || 0));
+            var current = currentResidualTotal();
+            if (current > target) {
+                var need = current - target;
+                var fromPool = Math.min(Math.max(0, manualAdj), need);
+                manualAdj -= fromPool;
+                need -= fromPool;
+                if (need > 0) fifoDeductFromLots(need, sourceEvent || { skipFifoTrace: true }, false);
+                current = currentResidualTotal();
+                if (current > target) {
+                    fifoDeductFromLots(current - target, { skipFifoTrace: true }, false);
+                    current = currentResidualTotal();
+                    if (current > target && manualAdj > 0) {
+                        manualAdj = Math.max(0, manualAdj - (current - target));
+                    }
+                }
+            }
+            current = currentResidualTotal();
+            if (current < target) manualAdj += (target - current);
         }
 
         // ★ 이벤트를 시간순으로 재생하면서 그 시점에 처리한다. 미지정 출고를 전부 쌓았다가
@@ -3068,6 +3358,10 @@ var LaserWipModule = (function() {
         //   새로 생긴(당시엔 존재하지도 않았던) LOT에서 잘못 빠져나가는 오류가 생긴다.
         //   (예: 7/13 미지정 출고가 7/20에 새로 생긴 LOT의 잔량을 갉아먹는 문제)
         events.forEach(function(e) {
+            if (e.type === 'stocktake_set') {
+                applyStocktakeSet(e.qty, e);
+                return;
+            }
             if (e.type === 'unassigned') {
                 if (e.qty >= 0) {
                     manualAdj += e.qty;
@@ -3122,6 +3416,24 @@ var LaserWipModule = (function() {
                 unmatchedWriteOff += amount;
             }
         });
+
+        // 미차감 반영이 실사 이후 잔량을 0으로 밀어버리는 경우, 마지막 실사 수량으로 다시 맞춘다.
+        // (실사 이후에 실제 입출고가 있으면 그대로 둔다)
+        const lastStocktakeEv = events.filter(function(e) { return e && e.type === 'stocktake_set'; })
+            .sort(_compareEventOccurrence).pop();
+        if (lastStocktakeEv) {
+            const laterQtyEvent = events.some(function(e) {
+                return e && e.type !== 'stocktake_set' && _compareEventOccurrence(e, lastStocktakeEv) > 0;
+            });
+            const laterUnmatched = _unmatchedActionsForProduct(_residualUnmatchedActions, carModel, partName, color)
+                .some(function(act) {
+                    return _compareEventOccurrence({
+                        date: act.date || '',
+                        createdAt: act.createdAt || act.id || ''
+                    }, lastStocktakeEv) > 0;
+                });
+            if (!laterQtyEvent && !laterUnmatched) applyStocktakeSet(lastStocktakeEv.qty, lastStocktakeEv);
+        }
 
         if (manualAdj < 0) manualAdj = 0;
 
@@ -4853,10 +5165,16 @@ var LaserWipModule = (function() {
                 injLot: injLot,
                 lotKey: lotKey,
                 qty: qty,
-                absoluteAfter: (isLotAdjust && absQty != null) ? Math.max(0, Number(absQty) || 0) : null,
+                absoluteAfter: (isLotAdjust && absQty != null)
+                    ? Math.max(0, Number(absQty) || 0)
+                    : (w.isResidualStocktake && w.stocktakeCountedQty != null
+                        ? Math.max(0, Math.round(Number(w.stocktakeCountedQty) || 0))
+                        : null),
                 author: w.author || '-',
                 note: w.note || '',
-                _seq: w.createdAt || w.id || '',
+                _seq: w.isResidualStocktake
+                    ? String(w.createdAt || w.id || '') + '_stocktake'
+                    : (w.createdAt || w.id || ''),
                 createdAt: w.createdAt || '',
                 sourceId: w.id || '',
                 editKind: 'residual_manual'
@@ -5470,7 +5788,9 @@ function _num(value) {
                 if (qty <= 0) return;
                 outgoingRows.push(Object.assign({}, base, {
                     qty: qty,
-                    route: w.isInspectionResidualOut ? '외관검사 포장출고' : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고'),
+                    route: w.isInspectionResidualOut ? '외관검사 포장출고'
+                        : (w.isResidualStocktake ? '재고 실사'
+                        : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고')),
                     note: w.note || w.machine || w.author || ''
                 }));
                 return;
@@ -5987,6 +6307,7 @@ function _num(value) {
                 _ensureResidualUnmatchedLoaded(true)
             ]).then(function() {
                 _renderTabContent();
+                _syncResidualStocktakeHistWindow();
                 if (repaired > 0) {
                     UIUtils.toast('손상된 레이저 기록 ' + repaired + '건을 자동 복구했습니다.', 'success');
                 } else {
@@ -6842,7 +7163,7 @@ function _num(value) {
                 <td style="white-space:nowrap;">${_esc(r.color || '-')}</td>
                 <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(cur)}</td>
                 <td style="text-align:right;">
-                    <input type="number" id="lwBulkTgt${i}" value="0" min="0" max="${cur}"
+                    <input type="number" id="lwBulkTgt${i}" value="${cur}" min="0" max="${cur}"
                         style="width:90px;text-align:right;" class="form-input">
                 </td>
             </tr>`;
@@ -6850,9 +7171,9 @@ function _num(value) {
 
         UIUtils.showModal('레이져 잔량 재고 실사', `
             <div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">
-                품목별 <strong>실사 수량</strong>(실제 창고 수량)을 입력하세요. 기본값은 <strong>0</strong>입니다.<br>
-                장부 잔량과의 차이는 <strong>작업·LOT 실적과 무관한 단일 '재고 실사 조정'</strong>으로 반영됩니다.
-                각 건은 잔량 상세의 <strong>재고 실사</strong> 이력으로 남아 개별 수정·삭제할 수 있습니다.
+                품목별 <strong>실사 수량</strong>(실제 창고 수량)을 입력하세요. 기본값은 <strong>현재 장부 잔량</strong>입니다. 틀린 품목만 고치면 됩니다.<br>
+                장부와의 차이는 작업·검사와 무관한 <strong>'재고 실사 조정'</strong>으로만 반영되며, <strong>검사 대기 목록에는 올라가지 않습니다.</strong>
+                보정 후 잔량은 잔량 재고 현황에 그대로 남습니다.
                 장부 잔량보다 큰 값은 반영되지 않습니다(그 품목은 건너뜁니다).
             </div>
             <div class="form-row" style="margin-bottom:12px;">
@@ -6955,7 +7276,7 @@ function _num(value) {
         const totalCut = targets.reduce(function(s, t) { return s + (t.cur - t.target); }, 0);
         const msg = `${targets.length}개 품목의 재고 실사를 반영합니다. 합계 ${UIUtils.formatNumber(totalCut)} EA 감소.`
             + (skipped ? ` (입력값이 장부보다 큰 ${skipped}개 품목은 제외)` : '')
-            + ` 작업·LOT 실적과 무관한 '재고 실사 조정' 이력으로 남아 되돌릴 수 있습니다. 반영할까요?`;
+            + ` 보정 후 잔량은 잔량 재고 현황에 남고, 검사 대기에는 올라가지 않습니다. 반영할까요?`;
 
         UIUtils.confirm(msg, async function() {
             await _applyResidualBulkCleanup(targets, totalCut, date, note, author);
@@ -6969,8 +7290,7 @@ function _num(value) {
                 const t = targets[i];
                 const cut = Math.max(0, t.cur - t.target);
                 if (cut <= 0) { done++; continue; }
-                // 실적(작업·LOT)과 무관한 단일 재고 실사 조정 출고.
-                // LOT을 지정하지 않아 _calcResidualLotDetail에서 미지정 출고로 FIFO 차감된다.
+                // 실사 수량이 그 시점의 잔량이 된다(차이 출고만 하면 LOT 재생과 어긋나 0이 될 수 있음).
                 await Storage.add(STORE_LASER, {
                     date: date,
                     carModel: t.carModel,
@@ -7004,6 +7324,7 @@ function _num(value) {
              isResidualExemptProduct: _isResidualExemptProduct,
              openManualInput,
              openResidualBulkCleanup, saveResidualBulkCleanup, filterResidualBulkCleanup, toggleAllResidualBulk,
+             scrollToResidualStocktakeHist, openResidualStocktakeHistWindow,
              openAfterLaserInput, onAfterCarChange, onAfterPartChange, saveAfterLaserInput,
              openAfterLaserOut, onOutCarChange, onOutPartChange, saveAfterLaserOut,
              openEditManualEntry, saveEditManualEntry, removeManualEntry,
