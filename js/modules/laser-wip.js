@@ -1104,7 +1104,7 @@ var LaserWipModule = (function() {
     const TABS = [
         { id: 'standby',     label: '레이져 대기품 현황',    icon: 'hourglass_top' },
         { id: 'after-laser', label: '레이져 후 재공품 현황', icon: 'bolt' },
-        { id: 'after-laser-residual', label: '레이져 잔량 현황', icon: 'inventory_2' }
+        { id: 'after-laser-residual', label: '레이져 포장 잔량 현황', icon: 'inventory_2' }
     ];
     const TAB_STATE_KEY = 'mes_laser_wip_tab';
 
@@ -2380,13 +2380,22 @@ function lwStFilterRows(q){
                 });
                 if (unassignedQty > 0) paintLotLabels.push('LOT 미지정');
                 let residualQty = _residualQtyFromLotDetail(detail);
+                // 최근 재고 실사가 있고 그 이후 실물 이동이 없으면 실사 수량이 곧 현재 잔량이다.
+                // (원장 재생 결과가 이력 리셋·컬러 키 불일치 등으로 어긋나도 실사 수량을 신뢰한다)
                 const lastSt = _latestResidualStocktake(r.carModel, r.partName, r.color);
-                const counted = lastSt ? _stocktakeCountedQty(lastSt) : 0;
-                if (counted > 0 && residualQty <= 0
-                    && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt)) {
-                    residualQty = counted;
-                    unassignedQty += counted;
-                    if (paintLotLabels.indexOf('LOT 미지정') < 0) paintLotLabels.push('LOT 미지정');
+                if (lastSt && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt)) {
+                    const counted = _stocktakeCountedQty(lastSt);
+                    if (residualQty !== counted) {
+                        const lotTagged = paintLotLabels.filter(function(p) { return p !== 'LOT 미지정'; }).length > 0;
+                        residualQty = counted;
+                        unassignedQty = counted;
+                        if (!lotTagged) {
+                            paintLotLabels.length = 0;
+                            if (counted > 0) paintLotLabels.push('LOT 미지정');
+                        } else if (counted > 0 && paintLotLabels.indexOf('LOT 미지정') < 0) {
+                            paintLotLabels.push('LOT 미지정');
+                        }
+                    }
                 }
                 return Object.assign({}, r, {
                     residualQty: residualQty,
@@ -3330,27 +3339,24 @@ function lwStFilterRows(q){
             }, 0) + Math.max(0, manualAdj);
         }
 
-        // 실사 수량 = 그 시점의 실물 잔량. FIFO 부족·미차감으로 0이 되지 않게 목표값으로 맞춘다.
+        // 실사 수량 = 그 시점의 실물 잔량. 재생 결과와 무관하게 그 시점 총 잔량을 target 으로 확정한다.
+        //  ① 보유 LOT을 target 까지 FIFO로 줄이고
+        //  ② 남은 차이는 미지정(manualAdj)으로 맞춘다. 기존 음수 채무(미차감 등)는 실사 수량이 우선하므로 버린다.
+        // (예전 구현은 currentResidualTotal 의 Math.max(0,manualAdj) 클램프 때문에 음수 채무가 있으면
+        //  manualAdj 가 음수로 남았다가 뒤의 `manualAdj<0→0` 에서 통째로 0이 돼 실사 수량이 사라졌다)
+        function _lotSumOnly() {
+            return Object.values(lotMap).reduce(function(s, l) {
+                return s + Math.max(0, Number(l.qty) || 0);
+            }, 0);
+        }
         function applyStocktakeSet(target, sourceEvent) {
             target = Math.max(0, Math.round(Number(target) || 0));
-            var current = currentResidualTotal();
-            if (current > target) {
-                var need = current - target;
-                var fromPool = Math.min(Math.max(0, manualAdj), need);
-                manualAdj -= fromPool;
-                need -= fromPool;
-                if (need > 0) fifoDeductFromLots(need, sourceEvent || { skipFifoTrace: true }, false);
-                current = currentResidualTotal();
-                if (current > target) {
-                    fifoDeductFromLots(current - target, { skipFifoTrace: true }, false);
-                    current = currentResidualTotal();
-                    if (current > target && manualAdj > 0) {
-                        manualAdj = Math.max(0, manualAdj - (current - target));
-                    }
-                }
+            var lotSum = _lotSumOnly();
+            if (lotSum > target) {
+                fifoDeductFromLots(lotSum - target, sourceEvent || { skipFifoTrace: true }, false);
+                lotSum = _lotSumOnly();
             }
-            current = currentResidualTotal();
-            if (current < target) manualAdj += (target - current);
+            manualAdj = Math.max(0, target - lotSum);
         }
 
         // ★ 이벤트를 시간순으로 재생하면서 그 시점에 처리한다. 미지정 출고를 전부 쌓았다가
