@@ -500,11 +500,23 @@ var LaserWipModule = (function() {
     }
 
     function _latestResidualStocktake(carModel, partName, color) {
-        return (_getLaserWorks()).filter(function(w) {
+        const list = (_getLaserWorks()).filter(function(w) {
             if (!w || !w.isResidualStocktake || w.isResidualAuditOnly) return false;
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
             return !color || (w.color || '') === color;
-        }).sort(_compareEventOccurrence).pop() || null;
+        });
+        if (!list.length) return null;
+        // 가장 최근 실사일. 같은 날 여러 건이면 "장부수량이 가장 큰" 건이 진짜 실사다.
+        // (작은 장부 = 이미 조정된 값을 다시 센 오입력 — 예: 1739→17 직후 17→0)
+        return list.slice().sort(function(a, b) {
+            const dayA = String((a && a.date) || '').slice(0, 10);
+            const dayB = String((b && b.date) || '').slice(0, 10);
+            if (dayA !== dayB) return dayA < dayB ? -1 : 1;
+            const bookA = Number(a && a.stocktakeBookQty) || 0;
+            const bookB = Number(b && b.stocktakeBookQty) || 0;
+            if (bookA !== bookB) return bookA - bookB;
+            return String((a && (a.createdAt || a.id)) || '').localeCompare(String((b && (b.createdAt || b.id)) || ''));
+        }).pop() || null;
     }
 
     // 실사 이후에 잔량을 바꾸는 작업·입출고가 있으면, 실사 수량을 그대로 쓰지 않는다.
@@ -3255,6 +3267,18 @@ function lwStFilterRows(q){
             });
         });
 
+        // 재고 실사: 같은 날 여러 건이면 "장부수량이 가장 큰" 건만 유효로 본다.
+        // (작은 장부 = 이미 조정된 값을 다시 센 오입력. 예: 1739→17 저장 후 17→0 을 또 저장하면
+        //  17→0 이 최신이라 품목이 잔량 현황에서 사라진다)
+        const _stByDay = {};
+        laserAllWorks.forEach(function(w) {
+            if (!w || !w.isResidualStocktake || w.isResidualAuditOnly) return;
+            const d = String(w.date || '').slice(0, 10);
+            const cur = _stByDay[d];
+            if (!cur || (Number(w.stocktakeBookQty) || 0) > (Number(cur.stocktakeBookQty) || 0)) _stByDay[d] = w;
+        });
+        const _validStIds = new Set(Object.keys(_stByDay).map(function(d) { return String(_stByDay[d].id || ''); }));
+
         // ② 수기 입출고 / LOT 절대 보정
         laserAllWorks.filter(function(w) {
             return w.isResidualManualIn || w.isResidualManualOut;
@@ -3268,6 +3292,7 @@ function lwStFilterRows(q){
             const paintLot = rawPaintLot ? _normalizePaintLot(rawPaintLot) : '';
             const injLot = rawInjLot ? _normalizeInjLot(rawInjLot) : '';
             if (w.isResidualStocktake) {
+                if (!_validStIds.has(String(w.id || ''))) return; // 같은 날 더 큰 장부 실사가 있으면 무시
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
@@ -7310,11 +7335,28 @@ function _num(value) {
 
     async function _applyResidualBulkCleanup(targets, totalCut, date, note, author) {
         let done = 0;
+        const day = String(date || '').slice(0, 10);
         try {
             for (let i = 0; i < targets.length; i++) {
                 const t = targets[i];
                 const cut = Math.max(0, t.cur - t.target);
                 if (cut <= 0) { done++; continue; }
+
+                // 같은 품목·같은 날짜의 기존 재고 실사 기록은 이번 실사로 대체한다.
+                // (재고 실사는 "현재 실물 = N개" 를 확정하는 것이므로, 같은 날 다시 세면
+                //  이전 값이 아니라 새 값이 곧 현재고여야 한다. 안 그러면 "17 → 0" 같은
+                //  이전 오입력이 최신으로 남아 품목이 잔량 현황에서 사라진다.)
+                const stale = (_getLaserWorks()).filter(function(w) {
+                    return w && w.isResidualStocktake && !w.isResidualAuditOnly
+                        && (w.carModel || '') === t.carModel
+                        && (w.partName || '') === t.partName
+                        && (w.color || '') === (t.color || '')
+                        && String(w.date || '').slice(0, 10) === day;
+                });
+                for (let s = 0; s < stale.length; s++) {
+                    try { await Storage.remove(STORE_LASER, stale[s].id); } catch (e) {}
+                }
+
                 // 실사 수량이 그 시점의 잔량이 된다(차이 출고만 하면 LOT 재생과 어긋나 0이 될 수 있음).
                 await Storage.add(STORE_LASER, {
                     date: date,
