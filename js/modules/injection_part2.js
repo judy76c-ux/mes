@@ -2651,6 +2651,7 @@ var InjectionWarehouseModule = (function() {
     }
 
     function loadData() {
+        _resetAuthLotQtyCache();
         const data = Storage.getAll(STORE);
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
 
@@ -3204,6 +3205,13 @@ var InjectionWarehouseModule = (function() {
                 label: '미차감 리셋',
                 color: '#0369a1',
                 detail: reason || '미차감만 0 · 표시 재고 유지'
+            };
+        }
+        if (d && _isStockCountAdjustmentRecord(d)) {
+            return {
+                label: '재고실사 보정',
+                color: '#b45309',
+                detail: String(d.resetReason || d.note || d.source || '').trim() || '실사수량 반영'
             };
         }
         if (d && d.type === '출고') {
@@ -6129,6 +6137,91 @@ var InjectionWarehouseModule = (function() {
         return map;
     }
 
+    /** 도장현장 반납 재입고 LOT별 합계 (품명||LOT) — 정당한 재입고분 */
+    function _siteReturnQtyMap() {
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(function(d) {
+            if (!_isSiteReturnInbound(d)) return;
+            const lots = (d.lots && d.lots.length > 0)
+                ? d.lots
+                : (d.lotNo ? [{ lotNo: d.lotNo, qty: d.quantity }] : []);
+            lots.forEach(function(l) {
+                const lotNo = String(l.lotNo || '').trim();
+                const qty = _lotNum(l.qty);
+                if (!lotNo || qty <= 0) return;
+                const k = _normKeyStr(d.partName) + '||' + lotNo;
+                map[k] = (map[k] || 0) + qty;
+            });
+        });
+        return map;
+    }
+
+    /** RST/DT 자동 생성 LOT·무표기는 실물 생산 LOT이 아니므로 수량 상한 검증 대상이 아니다 */
+    function _isSyntheticLot(lotNo) {
+        const v = String(lotNo == null ? '' : lotNo).trim();
+        return !v || v === '무표기' || /^(RST|DT)/i.test(v);
+    }
+
+    /**
+     * 한 LOT의 "정당하게 받은 수량" 상한.
+     *  = 수입검사 입고량 + 도장현장 반납 재입고량.
+     * 재고실사는 이 상한을 넘겨 LOT 수량을 올릴 수 없다 (수입검사에서 LOT·수량 확정 후 입고되므로).
+     * hasBasis=false 면 근거가 없는 것(컷오버 이전 레거시 직접입고 등) — 상한을 강제하지 않는다.
+     */
+    let _authLotQtyCache = null;
+    function _resetAuthLotQtyCache() { _authLotQtyCache = null; }
+    function _authorizedLotQty(partName, lotNo) {
+        if (!_authLotQtyCache) {
+            _authLotQtyCache = { insp: _inspectionLotQtyMap(), ret: _siteReturnQtyMap() };
+        }
+        const key = _normKeyStr(partName) + '||' + String(lotNo == null ? '' : lotNo).trim();
+        const inspQty = Number(_authLotQtyCache.insp[key]) || 0;
+        const returnQty = Number(_authLotQtyCache.ret[key]) || 0;
+        return {
+            authorized: inspQty + returnQty,
+            hasBasis: (inspQty > 0 || returnQty > 0),
+            inspQty: inspQty,
+            returnQty: returnQty
+        };
+    }
+
+    /**
+     * 현재고 확정(기준점) 레코드에 넣을 lots[] 을 계산한다.
+     * confirmStockBaseline / _commitStockCount(관리자) 의 중복 로직을 통합한 공용 빌더.
+     * 수입검사 근거가 있는 LOT의 수량이 허용 상한을 넘으면 상한으로 클램프하고 clampedLots 로 알린다
+     * (재고실사 오입력이 그대로 기준점으로 굳는 것을 막는 2차 방어).
+     */
+    function _buildBaselineLots(carModel, partName, color) {
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const resolvedColor = _resolveMasterColor(carModel, partName, color, materials);
+        const all = _filterProductRecords(carModel, partName, resolvedColor || color);
+        const bal = InvCalc.lotBalances(_recordsForStockCalc(all));
+        const clampedLots = [];
+        const lots = (bal.lots || [])
+            .filter(function (l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
+            .map(function (l) {
+                const lotNo = String(l.lotNo || '').trim() || '무표기';
+                let qty = Number(l.qty) || 0;
+                if (!_isSyntheticLot(lotNo)) {
+                    const az = _authorizedLotQty(partName, lotNo);
+                    if (az.hasBasis && qty > az.authorized) {
+                        clampedLots.push({ lotNo: lotNo, from: qty, to: az.authorized });
+                        qty = az.authorized;
+                    }
+                }
+                return { lotNo: lotNo, qty: qty, date: l.date || '', supplier: l.supplier || '' };
+            })
+            .filter(function (l) { return l.qty > 0; });
+        const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        return {
+            lots: lots,
+            total: total,
+            fullTotal: InvCalc.lotBalances(all).total,
+            clampedLots: clampedLots,
+            resolvedColor: resolvedColor || color || ''
+        };
+    }
+
     /** 생산현장으로 나간 출고인지 — 재고 보정·초기화는 제외 */
     function _isProductionOutbound(d) {
         if (!d || d.type !== '출고') return false;
@@ -6240,11 +6333,92 @@ var InjectionWarehouseModule = (function() {
         });
     }
 
+    /**
+     * 현재고 확정(기준점)에 박힌 LOT 수량이 수입검사 입고량(허용 상한)을 넘는 경우를 찾는다.
+     * findDuplicateLotInbounds() 가 재고실사 보정·기준점 레코드를 제외하기 때문에 생기는
+     * 사각지대 — 재고실사에서 실사수량을 잘못 입력해 기준점이 부풀려진 케이스를 여기서 잡는다.
+     */
+    function findBaselineInflatedLots() {
+        _resetAuthLotQtyCache();
+        const adjustMap = {}; // 품명||LOT → 재고실사 보정 순증(입고−출고)
+        (Storage.getAll(STORE) || []).forEach(function(d) {
+            if (!_isStockCountAdjustmentRecord(d)) return;
+            const lots = (d.lots && d.lots.length > 0) ? d.lots : (d.lotNo ? [{ lotNo: d.lotNo, qty: d.quantity }] : []);
+            lots.forEach(function(l) {
+                const lotNo = String(l.lotNo || '').trim();
+                const qty = _lotNum(l.qty);
+                if (!lotNo || qty <= 0) return;
+                const k = _normKeyStr(d.partName) + '||' + lotNo;
+                adjustMap[k] = (adjustMap[k] || 0) + (d.type === '출고' ? -qty : qty);
+            });
+        });
+
+        const stockMap = _calcStockMap();
+        const out = [];
+        Object.keys(stockMap).forEach(function(key) {
+            const g = stockMap[key];
+            const recs = _filterProductRecords(g.carModel, g.partName, g.color);
+            const baseline = _findLatestStockBaseline(recs);
+            if (!baseline || !Array.isArray(baseline.lots)) return;
+            baseline.lots.forEach(function(l) {
+                const lotNo = String(l.lotNo || '').trim();
+                const qty = _lotNum(l.qty);
+                if (!lotNo || qty <= 0 || _isSyntheticLot(lotNo)) return;
+                const az = _authorizedLotQty(g.partName, lotNo);
+                if (!az.hasBasis || qty <= az.authorized) return;
+                const k = _normKeyStr(g.partName) + '||' + lotNo;
+                out.push({
+                    carModel: g.carModel, partName: g.partName, color: g.color || '', lotNo: lotNo,
+                    baselineId: baseline.id,
+                    baselineDate: String(InvCalc.normDate(baseline.date).stamp || baseline.date || ''),
+                    baselineReason: String(baseline.baselineReason || baseline.note || '').trim(),
+                    baselineQty: qty,
+                    authorizedQty: az.authorized,
+                    inspQty: az.inspQty,
+                    returnQty: az.returnQty,
+                    excess: qty - az.authorized,
+                    auditInbound: Number(adjustMap[k]) || 0,
+                    reasonKind: 'baseline_inflation'
+                });
+            });
+        });
+        return out.sort(function(a, b) { return b.excess - a.excess; });
+    }
+
     /** 중복 입고 정리 모달 — 어느 기록을 지울지 고르게 한다 (관리자 전용) */
     function openDuplicateInboundModal() {
         const groups = findDuplicateLotInbounds();
-        if (!groups.length) { UIUtils.toast('초과 입고된 LOT이 없습니다.', 'info'); return; }
+        const inflated = findBaselineInflatedLots();
+        if (!groups.length && !inflated.length) { UIUtils.toast('초과 입고·재고실사 부풀림 LOT이 없습니다.', 'info'); return; }
         const canDelete = _isAdminUser();
+
+        const inflatedBlocks = inflated.map(function(x) {
+            return `<div style="margin-top:14px;padding:10px 12px;border:1px solid rgba(220,38,38,.35);border-radius:8px;background:rgba(220,38,38,.04);">
+                <div style="font-size:0.86rem;font-weight:700;">
+                    ${_escapeHtml(x.carModel || '-')} · ${_escapeHtml(x.partName || '-')} · ${_escapeHtml(x.color || '-')}
+                    <span style="font-family:monospace;margin-left:6px;">LOT ${_escapeHtml(x.lotNo)}</span>
+                    <span style="margin-left:8px;font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:4px;background:#b4530912;border:1px solid #b4530944;color:#b45309;">재고실사 부풀림</span>
+                </div>
+                <div style="margin-top:4px;font-size:0.82rem;line-height:1.6;">
+                    현재고 확정(${_escapeHtml(String(x.baselineDate).slice(0, 16))}) LOT 수량
+                    <strong>${UIUtils.formatNumber(x.baselineQty)} EA</strong> 가
+                    수입검사 입고 <strong>${UIUtils.formatNumber(x.authorizedQty)} EA</strong>
+                    ${x.returnQty ? `(검사 ${UIUtils.formatNumber(x.inspQty)} + 반납 ${UIUtils.formatNumber(x.returnQty)}) ` : ''}
+                    대비 <span style="color:var(--accent-red);font-weight:700;">${UIUtils.formatNumber(x.excess)} EA 초과</span>.
+                    ${x.auditInbound > 0 ? `재고실사 보정 입고 순증 ${UIUtils.formatNumber(x.auditInbound)} EA.` : ''}
+                    ${x.baselineReason ? `<div style="color:var(--text-muted);font-size:0.76rem;margin-top:2px;">사유: ${_escapeHtml(x.baselineReason)}</div>` : ''}
+                </div>
+                <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+                    ${canDelete ? `<button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626;"
+                        onclick="UIUtils.closeModal();InjectionWarehouseModule.openEditBaselineModal('${x.baselineId}')">기준값 수정</button>` : ''}
+                    <button class="btn btn-sm btn-outline"
+                        onclick="UIUtils.closeModal();InjectionWarehouseModule.showPartDetail('${_escapeHtml(x.carModel)}','${_escapeHtml(x.partName)}','${_escapeHtml(x.color || '')}')">입출고 이력 보기</button>
+                </div>
+                <div style="margin-top:5px;font-size:0.74rem;color:var(--text-muted);">
+                    권장: 실물을 재확인해 기준값을 수입검사 수량으로 수정하고, 원인이 된 <strong>재고실사 보정</strong> 입고 행이 있으면 이력에서 삭제하세요.
+                </div>
+            </div>`;
+        }).join('');
 
         const blocks = groups.map(function(g) {
             const rows = g.entries.map(function(e) {
@@ -6298,11 +6472,11 @@ var InjectionWarehouseModule = (function() {
             </div>`;
         }).join('');
 
-        UIUtils.showModal('초과 입고 정리',
+        UIUtils.showModal('초과 입고 · 재고실사 부풀림 정리',
             `<div style="padding:4px 0;">
                 <div style="padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,.3);
                             background:rgba(220,38,38,.06);font-size:0.84rem;line-height:1.6;">
-                    <strong>수입검사 합격수량보다 많이 입고</strong>됐거나, <strong>같은 검사건·같은 수량이 두 번 등록</strong>된 LOT입니다.
+                    <strong>수입검사 수량보다 많이 입고·확정</strong>됐거나, <strong>같은 검사건·같은 수량이 두 번 등록</strong>된 LOT입니다.
                     <div style="margin-top:6px;color:var(--text-muted);">
                         같은 LOT을 여러 번 나눠 받는 <strong>분할 입고는 정상</strong>이므로 목록에 뜨지 않습니다.
                         <strong>도장현장 반납</strong>은 출고분의 재입고라 비교하지 않습니다.
@@ -6311,7 +6485,8 @@ var InjectionWarehouseModule = (function() {
                         실물을 확인한 뒤 삭제하세요. 수입검사 기록은 변경되지 않습니다.
                     </div>
                 </div>
-                ${blocks}
+                ${inflated.length ? `<div style="margin-top:12px;font-size:0.82rem;font-weight:700;color:var(--accent-red);">■ 재고실사·현재고 확정으로 부풀려진 LOT (${inflated.length}건)</div>${inflatedBlocks}` : ''}
+                ${groups.length ? `<div style="margin-top:14px;font-size:0.82rem;font-weight:700;">■ 초과·중복 입고 LOT (${groups.length}건)</div>${blocks}` : ''}
             </div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             '900px'
@@ -6348,7 +6523,7 @@ var InjectionWarehouseModule = (function() {
                 UIUtils.closeModal();
                 loadData();
                 setTimeout(function() {
-                    if (findDuplicateLotInbounds().length) openDuplicateInboundModal();
+                    if (findDuplicateLotInbounds().length || findBaselineInflatedLots().length) openDuplicateInboundModal();
                 }, 120);
             }
         );
@@ -6570,6 +6745,7 @@ var InjectionWarehouseModule = (function() {
         const orphanQty = orphans.reduce(function(s, o) { return s + (Number(o.qty) || 0); }, 0);
         const adjRecords = findAdjustmentRecords();
         const adj = _summarizeAdjustments(adjRecords);
+        const inflatedCount = findBaselineInflatedLots().length;
 
         if (!dupGroups.length && !orphans.length && !hidden.length && !adj.total) {
             UIUtils.toast('정리할 대상이 없습니다.', 'info');
@@ -6584,6 +6760,10 @@ var InjectionWarehouseModule = (function() {
                     실행하면 삭제 대상 전체가 담긴 <strong>JSON 백업 파일이 먼저 다운로드</strong>된 뒤 삭제가 진행됩니다.
                     백업 파일은 반드시 보관하세요.
                 </div>
+                ${inflatedCount ? `<div style="padding:9px 12px;border-radius:8px;border:1px solid rgba(220,38,38,.3);background:rgba(220,38,38,.04);font-size:0.8rem;margin-top:8px;">
+                    ⚠ <strong>재고실사 부풀림 LOT ${inflatedCount}건</strong> 은 이 일괄 정리 대상이 아닙니다 —
+                    "초과 입고 · 재고실사 부풀림 LOT" 배너에서 각 LOT의 <strong>기준값을 직접 수정</strong>하세요.
+                </div>` : ''}
 
                 <label style="display:flex;gap:8px;align-items:flex-start;padding:10px 12px;margin-top:12px;
                               border:1px solid var(--border-color);border-radius:8px;cursor:pointer;">
@@ -6822,19 +7002,21 @@ var InjectionWarehouseModule = (function() {
         if (!card) return;
         const orphans = findOrphanInspectionInbounds();
         const dupes = findDuplicateLotInbounds();
-        const dupeBanner = dupes.length ? `
+        const inflated = findBaselineInflatedLots();
+        const anomalyCount = dupes.length + inflated.length;
+        const dupeBanner = anomalyCount ? `
             <div class="card" style="margin-bottom:20px;border-left:3px solid var(--accent-red);background:rgba(239,68,68,.04);">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
                     <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
                         <span class="material-symbols-outlined" style="color:var(--accent-red);">content_copy</span>
-                        초과 입고 LOT
+                        초과 입고 · 재고실사 부풀림 LOT
                         <span style="font-size:0.78rem;background:var(--accent-red);color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">
-                            ${dupes.length}건</span>
+                            ${anomalyCount}건</span>
                     </h4>
                     <div style="display:flex;gap:6px;flex-wrap:wrap;">
                         <button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626;"
                             onclick="InjectionWarehouseModule.openDuplicateInboundModal()">
-                            <span class="material-symbols-outlined" style="font-size:1rem;">rule</span> 중복 정리
+                            <span class="material-symbols-outlined" style="font-size:1rem;">rule</span> 정합 점검·정리
                         </button>
                         ${_isAdminUser() ? `
                         <button class="btn btn-sm btn-outline" style="color:#dc2626;border-color:#fca5a5;"
@@ -6845,7 +7027,8 @@ var InjectionWarehouseModule = (function() {
                     </div>
                 </div>
                 <div class="card-body" style="padding:10px 14px;font-size:0.82rem;color:var(--text-secondary);">
-                    수입검사 합격수량보다 창고에 더 많이 남은 LOT입니다. 재고가 실물보다 많을 수 있습니다.
+                    수입검사 수량보다 창고에 더 많이 남았거나(초과 입고), 재고실사·현재고 확정으로 LOT 수량이
+                    수입검사 입고량을 넘게 확정된(${inflated.length}건) LOT입니다. 재고가 실물보다 많을 수 있습니다.
                     분할 입고, 도장현장 반납, 생산출고로 이미 나간 수량은 제외했습니다.
                 </div>
             </div>` : '';
@@ -9247,6 +9430,7 @@ var InjectionWarehouseModule = (function() {
             UIUtils.toast('수량 보정 권한이 있는 사용자만 재고실사를 진행할 수 있습니다.', 'warning');
             return;
         }
+        _resetAuthLotQtyCache();
         window._injCountAllRows = _buildStockCountRows();
         window._injCountRows = [];
         window._injCountCurrentCarModel = '';
@@ -9286,7 +9470,7 @@ var InjectionWarehouseModule = (function() {
                             <th style="text-align:right;">장부수량</th>
                             <th style="text-align:right;min-width:100px;">실사수량</th>
                             <th style="text-align:right;">차이</th>
-                            <th></th>
+                            <th style="text-align:right;white-space:nowrap;">수입검사 입고<br><span style="font-weight:400;color:var(--text-muted);font-size:0.7rem;">(허용 상한)</span></th>
                         </tr>
                     </thead>
                     <tbody id="injCountBody"></tbody>
@@ -9414,19 +9598,11 @@ var InjectionWarehouseModule = (function() {
                     html += _subtotalRowHtml(g, bookTotal);
                 }
             } else {
-                html += `<tr class="inj-count-empty-row" ${groupAttrs} data-search="${groupSearch}">
+                html += `<tr class="inj-count-empty-row" ${groupAttrs} data-search="${groupSearch}" style="border-bottom:2px solid var(--border-color);">
                     <td style="${_INJ_COUNT_TD}">${_escapeHtml(g.carModel)}</td><td style="${_INJ_COUNT_TD}">${_escapeHtml(g.partName)}</td><td style="${_INJ_COUNT_TD}">${_escapeHtml(g.color || '-')}</td>
-                    <td colspan="4" style="${_INJ_COUNT_TD}color:var(--text-muted);">재고 0 · 실사에서 발견되면 우측 "LOT 추가"로 입력</td>
-                    <td style="${_INJ_COUNT_TD}"></td>
+                    <td colspan="5" style="${_INJ_COUNT_TD}color:var(--text-muted);">재고 0 · 신규 LOT 은 수입검사(입고 대기)로 등록하세요</td>
                 </tr>`;
             }
-            html += `<tr class="inj-count-addrow" ${groupAttrs} data-search="${groupSearch}" style="background:var(--bg-primary);border-bottom:2px solid var(--border-color);">
-                <td colspan="8" style="padding:3px 6px;">
-                    <button type="button" class="btn btn-sm btn-outline" style="display:inline-flex;align-items:center;gap:3px;font-size:0.72rem;padding:2px 8px;" onclick="InjectionWarehouseModule._addCountLotRow(this)">
-                        <span class="material-symbols-outlined" style="font-size:0.9rem;">add</span> LOT 추가
-                    </button>
-                </td>
-            </tr>`;
         });
 
         body.innerHTML = html || `<tr><td colspan="8" style="text-align:center;padding:20px;color:var(--text-muted);">대상 품목이 없습니다.</td></tr>`;
@@ -9441,17 +9617,26 @@ var InjectionWarehouseModule = (function() {
         const lotCell = isNewRow
             ? `<input type="text" class="form-input inj-count-lot" maxlength="6" placeholder="YYMMDD" style="width:82px;padding:2px 6px;height:24px;font-family:monospace;">`
             : `${_escapeHtml(lotNo)}${l.date ? `<span style="font-size:0.68rem;color:var(--text-muted);margin-left:5px;">${_escapeHtml(String(l.date).slice(0, 10))}</span>` : ''}`;
+
+        // 이 LOT이 수입검사·현장반납으로 정당하게 받은 상한. 실사수량은 이 값을 넘을 수 없다.
+        const az = (!isNewRow && !_isSyntheticLot(lotNo)) ? _authorizedLotQty(g.partName, lotNo) : { authorized: 0, hasBasis: false };
+        const authCell = az.hasBasis
+            ? `<span style="font-family:monospace;">${UIUtils.formatNumber(az.authorized)}</span>`
+            : `<span style="color:var(--text-muted);font-size:0.7rem;">상한 미확인</span>`;
+
         return `<tr data-row="1" data-car="${car}" data-part="${part}" data-color="${color}" data-lot="${_escapeHtml(lotNo)}"
-                data-book="${bookQty}" data-new="${isNewRow ? 1 : 0}" data-search="${searchKey}">
+                data-book="${bookQty}" data-new="${isNewRow ? 1 : 0}" data-search="${searchKey}"
+                data-authorized="${az.authorized}" data-hasbasis="${az.hasBasis ? 1 : 0}">
             <td style="${_INJ_COUNT_TD}">${car}</td><td style="${_INJ_COUNT_TD}">${part}</td><td style="${_INJ_COUNT_TD}">${color || '-'}</td>
             <td style="${_INJ_COUNT_TD}">${lotCell}</td>
             <td style="${_INJ_COUNT_TD}text-align:right;">${isNewRow ? '0' : UIUtils.formatNumber(bookQty)}</td>
             <td style="${_INJ_COUNT_TD}text-align:right;">
                 <input type="number" min="0" class="form-input inj-count-qty" value="${isNewRow ? '' : bookQty}" placeholder="0"
                     style="width:84px;height:24px;padding:2px 6px;text-align:right;" oninput="InjectionWarehouseModule._onCountQtyInput(this)">
+                <div class="inj-count-lothint" style="font-size:0.66rem;color:var(--text-muted);margin-top:1px;text-align:right;"></div>
             </td>
             <td style="${_INJ_COUNT_TD}text-align:right;" class="inj-count-diff">${isNewRow ? '' : '0'}</td>
-            <td style="${_INJ_COUNT_TD}"></td>
+            <td style="${_INJ_COUNT_TD}text-align:right;">${authCell}</td>
         </tr>`;
     }
 
@@ -9470,6 +9655,11 @@ var InjectionWarehouseModule = (function() {
     }
 
     function _addCountLotRow(btn) {
+        // 재고실사로는 신규 LOT을 만들 수 없다. LOT·수량은 수입검사에서 확정 후 입고된다.
+        // (호출 지점은 제거됐고, 회귀 시 무해하게 실패하도록 가드만 남긴다.)
+        UIUtils.toast('신규 LOT 은 수입검사(입고 대기)로 등록하세요. 재고실사는 기존 LOT 수량 보정 전용입니다.', 'warning');
+        return;
+        // eslint-disable-next-line no-unreachable
         const tr = btn.closest('tr');
         if (!tr) return;
         const g = { carModel: tr.dataset.gcar || '', partName: tr.dataset.gpart || '', color: tr.dataset.gcolor || '' };
@@ -9558,6 +9748,22 @@ var InjectionWarehouseModule = (function() {
             diffCell.style.color = diff > 0 ? 'var(--accent-green)' : (diff < 0 ? 'var(--accent-red)' : 'var(--text-muted)');
             diffCell.style.fontWeight = diff !== 0 ? '700' : '400';
         }
+
+        // 수입검사 입고량(허용 상한) 초과 시 즉시 경고 표시
+        const hasBasis = tr.dataset.hasbasis === '1';
+        const authorized = Number(tr.dataset.authorized) || 0;
+        const over = hasBasis && val > authorized;
+        const hint = tr.querySelector('.inj-count-lothint');
+        el.style.borderColor = over ? 'var(--accent-red)' : '';
+        el.style.background = over ? 'rgba(220,38,38,0.06)' : '';
+        if (over) {
+            tr.dataset.invalid = '1';
+            if (hint) { hint.textContent = `수입검사 입고 ${UIUtils.formatNumber(authorized)} 초과`; hint.style.color = 'var(--accent-red)'; }
+        } else {
+            delete tr.dataset.invalid;
+            if (hint) hint.textContent = '';
+        }
+
         _updateGroupSubtotal(tr.dataset.car, tr.dataset.part, tr.dataset.color);
         _updateCountSummary();
     }
@@ -9565,7 +9771,7 @@ var InjectionWarehouseModule = (function() {
     function _updateCountSummary() {
         const el = document.getElementById('injCountSummary');
         if (!el) return;
-        let lotCount = 0, totalDiff = 0;
+        let lotCount = 0, totalDiff = 0, overCount = 0;
         const productKeys = new Set();
         document.querySelectorAll('#injCountBody tr[data-row]').forEach(function (tr) {
             const book = Number(tr.dataset.book) || 0;
@@ -9573,15 +9779,18 @@ var InjectionWarehouseModule = (function() {
             const qty = Math.max(0, Math.round(Number(qtyInput ? qtyInput.value : 0) || 0));
             const isNew = tr.dataset.new === '1';
             if (isNew && qty <= 0) return;
+            if (tr.dataset.invalid === '1') overCount++;
             const diff = qty - book;
             if (diff === 0) return;
             lotCount++;
             totalDiff += diff;
             productKeys.add(`${tr.dataset.car}||${tr.dataset.part}||${tr.dataset.color}`);
         });
-        el.textContent = lotCount
+        el.textContent = (lotCount
             ? `변경 예정: ${productKeys.size}개 품목 · ${lotCount}개 LOT · 순변화 ${totalDiff > 0 ? '+' : ''}${UIUtils.formatNumber(totalDiff)} EA`
-            : '변경사항 없음';
+            : '변경사항 없음')
+            + (overCount ? ` · ⚠ 수입검사 초과 ${overCount}건 (저장 불가)` : '');
+        el.style.color = overCount ? 'var(--accent-red)' : 'var(--text-muted)';
     }
 
     /** 검토 요약 확인 후 저장 — 실제 반영은 사용자가 요약을 확인하고 한 번 더 확정해야 진행된다 */
@@ -9600,6 +9809,7 @@ var InjectionWarehouseModule = (function() {
 
         const body = document.getElementById('injCountBody');
         if (!body) return;
+        _resetAuthLotQtyCache();
         const changes = [];
         const lotErrors = [];
 
@@ -9614,26 +9824,50 @@ var InjectionWarehouseModule = (function() {
             let lotNo = tr.dataset.lot || '';
 
             if (isNew) {
-                if (countQty <= 0) return; // 신규 행인데 수량 미입력 → 무시
-                const lotInput = tr.querySelector('.inj-count-lot');
-                lotNo = (lotInput ? lotInput.value : '').trim();
-                const err = _yymmddLotError(lotNo);
-                if (err) { lotErrors.push(`${partName}${color ? ' · ' + color : ''}: ${err}`); return; }
+                // 재고실사로는 신규 LOT을 추가할 수 없다 — 수입검사에서 LOT·수량 확정 후 입고된다.
+                if (countQty <= 0) return;
+                lotErrors.push(`${partName}${color ? ' · ' + color : ''}: 신규 LOT 은 재고실사로 추가할 수 없습니다 — 수입검사(입고 대기)로 등록하세요.`);
+                return;
             }
 
             const diff = countQty - bookQty;
             if (diff === 0) return;
+
+            // 수입검사·현장반납으로 정당하게 받은 상한 초과 차단 (근거가 있을 때만)
+            if (!_isSyntheticLot(lotNo)) {
+                const az = _authorizedLotQty(partName, lotNo);
+                if (az.hasBasis && countQty > az.authorized) {
+                    lotErrors.push(
+                        `${partName}${color ? ' · ' + color : ''} · LOT ${lotNo}: 실사수량 ${UIUtils.formatNumber(countQty)} > `
+                        + `수입검사 입고 ${UIUtils.formatNumber(az.authorized)}. 재고실사로는 수입검사 수량을 초과할 수 없습니다. `
+                        + `수량 오류면 수입검사 화면에서 수정하세요.`
+                    );
+                    return;
+                }
+            }
+
             changes.push({ carModel, partName, color, lotNo, bookQty, countQty, diff, isNew });
         });
 
         if (lotErrors.length) {
-            UIUtils.toast('LOT번호를 확인하세요: ' + lotErrors.slice(0, 3).join(' / '), 'warning');
+            UIUtils.showModal('재고실사 저장 불가',
+                `<div style="font-size:0.86rem;line-height:1.7;">
+                    <div style="margin-bottom:8px;color:var(--accent-red);font-weight:700;">다음 항목은 저장할 수 없습니다:</div>
+                    <ul style="margin:0;padding-left:18px;">${lotErrors.map(function (e) { return '<li>' + _escapeHtml(e) + '</li>'; }).join('')}</ul>
+                    <div style="margin-top:10px;color:var(--text-muted);">해당 값을 수정하거나 비운 뒤 다시 저장하세요.</div>
+                </div>`,
+                `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">확인</button>`);
             return;
         }
         if (!changes.length) {
             UIUtils.toast('변경된 수량이 없습니다.', 'info');
             return;
         }
+
+        // 하향/소멸 경고 — 절반 이상 줄거나 0으로 소멸하는 LOT
+        const dropWarn = changes.filter(function (c) {
+            return c.bookQty > 0 && (c.countQty === 0 || (c.diff < 0 && Math.abs(c.diff) >= c.bookQty * 0.5));
+        });
 
         const totalDiff = changes.reduce(function (s, c) { return s + c.diff; }, 0);
         const productKeys = new Set(changes.map(function (c) { return `${c.carModel}||${c.partName}||${c.color}`; }));
@@ -9647,8 +9881,15 @@ var InjectionWarehouseModule = (function() {
         const confirmTail = _isAdminUser()
             ? '저장하면 보정 기록을 남기고, 보정된 품목의 현재고를 새 기준점(현재고 확정)으로 저장합니다.'
             : '저장하면 보정 기록만 남습니다. 현재고 확정(기준점)은 관리자가 품목 상세에서 별도로 확인 후 진행합니다.';
+        const dropBlock = dropWarn.length
+            ? `\n\n⚠ 다음 LOT 은 절반 이상 감소하거나 0 으로 소멸합니다:\n`
+              + dropWarn.slice(0, 8).map(function (c) {
+                  return `  · ${c.partName}${c.color ? ' · ' + c.color : ''} LOT ${c.lotNo} : ${UIUtils.formatNumber(c.bookQty)} → ${UIUtils.formatNumber(c.countQty)}`;
+              }).join('\n')
+              + (dropWarn.length > 8 ? `\n  ... 외 ${dropWarn.length - 8}건` : '')
+            : '';
         UIUtils.confirm(
-            `[${carModelLabel}] ${productKeys.size}개 품목 · ${changes.length}개 LOT 보정 예정 (순변화 ${totalDiff > 0 ? '+' : ''}${UIUtils.formatNumber(totalDiff)} EA)\n\n${preview}${more}\n\n`
+            `[${carModelLabel}] ${productKeys.size}개 품목 · ${changes.length}개 LOT 보정 예정 (순변화 ${totalDiff > 0 ? '+' : ''}${UIUtils.formatNumber(totalDiff)} EA)\n\n${preview}${more}${dropBlock}\n\n`
             + `${confirmTail}\n계속할까요?`,
             function () { _commitStockCount(changes, reason); }
         );
@@ -9709,19 +9950,17 @@ var InjectionWarehouseModule = (function() {
                     lotCount++;
                 }
 
-                // 현재고 확정(기준점)은 관리자만 — confirmStockBaseline과 동일한 방식
-                let baselineQty = null, baselineLotCount = null;
+                // 현재고 확정(기준점)은 관리자만 — confirmStockBaseline과 동일한 방식(_buildBaselineLots 공용)
+                let baselineQty = null, baselineLotCount = null, baselineClamped = [];
                 if (isAdmin) {
-                    const productItems = _filterProductRecords(g.carModel, g.partName, g.color);
-                    const calcRecs = _recordsForStockCalc(productItems);
-                    const bal = InvCalc.lotBalances(calcRecs);
-                    const lots = (bal.lots || [])
-                        .filter(function (l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
-                        .map(function (l) {
-                            return { lotNo: String(l.lotNo || '').trim() || '무표기', qty: Number(l.qty) || 0, date: l.date || '', supplier: l.supplier || '' };
-                        });
-                    const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
-                    const fullTotal = InvCalc.lotBalances(productItems).total;
+                    const built = _buildBaselineLots(g.carModel, g.partName, g.color);
+                    const lots = built.lots;
+                    const total = built.total;
+                    const fullTotal = built.fullTotal;
+                    baselineClamped = built.clampedLots || [];
+                    if (baselineClamped.length) {
+                        console.warn('[재고실사] 기준점 LOT 수량이 수입검사 상한으로 자동 조정됨:', g.partName, baselineClamped);
+                    }
 
                     await _addInventoryRecord({
                         date: InvCalc.stampFor(UIUtils.today()),
@@ -9760,7 +9999,8 @@ var InjectionWarehouseModule = (function() {
                     originalData: {
                         carModel: g.carModel, partName: g.partName, color: g.color || '',
                         items: g.items, baselineQty: baselineQty, lotCount: baselineLotCount,
-                        sessionId: sessionId, confirmed: isAdmin
+                        sessionId: sessionId, confirmed: isAdmin,
+                        clampedToInspection: baselineClamped
                     },
                     summary: `${g.carModel} / ${g.partName} ${g.color || ''} / 실사 보정 ${g.items.length}건`
                         + (isAdmin ? ` · 확정 ${UIUtils.formatNumber(baselineQty)} EA` : ' · 확정 대기(관리자 필요)')
@@ -9977,25 +10217,30 @@ var InjectionWarehouseModule = (function() {
         const carModel = decodeURIComponent(carModelEnc || '');
         const partName = decodeURIComponent(partNameEnc || '');
         const color = decodeURIComponent(colorEnc || '');
-        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
-        const resolvedColor = _resolveMasterColor(carModel, partName, color, materials);
-        const all = _filterProductRecords(carModel, partName, resolvedColor || color);
-        const calcRecs = _recordsForStockCalc(all);
-        const bal = InvCalc.lotBalances(calcRecs);
-        const lots = (bal.lots || [])
-            .filter(function (l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
-            .map(function (l) {
-                return {
-                    lotNo: String(l.lotNo || '').trim() || '무표기',
-                    qty: Number(l.qty) || 0,
-                    date: l.date || '',
-                    supplier: l.supplier || ''
-                };
-            });
-        const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+        _resetAuthLotQtyCache();
+        const built = _buildBaselineLots(carModel, partName, color);
+        const lots = built.lots;
+        const total = built.total;
+        const resolvedColor = built.resolvedColor;
+        const fullTotal = built.fullTotal;
+
+        if (built.clampedLots && built.clampedLots.length) {
+            const lines = built.clampedLots.map(function (c) {
+                return `  · LOT ${c.lotNo} : ${UIUtils.formatNumber(c.from)} → ${UIUtils.formatNumber(c.to)}`;
+            }).join('\n');
+            UIUtils.confirm(
+                `다음 LOT 은 수입검사 허용 수량을 초과해, 허용 수량으로 조정되어 확정됩니다:\n\n${lines}\n\n`
+                + `(재고실사 오입력 등으로 부풀려진 값을 바로잡습니다.) 계속할까요?`,
+                function () { _writeStockBaseline(carModel, partName, color, resolvedColor, lots, total, fullTotal, reason); }
+            );
+            return;
+        }
+        _writeStockBaseline(carModel, partName, color, resolvedColor, lots, total, fullTotal, reason);
+    }
+
+    async function _writeStockBaseline(carModel, partName, color, resolvedColor, lots, total, fullTotal, reason) {
         const material = _findInjectionMaterial(carModel, partName, color);
         const actor = _getResetActorFields();
-        const fullTotal = InvCalc.lotBalances(all).total;
 
         const record = {
             date: InvCalc.stampFor(UIUtils.today()),
@@ -10149,6 +10394,23 @@ var InjectionWarehouseModule = (function() {
             const qty = input ? (Math.max(0, Number(input.value) || 0)) : (Number(l.qty) || 0);
             return { ...l, qty: qty };
         }).filter(function (l) { return (Number(l.qty) || 0) > 0; });
+
+        // 수입검사 입고량(허용 상한)을 넘는 LOT 수량은 저장할 수 없다
+        _resetAuthLotQtyCache();
+        const overLots = lots.filter(function (l) {
+            if (_isSyntheticLot(l.lotNo)) return false;
+            const az = _authorizedLotQty(d.partName, l.lotNo);
+            return az.hasBasis && (Number(l.qty) || 0) > az.authorized;
+        });
+        if (overLots.length) {
+            const lines = overLots.map(function (l) {
+                const az = _authorizedLotQty(d.partName, l.lotNo);
+                return `LOT ${l.lotNo}: ${UIUtils.formatNumber(l.qty)} > 수입검사 입고 ${UIUtils.formatNumber(az.authorized)}`;
+            }).join(' / ');
+            UIUtils.toast('수입검사 입고량을 초과하는 LOT 수량은 확정할 수 없습니다 — ' + lines, 'warning');
+            return;
+        }
+
         const total = lots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
         const actor = _getResetActorFields();
         const before = { lots: d.lots, quantity: d.quantity, baselineReason: d.baselineReason };
@@ -12067,6 +12329,7 @@ var InjectionWarehouseModule = (function() {
         findOrphanInspectionInbounds,
         renderOrphanInboundAudit,
         findDuplicateLotInbounds,
+        findBaselineInflatedLots,
         openDuplicateInboundModal,
         confirmDeleteDuplicateInbound,
         openBulkCleanupModal,
