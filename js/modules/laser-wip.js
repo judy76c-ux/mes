@@ -2369,6 +2369,7 @@ function lwStFilterRows(q){
             // 넘어가므로 레이져 잔량이 발생할 수 없다. 컬러 명칭 변경 등으로 남은 잔재는 표시하지 않는다.
             .filter(r => !_isResidualExemptProduct(r.carModel, r.partName))
             .map(r => {
+              try {
                 const detail = _calcResidualLotDetail(r.carModel, r.partName, r.color);
                 const paintLotLabels = [];
                 let unassignedQty = Math.max(0, Number(detail.manualAdj) || 0);
@@ -2404,6 +2405,24 @@ function lwStFilterRows(q){
                     unassignedQty: unassignedQty,
                     unmatched: Math.max(0, Number(detail.unmatched) || 0)
                 });
+              } catch (err) {
+                // 한 품목 계산 실패가 잔량 현황 전체를 비우지 않도록 한다.
+                console.error('[레이져 포장 잔량] 계산 실패:', r.carModel, r.partName, r.color, err);
+                // 실사 수량이라도 있으면 살려서 표시한다.
+                let fallbackQty = 0;
+                try {
+                    const st = _latestResidualStocktake(r.carModel, r.partName, r.color);
+                    if (st) fallbackQty = _stocktakeCountedQty(st);
+                } catch (e2) {}
+                return Object.assign({}, r, {
+                    residualQty: fallbackQty,
+                    residualLotCount: 0,
+                    paintLotSummary: fallbackQty > 0 ? 'LOT 미지정' : '-',
+                    unassignedQty: fallbackQty,
+                    unmatched: 0,
+                    _calcError: true
+                });
+              }
             })
             .filter(r => r.residualQty > 0)
             .sort((a, b) => {
@@ -7326,8 +7345,39 @@ function _num(value) {
         refresh();
     }
 
+    // 진단용: 재고 실사한 품목이 잔량 현황에 왜 안 뜨는지 단계별로 보여준다. (콘솔에서 호출)
+    function _diagnoseResidualStocktake() {
+        const all = _getLaserWorks();
+        const sts = all.filter(function(w) { return w && w.isResidualStocktake && !w.isResidualAuditOnly; });
+        const rows = _calcLaserResidualWip();
+        const rowKey = function(x) { return (x.carModel||'') + '||' + (x.partName||'') + '||' + (x.color||''); };
+        const inRows = new Set(rows.map(rowKey));
+        return sts.map(function(w) {
+            const k = (w.carModel||'') + '||' + (w.partName||'') + '||' + (w.color||'');
+            let detail = null, detErr = null;
+            try { detail = _calcResidualLotDetail(w.carModel, w.partName, w.color); }
+            catch (e) { detErr = String(e && e.message || e); }
+            const lastSt = _latestResidualStocktake(w.carModel, w.partName, w.color);
+            let movementAfter = null;
+            try { movementAfter = _hasResidualMovementAfter(w.carModel, w.partName, w.color, lastSt); } catch (e) {}
+            return {
+                품명: w.partName, 컬러: w.color, 차종: w.carModel, 일자: w.date,
+                실사수량: w.stocktakeCountedQty, 장부: w.stocktakeBookQty, 조정량: w.quantity,
+                면제품목: _isResidualExemptProduct(w.carModel, w.partName),
+                calc결과: detErr ? ('ERROR: ' + detErr)
+                    : { lots: (detail.lots||[]).map(function(l){return l.paintLot+'/'+l.injLot+':'+l.qty;}), manualAdj: detail.manualAdj, unmatched: detail.unmatched },
+                calc잔량: detail ? _residualQtyFromLotDetail(detail) : null,
+                최근실사찾음: !!lastSt,
+                실사후이동있음: movementAfter,
+                최종행에포함: inRows.has(k),
+                같은품명행키: rows.filter(function(x){return x.partName===w.partName;}).map(rowKey)
+            };
+        });
+    }
+
     return { init, render, refresh, switchTab, openTab, _activeTabId, isAfterLaserDrainProduct,
              isResidualExemptProduct: _isResidualExemptProduct,
+             _diagnoseResidualStocktake,
              openManualInput,
              openResidualBulkCleanup, saveResidualBulkCleanup, filterResidualBulkCleanup, toggleAllResidualBulk,
              scrollToResidualStocktakeHist, openResidualStocktakeHistWindow,
