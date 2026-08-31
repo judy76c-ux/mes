@@ -449,8 +449,8 @@ var JigModule = (function () {
                             <span class="material-symbols-outlined">sync</span> 데이터 보정/재계산
                         </button>
                         <button class="btn btn-outline btn-sm" onclick="JigModule.openPreMesBaselineBulkModal()"
-                            title="MES 구축 전 사용해온 누적횟수를 품목별로 한번에 입력합니다. 조치(교체/초기화) 이력이 있는 품목은 이미 초기화 이후 실적만 반영되어 제외됩니다.">
-                            <span class="material-symbols-outlined">history_edu</span> 구축 전 누적 일괄입력
+                            title="품목별 현재 누적횟수를 입력값으로 덮어씁니다. MES 실적에 더하지 않습니다.">
+                            <span class="material-symbols-outlined">tune</span> 현재 누적 보정
                         </button>
                     ` : ''}
                 </div>
@@ -897,7 +897,7 @@ var JigModule = (function () {
         });
         const preMesMap = {};
         logs.forEach(function (log) {
-            if (log.source !== 'pre_mes_baseline') return;
+            if (!_isCountAdjustLog(log)) return;
             if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
             preMesMap[log.jigId] = Number(log.useCount) || 0;
         });
@@ -907,7 +907,7 @@ var JigModule = (function () {
         logs.forEach(function (log) {
             if (String(log.date || '').slice(0, 10) !== today) return;
             if (_isResetWorkType(log.workType)) return;
-            if (log.source === 'pre_mes_baseline') return;
+            if (_isCountAdjustLog(log)) return;
             if (!_isOnOrAfterReplacement(log.date, lastResetMap[log.jigId])) return;
             todayMap[log.jigId] = (todayMap[log.jigId] || 0) + (Number(log.useCount) || 0);
             if (log.paintingWorkId) countedWorkIds[log.paintingWorkId] = true;
@@ -940,14 +940,33 @@ var JigModule = (function () {
         }));
     }
 
+    function _isCountAdjustLog(log) {
+        return !!(log && log.source === 'pre_mes_baseline');
+    }
+
     function _preMesBaselineLog(jigId) {
         const logs = Storage.getAll(LOG_STORE) || [];
         const replacementDate = _latestReplacementDate(logs, jigId);
         return logs.find(function (log) {
             return log.jigId === jigId
-                && log.source === 'pre_mes_baseline'
+                && _isCountAdjustLog(log)
                 && _isOnOrAfterReplacement(log.date, replacementDate);
         }) || null;
+    }
+
+    // 보정 로그를 뺀 MES 실적(교체 이후). 현재 누적 = 이 값 + 보정 차이.
+    function _mesActualCount(jigId) {
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const replacementDate = _latestReplacementDate(logs, jigId);
+        let sum = 0;
+        logs.forEach(function (log) {
+            if (!log || log.jigId !== jigId) return;
+            if (_isCountAdjustLog(log)) return;
+            if (_isResetWorkType(log.workType)) return;
+            if (!_isOnOrAfterReplacement(log.date, replacementDate)) return;
+            sum += Number(log.useCount) || 0;
+        });
+        return sum;
     }
 
     function _usageLogsForJig(jigId) {
@@ -957,6 +976,7 @@ var JigModule = (function () {
             if (log.jigId !== jigId) return false;
             if (!_isOnOrAfterReplacement(log.date, replacementDate)) return false;
             if (_isResetWorkType(log.workType)) return false;
+            if (_isCountAdjustLog(log)) return true;
             return (Number(log.useCount) || 0) > 0;
         }).sort(function (a, b) {
             return String(b.date || '').localeCompare(String(a.date || ''))
@@ -1039,15 +1059,16 @@ var JigModule = (function () {
         const logs = _usageLogsForJig(jigId);
         const total = logs.reduce(function (s, l) { return s + (Number(l.useCount) || 0); }, 0);
         const baseline = _preMesBaselineLog(jigId);
-        const preMes = Number(baseline && baseline.useCount) || 0;
-        const afterMes = Math.max(0, total - preMes);
+        const adjustDelta = Number(baseline && baseline.useCount) || 0;
+        const mesActual = _mesActualCount(jigId);
         const resetDate = _latestReplacementDate(Storage.getAll(LOG_STORE) || [], jigId) || jig.lastResetDate || jig.registDate || '-';
         const adminForm = _isAdminUser()
             ? '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);">' +
-                '<div style="font-size:0.82rem;font-weight:700;color:#ea580c;margin-bottom:4px;">EMS 구축 전 누적횟수 (관리자)</div>' +
-                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;">MES 구축 전에 사용한 횟수를 입력합니다. 구축 이후 도장 작업일보 횟수에 더해 현재 실적과 맞춥니다. 0이면 구축 전 분을 제거합니다.</div>' +
+                '<div style="font-size:0.82rem;font-weight:700;color:#ea580c;margin-bottom:4px;">현재 누적 보정 (관리자)</div>' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:8px;">입력한 값이 <strong>현재 누적횟수</strong>가 됩니다. MES 실적에 더하지 않고 덮어씁니다. MES 실적과 같은 값을 넣으면 보정이 해제됩니다.</div>' +
                 '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">' +
-                    '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + (preMes || '') + '" ' +
+                    '<span style="font-size:0.78rem;color:var(--text-secondary);">MES 실적 ' + _fmt(mesActual) + '회 →</span>' +
+                    '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + (total || 0) + '" ' +
                         'style="width:auto;min-width:7em;text-align:right;">' +
                     '<span style="font-size:0.8rem;color:var(--text-secondary);">회</span>' +
                     '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.savePreMesUsedCount(\'' + _js(jigId) + '\')">저장</button>' +
@@ -1064,8 +1085,8 @@ var JigModule = (function () {
             const cvt = work ? _getProductCvt(work.carModel, work.partName) : 0;
             const spindle = (work && cvt && inputQty) ? Math.ceil(inputQty / cvt) : 0;
             const lotText = _workLotText(work);
-            const sourceLabel = log.source === 'pre_mes_baseline'
-                ? 'EMS 구축 전'
+            const sourceLabel = _isCountAdjustLog(log)
+                ? '누적 보정'
                 : (log.source === 'auto_painting' ? '도장 작업일보' : (log.workType || '수동 등록'));
             const viewBtn = (work && work.id && typeof PaintingWorkModule !== 'undefined' && PaintingWorkModule.openWorkViewPage)
                 ? '<button type="button" class="btn btn-sm btn-outline" style="padding:1px 7px;font-size:0.72rem;" ' +
@@ -1100,10 +1121,14 @@ var JigModule = (function () {
                     '이전교체일 <strong>' + _esc(resetDate) + '</strong> · ' +
                     '이력 <strong>' + _fmt(logs.length) + '</strong>건 · ' +
                     '누적 <strong style="color:var(--accent-blue);">' + _fmt(total) + '</strong>회' +
-                    ' <span style="font-size:0.75rem;color:var(--text-muted);">(구축 전 ' + _fmt(preMes) + ' + 구축 후 ' + _fmt(afterMes) + ')</span>' +
+                    ' <span style="font-size:0.75rem;color:var(--text-muted);">(MES 실적 ' + _fmt(mesActual) +
+                    (adjustDelta
+                        ? (' · 보정 ' + (adjustDelta > 0 ? '+' : '') + _fmt(adjustDelta))
+                        : '') +
+                    ')</span>' +
                 '</div>' +
                 '<div style="margin-top:6px;font-size:0.75rem;color:var(--text-muted);">' +
-                    '누적횟수 = EMS 구축 전 입력분 + 이전 교체일 이후 도장 작업일보(및 수동 등록) 합계입니다.</div>' +
+                    '누적횟수 = 이전 교체일 이후 도장 작업일보(및 수동 등록)에 현재 누적 보정을 덮어쓴 값입니다.</div>' +
             '</div>' +
             adminForm +
             '<div style="overflow-x:auto;">' +
@@ -1134,7 +1159,7 @@ var JigModule = (function () {
 
     async function savePreMesUsedCount(jigId) {
         if (!_isAdminUser()) {
-            UIUtils.toast('EMS 구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            UIUtils.toast('현재 누적 보정은 관리자만 입력할 수 있습니다.', 'warning');
             return;
         }
         const jig = Storage.getById(STORE, jigId);
@@ -1149,52 +1174,29 @@ var JigModule = (function () {
             UIUtils.toast('누적횟수를 숫자로 입력하세요. 공란은 0으로 저장됩니다.', 'warning');
             return;
         }
-        const logs = Storage.getAll(LOG_STORE) || [];
-        const replacementDate = _latestReplacementDate(logs, jigId);
-        const existing = _preMesBaselineLog(jigId);
         const actor = _currentUser();
         const worker = actor
             ? String(actor.displayName || actor.username || actor.id || '')
             : '';
-        const date = replacementDate || _today();
-        const payload = {
-            jigId: jigId,
-            date: date,
-            workType: 'EMS 구축 전 누적',
-            useCount: qty,
-            source: 'pre_mes_baseline',
-            note: 'EMS 구축 전 실적 매칭',
-            worker: worker
-        };
         try {
-            if (qty === 0) {
-                if (existing) await Storage.remove(LOG_STORE, existing.id);
-                UIUtils.toast('EMS 구축 전 누적횟수를 제거했습니다.', 'success');
-            } else if (existing) {
-                await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, payload));
-                UIUtils.toast('EMS 구축 전 누적횟수를 수정했습니다.', 'success');
-            } else {
-                await Storage.add(LOG_STORE, payload);
-                UIUtils.toast('EMS 구축 전 누적횟수를 등록했습니다.', 'success');
-            }
+            await _upsertCountAdjust(jigId, qty, worker);
         } catch (e) {
             UIUtils.toast('저장에 실패했습니다.', 'error');
             return;
         }
+        UIUtils.toast('현재 누적횟수를 ' + _fmt(qty) + '회로 보정했습니다.', 'success');
         UIUtils.closeModal();
         loadAll();
         openUsageHistory(jigId);
     }
 
-    // MES 구축 전 누적횟수를 품목별로 한번에 입력하는 화면.
-    // 조치(교체/초기화) 이력이 있는 품목은 초기화 이후 실적만 유효 카운트되므로 대상에서 제외한다.
+    // 품목별 현재 누적횟수를 입력값으로 덮어쓰는 화면.
     function openPreMesBaselineBulkModal() {
         if (!_isAdminUser()) {
-            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            UIUtils.toast('현재 누적 보정은 관리자만 입력할 수 있습니다.', 'warning');
             return;
         }
         const jigs = _enrichedJigs()
-            .filter(function (j) { return !j.lastResetDate; })
             .sort(function (a, b) {
                 const ai = CAR_ORDER.indexOf(_jigCarKey(a));
                 const bi = CAR_ORDER.indexOf(_jigCarKey(b));
@@ -1205,7 +1207,7 @@ var JigModule = (function () {
             });
         _preMesBulkCarFilter = '';
         UIUtils.showModal(
-            '구축 전 누적 일괄입력',
+            '현재 누적 보정',
             _renderPreMesBaselineBulkBody(jigs),
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
             'xl'
@@ -1216,12 +1218,12 @@ var JigModule = (function () {
         const th = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;';
         const td = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;';
         const note = '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);font-size:0.78rem;color:var(--text-secondary);">' +
-            'MES 구축 이전부터 사용해 온 품목의 누적횟수를 입력합니다. 입력한 값은 MES 이후 실적에 더해집니다.<br>' +
-            '컬러만 다른 품목(6PS · BC5 등)은 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0으로 저장됩니다.<br>' +
-            '<strong style="color:#ea580c;">조치(교체/초기화) 이력이 있는 품목은 이미 초기화 시점 이후 실적만 반영되어 있어 아래 목록에서 자동 제외됩니다.</strong>' +
+            '품목의 <strong>현재 누적횟수</strong>를 입력값으로 덮어씁니다. MES 실적에 더하지 않습니다.<br>' +
+            '컬러만 다른 품목(6PS · BC5 등)은 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0회로 저장됩니다.<br>' +
+            '이후 도장 작업 실적은 보정한 누적 위에 더해집니다. MES 실적과 같은 값을 넣으면 보정이 해제됩니다.' +
             '</div>';
         if (!jigs.length) {
-            return note + '<div style="padding:24px;text-align:center;color:var(--text-muted);">입력이 필요한 품목이 없습니다. (전체 품목이 조치 이력을 보유 중)</div>';
+            return note + '<div style="padding:24px;text-align:center;color:var(--text-muted);">보정할 지그 품목이 없습니다.</div>';
         }
         const groups = _groupJigsByFamily(jigs);
         const rows = groups.map(function (g) {
@@ -1231,6 +1233,7 @@ var JigModule = (function () {
                 ? g.colorLabels.join(' · ')
                 : (g.partNames.length > 1 ? g.partNames.slice(1).join(', ') : '');
             const partTitle = g.partNames.join(' / ');
+            const currentTotal = Number((g.members[0] && g.members[0].usedCount) || g.usedCount || 0);
             return '<tr class="pre-mes-bulk-row" data-car="' + _esc(car) + '" data-jig-ids="' + _esc(g.memberIds.join(',')) + '">' +
                 '<td style="' + td + 'text-align:center;font-weight:700;color:var(--accent-blue);white-space:nowrap;">' + _esc(g.carModel || '-') + '</td>' +
                 '<td style="' + td + 'white-space:nowrap;" title="' + _esc(partTitle) + '">' +
@@ -1238,9 +1241,9 @@ var JigModule = (function () {
                     (extra ? '<span style="margin-left:6px;font-size:0.72rem;font-weight:700;color:var(--accent-blue);">' + _esc(extra) + '</span>' : '') +
                 '</td>' +
                 '<td style="' + td + 'text-align:center;white-space:nowrap;"><span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.68rem;">' + _esc(g.line || '-') + '</span></td>' +
-                '<td style="' + td + 'text-align:right;white-space:nowrap;">' + _fmt(g.usedCount || 0) + '</td>' +
+                '<td style="' + td + 'text-align:right;white-space:nowrap;">' + _fmt(currentTotal) + '</td>' +
                 '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
-                    '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + (g.preMesUsedCount || '') + '" ' +
+                    '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + currentTotal + '" ' +
                         'style="width:auto;min-width:7em;text-align:right;display:inline-block;">' +
                 '</td>' +
                 '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
@@ -1264,8 +1267,8 @@ var JigModule = (function () {
                     '<th style="' + th + '">차종</th>' +
                     '<th style="' + th + '">제품명</th>' +
                     '<th style="' + th + '">라인</th>' +
-                    '<th style="' + th + '">MES 누적</th>' +
-                    '<th style="' + th + '">구축 전 누적</th>' +
+                    '<th style="' + th + '">현재 누적</th>' +
+                    '<th style="' + th + '">보정 후 누적</th>' +
                     '<th style="' + th + '">저장</th>' +
                 '</tr></thead>' +
                 '<tbody>' + rows +
@@ -1299,7 +1302,11 @@ var JigModule = (function () {
         }
     }
 
-    async function _upsertPreMesBaseline(jigId, qty, actorWorker) {
+    // target = 화면에 보여줄 현재 누적. MES 실적과의 차이를 보정 로그로 저장한다.
+    async function _upsertCountAdjust(jigId, target, actorWorker) {
+        const qty = Math.max(0, Math.round(Number(target) || 0));
+        const mes = _mesActualCount(jigId);
+        const delta = qty - mes;
         const logs = Storage.getAll(LOG_STORE) || [];
         const replacementDate = _latestReplacementDate(logs, jigId);
         const existing = _preMesBaselineLog(jigId);
@@ -1307,13 +1314,14 @@ var JigModule = (function () {
         const payload = {
             jigId: jigId,
             date: date,
-            workType: 'EMS 구축 전 누적',
-            useCount: qty,
+            workType: '누적횟수 보정',
+            useCount: delta,
             source: 'pre_mes_baseline',
-            note: 'EMS 구축 전 실적 매칭',
+            adjustTargetCount: qty,
+            note: '현재 누적 보정 ' + _fmt(mes) + ' → ' + _fmt(qty),
             worker: actorWorker || ''
         };
-        if (qty === 0) {
+        if (delta === 0) {
             if (existing) await Storage.remove(LOG_STORE, existing.id);
             return;
         }
@@ -1324,9 +1332,13 @@ var JigModule = (function () {
         await Storage.add(LOG_STORE, payload);
     }
 
+    async function _upsertPreMesBaseline(jigId, qty, actorWorker) {
+        return _upsertCountAdjust(jigId, qty, actorWorker);
+    }
+
     async function saveBulkPreMesUsedCount(jigId) {
         if (!_isAdminUser()) {
-            UIUtils.toast('구축 전 누적횟수는 관리자만 입력할 수 있습니다.', 'warning');
+            UIUtils.toast('현재 누적 보정은 관리자만 입력할 수 있습니다.', 'warning');
             return;
         }
         const raw = document.getElementById('bulkPreMes_' + jigId);
@@ -1362,6 +1374,11 @@ var JigModule = (function () {
             statusEl.textContent = ids.length > 1 ? '저장됨 (' + ids.length + '품목)' : '저장됨';
             setTimeout(function () { if (statusEl) statusEl.textContent = ''; }, 2000);
         }
+        if (tr) {
+            const cells = tr.querySelectorAll('td');
+            if (cells[3]) cells[3].textContent = _fmt(qty);
+        }
+        if (raw) raw.value = String(qty);
         loadAll();
     }
 
@@ -1513,7 +1530,7 @@ var JigModule = (function () {
                 })() + '</td>' +
                 '<td class="jig-col-short" style="' + tdn + 'text-align:center;">' +
                     '<button type="button" class="btn btn-sm btn-outline"' +
-                    ' title="' + (_isAdminUser() ? '이력 보기 · EMS 구축 전 횟수 입력' : '생산일보 이력 보기') + ((j.preMesUsedCount || 0) ? ' (구축 전 ' + _fmt(j.preMesUsedCount) + '회 포함)' : '') + '"' +
+                    ' title="' + (_isAdminUser() ? '이력 보기 · 현재 누적 보정' : '생산일보 이력 보기') + ((j.preMesUsedCount || 0) ? ' (보정 ' + ((Number(j.preMesUsedCount) > 0) ? '+' : '') + _fmt(j.preMesUsedCount) + '회)' : '') + '"' +
                     ' onclick="JigModule.openUsageHistory(\'' + _js(j.id) + '\')"' +
                     ' style="padding:1px 8px;font-size:0.82rem;font-weight:700;color:var(--accent-blue);border-color:rgba(37,99,235,.35);">' +
                     _fmt(j.usedCount || 0) +
