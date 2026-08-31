@@ -13110,6 +13110,7 @@ const SettingsModule = (function() {
     ════════════════════════════════════════════════════════════ */
     const _esc = s => String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     let _selectedPermRole = null; /* 권한 패널에서 현재 선택된 역할 키 */
+    const _expandedPermGroups = new Set(); /* 페이지별 설정이 펼쳐진 그룹 키 */
 
     // '관리/설정' 페이지 접근은 역할별 권한 매트릭스로 다른 역할에도 열어줄 수 있게 됐지만,
     // 사용자 계정·역할·권한 매트릭스 자체를 바꾸는 것까지 열리면 그 역할이 스스로에게
@@ -13128,7 +13129,8 @@ const SettingsModule = (function() {
         'JIG 마스터 폐기·삭제·초기화, 설비 점검/수리 이력 삭제',
         'C/S 품질검사 양식 템플릿 구조 편집',
         '결재 서명 취소/초기화',
-        '도료 창고 작성 담당자 지정'
+        '도료 창고 작성 담당자 지정',
+        '도료 창고 입출고 이력 삭제 (오류 출고 등, 재고는 남은 이력으로 재계산)'
     ];
     function _requireTrueAdmin(message) {
         if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser()) {
@@ -13205,6 +13207,34 @@ const SettingsModule = (function() {
                             </label>
                         </div>
                         <div style="margin-top:5px;font-size:0.68rem;color:var(--text-muted);">${pids.length}개 페이지${accessAny && !accessAll ? ' (일부 접근)' : ''}${writeAny && !writeAll ? ' (일부 입력)' : ''}${adjustAny && !adjustAll ? ' (일부 수량 보정)' : ''}</div>
+                        ${pids.length > 1 ? `<button type="button" onclick="SettingsModule.togglePermGroupExpand('${g.key}')"
+                            style="margin-top:6px;background:none;border:none;padding:0;cursor:pointer;font-size:0.7rem;font-weight:600;color:${role.color};">
+                            ${_expandedPermGroups.has(g.key) ? '▲ 페이지별 설정 접기' : '▼ 페이지별 설정 펼치기'}
+                        </button>` : ''}
+                        ${_expandedPermGroups.has(g.key) ? `
+                        <div style="margin-top:8px;border-top:1px dashed var(--border-color);padding-top:8px;display:flex;flex-direction:column;gap:8px;">
+                            ${pids.map(pid => {
+                                const p = (AuthModule.ALL_PAGES || []).find(x => x.id === pid);
+                                const pLabel = p ? p.label : pid;
+                                const pAccess = AuthModule.isPageAccessGranted(roleKey, pid);
+                                const pWrite  = AuthModule.isPageWriteGranted(roleKey, pid);
+                                const pAdjust = AuthModule.isPageAdjustGranted(roleKey, pid);
+                                const pcb = (t, on, ac) => `<label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:0.74rem;white-space:nowrap;">
+                                    <input type="checkbox" data-role="${roleKey}" data-page="${pid}" data-type="${t}" ${on ? 'checked' : ''}
+                                        onchange="SettingsModule.onPagePermChange(this)"
+                                        style="width:13px;height:13px;cursor:pointer;accent-color:${ac};">
+                                    <span style="color:${ac};font-weight:600;">${t === 'access' ? '접근' : t === 'write' ? '입력' : '수량 보정'}</span>
+                                </label>`;
+                                return `<div style="border:1px solid var(--border-color);border-radius:6px;padding:6px 8px;background:var(--bg-secondary);">
+                                    <div style="font-size:0.76rem;font-weight:600;color:var(--text-primary);margin-bottom:5px;">${_esc(pLabel)}</div>
+                                    <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                        ${pcb('access', pAccess, role.color)}
+                                        ${pcb('write', pWrite, '#dc2626')}
+                                        ${pcb('adjust', pAdjust, '#7c3aed')}
+                                    </div>
+                                </div>`;
+                            }).join('')}
+                        </div>` : ''}
                     </div>`;
                 }).join('')}
             </div>
@@ -13630,6 +13660,58 @@ const SettingsModule = (function() {
         await _saveAndRefreshRolePerms(roleKey, perms, '권한이 저장되었습니다.');
     }
 
+    /* 그룹 카드 안에서 "페이지별 설정" 펼침/접힘 토글 */
+    function togglePermGroupExpand(groupKey) {
+        if (_expandedPermGroups.has(groupKey)) _expandedPermGroups.delete(groupKey);
+        else _expandedPermGroups.add(groupKey);
+        const panel = document.getElementById('umGroupPermsPanel');
+        if (panel) panel.innerHTML = _renderGroupPermsPanel(_selectedPermRole);
+    }
+
+    /* 개별 페이지 권한 체크박스 변경 (그룹 펼침 상태에서) */
+    async function onPagePermChange(el) {
+        if (_permSaving) return;
+        _permSaving = true;
+        try { await _onPagePermChangeInner(el); } finally { _permSaving = false; }
+    }
+    async function _onPagePermChangeInner(el) {
+        if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) {
+            el.checked = !el.checked;
+            return;
+        }
+        const roleKey = el.dataset.role;
+        const pageId  = el.dataset.page;
+        const type    = el.dataset.type;
+        const checked = el.checked;
+
+        const raw = AuthModule.getPermissions();
+        const perms = JSON.parse(JSON.stringify(raw));
+        let rp = perms[roleKey];
+        if (rp === null) {
+            const all = AuthModule.ALL_PAGES.map(p => p.id);
+            rp = { access: [...all], write: [...all], adjust: [...all] };
+        } else if (!rp || typeof rp !== 'object') {
+            rp = { access: [], write: [], adjust: [] };
+        } else {
+            rp = { access: [...(rp.access||[])], write: [...(rp.write||[])], adjust: [...(rp.adjust||rp.write||[])] };
+        }
+        const add = (list, id) => { if (!list.includes(id)) list.push(id); };
+        const del = (list, id) => { const i = list.indexOf(id); if (i >= 0) list.splice(i, 1); };
+
+        if (type === 'access') {
+            if (checked) { add(rp.access, pageId); }
+            else { del(rp.access, pageId); del(rp.write, pageId); del(rp.adjust, pageId); }
+        } else if (type === 'write') {
+            if (checked) { add(rp.access, pageId); add(rp.write, pageId); }
+            else { del(rp.write, pageId); del(rp.adjust, pageId); }
+        } else if (type === 'adjust') {
+            if (checked) { add(rp.access, pageId); add(rp.adjust, pageId); }
+            else { del(rp.adjust, pageId); }
+        }
+        perms[roleKey] = rp;
+        await _saveAndRefreshRolePerms(roleKey, perms, '페이지 권한이 저장되었습니다.');
+    }
+
     /* 전체 접근 허용 / 전체 입력 허용 / 전체 해제 */
     async function toggleAllGroupPerm(roleKey, mode) {
         if (!_requireTrueAdmin('권한 매트릭스 변경은 관리자 계정만 할 수 있습니다.')) return;
@@ -13787,7 +13869,7 @@ const SettingsModule = (function() {
         render,
         saveTelegramConfig, testAlimtalk, saveSlackConfig, testSlackNotify,
         openUserModal, addUserRoleRow, removeUserRoleRow, saveUser, deleteUser, onPermChange, toggleAllPerm,
-        onRolePermSelect, onGroupPermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
+        onRolePermSelect, onGroupPermChange, togglePermGroupExpand, onPagePermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         fixShippingWritePermsNow,
         switchTab,
         openAddProductModal,

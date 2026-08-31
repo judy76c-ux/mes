@@ -157,6 +157,7 @@ var StockDetailUI = (function() {
                     ${unmatchedAfter > 0 ? `<div style="font-size:0.68rem;color:var(--accent-red);font-weight:700;">미차감 ${UIUtils.formatNumber(unmatchedAfter)}</div>` : ''}
                 </td>
                 <td style="font-size:0.78rem;color:var(--text-muted);">${who || '-'}</td>
+                ${opts.showActions ? `<td style="white-space:nowrap;text-align:center;">${(typeof opts.actionHtmlFn === 'function' ? opts.actionHtmlFn(d, step) : '') || ''}</td>` : ''}
             </tr>`;
     }
 
@@ -309,6 +310,7 @@ var StockDetailUI = (function() {
         opts = opts || {};
         const splitLots = !!opts.splitLots;
         const showActions = !!opts.showActions;
+        const actionHeader = _escHtml(opts.actionHeader || '수정');
         const colSpan = (splitLots ? 9 : 8) + (showActions ? 1 : 0);
         const lotHeaders = splitLots
             ? '<th>도장 LOT</th><th>사출 LOT</th>'
@@ -334,7 +336,7 @@ var StockDetailUI = (function() {
                             <th style="text-align:right;white-space:nowrap;">기존 수량</th>
                             <th style="text-align:right;white-space:nowrap;">현재 수량</th>
                             <th style="white-space:nowrap;">작성자</th>
-                            ${showActions ? '<th style="white-space:nowrap;text-align:center;">수정</th>' : ''}
+                            ${showActions ? `<th style="white-space:nowrap;text-align:center;">${actionHeader}</th>` : ''}
                         </tr>
                     </thead>
                     <tbody>

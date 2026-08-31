@@ -21402,6 +21402,18 @@ var ProdQualityModule = (function() {
         ].join('|').toLowerCase();
     }
 
+    /** 같은 날·라인·품목은 초중종물 1건. 시작시각/계획ID가 달라도 동일 건으로 본다. */
+    function _qualityProductKey(x) {
+        if (!x) return '';
+        return [
+            String(x.date || '').slice(0, 10),
+            String(x.line || '').trim(),
+            String(x.carModel || '').trim(),
+            String(x.partName || '').trim(),
+            String(x.color || '').trim()
+        ].join('|').toLowerCase();
+    }
+
     function _measureIssueIdSet() {
         const ids = new Set();
         _measureRecords().forEach(function(r) {
@@ -21579,9 +21591,11 @@ var ProdQualityModule = (function() {
         });
         if (!matches.length && hint && String(hint.date || '') && (hint.carModel || hint.partName)) {
             const fp = _qualityFingerprint(hint);
+            const pk = _qualityProductKey(hint);
             issues.forEach(function(i) {
                 if (wid && i.workId && String(i.workId) !== wid) return;
-                if (_qualityFingerprint(i) === fp) add(i);
+                if (fp && _qualityFingerprint(i) === fp) add(i);
+                else if (pk && _qualityProductKey(i) === pk) add(i);
             });
         }
         return _pickBestIssue(matches);
@@ -21703,6 +21717,9 @@ var ProdQualityModule = (function() {
         _syncFromPlansRunning = true;
         let created = 0;
         try {
+            if (typeof Storage.refresh === 'function') {
+                await Storage.refresh(STORE);
+            }
             const due = _dueQualityPlans();
             const works = Storage.getAll(PAINT_WORK_STORE) || [];
             const workByPlan = new Map();
@@ -21814,8 +21831,17 @@ var ProdQualityModule = (function() {
         const filterIssue = (d) =>
             (!start || d.date >= start) && (!end || d.date <= end) && (!car || d.carModel === car);
         const filteredIssueIds = new Set(allIssues.filter(filterIssue).map(d => d.id));
-        const noDataAlwaysOn = allIssues.filter(d => !recordMap.has(String(d.id))).map(d => d.id);
-        noDataAlwaysOn.forEach(id => filteredIssueIds.add(id));
+        // DATA 미입력은 기간 밖이어도 보여 주되, 현재 목록의 작업/계획과 연결된 건만 유지한다.
+        // 예전처럼 '미입력 전부'를 넣으면 자동생성 중복 양식이 날짜 필터와 무관하게 쌓였다.
+        allIssues.forEach(function(d) {
+            if (recordMap.has(String(d.id))) return;
+            const linkedWork = allWorks.some(function(w) {
+                if (d.workId && String(w.id) === String(d.workId)) return true;
+                if (d.planId && String(w.planId || '') === String(d.planId)) return true;
+                return _qualityProductKey(w) && _qualityProductKey(w) === _qualityProductKey(d);
+            });
+            if (linkedWork) filteredIssueIds.add(d.id);
+        });
         // 발행 시간 기준 정렬 (최근 발행 우선): createdAt > id(시간순 슬러그) > date
         const issueSortKey = (d) => String(d.createdAt || d.updatedAt || d.id || d.date || '');
         const data = allIssues
@@ -21887,7 +21913,8 @@ var ProdQualityModule = (function() {
         const rawDate = String(d.date || '');
         const rawPrinted = d.printedAt ? String(d.printedAt).replace('T', ' ') : '';
         const datePart = (rawDate.split(/[ T]/)[0] || rawPrinted.split(/[ T]/)[0] || '');
-        const timePart = (rawPrinted.split(/[ T]/)[1] || rawDate.split(/[ T]/)[1] || '').slice(0, 5);
+        const rawStart = String(d.startTime || d.slot || '').trim();
+        const timePart = (rawPrinted.split(/[ T]/)[1] || rawDate.split(/[ T]/)[1] || rawStart || '').slice(0, 5);
         const p = datePart.match(/^(\d{4})-(\d{2})-(\d{2})/);
         if (!p) return _esc(datePart || '-');
         return `<div style="text-align:center;line-height:1.3;white-space:nowrap;">
@@ -22016,6 +22043,7 @@ var ProdQualityModule = (function() {
         const workIds = new Set((works || []).map(w => w.id));
         const shownPlanIds = new Set();
         const shownIssueIds = new Set();
+        const shownProductKeys = new Set();
         (works || []).forEach(function(w) {
             if (w.planId) shownPlanIds.add(String(w.planId));
             shownPlanIds.add(_normalizePlanId(w.planId));
@@ -22064,6 +22092,12 @@ var ProdQualityModule = (function() {
                 : '';
             const overdue = _isOverdueQualitySource(w, !!record);
             if (issue && issue.id) shownIssueIds.add(issue.id);
+            const workPk = _qualityProductKey(w);
+            if (workPk) shownProductKeys.add(workPk);
+            if (issue) {
+                const issuePk = _qualityProductKey(issue);
+                if (issuePk) shownProductKeys.add(issuePk);
+            }
 
             rows.push({
                 sortKey,
@@ -22091,6 +22125,8 @@ var ProdQualityModule = (function() {
             if (shownIssueIds.has(d.id)) return;
             const bestFp = issueByFp && issueByFp.get(_qualityFingerprint(d));
             if (bestFp && shownIssueIds.has(bestFp.id)) return;
+            const pk = _qualityProductKey(d);
+            if (pk && shownProductKeys.has(pk)) return;
 
             const record = recordMap.get(String(d.id));
             const printed = !!d.printedAt;
@@ -22108,6 +22144,8 @@ var ProdQualityModule = (function() {
                 ? `<button class="btn btn-sm btn-danger" onclick="ProdQualityModule.remove('${_js(d.id)}')">삭제</button>`
                 : '';
             const overdue = _isOverdueQualitySource(d, !!record);
+            if (d.id) shownIssueIds.add(d.id);
+            if (pk) shownProductKeys.add(pk);
 
             rows.push({
                 sortKey,

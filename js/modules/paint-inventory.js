@@ -528,13 +528,13 @@ const PaintInventoryModule = (function() {
                 </td>` : `<td style="white-space:nowrap;">${_outWorkerName(d)}</td>`}
                 <td style="white-space:nowrap;">
                     <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.edit('${d.id}')">수정</button>
-                    <button onclick="PaintInventoryModule.remove('${d.id}')"
-                        title="삭제"
+                    ${_isAdminUser() ? `<button onclick="PaintInventoryModule.remove('${d.id}')"
+                        title="관리자 이력 삭제"
                         style="margin-left:6px;padding:2px 6px;font-size:0.72rem;border:1px solid var(--border-color);border-radius:4px;background:transparent;color:var(--text-muted);opacity:0.35;cursor:pointer;transition:opacity 0.2s;"
                         onmouseenter="this.style.opacity='1';this.style.color='var(--accent-red)';this.style.borderColor='var(--accent-red)';"
                         onmouseleave="this.style.opacity='0.35';this.style.color='var(--text-muted)';this.style.borderColor='var(--border-color)';">
                         <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;">delete</span>
-                    </button>
+                    </button>` : ''}
                 </td>
             </tr>`;
     }
@@ -1116,7 +1116,8 @@ const PaintInventoryModule = (function() {
     function showPaintDetail(matId, opts) {
         opts = opts || {};
         // 생산계획 등록 등 기본 모달이 열린 상태에서 열리면 별도 창(asChild)으로 띄워 등록 창을 유지
-        const asChild = !!(opts.asChild || opts.child
+        // replace:true 는 이력 삭제 후 같은 상세를 다시 그릴 때, 열린 창을 자식 모달로 중첩하지 않기 위함
+        const asChild = !opts.replace && !!(opts.asChild || opts.child
             || (typeof UIUtils.isPrimaryModalOpen === 'function' && UIUtils.isPrimaryModalOpen()));
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
@@ -1290,6 +1291,8 @@ const PaintInventoryModule = (function() {
             : `<tr><td colspan="8" style="text-align:center;padding:14px;color:var(--text-muted);">재고 없음</td></tr>`;
 
         // 입출고 이력 (전체 · 최신순 · 기존/현재 수량)
+        // 삭제는 관리자 전용 — 오류 출고/중복 등록을 원장에서 지우고 남은 이력으로 재고를 다시 계산한다.
+        const showHistoryActions = _isAdminUser();
         const historySection = StockDetailUI.buildInvHistorySection(invRecords, {
             routeFn: _paintInvRoute,
             lotFn: function(d) {
@@ -1304,6 +1307,14 @@ const PaintInventoryModule = (function() {
                 const processedBy = d.processedBy || '';
                 if (worker && processedBy && worker !== processedBy) return `${worker} (처리: ${processedBy})`;
                 return worker || processedBy || '-';
+            },
+            showActions: showHistoryActions,
+            actionHeader: '관리',
+            actionHtmlFn: function(d) {
+                if (!d || !d.id) return '';
+                const safeId = String(d.id).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+                return `<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#dc2626;border-color:#fca5a5;"
+                    onclick="PaintInventoryModule.deleteInventoryRecord('${safeId}')">삭제</button>`;
             }
         });
 
@@ -3815,11 +3826,39 @@ const PaintInventoryModule = (function() {
     }
 
     function remove(id) {
-        UIUtils.confirm('삭제하시겠습니까?', async () => {
-            await Storage.remove(STORE, id);
-            UIUtils.toast('삭제되었습니다.', 'success');
-            loadData();
-        });
+        deleteInventoryRecord(id, { refreshDetail: false });
+    }
+
+    /** 입출고 이력 행 삭제 — 오류 출고·중복 등록 등을 관리자가 정리할 때 사용.
+     *  잔량은 남은 이력에서 다시 계산되므로 별도 보정 없이 기록만 지운다. */
+    function deleteInventoryRecord(id, opts) {
+        opts = opts || {};
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 입출고 이력을 삭제할 수 있습니다.', 'warning');
+            return;
+        }
+        const d = Storage.getById(STORE, id);
+        if (!d) {
+            UIUtils.toast('이력 기록을 찾을 수 없습니다.', 'error');
+            return;
+        }
+        const typeLabel = d.type === '출고' ? '출고' : '입고';
+        const lotTxt = d.prodLot || d.lotNo || '-';
+        const qty = Number(d.quantity) || 0;
+        const refreshDetail = opts.refreshDetail !== false;
+        UIUtils.confirm(
+            typeLabel + ' 이력 ' + UIUtils.formatNumber(qty) + '캔(LOT ' + lotTxt + ')을 삭제하시겠습니까?\n삭제 후 재고는 남은 이력 기준으로 다시 계산됩니다.',
+            async () => {
+                await Storage.remove(STORE, id);
+                UIUtils.toast('삭제되었습니다. 재고가 남은 이력 기준으로 다시 계산됩니다.', 'success');
+                loadData();
+                if (refreshDetail && d.materialId) {
+                    setTimeout(function() {
+                        showPaintDetail(d.materialId, { replace: true });
+                    }, 80);
+                }
+            }
+        );
     }
 
     function clearAllInventory() {
@@ -5341,6 +5380,7 @@ const PaintInventoryModule = (function() {
         showStockModal,
         filterStock,
         remove,
+        deleteInventoryRecord,
         clearAllInventory,
         exportData,
         openTemperatureStandard,
