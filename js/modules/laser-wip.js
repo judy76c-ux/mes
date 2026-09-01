@@ -7768,6 +7768,7 @@ function _num(value) {
              openEditLaserWorkIdentity, saveEditLaserWorkIdentity,
              onEditLaserIdCarChange, onEditLaserIdPartChange,
              getWipStock, getWipLotDetail, _calcWip, showWipDetail, showResidualDetail,
+             getAfterLaserFlowRows: _buildAfterLaserFlowRows,
              filterHistoryByPaintLot,
              applyListFilter, clearListFilter, applyFlowDateFilter,
              openHistRouteLink,

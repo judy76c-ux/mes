@@ -7,6 +7,9 @@ const PaintInventoryModule = (function() {
     const STORE          = DB.STORES.PAINT_INVENTORY;
     const MATERIALS_STORE = DB.STORES.PAINT_MATERIALS;
 
+    // 입고 대기 목록 진단 스냅샷 — renderPaintInspStandby가 갱신, diagnosePaintStandby()로 조회
+    let _lastPaintStandbyDiag = null;
+
     // 이 페이지의 작성 책임자(작성 담당자) — 서버 config에 사용자 id 배열로 저장
     const AUTHOR_CONFIG_KEY = 'page_authors_paint-inventory';
 
@@ -1663,8 +1666,23 @@ const PaintInventoryModule = (function() {
         const materials   = Storage.getAll(DB.STORES.PAINT_MATERIALS)           || [];
 
         // 합격·특채 검사 목록 (특채 = 예외 입고 허용)
+        const _todayStr = (UIUtils.today && UIUtils.today()) || new Date().toISOString().slice(0, 10);
+        const _notPassed = [];
         const passed = inspections
-            .filter(i => (i.verdict === '합격' || i.verdict === '특채') && (Number(i.incomingQty) || 0) > 0)
+            .filter(i => {
+                const okVerdict = (i.verdict === '합격' || i.verdict === '특채');
+                const okQty = (Number(i.incomingQty) || 0) > 0;
+                if (okVerdict && okQty) return true;
+                // 오늘 검사분 중 조건 미충족은 진단용으로 남긴다 (누락 추적)
+                if ((i.date || '').slice(0, 10) === _todayStr) {
+                    _notPassed.push({
+                        도료명: i.paintName, LOT: i.lotNo, 검사일: (i.date || '').slice(0, 10),
+                        판정: i.verdict || '(없음)', 입고수량: i.incomingQty,
+                        사유: !okVerdict ? `판정이 합격/특채가 아님(${i.verdict || '없음'})` : '입고수량이 0 또는 미입력'
+                    });
+                }
+                return false;
+            })
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
         if (passed.length === 0) {
@@ -1697,15 +1715,31 @@ const PaintInventoryModule = (function() {
             inventory.filter(i => _isCurrentStockEditRecord(i)).map(i => `${i.materialId}||${i.lotNo}`)
         );
 
-        const pending = passed.filter(i => {
-            if (isPaintInspectionStandbyCanceled(i)) return false;
-            if (processedInspIds.has(i.id)) return false;
+        function _standbyExcludeReason(i) {
+            if (isPaintInspectionStandbyCanceled(i)) return '입고취소 처리됨';
+            if (processedInspIds.has(i.id)) return '이미 창고 입고 완료';
             const mid = getMaterialId(i.paintName);
-            if (mid && legacyStockSet.has(`${mid}||${i.lotNo}`)) return false;
-            // 일괄 업로드로 이 LOT의 재고가 이미 설정돼 있으면(같은 LOT 중복 방지) 대기품 제외
-            if (mid && bulkHandledLotKeys.has(`${mid}||${i.lotNo}`)) return false;
+            if (!mid) return '';
+            if (legacyStockSet.has(`${mid}||${i.lotNo}`)) return '같은 자재·LOT의 수기(검사연동X) 재고가 이미 있음';
+            if (bulkHandledLotKeys.has(`${mid}||${i.lotNo}`)) return '같은 자재·LOT가 일괄등록으로 재고 설정됨';
+            return '';
+        }
+        const _excluded = [];
+        const pending = passed.filter(i => {
+            const reason = _standbyExcludeReason(i);
+            if (reason) { _excluded.push({ insp: i, reason: reason }); return false; }
             return true;
         });
+        _lastPaintStandbyDiag = {
+            전체검사: inspections.length,
+            합격특채: passed.length,
+            대기: pending.length,
+            제외: _excluded.map(x => ({
+                도료명: x.insp.paintName, LOT: x.insp.lotNo, 검사일: (x.insp.date || '').slice(0, 10),
+                입고수량: x.insp.incomingQty, 판정: x.insp.verdict, 사유: x.reason
+            })),
+            합격특채아님_금일: _notPassed
+        };
 
         if (badge) {
             if (pending.length > 0) {
@@ -1716,9 +1750,19 @@ const PaintInventoryModule = (function() {
             }
         }
 
+        // 합격/특채인데 대기에서 빠진 항목이 있으면 경고 배너 (자재 누락 추적용)
+        const _missBannerHtml = (_excluded.length || _notPassed.length)
+            ? `<div style="margin:10px 16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,0.28);background:rgba(220,38,38,0.06);font-size:0.8rem;color:var(--text-secondary);line-height:1.5;">
+                    <strong style="color:var(--accent-red,#dc2626);">⚠ 검사 완료했지만 입고 대기에 없는 도료 ${_excluded.length + _notPassed.length}건</strong>
+                    ${_excluded.map(x => `<div>· ${_escapeHtml(x.insp.paintName || '-')} / LOT ${_escapeHtml(x.insp.lotNo || '-')} — ${_escapeHtml(x.reason)}</div>`).join('')}
+                    ${_notPassed.map(x => `<div>· ${_escapeHtml(x.도료명 || '-')} / LOT ${_escapeHtml(x.LOT || '-')} — ${_escapeHtml(x.사유)}</div>`).join('')}
+                    <div style="margin-top:4px;color:var(--text-muted);">콘솔에서 <code>PaintInventoryModule.diagnosePaintStandby()</code> 로 상세 확인</div>
+                </div>`
+            : '';
+
         // 대기 품목이 없으면 완료 메시지 표시
         if (pending.length === 0) {
-            body.innerHTML = `
+            body.innerHTML = _missBannerHtml + `
                 <div style="display:flex;align-items:center;gap:10px;padding:18px;color:var(--accent-green);font-size:0.9rem;">
                     <span class="material-symbols-outlined">check_circle</span>
                     <span>입고 대기 품목이 없습니다. 모든 검사 완료품이 입고 처리되었습니다.</span>
@@ -1727,7 +1771,7 @@ const PaintInventoryModule = (function() {
         }
 
         // 입고 대기 항목만 렌더링 (입고 완료된 항목 제외)
-        body.innerHTML = `
+        body.innerHTML = _missBannerHtml + `
             <div style="display:flex;justify-content:flex-end;padding:10px 16px;border-bottom:1px solid var(--border-color);background:var(--bg-secondary);">
                 <button class="btn btn-sm btn-outline" onclick="PaintInventoryModule.cancelAllPaintInspectionStandby()"
                     title="현재 입고 대기 목록을 모두 취소합니다. 검사 기록은 삭제하지 않습니다.">
@@ -5321,10 +5365,22 @@ const PaintInventoryModule = (function() {
         setTimeout(() => win.print(), 250);
     }
 
+    // 콘솔 진단: 수입검사 대비 입고 대기에서 빠진 항목과 그 사유를 표로 출력
+    function diagnosePaintStandby() {
+        try { renderPaintInspStandby(); } catch (e) { /* body 없어도 계산은 됨 */ }
+        const d = _lastPaintStandbyDiag;
+        if (!d) { console.log('진단 데이터 없음 — 도료 창고 화면을 한 번 연 뒤 다시 실행하세요.'); return null; }
+        console.log(`전체 검사 ${d.전체검사} · 합격/특채 ${d.합격특채} · 입고대기 ${d.대기} · 제외 ${d.제외.length} · (금일)합격특채아님 ${d.합격특채아님_금일.length}`);
+        if (d.제외.length) { console.log('── 합격/특채인데 대기에서 제외된 항목 ──'); console.table(d.제외); }
+        if (d.합격특채아님_금일.length) { console.log('── 금일 검사 중 합격/특채·수량 조건 미충족 ──'); console.table(d.합격특채아님_금일); }
+        return d;
+    }
+
     return {
         render,
         _switchTab,
         loadData,
+        diagnosePaintStandby,
         renderAuthorBar,
         openAuthorModal,
         saveAuthors,

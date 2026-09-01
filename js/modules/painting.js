@@ -5057,10 +5057,23 @@ const PaintingWorkModule = (function() {
             const allRows = _loadRows(start, end);
             // 반납 이력은 선택(pickMode) 화면에서는 의미가 없다 — 실적에 넣을 잔량이 아니므로 조회 전용 화면에만 섞는다.
             const allReturnRows = pickMode ? [] : _loadReturnRows(start, end);
+            let _flowIn = [], _flowOut = [];
+            if (!pickMode && typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getAfterLaserFlowRows === 'function') {
+                try {
+                    const _f = LaserWipModule.getAfterLaserFlowRows() || {};
+                    const _inRange = function (r) {
+                        const d = String(r.date || '').slice(0, 10);
+                        return (!start || d >= start) && (!end || d <= end);
+                    };
+                    _flowIn = (_f.incomingRows || []).filter(_inRange);
+                    _flowOut = (_f.outgoingRows || []).filter(_inRange);
+                } catch (e) { _flowIn = []; _flowOut = []; }
+            }
+            const _allWipRows = _flowIn.concat(_flowOut);
             const cars = [];
             const parts = [];
             const colors = [];
-            allRows.concat(allReturnRows).forEach(function (r) {
+            allRows.concat(allReturnRows).concat(_allWipRows).forEach(function (r) {
                 var c = String(r.carModel || '').trim();
                 var p = String(r.partName || '').trim();
                 var col = String(r.color || '').trim();
@@ -5109,10 +5122,24 @@ const PaintingWorkModule = (function() {
             const decoratedReturns = usedFilter ? [] : returnRows.map(function (r) {
                 return { rec: r, kind: 'return' };
             });
-            const combined = decorated.concat(decoratedReturns).sort(function (a, b) {
-                var da = _dayOf(a.rec) + ' ' + _timeOf(a.rec);
-                var db = _dayOf(b.rec) + ' ' + _timeOf(b.rec);
-                return db.localeCompare(da);
+            // 레이져 후 재공품 입출고(레이져→도장-B 품목) — 읽기전용. 자재는 사출창고가 아니라 재공품에서 나감.
+            let decoratedWip = [];
+            if (!pickMode && !usedFilter) {
+                const _wipHit = function (r) {
+                    if (wantCar && String(r.carModel || '').trim() !== wantCar) return false;
+                    if (wantPart && !_partHit(r.partName, wantPart)) return false;
+                    if (wantColor && !_colorHit(r.color, wantColor)) return false;
+                    return true;
+                };
+                _flowIn.filter(_wipHit).forEach(function (r) { decoratedWip.push({ rec: r, kind: 'wip', dir: 'in' }); });
+                _flowOut.filter(_wipHit).forEach(function (r) { decoratedWip.push({ rec: r, kind: 'wip', dir: 'out' }); });
+            }
+            const _stampOf = function (row) {
+                if (row.kind === 'wip') return String(row.rec.date || '');
+                return _dayOf(row.rec) + ' ' + _timeOf(row.rec);
+            };
+            const combined = decorated.concat(decoratedReturns).concat(decoratedWip).sort(function (a, b) {
+                return _stampOf(b).localeCompare(_stampOf(a));
             });
             if (countEl) countEl.textContent = combined.length + '건';
             var pickAllEl = document.getElementById('pwMatHistPickAll');
@@ -5131,6 +5158,30 @@ const PaintingWorkModule = (function() {
                 const r = row.rec;
                 const pad = 'white-space:nowrap;padding:4px 6px;width:auto;';
                 const tight = 'white-space:nowrap;padding:4px 5px;width:auto;';
+                if (row.kind === 'wip') {
+                    const isIn = row.dir === 'in';
+                    const dstr = String(r.date || '');
+                    const wDay = dstr.slice(0, 10);
+                    const wTime = dstr.length > 11 ? dstr.slice(11, 16) : '-';
+                    const injTxt = (r.injLot && r.injLot !== '-') ? r.injLot : (r.paintLot && r.paintLot !== '-' ? r.paintLot : '-');
+                    return '<tr style="background:' + (isIn ? 'rgba(124,58,237,0.05)' : 'rgba(37,99,235,0.05)') + ';">' +
+                        '<td style="' + pad + 'font-size:0.82rem;">' + _esc(wDay) + '</td>' +
+                        '<td style="' + pad + 'font-size:0.82rem;">' + _esc(wTime) + '</td>' +
+                        '<td style="' + pad + '"><span style="font-weight:700;white-space:nowrap;color:' + (isIn ? '#7c3aed' : '#2563eb') + ';">' +
+                            (isIn ? '재공입고' : '재공투입') + '</span></td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '"><strong>' + _esc(r.carModel || '-') + '</strong></td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '">' + _esc(r.partName || '-') + '</td>' +
+                        '<td class="pw-hist-tight" style="' + tight + '">' + _esc(r.color && r.color !== '-' ? r.color : '-') + '</td>' +
+                        '<td class="pw-hist-tight" style="' + tight + 'font-family:monospace;font-size:0.8rem;">' + _esc(injTxt) + '</td>' +
+                        '<td style="text-align:right;' + pad + 'font-weight:700;">' + (isIn ? _fmt(Number(r.qty) || 0) : '<span style="color:var(--text-muted);">-</span>') + '</td>' +
+                        '<td style="text-align:right;' + pad + 'font-weight:700;color:#2563eb;">' + (isIn ? '<span style="color:var(--text-muted);">-</span>' : _fmt(Number(r.qty) || 0)) + '</td>' +
+                        '<td style="text-align:right;' + pad + 'color:var(--text-muted);">-</td>' +
+                        '<td style="' + pad + 'font-size:0.78rem;color:var(--text-secondary);">' + _esc(r.route || (isIn ? '레이져 완료' : '도장 투입')) +
+                            (r.beforeReset ? ' <span style="color:var(--text-muted);">(리셋 이전)</span>' : '') + '</td>' +
+                        (pickMode ? '<td style="' + pad + '"></td>' : '') +
+                        (isAdmin ? '<td style="' + pad + 'text-align:center;color:var(--text-muted);font-size:0.72rem;">레이져 상세에서 수정</td>' : '') +
+                    '</tr>';
+                }
                 if (row.kind === 'return') {
                     return '<tr style="background:rgba(8,145,178,0.05);">' +
                         '<td style="' + pad + 'font-size:0.82rem;">' + _esc(_dayOf(r)) + '</td>' +
@@ -5521,6 +5572,7 @@ const PaintingWorkModule = (function() {
                 (prefCar || prefPart || prefColor ? ' 현재 실적: <strong>' + _esc(prefCar || '-') + ' / ' + _esc(prefPart || '-') + (prefColor ? ' / ' + _esc(prefColor) : '') + '</strong>.' : '') +
                 ' 사출 창고 생산출고만 있고 현장 입고 확인이 안 된 건은 여기에 없습니다.' +
                 (!pickMode ? ' <strong>구분</strong> 열의 <span style="color:#0891b2;font-weight:700;">↩ 반납</span> 행은 현장에서 사출창고로 되돌려보낸 이력입니다.' : '') +
+                (!pickMode ? ' <span style="color:#7c3aed;font-weight:700;">재공입고</span>/<span style="color:#2563eb;font-weight:700;">재공투입</span> 행은 레이져→도장-B 품목이 사출창고가 아니라 <strong>레이져 후 재공품</strong>에서 들어오고 나간 이력(읽기전용, 수정은 레이져 후 재공 상세)입니다.' : '') +
             '</div>' +
             '<div class="data-table-wrapper" style="max-height:420px;overflow:auto;border:1px solid var(--border-color);border-radius:6px;">' +
                 '<table class="data-table data-table--content compact pw-mat-hist-table" style="width:max-content;table-layout:auto;border-collapse:collapse;">' +
