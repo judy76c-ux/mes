@@ -251,16 +251,44 @@ const ProductionPlanModule = (function() {
         search();
 
         if (_autoTimer) clearInterval(_autoTimer);
-        _autoTimer = setInterval(() => autoUpdateStatus(), 60000);
+        _autoTimer = setInterval(() => {
+            autoUpdateStatus();
+            _releasePastTemporaryPlans().then(function (changed) { if (changed) search(); });
+        }, 60000);
     }
 
     async function search() {
+        await _releasePastTemporaryPlans();
         renderCalendar();
         const date = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
         if (document.getElementById('planGridBodyA') && document.getElementById('planGridBodyB')) {
             renderDayGrids(date);
         }
         if (date === UIUtils.today()) autoUpdateStatus();
+    }
+
+    // 임시 계획(사출·도료 재고 검증 없이 등록)은 생산일이 지나면 자동으로 정식 계획으로 전환한다.
+    // (한 번 지나간 계획은 재고 검증을 다시 하지 않으므로 안전하게 해제 가능)
+    let _tempReleaseRunning = false;
+    async function _releasePastTemporaryPlans() {
+        if (_tempReleaseRunning) return false;
+        const today = UIUtils.today();
+        const stale = (Storage.getAll(STORE) || []).filter(function (p) {
+            return p && p.isTemporary && String(p.date || '').slice(0, 10) < today;
+        });
+        if (!stale.length) return false;
+        _tempReleaseRunning = true;
+        try {
+            for (const p of stale) {
+                await Storage.update(STORE, p.id, Object.assign({}, p, {
+                    isTemporary: false,
+                    temporaryReleasedAt: new Date().toISOString()
+                }));
+            }
+        } finally {
+            _tempReleaseRunning = false;
+        }
+        return true;
     }
 
     /** 일별 그리드 키 — startTime 우선(슬롯 비어 있어도 표시). 동일 키 중복 시 최신 문서 유지 */
@@ -3859,6 +3887,7 @@ const ProductionPlanModule = (function() {
         _autoFillItemType,
         _updateLinkedProductBanner,
         autoUpdateStatus,
+        releasePastTemporaryPlans: _releasePastTemporaryPlans,
         _showInjLotPopup,
         _calcInjPlanReserved,
         _getInjReserveDetail,

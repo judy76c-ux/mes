@@ -82,6 +82,13 @@ const App = (function() {
             // 3. 모듈 등록
             registerModules();
 
+            // 3-0. 임시 생산계획(재고 검증 없이 등록) — 생산일이 지난 건은 정식 계획으로 자동 전환
+            try {
+                if (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule.releasePastTemporaryPlans) {
+                    await ProductionPlanModule.releasePastTemporaryPlans();
+                }
+            } catch (e) { console.warn('임시 계획 자동 해제 실패:', e); }
+
             // 3-1. 대형 모듈 lazy 등록 (production_mgmt_v91.js — 1.47MB)
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
