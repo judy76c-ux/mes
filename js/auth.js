@@ -35,7 +35,7 @@ const AuthModule = (function () {
         'overdue_inbound_a', 'overdue_inbound_b',
         'laser_inbound', 'paint_out',
         'paint_mix_a', 'paint_mix_b',
-        'quality_cs'
+        'quality_cs', 'laser_jig'
     ];
     function _emptyIncomingInspNotify() {
         const o = {};
@@ -1543,6 +1543,7 @@ const AuthModule = (function () {
         if (kind === 'overdue_inbound_b') return 'overdue_inbound_b';
         if (kind === 'overdue_inbound_a' || kind === 'overdue_inbound') return 'overdue_inbound_a';
         if (kind === 'laser_inbound') return 'laser_inbound';
+        if (kind === 'laser_jig' || kind === 'laser_jig_life') return 'laser_jig';
         if (kind === 'paint_out') return 'paint_out';
         if (kind === 'paint_mix_b') return 'paint_mix_b';
         if (kind === 'paint_mix_a' || kind === 'paint_mix' || kind === 'paint_mix_missing') return 'paint_mix_a';
@@ -1565,6 +1566,7 @@ const AuthModule = (function () {
         if (key === 'overdue_inbound_b') return '이전 날짜 미입고 대기 (도장-B)';
         if (key === 'overdue_inbound_a') return '이전 날짜 미입고 대기 (도장-A)';
         if (key === 'laser_inbound') return '레이져 입고 확인 대기';
+        if (key === 'laser_jig') return '레이져 지그 조치';
         if (key === 'paint_out') return '도료 창고 출고';
         if (key === 'paint_mix_b') return '도료 사용 미등록 (도장-B)';
         if (key === 'paint_mix_a') return '도료 사용 미등록 (도장-A)';
@@ -1595,6 +1597,8 @@ const AuthModule = (function () {
             text = '어제 이전 출고 중 ' + line + ' 현장 입고 확인이 없으면 지정한 사용자에게 알림이 갑니다. 도장-A / 도장-B 수신자는 따로 지정합니다.';
         } else if (key === 'laser_inbound') {
             text = '도장 실적 또는 사출→레이져 직행 출고가 「입고 확인 대기」에 오르면 지정한 사용자에게 알림이 갑니다.';
+        } else if (key === 'laser_jig') {
+            text = '레이져 지그(레이저인쇄 품목 포함)가 수명 90%에 도달하거나 초과하면 지정한 사용자에게 알림이 갑니다. 도장 지그 수명관리의 「조치 필요」와 같습니다.';
         } else if (key === 'paint_out') {
             text = '도료 창고에서 출고 완료하면 지정한 사용자에게 알림이 갑니다.';
         } else if (key === 'paint_mix_a' || key === 'paint_mix_b') {

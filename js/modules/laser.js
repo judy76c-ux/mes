@@ -5758,6 +5758,8 @@ var LaserStandbyModule = (function() {
     // 주기적 실사 이력 — _manualOverrides(현재 상태)와 별개의 append-only 로그.
     // 이후 다른 보정이 값을 다시 바꿔도 "언제 누가 실사했는지" 추세가 남아야 하므로 절대 수정하지 않고 추가만 한다.
     const STOCKTAKE_LOG_KEY = 'laser_standby_stocktake_log_v1';
+    // 정기 실사 주기(일). 마지막 실사 이후 이 일수가 지나면 실사 필요로 표시한다.
+    const STOCKTAKE_CYCLE_DAYS = 30;
     let _manualOverrides = [];
     let _manualOverridesLoaded = false;
     let _stocktakeLog = [];
@@ -5774,6 +5776,8 @@ var LaserStandbyModule = (function() {
     let _notifyRecipientsLoaded = false;
     let _lsbFilterCar = '';
     let _lsbFilterPart = '';
+    let _lsbFlowStart = '';
+    let _lsbFlowEnd = '';
 
     // background cache warm → 레이져 대기품 화면 1회 재렌더 (뒤늦게 로드되는 스토어 반영)
     let _cacheWarmUnsub = null;
@@ -5811,6 +5815,71 @@ var LaserStandbyModule = (function() {
             .replace(/'/g, '&#39;');
     }
 
+    function _flowDefaultStart() {
+        return (typeof UIUtils !== 'undefined' && UIUtils.monthAgo) ? UIUtils.monthAgo() : '';
+    }
+
+    function _flowDefaultEnd() {
+        return (typeof UIUtils !== 'undefined' && UIUtils.today) ? UIUtils.today() : '';
+    }
+
+    function _ensureStandbyFlowDates() {
+        if (!_lsbFlowStart) _lsbFlowStart = _flowDefaultStart();
+        if (!_lsbFlowEnd) _lsbFlowEnd = _flowDefaultEnd();
+        return { start: _lsbFlowStart, end: _lsbFlowEnd };
+    }
+
+    function _standbyFlowDateKey(dateVal) {
+        const s = String(dateVal || '').trim();
+        if (!s) return '';
+        const m = s.match(/^(\d{4}-\d{2}-\d{2})/);
+        return m ? m[1] : s.slice(0, 10);
+    }
+
+    function _inStandbyFlowDateRange(dateVal, start, end) {
+        const d = _standbyFlowDateKey(dateVal);
+        if (!d) return true;
+        if (start && d < start) return false;
+        if (end && d > end) return false;
+        return true;
+    }
+
+    function _readStandbyFlowDatesFromDom() {
+        const sEl = document.getElementById('lsbFlowStart');
+        const eEl = document.getElementById('lsbFlowEnd');
+        if (sEl) _lsbFlowStart = String(sEl.value || '').slice(0, 10) || _flowDefaultStart();
+        if (eEl) _lsbFlowEnd = String(eEl.value || '').slice(0, 10) || _flowDefaultEnd();
+        return _ensureStandbyFlowDates();
+    }
+
+    function _standbyFlowDateBarHtml() {
+        const dates = document.getElementById('lsbFlowStart') ? _readStandbyFlowDatesFromDom() : _ensureStandbyFlowDates();
+        return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+            <span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">조회기간</span>
+            <input type="date" class="form-input" id="lsbFlowStart" value="${_escapeHtml(dates.start)}"
+                style="width:auto;min-width:138px;height:32px;"
+                onkeydown="if(event.key==='Enter')LaserStandbyModule.applyFlowDateFilter()">
+            <span style="color:var(--text-muted);">~</span>
+            <input type="date" class="form-input" id="lsbFlowEnd" value="${_escapeHtml(dates.end)}"
+                style="width:auto;min-width:138px;height:32px;"
+                onkeydown="if(event.key==='Enter')LaserStandbyModule.applyFlowDateFilter()">
+            <button type="button" class="btn btn-sm btn-outline" style="height:32px;white-space:nowrap;"
+                onclick="LaserStandbyModule.applyFlowDateFilter()">
+                <span class="material-symbols-outlined" style="font-size:1rem;">search</span> 조회
+            </button>
+        </div>`;
+    }
+
+    function applyFlowDateFilter() {
+        const dates = _readStandbyFlowDatesFromDom();
+        if (dates.start && dates.end && dates.start > dates.end) {
+            UIUtils.toast('시작일이 종료일보다 늦습니다.', 'warning');
+            return;
+        }
+        const { allItems } = _buildInventorySnapshot();
+        renderDetailTable(_filterStandbyItems(allItems));
+    }
+
     function render(container) {
         container.innerHTML = `
             <div class="fade-in-up" style="padding:20px;">
@@ -5845,16 +5914,19 @@ var LaserStandbyModule = (function() {
                 <div class="card" style="margin-bottom:20px;">
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">inventory_2</span> 재공 재고 현황</h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">입고(도장완료) − 출고(레이져처리) = 재공재고</span>
+                        ${_stocktakeHeaderActionsHtml()}
                     </div>
                     <div class="card-body" id="lsbInventory" style="padding:16px; display:flex; flex-direction:column; gap:14px;"></div>
                 </div>
 
                 <!-- 입출고 현황 -->
                 <div class="card">
-                    <div class="card-header">
+                    <div class="card-header" style="flex-wrap:wrap;gap:8px;align-items:center;">
                         <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">입고와 출고 내역을 분리 표시</span>
+                        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;">
+                            <span style="font-size:0.75rem;color:var(--text-muted);">입고와 출고 내역을 분리 표시</span>
+                            ${_standbyFlowDateBarHtml()}
+                        </div>
                     </div>
                     <div class="card-body" id="lsbDetail" style="padding:0;"></div>
                 </div>
@@ -6177,6 +6249,39 @@ var LaserStandbyModule = (function() {
             }
         });
         return map;
+    }
+
+    function _stocktakeDaysAgo(lastDate) {
+        const d = String(lastDate || '').slice(0, 10);
+        if (!d) return null;
+        const t = new Date(d + 'T00:00:00').getTime();
+        if (!Number.isFinite(t)) return null;
+        return Math.floor((Date.now() - t) / 86400000);
+    }
+
+    function _isStocktakeOverdue(lastDate) {
+        const days = _stocktakeDaysAgo(lastDate);
+        return days == null || days >= STOCKTAKE_CYCLE_DAYS;
+    }
+
+    function _isStandbyLotPlaceholder(value) {
+        const s = String(value == null ? '' : value).trim();
+        return !s || s === '-' || s === '(미확인)' || s === '무표기';
+    }
+
+    function _stocktakeHeaderActionsHtml() {
+        const canAdjust = _canAdjustStandby();
+        return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end;">
+            <span style="font-size:0.75rem;color:var(--text-muted);">입고(도장완료) − 출고(레이져처리) = 재공재고</span>
+            ${canAdjust ? `<button type="button" class="btn btn-sm btn-outline" style="font-size:0.76rem;white-space:nowrap;"
+                onclick="LaserStandbyModule.openBulkStocktake()">
+                <span class="material-symbols-outlined" style="font-size:0.95rem;">fact_check</span> 재고 실사
+            </button>` : ''}
+            <button type="button" class="btn btn-sm btn-outline" style="font-size:0.76rem;white-space:nowrap;"
+                onclick="LaserStandbyModule.openStocktakeHistory()">
+                <span class="material-symbols-outlined" style="font-size:0.95rem;">open_in_new</span> 실사 이력
+            </button>
+        </div>`;
     }
 
     async function _ensureHistoryResetsLoaded(forceReload = false) {
@@ -7016,8 +7121,10 @@ var LaserStandbyModule = (function() {
                     injectionLot: override.injectionLot || '',
                     author: override.author || '',
                     operator: override.author || '',
-                    note: override.note || (override.manualType === 'add' ? '수기추가'
-                        : (override.manualType === 'out' ? '수기출고' : '수기조정'))
+                    isStocktake: !!override.isStocktake,
+                    note: override.note || (override.isStocktake ? '재고실사'
+                        : (override.manualType === 'add' ? '수기추가'
+                        : (override.manualType === 'out' ? '수기출고' : '수기조정')))
                 });
             } else if (diff < 0) {
                 inventoryMap[key].outQty += Math.abs(diff);
@@ -7033,10 +7140,13 @@ var LaserStandbyModule = (function() {
                     qty: Math.abs(diff),
                     author: override.author || '',
                     operator: override.author || '',
-                    machine: override.note || (override.manualType === 'add' ? '수기추가'
-                        : (override.manualType === 'out' ? '수기출고' : '수기조정')),
-                    note: override.note || (override.manualType === 'add' ? '수기추가'
-                        : (override.manualType === 'out' ? '수기출고' : '수기조정'))
+                    isStocktake: !!override.isStocktake,
+                    machine: override.note || (override.isStocktake ? '재고실사'
+                        : (override.manualType === 'add' ? '수기추가'
+                        : (override.manualType === 'out' ? '수기출고' : '수기조정'))),
+                    note: override.note || (override.isStocktake ? '재고실사'
+                        : (override.manualType === 'add' ? '수기추가'
+                        : (override.manualType === 'out' ? '수기출고' : '수기조정')))
                 });
             }
         });
@@ -7235,13 +7345,19 @@ var LaserStandbyModule = (function() {
             // 수량 보정(재고 실사·오차 정정)으로 수량이 줄어든 경우 — 실제로 뭔가를 내보낸
             // "출고"가 아니라 재고 숫자 자체를 맞춘 것이므로, 의도적 반출("수동 출고")과
             // 라벨을 구분한다. manualType==='out'(수기출고)만 진짜 의도적 출고로 본다.
+            if (srcType === 'manual_override' && (r.isStocktake || /재고\s*실사|정기\s*실사/.test(note))) {
+                return { label: '재고 실사', color: '#16a34a', detail: note || '정기 재고실사' };
+            }
             if (srcType === 'manual_override' && !/수기출고/.test(note)) {
                 return { label: '수량 보정', color: '#d97706', detail: note || '재고 수량 보정(감소)' };
             }
             return { label: '수동 출고', color: '#dc2626', detail: note || machine || '수기 출고' };
         }
 
-        // 입고: 수동 입고 vs 도장 라인에서 입고
+        // 입고: 재고 실사 증가 / 수동 입고 vs 도장 라인에서 입고
+        if (srcType === 'manual_override' && (r.isStocktake || /재고\s*실사|정기\s*실사/.test(note))) {
+            return { label: '재고 실사', color: '#16a34a', detail: note || '정기 재고실사' };
+        }
         if (srcType === 'manual_override' || /수기|수동|조정|추가/.test(note) || /수기|수동|조정|추가/.test(machine)) {
             return { label: '수동 입고', color: '#0891b2', detail: note || machine || '수기 등록' };
         }
@@ -7876,6 +7992,7 @@ var LaserStandbyModule = (function() {
         const partEl = document.getElementById('lsbFilterPart');
         _lsbFilterCar = carEl ? String(carEl.value || '') : '';
         _lsbFilterPart = partEl ? String(partEl.value || '') : '';
+        _readStandbyFlowDatesFromDom();
         const { allItems, stockItems } = _buildInventorySnapshot();
         const filteredStock = _filterStandbyItems(stockItems);
         const filteredAll = _filterStandbyItems(allItems);
@@ -8260,13 +8377,14 @@ var LaserStandbyModule = (function() {
         const rowsHtml = rows.length ? rows.map(function(r) {
             const label = [r.carModel, r.partName, r.color && r.color !== '-' ? r.color : ''].filter(Boolean).join(' · ');
             const enc = encodeURIComponent(r.key);
+            const overdue = _isStocktakeOverdue(r.lastDate);
             const lastCell = r.lastDate
-                ? `${_escapeHtml(r.lastDate)} <span style="color:var(--text-muted);">(${r.daysAgo}일 전)</span>`
+                ? `${_escapeHtml(r.lastDate)} <span style="color:${overdue ? 'var(--accent-red,#dc2626)' : 'var(--text-muted)'};">(${r.daysAgo}일 전)</span>`
                 : `<span style="color:var(--accent-red,#dc2626);font-weight:700;">실사 이력 없음</span>`;
             const diffCell = (r.lastDiff != null && r.lastDiff !== 0)
                 ? `<span style="color:${r.lastDiff < 0 ? 'var(--accent-red,#dc2626)' : 'var(--accent-blue)'};font-weight:700;">${r.lastDiff > 0 ? '+' : ''}${_fmtStockQty(r.lastDiff)}</span>`
                 : (r.lastDate ? '<span style="color:var(--text-muted);">일치</span>' : '-');
-            return `<tr>
+            return `<tr style="${overdue ? 'background:rgba(220,38,38,0.05);' : ''}">
                 <td style="padding:8px 10px;font-weight:600;white-space:nowrap;">${_escapeHtml(label)}</td>
                 <td style="text-align:right;padding:8px 10px;white-space:nowrap;">${_fmtStockQty(r.stock)}</td>
                 <td style="padding:8px 10px;white-space:nowrap;font-size:0.82rem;">${lastCell}</td>
@@ -8279,16 +8397,17 @@ var LaserStandbyModule = (function() {
         }).join('') : `<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--text-muted);">재공 재고가 있는 품목이 없습니다.</td></tr>`;
 
         const neverCount = rows.filter(function(r) { return !r.lastDate; }).length;
+        const overdueCount = rows.filter(function(r) { return _isStocktakeOverdue(r.lastDate); }).length;
 
         UIUtils.showModal('레이저 대기품 재고실사', `
             <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:10px;line-height:1.5;">
                 레이저 작업이 MES 기록 없이 진행되면(미기록 소진) 시스템 재고는 시간이 지날수록 실제보다 부풀어 오르며,
-                이는 이력 대사만으로는 잡히지 않습니다. 실사 이력이 없거나 오래된 품목부터 정기적으로 세어
-                아래 목록에 반영하세요.
-                ${neverCount > 0 ? `<strong style="color:var(--accent-red,#dc2626);"> 실사 이력 없는 품목 ${neverCount}종.</strong>` : ''}
+                이는 이력 대사만으로는 잡히지 않습니다. <strong>${STOCKTAKE_CYCLE_DAYS}일</strong> 주기로
+                실사 이력이 없거나 오래된 품목부터 세어 반영하세요.
+                ${overdueCount > 0 ? `<strong style="color:var(--accent-red,#dc2626);"> 실사 필요 ${overdueCount}종${neverCount ? ` (미실시 ${neverCount}종 포함)` : ''}.</strong>` : ''}
             </div>
             <div class="data-table-wrapper" style="overflow-x:auto;max-height:60vh;overflow-y:auto;">
-                <table class="data-table" style="width:max-content;min-width:100%;border-collapse:collapse;">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
                     <thead>
                         <tr>
                             <th style="white-space:nowrap;">품목</th>
@@ -8302,6 +8421,7 @@ var LaserStandbyModule = (function() {
                 </table>
             </div>
         `, `
+            ${_canAdjustStandby() ? `<button class="btn btn-primary" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openBulkStocktake(),80);">LOT별 일괄 실사</button>` : ''}
             <button class="btn btn-secondary" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openStocktakeHistory(),80);">실사 이력 전체보기</button>
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
         `, 'lg');
@@ -8352,6 +8472,347 @@ var LaserStandbyModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openStocktakeBoard(),80);">← 실사 게시판</button>
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
         `, 'lg');
+    }
+
+    // ── 레이져 대기품 일괄 재고 실사 ────────────────────────────────────
+    // 잔량 실사와 같이 LOT별로 장부 vs 실사 수량을 한 화면에서 입력한다.
+    // 체크된 품목은 수량이 같아도 실사 이력·현재고 기준점으로 남긴다(정기 순환).
+    async function openBulkStocktake() {
+        if (!_canAdjustStandby()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 재고실사를 진행할 수 있습니다.', 'warning');
+            return;
+        }
+        await _ensureManualOverridesLoaded();
+        await _ensureStocktakeLogLoaded();
+        const { stockItems } = _buildInventorySnapshot();
+        const rows = (stockItems || []).filter(function(item) {
+            return (Number(item.stockQty) || 0) > 0;
+        });
+        if (!rows.length) {
+            UIUtils.toast('실사할 대기 재고가 없습니다.', 'info');
+            return;
+        }
+        const today = (UIUtils.today && UIUtils.today()) || new Date().toISOString().slice(0, 10);
+        const totalNow = rows.reduce(function(s, r) {
+            return s + (Number(r.stockQty) || 0);
+        }, 0);
+        const cars = [...new Set(rows.map(function(r) { return r.carModel || ''; }).filter(Boolean))]
+            .sort(function(a, b) { return String(a).localeCompare(String(b), 'ko'); });
+
+        let lineSeq = 0;
+        const bodyRows = rows.map(function(item, pi) {
+            const key = item.key || _itemKey(item.carModel, item.partName, item.color);
+            const cur = Math.round(Number(item.stockQty) || 0);
+            let lotRows = [];
+            try { lotRows = _buildLotBalanceRows(key, item) || []; }
+            catch (e) { lotRows = []; }
+            const lotLines = [];
+            let lotSum = 0;
+            lotRows.forEach(function(l) {
+                const q = Math.round(Number(l.qty) || 0);
+                if (q <= 0) return;
+                const pl = String(l.paintLot || '').trim();
+                const il = String(l.lotNo || l.injectionLot || '').trim();
+                const placeholder = _isStandbyLotPlaceholder(pl) || _isStandbyLotPlaceholder(il);
+                lotLines.push({
+                    kind: placeholder ? 'unassigned' : 'lot',
+                    paintLot: pl,
+                    injLot: il,
+                    book: q
+                });
+                lotSum += q;
+            });
+            let unassigned = Math.max(0, cur - lotSum);
+            const lines = lotLines.slice();
+            if (!lines.length) {
+                lines.push({ kind: 'legacy', paintLot: '', injLot: '', book: cur });
+            } else if (unassigned > 0) {
+                lines.push({ kind: 'unassigned', paintLot: '', injLot: '', book: unassigned });
+            }
+            const cm = _escapeHtml(item.carModel || '-');
+            const pn = _escapeHtml(item.partName || '-');
+            const cl = _escapeHtml((item.color && item.color !== '-') ? item.color : '-');
+            return lines.map(function(ln, li) {
+                const seq = lineSeq++;
+                const first = li === 0;
+                const lotLabel = ln.kind === 'lot'
+                    ? `<span style="font-variant-numeric:tabular-nums;">${_escapeHtml(ln.paintLot)}</span>`
+                    : '<span style="color:var(--text-muted);">LOT 미지정</span>';
+                const injLabel = ln.kind === 'lot'
+                    ? `<span style="font-variant-numeric:tabular-nums;">${_escapeHtml(ln.injLot)}</span>`
+                    : '<span style="color:var(--text-muted);">-</span>';
+                return `<tr data-row="1" data-seq="${seq}" data-pi="${pi}" data-line="${li}"
+                        data-kind="${ln.kind}" data-cur="${ln.book}"
+                        data-cm="${_escapeAttr(item.carModel || '')}" data-pn="${_escapeAttr(item.partName || '')}" data-cl="${_escapeAttr(item.color || '')}"
+                        data-key="${_escapeAttr(key)}"
+                        data-pl="${_escapeAttr(ln.paintLot)}" data-il="${_escapeAttr(ln.injLot)}"
+                        style="${first ? '' : 'background:rgba(148,163,184,0.05);'}">
+                    <td style="text-align:center;white-space:nowrap;"><input type="checkbox" id="lsbStChk${seq}" checked></td>
+                    <td style="white-space:nowrap;${first ? '' : 'color:var(--text-muted);'}">${first ? cm : ''}</td>
+                    <td style="white-space:nowrap;${first ? '' : 'color:var(--text-muted);'}">${first ? pn : `<span style="padding-left:12px;">↳</span>`}</td>
+                    <td style="white-space:nowrap;${first ? '' : 'color:var(--text-muted);'}">${first ? cl : ''}</td>
+                    <td style="white-space:nowrap;">${lotLabel}</td>
+                    <td style="white-space:nowrap;">${injLabel}</td>
+                    <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap;">${UIUtils.formatNumber(ln.book)}</td>
+                    <td style="text-align:right;white-space:nowrap;">
+                        <input type="number" id="lsbStTgt${seq}" value="${ln.book}" min="0"
+                            style="width:auto;min-width:5em;text-align:right;" class="form-input">
+                    </td>
+                </tr>`;
+            }).join('');
+        }).join('');
+
+        UIUtils.showModal('레이져 대기품 재고 실사', `
+            <div style="background:rgba(22,163,74,0.07);border:1px solid rgba(22,163,74,0.22);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">
+                품목의 보유 <strong>LOT별</strong>로 <strong>실사 수량</strong>(실제 창고 수량)을 입력하세요. 기본값은 <strong>현재 장부 수량</strong>입니다. 틀린 LOT만 고치면 됩니다.<br>
+                <strong>${STOCKTAKE_CYCLE_DAYS}일</strong> 주기로 전 품목을 순환 실사하세요. 수량이 같아도 체크된 품목은 실사 이력에 남아 다음 주기의 기준이 됩니다.
+                장부보다 많거나 적어도 모두 반영됩니다. 신규 LOT 추가는 품목 상세의 수량 보정에서 하세요.
+            </div>
+            <div class="form-row" style="margin-bottom:12px;">
+                <div class="form-group">
+                    <label class="form-label">실사 기준일</label>
+                    <input type="date" class="form-input" id="lsbStDate" value="${today}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">차종 필터</label>
+                    <select class="form-select" id="lsbStFilterCar" onchange="LaserStandbyModule.filterBulkStocktake()">
+                        <option value="">전체 차종</option>
+                        ${cars.map(function(c) { return `<option value="${_escapeAttr(c)}">${_escapeHtml(c)}</option>`; }).join('')}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">비고</label>
+                    <input type="text" class="form-input" id="lsbStNote" placeholder="정기 재고실사" value="정기 재고실사">
+                </div>
+            </div>
+            <div class="data-table-wrapper" style="overflow-x:auto;max-height:46vh;overflow-y:auto;border:1px solid var(--border-color);border-radius:8px;">
+                <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;margin:0;font-size:0.82rem;">
+                    <thead><tr>
+                        <th style="text-align:center;white-space:nowrap;"><input type="checkbox" id="lsbStChkAll" checked onclick="LaserStandbyModule.toggleAllBulkStocktake(this)"></th>
+                        <th style="white-space:nowrap;">차종</th>
+                        <th style="white-space:nowrap;">품명</th>
+                        <th style="white-space:nowrap;">컬러</th>
+                        <th style="white-space:nowrap;">도장 LOT</th>
+                        <th style="white-space:nowrap;">사출 LOT</th>
+                        <th style="text-align:right;white-space:nowrap;">장부 수량</th>
+                        <th style="text-align:right;white-space:nowrap;">실사 수량</th>
+                    </tr></thead>
+                    <tbody id="lsbStRows">${bodyRows}</tbody>
+                </table>
+            </div>
+            <div style="margin-top:10px;font-size:0.8rem;color:var(--text-muted);">
+                대상 <span id="lsbStCount">${rows.length}</span>개 품목 · 장부 합계 <strong id="lsbStSum" style="color:var(--accent-orange,#f59e0b);">${UIUtils.formatNumber(totalNow)}</strong> EA
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="LaserStandbyModule.saveBulkStocktake()">재고 실사 반영</button>
+        `, 'lg');
+    }
+
+    function filterBulkStocktake() {
+        const car = (document.getElementById('lsbStFilterCar') || {}).value || '';
+        const trs = document.querySelectorAll('#lsbStRows tr[data-row]');
+        const shownPi = {};
+        let sum = 0;
+        trs.forEach(function(tr) {
+            const match = !car || (tr.getAttribute('data-cm') || '') === car;
+            tr.style.display = match ? '' : 'none';
+            if (match) {
+                shownPi[tr.getAttribute('data-pi')] = true;
+                sum += Math.round(Number(tr.getAttribute('data-cur')) || 0);
+            }
+        });
+        const cntEl = document.getElementById('lsbStCount');
+        if (cntEl) cntEl.textContent = String(Object.keys(shownPi).length);
+        const sumEl = document.getElementById('lsbStSum');
+        if (sumEl) sumEl.textContent = UIUtils.formatNumber(sum);
+        const allEl = document.getElementById('lsbStChkAll');
+        if (allEl) allEl.checked = true;
+        toggleAllBulkStocktake(allEl);
+    }
+
+    function toggleAllBulkStocktake(src) {
+        const on = !!(src && src.checked);
+        document.querySelectorAll('#lsbStRows tr[data-row]').forEach(function(tr) {
+            if (tr.style.display === 'none') return;
+            const cb = tr.querySelector('input[type=checkbox]');
+            if (cb) cb.checked = on;
+        });
+    }
+
+    async function saveBulkStocktake() {
+        if (!_canAdjustStandby()) {
+            UIUtils.toast('수정/보정 권한이 있는 사용자만 재고실사를 저장할 수 있습니다.', 'warning');
+            return;
+        }
+        const date = (document.getElementById('lsbStDate') || {}).value
+            || ((UIUtils.today && UIUtils.today()) || new Date().toISOString().slice(0, 10));
+        const note = ((document.getElementById('lsbStNote') || {}).value || '').trim() || '정기 재고실사';
+        const author = _currentAuthorName();
+
+        const trs = Array.prototype.slice.call(document.querySelectorAll('#lsbStRows tr[data-row]'));
+        const byProd = {};
+        trs.forEach(function(tr) {
+            if (tr.style.display === 'none') return;
+            const pi = tr.getAttribute('data-pi');
+            const seq = tr.getAttribute('data-seq');
+            const chk = document.getElementById('lsbStChk' + seq);
+            if (!(chk && chk.checked)) return;
+            const book = Math.round(Number(tr.getAttribute('data-cur')) || 0);
+            const counted = Math.max(0, Math.round(Number((document.getElementById('lsbStTgt' + seq) || {}).value) || 0));
+            if (!byProd[pi]) {
+                byProd[pi] = {
+                    key: tr.getAttribute('data-key') || '',
+                    carModel: tr.getAttribute('data-cm') || '',
+                    partName: tr.getAttribute('data-pn') || '',
+                    color: tr.getAttribute('data-cl') || '',
+                    book: 0,
+                    counted: 0,
+                    lots: []
+                };
+            }
+            const p = byProd[pi];
+            p.book += book;
+            p.counted += counted;
+            if (counted <= 0) return;
+            const pl = String(tr.getAttribute('data-pl') || '').trim();
+            const il = String(tr.getAttribute('data-il') || '').trim();
+            if (!_isStandbyLotPlaceholder(pl) && !_isStandbyLotPlaceholder(il)) {
+                p.lots.push({ paintLot: pl, injectionLot: il, qty: counted });
+            } else {
+                p.lots.push({ paintLot: pl || '-', injectionLot: il || '(미확인)', qty: counted });
+            }
+        });
+
+        const targets = Object.keys(byProd).map(function(pi) { return byProd[pi]; });
+        if (!targets.length) {
+            UIUtils.toast('체크된 품목이 없습니다.', 'info');
+            return;
+        }
+
+        let plus = 0;
+        let minus = 0;
+        let same = 0;
+        targets.forEach(function(t) {
+            const d = t.counted - t.book;
+            if (d > 0) plus += d;
+            else if (d < 0) minus += -d;
+            else same += 1;
+        });
+        const changed = targets.length - same;
+        const msg = `${targets.length}개 품목의 재고 실사를 반영합니다.`
+            + (changed ? ` 차이 있는 품목 ${changed}개 · 감소 ${UIUtils.formatNumber(minus)} EA · 증가 ${UIUtils.formatNumber(plus)} EA.` : ' 장부와 일치합니다.')
+            + (same && changed ? ` 일치 ${same}개도 실사 이력에 남습니다.` : '')
+            + ' 반영할까요?';
+
+        UIUtils.confirm(msg, async function() {
+            await _applyBulkStocktake(targets, date, note, author);
+        });
+    }
+
+    async function _applyBulkStocktake(targets, date, note, author) {
+        await _ensureManualOverridesLoaded();
+        await _ensureStocktakeLogLoaded();
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const injectionMaterials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const effectiveAt = new Date().toISOString();
+        const stocktakeDate = String(date || '').slice(0, 10)
+            || ((UIUtils.today && UIUtils.today()) || effectiveAt.slice(0, 10));
+        let done = 0;
+        let skippedGhost = 0;
+
+        try {
+            for (let i = 0; i < targets.length; i++) {
+                const t = targets[i];
+                const identity = _canonicalStandbyRecord(
+                    { carModel: t.carModel, partName: t.partName, color: t.color },
+                    products,
+                    injectionMaterials
+                );
+                if (identity && identity._unmatchedProduct) {
+                    skippedGhost++;
+                    continue;
+                }
+                const carModel = (identity && identity.carModel) || t.carModel;
+                const partName = (identity && identity.partName) || t.partName;
+                const color = (identity && identity.color) || t.color;
+                const nextKey = _itemKey(carModel, partName, color);
+                const actualQty = Math.max(0, Math.round(Number(t.counted) || 0));
+                const effectiveLots = (t.lots || []).filter(function(lot) {
+                    return lot && (Number(lot.qty) || 0) > 0;
+                }).map(function(lot) {
+                    return {
+                        paintLot: lot.paintLot || '-',
+                        injectionLot: lot.injectionLot || '(미확인)',
+                        qty: Math.max(0, Math.round(Number(lot.qty) || 0))
+                    };
+                });
+                const paintLot = [...new Set(effectiveLots.map(function(lot) { return lot.paintLot; }).filter(function(v) { return !_isStandbyLotPlaceholder(v); }))].join(', ');
+                const injectionLot = [...new Set(effectiveLots.map(function(lot) { return lot.injectionLot; }).filter(function(v) { return !_isStandbyLotPlaceholder(v); }))].join(', ');
+
+                const currentIndex = _manualOverrides.findIndex(function(item) {
+                    return _itemKey(item.carModel, item.partName, item.color) === nextKey
+                        || _itemKey(item.carModel, item.partName, item.color) === t.key;
+                });
+                const nextRecord = {
+                    id: currentIndex >= 0 ? _manualOverrides[currentIndex].id : Storage.generateId(),
+                    carModel: carModel,
+                    partName: partName,
+                    color: color,
+                    actualQty: actualQty,
+                    paintLot: paintLot,
+                    injectionLot: injectionLot,
+                    lots: actualQty > 0 ? effectiveLots : [],
+                    manualType: 'edit',
+                    isStocktake: true,
+                    note: note,
+                    author: author,
+                    effectiveAt: effectiveAt,
+                    updatedAt: effectiveAt
+                };
+                _manualOverrides = _manualOverrides.filter(function(item, index) {
+                    if (index === currentIndex) return false;
+                    return _itemKey(item.carModel, item.partName, item.color) !== nextKey;
+                });
+                _manualOverrides.push(nextRecord);
+
+                _stocktakeLog.push({
+                    id: Storage.generateId(),
+                    key: nextKey,
+                    carModel: carModel,
+                    partName: partName,
+                    color: color,
+                    before: Math.max(0, Math.round(Number(t.book) || 0)),
+                    after: actualQty,
+                    diff: actualQty - Math.max(0, Math.round(Number(t.book) || 0)),
+                    reason: note,
+                    author: author,
+                    source: 'bulk',
+                    date: stocktakeDate,
+                    at: effectiveAt
+                });
+                done++;
+            }
+            await _saveManualOverrides();
+            await _saveStocktakeLog();
+        } catch (e) {
+            console.error('[LaserStandby] saveBulkStocktake failed:', e);
+            UIUtils.toast('재고 실사 반영 중 오류가 발생했습니다. ' + done + '건까지 반영됨: ' + (e && e.message ? e.message : '오류'), 'error');
+            renderAll();
+            return;
+        }
+
+        if (done === 0) {
+            UIUtils.toast(skippedGhost
+                ? '제품 마스터에 없는 품목은 실사할 수 없습니다. 품명을 수정한 뒤 다시 시도하세요.'
+                : '반영할 품목이 없습니다.', 'warning');
+            return;
+        }
+
+        UIUtils.closeModal();
+        renderAll();
+        const ghostNote = skippedGhost ? ` (마스터 미등록 ${skippedGhost}종 제외)` : '';
+        UIUtils.toast(`레이져 대기품 재고 실사 ${done}개 품목 반영 완료${ghostNote}`, 'success');
     }
 
     function _collectStandbyMismatch(stockItems) {
@@ -8792,6 +9253,10 @@ var LaserStandbyModule = (function() {
         const unmatchedQty = unmatchedList.reduce(function(s, i) { return s + (Number(i.unmatchedQty) || 0); }, 0);
         const manualAdjustEntries = _collectManualAdjustEntries(allItems);
         const lastByKey = _lastStocktakeByKey();
+        const overdueCount = stockItems.filter(function(i) {
+            const last = lastByKey[i.key || _itemKey(i.carModel, i.partName, i.color)];
+            return _isStocktakeOverdue(last && (last.date || (last.at || '').slice(0, 10)));
+        }).length;
         const neverCounted = stockItems.filter(function(i) {
             return !lastByKey[i.key || _itemKey(i.carModel, i.partName, i.color)];
         }).length;
@@ -8822,10 +9287,12 @@ var LaserStandbyModule = (function() {
                 <div class="stat-card-value" style="${manualAdjustEntries.length ? 'color:#ea580c;' : ''}">${manualAdjustEntries.length}</div>
                 <div class="stat-card-label">수기조정 건수${manualAdjustEntries.length ? ' · 클릭' : ''}</div>
             </div>
-            <div class="stat-card" style="cursor:pointer;${neverCounted > 0 ? 'border-color:rgba(22,163,74,.45);background:rgba(22,163,74,.06);' : ''}"
+            <div class="stat-card" style="cursor:pointer;${overdueCount > 0 ? 'border-color:rgba(220,38,38,.45);background:rgba(220,38,38,.06);' : 'border-color:rgba(22,163,74,.45);background:rgba(22,163,74,.06);'}"
                  onclick="LaserStandbyModule.openStocktakeBoard()">
-                <div class="stat-card-value" style="${neverCounted > 0 ? 'color:var(--accent-green,#16a34a);' : ''}">${neverCounted > 0 ? neverCounted : '✓'}</div>
-                <div class="stat-card-label">${neverCounted > 0 ? '실사 미실시 품목 · 클릭' : '재고실사 · 클릭'}</div>
+                <div class="stat-card-value" style="${overdueCount > 0 ? 'color:var(--accent-red,#dc2626);' : 'color:var(--accent-green,#16a34a);'}">${overdueCount > 0 ? overdueCount : '✓'}</div>
+                <div class="stat-card-label">${overdueCount > 0
+                    ? (neverCounted > 0 ? `실사 필요 ${overdueCount}종 · 클릭` : `${STOCKTAKE_CYCLE_DAYS}일 초과 ${overdueCount}종 · 클릭`)
+                    : '재고실사 · 클릭'}</div>
             </div>
         `;
     }
@@ -8868,6 +9335,7 @@ var LaserStandbyModule = (function() {
     function renderInventoryBlocks(items) {
         const el = document.getElementById('lsbInventory');
         if (!el) return;
+        const lastByKey = _lastStocktakeByKey();
 
         // items에는 이제 재고 0 이하(소진) 품목도 함께 들어온다 — 별도 칩 목록으로 분리하지 않고
         // 재고가 있는 품목과 같은 차종별 표에 섞어서 리스트업한다(요청: "재공 재고 현황에 같이 표시").
@@ -8989,6 +9457,20 @@ var LaserStandbyModule = (function() {
                             <td style="padding:5px 8px;font-size:0.7rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);white-space:nowrap;text-align:right;">
                                 ${lastIn}
                             </td>
+                            <td style="padding:5px 8px;font-size:0.7rem;border-bottom:1px solid var(--border-color);white-space:nowrap;text-align:right;">
+                                ${(() => {
+                                    const last = lastByKey[itemKey];
+                                    const lastDate = last ? String(last.date || (last.at || '').slice(0, 10)) : '';
+                                    if (!lastDate) {
+                                        return '<span style="color:var(--accent-red,#dc2626);font-weight:700;">실사 없음</span>';
+                                    }
+                                    const daysAgo = _stocktakeDaysAgo(lastDate);
+                                    const overdue = _isStocktakeOverdue(lastDate);
+                                    const warn = daysAgo != null && daysAgo >= 14 && !overdue;
+                                    const color = overdue ? 'var(--accent-red,#dc2626)' : (warn ? '#d97706' : 'var(--text-muted)');
+                                    return `<span style="color:${color};font-weight:${overdue ? '700' : '400'};">${_escapeHtml(lastDate)}${daysAgo != null ? ` <span style="font-weight:400;">(${daysAgo}일 전)</span>` : ''}</span>`;
+                                })()}
+                            </td>
                         </tr>`;
                     }).join('');
 
@@ -9015,6 +9497,7 @@ var LaserStandbyModule = (function() {
                                 <th style="padding:4px 6px;text-align:left;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;">도장 LOT</th>
                                 <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;">재고</th>
                                 <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;">최근입고</th>
+                                <th style="padding:4px 8px;text-align:right;font-size:0.68rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;">마지막 실사</th>
                             </tr>
                         </thead>
                         <tbody>${rows}</tbody>
@@ -9091,8 +9574,16 @@ var LaserStandbyModule = (function() {
         incomingRows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
         outgoingRows.sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
 
+        const flowDates = document.getElementById('lsbFlowStart') ? _readStandbyFlowDatesFromDom() : _ensureStandbyFlowDates();
+        incomingRows = incomingRows.filter(function(r) {
+            return _inStandbyFlowDateRange(r.date, flowDates.start, flowDates.end);
+        });
+        outgoingRows = outgoingRows.filter(function(r) {
+            return _inStandbyFlowDateRange(r.date, flowDates.start, flowDates.end);
+        });
+
         if (incomingRows.length === 0 && outgoingRows.length === 0) {
-            el.innerHTML = `<p style="color:var(--text-muted);font-size:0.88rem;padding:20px;">내역이 없습니다.</p>`;
+            el.innerHTML = `<p style="color:var(--text-muted);font-size:0.88rem;padding:20px;">해당 기간의 입출고 내역이 없습니다.</p>`;
             return;
         }
 
@@ -9844,6 +10335,7 @@ var LaserStandbyModule = (function() {
             manualType: addMode ? 'add' : 'edit',
             note: adjustReason || undefined,
             author,
+            isStocktake: !!isStocktake,
             effectiveAt,
             updatedAt: effectiveAt
         };
@@ -9934,14 +10426,17 @@ var LaserStandbyModule = (function() {
             <div class="card" style="margin-bottom:20px;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined">inventory_2</span> 재공 재고 현황</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">입고(도장완료) − 출고(레이져처리) = 재공재고</span>
+                    ${_stocktakeHeaderActionsHtml()}
                 </div>
                 <div class="card-body" id="lsbInventory" style="padding:16px; display:flex; flex-direction:column; gap:14px;"></div>
             </div>
             <div class="card">
-                <div class="card-header">
+                <div class="card-header" style="flex-wrap:wrap;gap:8px;align-items:center;">
                     <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);">입고와 출고 내역을 분리 표시</span>
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;">
+                        <span style="font-size:0.75rem;color:var(--text-muted);">입고와 출고 내역을 분리 표시</span>
+                        ${_standbyFlowDateBarHtml()}
+                    </div>
                 </div>
                 <div class="card-body" id="lsbDetail" style="padding:0;"></div>
             </div>`;
@@ -10178,7 +10673,10 @@ var LaserStandbyModule = (function() {
             ${_standbyHistoryPaintLotFilterHtml(lotGroupRows)}
             <div id="lsbInvHistorySection">${historySection}</div>
             `,
-            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>${canAdjust ? `
+            <button class="btn btn-outline" onclick="UIUtils.closeModal();setTimeout(()=>LaserStandbyModule.openAdjustModal('${_keyJs}', false, true),80);">
+                <span class="material-symbols-outlined" style="font-size:1rem;">fact_check</span> 재고 실사
+            </button>` : ''}`,
             'lg'
         );
     }
@@ -11374,6 +11872,7 @@ var LaserStandbyModule = (function() {
         filterHistoryByPaintLot,
         applyListFilter,
         clearListFilter,
+        applyFlowDateFilter,
         ensureManualOverridesLoadedForWork,
         ensureInboundConfirmLoaded: _ensureInboundConfirmLoaded,
         isLaserInboundConfirmed,
@@ -11386,6 +11885,10 @@ var LaserStandbyModule = (function() {
         openManualAdjustList,
         openStocktakeBoard,
         openStocktakeHistory,
+        openBulkStocktake,
+        filterBulkStocktake,
+        toggleAllBulkStocktake,
+        saveBulkStocktake,
         getWorkLotSnapshotSync,
         normalizeStandbyRecord: function(row, products, injectionMaterials) {
             return _canonicalStandbyRecord(

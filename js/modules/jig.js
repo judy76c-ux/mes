@@ -51,6 +51,24 @@ var JigModule = (function () {
     const _fmt = n => (UIUtils.formatNumber ? UIUtils.formatNumber(n) : Number(n || 0).toLocaleString('ko-KR'));
     const _esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const _js = s => String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\r?\n/g, ' ');
+    // "YYMMDD" / "YYYYMMDD" / "YYYY-MM-DD" → 저장용 "YYYY-MM-DD". 유효하지 않으면 '' 반환.
+    const _normalizeYmd8 = v => {
+        let s = String(v || '').replace(/[^0-9]/g, '');
+        if (s.length === 6) s = '20' + s;          // YYMMDD → 20YYMMDD
+        if (s.length !== 8) return '';
+        const y = +s.slice(0, 4), m = +s.slice(4, 6), d = +s.slice(6, 8);
+        if (m < 1 || m > 12 || d < 1 || d > 31 || y < 2000 || y > 2100) return '';
+        const dt = new Date(y, m - 1, d);
+        if (dt.getFullYear() !== y || dt.getMonth() !== m - 1 || dt.getDate() !== d) return '';
+        return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
+    };
+    // 저장값("YYYY-MM-DD" 등) → 화면 표시용 "YYMMDD" (6자리). 없으면 ''.
+    const _ymd6 = v => {
+        const s = String(v || '').replace(/[^0-9]/g, '');
+        if (s.length === 8) return s.slice(2);
+        if (s.length === 6) return s;
+        return '';
+    };
 
     function _calcOneJigFilm(pointMms) {
         const p0 = _numMm(pointMms[0]);
@@ -229,10 +247,15 @@ var JigModule = (function () {
         return _fmt(n);
     }
     const _isAdminUser = () => {
+        // 앱 전역 관리자 판정(대표 role + roles 배열 모두 확인)과 일치시킨다.
+        if (typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function') {
+            try { return !!AuthModule.isAdminUser(); } catch (e) { /* fall through */ }
+        }
         const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
             ? AuthModule.getCurrentUser()
             : null;
-        return !!(user && user.role === 'admin');
+        const roles = user ? [].concat(user.roles || [], user.role || []) : [];
+        return roles.indexOf('admin') >= 0;
     };
     const _currentUser = () => {
         try {
@@ -443,6 +466,7 @@ var JigModule = (function () {
                     <button id="jigFilterA" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('A라인')">A라인</button>
                     <button id="jigFilterB" class="btn btn-outline btn-sm" onclick="JigModule.filterLine('B라인')">B라인</button>
                     ${_asShowCheckboxHtml()}
+                    ${_laserJigNotifyButtonHtml()}
                     ${_isAdminUser() ? `
                         <button class="btn btn-outline btn-sm" onclick="JigModule.syncFromPaintingWork()"
                             title="자동 생성된 JIG 사용 이력을 삭제 후 도장 작업 실적 기준으로 다시 계산합니다.">
@@ -581,27 +605,31 @@ var JigModule = (function () {
         return Object.keys(set).sort(function (a, b) { return b.length - a.length; });
     }
 
-    /** 품명에서 컬러(6PS, BC5 등)를 떼 같은 지그 묶음 기준명을 만든다. */
+    /** 품명에서 컬러(6PS, BC5 등)만 떼 같은 지그 묶음 기준명을 만든다.
+     *  컬러 뒤에 오는 부가 표기(1spot / SEESAW 등 측정포인트 구분)는 서로 다른 지그이므로 남긴다.
+     *  (예: "KNOB [LED] BK 1spot" vs "KNOB [LED] BK SEESAW" → 각각 "KNOB [LED] 1spot" / "KNOB [LED] SEESAW"). */
     function _partFamilyName(carModel, partName, colorMap, colorsByCar) {
         const part = String(partName || '').trim();
         if (!part) return '';
         const car = String(carModel || '').trim();
-        function truncateAt(color) {
+        function stripColor(color) {
             if (!color) return '';
-            const re = new RegExp('\\b' + _escRe(color) + '\\b', 'i');
-            const m = re.exec(part);
-            if (!m) return '';
-            return part.slice(0, m.index)
-                .replace(/[\[\(]\s*$/, '')
-                .replace(/[-_/]\s*$/, '')
+            const reG = new RegExp('\\b' + _escRe(color) + '\\b', 'ig');
+            const out = part.replace(reG, ' ');
+            if (out === part) return '';
+            return out
+                .replace(/\(\s*\)|\[\s*\]/g, '')
+                .replace(/\s{2,}/g, ' ')
+                .replace(/\s*[-_/]\s*$/, '')
+                .replace(/[-_/(\[]\s*$/, '')
                 .trim();
         }
         const mapped = (colorMap && colorMap[car.toUpperCase() + '||' + part.toUpperCase()]) || '';
-        const fromMapped = truncateAt(mapped);
+        const fromMapped = stripColor(mapped);
         if (fromMapped) return fromMapped;
         const colors = _colorsOfCar(colorsByCar, car);
         for (let i = 0; i < colors.length; i++) {
-            const t = truncateAt(colors[i]);
+            const t = stripColor(colors[i]);
             if (t) return t;
         }
         return part.replace(/\s+/g, ' ');
@@ -659,20 +687,37 @@ var JigModule = (function () {
         });
     }
 
+    // 같은 지그를 공용으로 쓸 수 있는 차종군 (A3 / A3 PA)
+    const CAR_ALIAS_GROUPS = [['A3', 'A3 PA', 'A3(PA)']];
+    function _carAliasGroup(carModel) {
+        const c = String(carModel || '').trim();
+        for (let i = 0; i < CAR_ALIAS_GROUPS.length; i++) {
+            if (CAR_ALIAS_GROUPS[i].indexOf(c) >= 0) return CAR_ALIAS_GROUPS[i].slice();
+        }
+        return c ? [c] : [];
+    }
+    // 이 지그가 커버하는 차종 목록 (대표 차종 + carAliases). carAliases는 대장 수정에서 명시적으로 선택된 것만.
+    function _jigCarKeys(jig) {
+        const base = _jigCarKey(jig);
+        const extra = Array.isArray(jig && jig.carAliases) ? jig.carAliases.map(function (c) { return String(c || '').trim(); }).filter(Boolean) : [];
+        return [...new Set([base].concat(extra).filter(Boolean))];
+    }
+
     function _jigMatchesPart(jig, partName) {
         const target = String(partName || '').trim();
         return !!target && _jigPartNames(jig).includes(target);
     }
 
     function _findJigForProduct(jigs, carModel, partName, line) {
+        const car = String(carModel || '').trim();
         return (jigs || []).find(j =>
-            j.carModel === carModel && j.line === line && _jigMatchesPart(j, partName)
+            _jigCarKeys(j).indexOf(car) >= 0 && j.line === line && _jigMatchesPart(j, partName)
         );
     }
 
     function _jigMatchesWorkJob(jig, job) {
         if (!jig || !job) return false;
-        if (_jigCarKey(jig) !== String(job.car || '').trim()) return false;
+        if (_jigCarKeys(jig).indexOf(String(job.car || '').trim()) < 0) return false;
         if (!_jigMatchesPart(jig, job.part)) return false;
         if (!job.line) return true;
         if ((jig.line || '') === job.line) return true;
@@ -1071,8 +1116,15 @@ var JigModule = (function () {
                     '<input type="number" id="jigPreMesUsedCount" class="form-input" min="0" step="1" value="' + (total || 0) + '" ' +
                         'style="width:auto;min-width:7em;text-align:right;">' +
                     '<span style="font-size:0.8rem;color:var(--text-secondary);">회</span>' +
+                    '<span style="font-size:0.78rem;color:var(--text-secondary);margin-left:6px;">이전 교체일</span>' +
+                    '<input type="text" id="jigPreMesReplDate" class="form-input" inputmode="numeric" maxlength="6" placeholder="YYMMDD" ' +
+                        'value="' + _esc(_ymd6(_latestReplacementDate(Storage.getAll(LOG_STORE) || [], jigId) || jig.lastResetDate || '')) + '" ' +
+                        'oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,6)" ' +
+                        'style="width:auto;min-width:7em;text-align:center;">' +
                     '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.savePreMesUsedCount(\'' + _js(jigId) + '\')">저장</button>' +
-                '</div></div>'
+                '</div>' +
+                '<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">현재 저장된 교체일: <strong>' + _esc(_ymd6(_latestReplacementDate(Storage.getAll(LOG_STORE) || [], jigId) || '') || '없음') + '</strong> · 이전 교체일(YYMMDD)을 입력하면 그 날짜의 교체 이력으로 저장됩니다. 공란이면 변경하지 않습니다.</div>' +
+                '</div>'
             : '';
         const aliases = (jig.partAliases || []).filter(function (p) { return p !== jig.partName; });
         const th = 'padding:6px 8px;text-align:center;font-size:0.72rem;color:var(--text-muted);font-weight:600;border-bottom:1px solid var(--border-color);white-space:nowrap;';
@@ -1174,11 +1226,28 @@ var JigModule = (function () {
             UIUtils.toast('누적횟수를 숫자로 입력하세요. 공란은 0으로 저장됩니다.', 'warning');
             return;
         }
+        const replEl = document.getElementById('jigPreMesReplDate');
+        const replRaw = String((replEl && replEl.value) || '').trim();
+        let replYmd = '';
+        if (replRaw !== '') {
+            replYmd = _normalizeYmd8(replRaw);
+            if (!replYmd) {
+                UIUtils.toast('이전 교체일은 YYMMDD 형식의 실제 날짜로 입력하세요. (예: 260821)', 'warning');
+                if (replEl && replEl.focus) replEl.focus();
+                return;
+            }
+            if (replYmd > _today()) {
+                UIUtils.toast('이전 교체일은 미래 날짜일 수 없습니다.', 'warning');
+                if (replEl && replEl.focus) replEl.focus();
+                return;
+            }
+        }
         const actor = _currentUser();
         const worker = actor
             ? String(actor.displayName || actor.username || actor.id || '')
             : '';
         try {
+            if (replYmd) await _upsertBaselineReplacement(jigId, replYmd, worker);
             await _upsertCountAdjust(jigId, qty, worker);
         } catch (e) {
             UIUtils.toast('저장에 실패했습니다.', 'error');
@@ -1220,15 +1289,22 @@ var JigModule = (function () {
         const note = '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);font-size:0.78rem;color:var(--text-secondary);">' +
             '품목의 <strong>현재 누적횟수</strong>를 입력값으로 덮어씁니다. MES 실적에 더하지 않습니다.<br>' +
             '컬러만 다른 품목(6PS · BC5 등)은 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0회로 저장됩니다.<br>' +
-            '이후 도장 작업 실적은 보정한 누적 위에 더해집니다. MES 실적과 같은 값을 넣으면 보정이 해제됩니다.' +
+            '이후 도장 작업 실적은 보정한 누적 위에 더해집니다. MES 실적과 같은 값을 넣으면 보정이 해제됩니다.<br>' +
+            '<strong>이전 교체일</strong>(YYMMDD)을 입력하면 그 날짜의 교체 이력으로 저장되고, 이후 누적은 그 날짜 이후 실적만 집계합니다. 공란이면 교체일은 변경하지 않습니다. (각 행에 현재 저장된 교체일이 표시됩니다.)' +
             '</div>';
         if (!jigs.length) {
             return note + '<div style="padding:24px;text-align:center;color:var(--text-muted);">보정할 지그 품목이 없습니다.</div>';
         }
         const groups = _groupJigsByFamily(jigs);
+        const _bulkLogs = Storage.getAll(LOG_STORE) || [];
         const rows = groups.map(function (g) {
             const rowId = 'bulkPreMes_' + g.primaryId;
             const car = _jigCarKey(g);
+            const storedRepl = (g.memberIds || [g.primaryId]).reduce(function (acc, id) {
+                const d = _latestReplacementDate(_bulkLogs, id) || '';
+                return d > acc ? d : acc;
+            }, '');
+            const curRepl = _ymd6(storedRepl);
             const extra = g.colorLabels.length
                 ? g.colorLabels.join(' · ')
                 : (g.partNames.length > 1 ? g.partNames.slice(1).join(', ') : '');
@@ -1245,6 +1321,13 @@ var JigModule = (function () {
                 '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
                     '<input type="number" id="' + rowId + '" class="form-input" min="0" step="1" value="' + currentTotal + '" ' +
                         'style="width:auto;min-width:7em;text-align:right;display:inline-block;">' +
+                '</td>' +
+                '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
+                    '<input type="text" id="bulkPreMesRepl_' + g.primaryId + '" class="form-input" inputmode="numeric" maxlength="6" ' +
+                        'placeholder="YYMMDD" value="' + _esc(curRepl) + '" ' +
+                        'oninput="this.value=this.value.replace(/[^0-9]/g,\'\').slice(0,6)" ' +
+                        'style="width:auto;min-width:7em;text-align:center;display:inline-block;">' +
+                    '<div style="font-size:0.68rem;color:var(--text-muted);margin-top:2px;">저장됨: ' + _esc(curRepl || '없음') + '</div>' +
                 '</td>' +
                 '<td style="' + td + 'text-align:center;white-space:nowrap;">' +
                     '<button type="button" class="btn btn-sm btn-primary" onclick="JigModule.saveBulkPreMesUsedCount(\'' + _js(g.primaryId) + '\')">저장</button>' +
@@ -1269,10 +1352,11 @@ var JigModule = (function () {
                     '<th style="' + th + '">라인</th>' +
                     '<th style="' + th + '">현재 누적</th>' +
                     '<th style="' + th + '">보정 후 누적</th>' +
+                    '<th style="' + th + '">이전 교체일<br><span style="font-weight:400;font-size:0.68rem;">YYMMDD</span></th>' +
                     '<th style="' + th + '">저장</th>' +
                 '</tr></thead>' +
                 '<tbody>' + rows +
-                    '<tr id="preMesBulkEmptyRow" style="display:none;"><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">선택한 차종의 품목이 없습니다.</td></tr>' +
+                    '<tr id="preMesBulkEmptyRow" style="display:none;"><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">선택한 차종의 품목이 없습니다.</td></tr>' +
                 '</tbody>' +
             '</table></div>';
     }
@@ -1336,6 +1420,36 @@ var JigModule = (function () {
         return _upsertCountAdjust(jigId, qty, actorWorker);
     }
 
+    // 현재 누적 보정 화면에서 입력한 "이전 교체일"을 교체 이력으로 upsert 한다.
+    // 같은 화면에서 만든 교체 로그(source=pre_mes_baseline_replacement)는 날짜만 갱신하고,
+    // 실제 교체 로그(사진 첨부 등)와 겹치는 날짜면 새로 만들지 않는다.
+    async function _upsertBaselineReplacement(jigId, ymd, worker) {
+        if (!ymd) return;
+        const jig = (Storage.getAll(STORE) || []).find(function (j) { return j.id === jigId; });
+        const action = jig ? _resetActionForJig(jig) : '교체';
+        const logs = Storage.getAll(LOG_STORE) || [];
+        const existing = logs.find(function (l) {
+            return l.jigId === jigId && _isResetWorkType(l.workType) && l.source === 'pre_mes_baseline_replacement';
+        });
+        if (existing) {
+            if (String(existing.date || '') === ymd) return;
+            await Storage.update(LOG_STORE, existing.id, Object.assign({}, existing, {
+                date: ymd, workType: action, note: '이전 교체 이력 입력 (현재 누적 보정)', worker: worker || existing.worker || ''
+            }));
+            return;
+        }
+        const dupe = logs.some(function (l) {
+            return l.jigId === jigId && _isResetWorkType(l.workType) && String(l.date || '') === ymd;
+        });
+        if (dupe) return;
+        await Storage.add(LOG_STORE, {
+            jigId: jigId, date: ymd, workType: action, useCount: 0,
+            source: 'pre_mes_baseline_replacement',
+            note: '이전 교체 이력 입력 (현재 누적 보정)',
+            worker: worker || ''
+        });
+    }
+
     async function saveBulkPreMesUsedCount(jigId) {
         if (!_isAdminUser()) {
             UIUtils.toast('현재 누적 보정은 관리자만 입력할 수 있습니다.', 'warning');
@@ -1357,12 +1471,29 @@ var JigModule = (function () {
             UIUtils.toast('누적횟수를 숫자로 입력하세요. 공란은 0으로 저장됩니다.', 'warning');
             return;
         }
+        const replEl = document.getElementById('bulkPreMesRepl_' + jigId);
+        const replRaw = String((replEl && replEl.value) || '').trim();
+        let replYmd = '';
+        if (replRaw !== '') {
+            replYmd = _normalizeYmd8(replRaw);
+            if (!replYmd) {
+                UIUtils.toast('이전 교체일은 YYMMDD 형식의 실제 날짜로 입력하세요. (예: 260821)', 'warning');
+                if (replEl && replEl.focus) replEl.focus();
+                return;
+            }
+            if (replYmd > _today()) {
+                UIUtils.toast('이전 교체일은 미래 날짜일 수 없습니다.', 'warning');
+                if (replEl && replEl.focus) replEl.focus();
+                return;
+            }
+        }
         const actor = _currentUser();
         const worker = actor
             ? String(actor.displayName || actor.username || actor.id || '')
             : '';
         try {
             for (let i = 0; i < ids.length; i++) {
+                if (replYmd) await _upsertBaselineReplacement(ids[i], replYmd, worker);
                 await _upsertPreMesBaseline(ids[i], qty, worker);
             }
         } catch (e) {
@@ -1379,6 +1510,12 @@ var JigModule = (function () {
             if (cells[3]) cells[3].textContent = _fmt(qty);
         }
         if (raw) raw.value = String(qty);
+        if (replYmd && replEl) {
+            const shown = _ymd6(replYmd);
+            replEl.value = shown;
+            const savedLbl = replEl.parentElement && replEl.parentElement.querySelector('div');
+            if (savedLbl) savedLbl.textContent = '저장됨: ' + shown;
+        }
         loadAll();
     }
 
@@ -1452,6 +1589,42 @@ var JigModule = (function () {
 
     function _needsLifeAction(j) {
         return _lifePct(j) >= 90;
+    }
+
+    function _isLaserRelatedJig(j) {
+        const names = [j && j.partName].concat(Array.isArray(j && j.partAliases) ? j.partAliases : [])
+            .map(function (n) { return String(n || '').trim(); })
+            .filter(Boolean);
+        if (names.some(function (n) { return /레이저|레이져|laser/i.test(n); })) return true;
+        const car = _jigCarKey(j);
+        const products = (typeof Storage !== 'undefined' && Storage.getAll)
+            ? (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            : [];
+        return products.some(function (p) {
+            const pName = String(p.partName || '').trim();
+            if (!pName || names.indexOf(pName) < 0) return false;
+            const pCar = String(p.carModel || '').trim();
+            if (car && pCar && car !== pCar) return false;
+            const text = [
+                p.process1, p.process2, p.process3,
+                p.process4, p.process5, p.process6,
+                p.processFlow, p.route
+            ].join(' ');
+            return /레이저|레이져|laser/i.test(text);
+        });
+    }
+
+    function _collectLaserJigLifeActions() {
+        return (_enrichedJigs() || []).filter(function (j) {
+            return _needsLifeAction(j) && _isLaserRelatedJig(j);
+        });
+    }
+
+    function _laserJigNotifyButtonHtml() {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.incomingInspNotifyAdminButtonHtml !== 'function') {
+            return '';
+        }
+        return AuthModule.incomingInspNotifyAdminButtonHtml('laser_jig', { small: true, label: '레이져 지그 알림' });
     }
 
     function _lifePinSection(cfg, jigs, orderingByJigId, rowOpts) {
@@ -1625,7 +1798,8 @@ var JigModule = (function () {
             border: '#fecaca',
             bg: '#fef2f2',
             hint: '조치가 다가옵니다. JIG 발주가 필요합니다.',
-            actionHtml: '<button type="button" class="btn btn-sm btn-outline" onclick="Router.navigate(\'jig-ordering\')" style="padding:2px 8px;font-size:0.72rem;font-weight:700;border-color:#fecaca;color:#b91c1c;">발주 관리</button>'
+            actionHtml: '<button type="button" class="btn btn-sm btn-outline" onclick="Router.navigate(\'jig-ordering\')" style="padding:2px 8px;font-size:0.72rem;font-weight:700;border-color:#fecaca;color:#b91c1c;">발주 관리</button>' +
+                _laserJigNotifyButtonHtml()
         }, actionJigs, orderingByJigId, { showActionBadge: true, todayIdMap: todayAllIds, sortByPct: true });
 
         const todayHtml = _lifePinSection({
@@ -2199,16 +2373,31 @@ var JigModule = (function () {
         return [...new Set(_jigPartNames(d))];
     }
 
+    // 차종군(A3/A3 PA) 안의 모든 차종 품명을 [{part, car}] 로 반환. 그 외 차종은 해당 차종만.
+    // 단, 공용으로 끌어오는 "다른 차종"의 A/S 품목은 제외한다(양산 지그에 A/S 실적이 섞이지 않도록).
     function _masterPartListForCar(carModel, selectedParts = []) {
+        const group = _carAliasGroup(carModel);
         const paintingProds = _paintingProducts();
-        const parts = [...new Set(
-            paintingProds.filter(p => !carModel || p.carModel === carModel)
-                .map(p => p.partName).filter(Boolean)
-        )];
-        (selectedParts || []).forEach(p => {
-            if (p && !parts.includes(p)) parts.push(p);
+        const itemTypeMap = _productItemTypeMap();
+        const rows = [];
+        const seen = {};
+        paintingProds.forEach(p => {
+            const part = String(p.partName || '').trim();
+            if (!part) return;
+            const pcar = String(p.carModel || '').trim();
+            if (carModel && group.indexOf(pcar) < 0) return;
+            // 다른 차종(공용 후보)의 A/S 품목은 목록에서 제외
+            if (carModel && pcar !== String(carModel).trim()
+                && _isAsItemType(itemTypeMap[pcar + '||' + part] || _normItemType(p.itemType))) return;
+            const k = pcar + '||' + part;
+            if (seen[k]) return;
+            seen[k] = true;
+            rows.push({ part: part, car: pcar });
         });
-        return parts.sort((a, b) => a.localeCompare(b, 'ko'));
+        (selectedParts || []).forEach(p => {
+            if (p && !rows.some(r => r.part === p)) rows.push({ part: p, car: carModel || '' });
+        });
+        return rows.sort((a, b) => (a.car || '').localeCompare(b.car || '', 'ko') || a.part.localeCompare(b.part, 'ko'));
     }
 
     function _masterPartNamesFieldHtml(carModel, selectedParts = [], readOnly = false) {
@@ -2226,19 +2415,34 @@ var JigModule = (function () {
             </div>
             ${selected.length > 1 ? `<div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">공용 지그 · ${selected.length}개 품명</div>` : ''}`;
         }
-        const parts = _masterPartListForCar(carModel, selected);
-        if (!parts.length) {
+        const rows = _masterPartListForCar(carModel, selected);
+        if (!rows.length) {
             return `<div id="jigMasterPartPick" style="padding:10px 12px;color:var(--text-muted);border:1px dashed var(--border-color);border-radius:8px;">해당 차종의 도장 제품이 없습니다.</div>`;
         }
+        const group = _carAliasGroup(carModel);
+        const multiCar = group.length > 1;
+        const seenPart = {};
+        let lastCar = null;
+        const listHtml = rows.map(r => {
+            const dup = seenPart[r.part];
+            seenPart[r.part] = true;
+            const carHdr = (multiCar && r.car !== lastCar)
+                ? `<div style="font-size:0.72rem;font-weight:700;color:var(--accent-blue);margin:6px 0 2px;">${_esc(r.car || '기타')}</div>`
+                : '';
+            lastCar = r.car;
+            // 같은 품명이 두 차종에 다 있으면 첫 번째만 체크박스로, 이후엔 안내만
+            const carTag = (multiCar && !dup) ? `<span style="font-size:0.68rem;color:var(--text-muted);">(${_esc(r.car)})</span>` : '';
+            if (dup) return carHdr;
+            return `${carHdr}<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:0.82rem;cursor:pointer;">
+                        <input type="checkbox" class="jigMasterPartChk" value="${_esc(r.part)}" data-car="${_esc(r.car)}" ${selected.includes(r.part) ? 'checked' : ''} onchange="JigModule.recalcMasterOrderQty()">
+                        <span>${_esc(r.part)} ${carTag}</span>
+                    </label>`;
+        }).join('');
         return `
-            <div id="jigMasterPartPick" style="max-height:180px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;padding:8px 10px;background:var(--bg-secondary);">
-                ${parts.map(p => `
-                    <label style="display:flex;align-items:center;gap:8px;padding:4px 2px;font-size:0.82rem;cursor:pointer;">
-                        <input type="checkbox" class="jigMasterPartChk" value="${_esc(p)}" ${selected.includes(p) ? 'checked' : ''} onchange="JigModule.recalcMasterOrderQty()">
-                        <span>${_esc(p)}</span>
-                    </label>`).join('')}
+            <div id="jigMasterPartPick" style="max-height:200px;overflow:auto;border:1px solid var(--border-color);border-radius:8px;padding:8px 10px;background:var(--bg-secondary);">
+                ${listHtml}
             </div>
-            <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">공용 지그는 품명을 여러 개 선택하세요. 기존 대표 품명은 유지되고, 없으면 목록에서 먼저 체크된 항목이 대표가 됩니다.</div>`;
+            <div style="font-size:0.72rem;color:var(--text-muted);margin-top:6px;">공용 지그는 품명을 여러 개 선택하세요. 기존 대표 품명은 유지되고, 없으면 목록에서 먼저 체크된 항목이 대표가 됩니다.${multiCar ? `<br><strong>${_esc(group.join(' / '))}</strong> 차종은 서로 공용 지그로 묶을 수 있습니다. 다른 차종 품명을 선택하면 그 차종도 이 지그가 커버합니다. (다른 차종의 A/S 품목은 목록에서 제외됩니다.)` : ''}</div>`;
     }
 
     function _collectMasterPartNames() {
@@ -2441,7 +2645,22 @@ var JigModule = (function () {
     }
 
     function _jigItemType(j, itemTypeMap) {
-        return itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`] || '';
+        // 대표 (차종||품명) 우선. 비어 있으면 병합 품명·커버 차종까지 훑어본다.
+        // 양산 품목이 하나라도 있으면 그 값을 반환하고, 전부 A/S 로만 조회되면 A/S 로 본다.
+        const direct = itemTypeMap[`${j.carModel || ''}||${j.partName || ''}`];
+        if (direct && !_isAsItemType(direct)) return direct;
+        const cars = _jigCarKeys(j);
+        const names = _jigPartNames(j);
+        let asFound = direct && _isAsItemType(direct) ? direct : '';
+        for (let ci = 0; ci < cars.length; ci++) {
+            for (let ni = 0; ni < names.length; ni++) {
+                const t = itemTypeMap[cars[ci] + '||' + names[ni]];
+                if (!t) continue;
+                if (!_isAsItemType(t)) return t;
+                asFound = asFound || t;
+            }
+        }
+        return asFound || direct || '';
     }
 
     function _sortJigMasterList(jigs, itemTypeMap) {
@@ -3191,7 +3410,7 @@ var JigModule = (function () {
                 </div>
             </div>
             <div class="form-group">
-                <label class="form-label">품명 <span style="color:var(--accent-red)">*</span>${_masterSelectedPartNames(d).length > 1 ? ' <span style="font-size:0.72rem;color:var(--accent-blue);font-weight:600;">(공용)</span>' : ''}</label>
+                <label class="form-label">품명 <span style="color:var(--accent-red)">*</span>${(_masterSelectedPartNames(d).length > 1 || (Array.isArray(d.carAliases) && d.carAliases.length)) ? ' <span style="font-size:0.72rem;color:var(--accent-blue);font-weight:600;">(공용' + ((Array.isArray(d.carAliases) && d.carAliases.length) ? ' · ' + _esc([d.carModel].concat(d.carAliases).filter(Boolean).join('/')) : '') + ')</span>' : ''}</label>
                 <div id="jigMasterPartField">${_masterPartNamesFieldHtml(d.carModel || '', _masterSelectedPartNames(d), readOnly)}</div>
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
@@ -3325,6 +3544,16 @@ var JigModule = (function () {
         // 대표 품명: 기존 partName이 선택에 남아 있으면 유지, 아니면 첫 선택
         let partName = partNames.includes(prev.partName) ? prev.partName : (partNames[0] || '');
         const partAliases = partNames;
+        // A3 / A3 PA 공용: 체크된 품명이 속한 다른 차종을 carAliases 로 저장 → 그 차종 실적도 이 지그가 집계
+        const _grp = _carAliasGroup(carModel);
+        const _checkedCars = [...new Set(
+            Array.from(document.querySelectorAll('.jigMasterPartChk:checked'))
+                .map(el => (el.getAttribute('data-car') || '').trim())
+                .filter(Boolean)
+        )];
+        const carAliases = _grp.length > 1
+            ? _checkedCars.filter(c => c && c !== carModel && _grp.indexOf(c) >= 0)
+            : [];
         const thicknessPointMm = _readThicknessPointsFromForm().map(function (v) { return _numMm(v) || 0; });
         const initialThicknessMm = thicknessPointMm[0] || 0;
         const filmThicknessMm = _calcAvgFilmThickness(thicknessPointMm)
@@ -3355,7 +3584,8 @@ var JigModule = (function () {
             carModel,
             partName,
             partAliases,
-            merged: partAliases.length > 1,
+            carAliases,
+            merged: partAliases.length > 1 || carAliases.length > 0,
             line: prev.line || _lineForMaster(carModel, partName),
             initialThicknessMm: initialThicknessMm || 0,
             thicknessPointMm: thicknessPointMm,
@@ -4160,6 +4390,29 @@ var JigModule = (function () {
             }
             UIUtils.toast(`동기화 완료: ${added}건 등록 / ${skipped}건 스킵`, 'success');
             loadAll();
+        });
+    }
+
+    if (typeof AuthModule !== 'undefined' && typeof AuthModule.registerNotifyCollector === 'function') {
+        AuthModule.registerNotifyCollector('laser_jig', function () {
+            return {
+                list: _collectLaserJigLifeActions(),
+                opts: {
+                    logLabel: '레이져 지그 조치',
+                    title: '레이져 지그 조치 필요',
+                    intro: '레이져 지그 수명이 90%에 도달했거나 초과했습니다. 도장 지그 수명관리에서 발주·조치를 진행해 주세요.',
+                    idOf: function (r) { return String((r && r.id) || ''); },
+                    formatLine: function (r) {
+                        const pct = Math.min(100, _lifePct(r));
+                        const manage = _derivedJigLife(r).manage || Number(r.maxCount) || 0;
+                        return '- ' + (_jigCarKey(r) || '-') + ' / ' + (r.partName || '-') +
+                            (r.line ? ' · ' + r.line : '') +
+                            ' · 누적 ' + _fmt(r.usedCount || 0) +
+                            (manage ? ' / 수명 ' + _fmt(manage) : '') +
+                            ' · ' + pct.toFixed(0) + '%';
+                    }
+                }
+            };
         });
     }
 

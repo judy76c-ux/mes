@@ -628,6 +628,9 @@ var LaserJigMasterModule = (function () {
         container.innerHTML = `
             <div class="fade-in-up">
                 ${LaserProcessUI.renderSection('laser-jig-master', '', '',
+                    ((typeof AuthModule !== 'undefined' && AuthModule.incomingInspNotifyAdminButtonHtml)
+                        ? AuthModule.incomingInspNotifyAdminButtonHtml('laser_jig', { small: true, label: '레이져 지그 알림' })
+                        : '') +
                     '<button class="btn btn-primary btn-sm" onclick="LaserJigMasterModule.openModal()"><span class="material-symbols-outlined">add</span> 지그 등록</button>')}
                 ${LaserProcessUI.renderJigSubNav('laser-jig-master')}
                 <div class="card">
