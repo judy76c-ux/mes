@@ -682,9 +682,65 @@ var JigModule = (function () {
             g.usedCount = g.members.reduce(function (s, j) { return s + (Number(j.usedCount) || 0); }, 0);
             g.preMesUsedCount = preSame ? (preVals[0] || 0) : 0;
             g.primaryId = g.members[0].id;
+            // 각 패밀리 멤버의 대표 ID. (공용 _coUseIds 는 대표 1개에만 반영 — 현재 누적이 합계로 표시되므로)
             g.memberIds = g.members.map(function (j) { return j.id; });
             return g;
         });
+    }
+
+    // 대표 지그ID → 함께 묶인(공용) 지그ID 목록. _collapseCoUseJigs 가 갱신한다.
+    let _coUseGroups = {};
+
+    function _coUseIdsFor(id) {
+        return (_coUseGroups && _coUseGroups[id]) ? _coUseGroups[id].slice() : [id];
+    }
+
+    // 같은 차종군·같은 라인에서 품명 집합이 같거나 포함관계인 지그 레코드를 한 줄로 합친다.
+    // (예: J34A knob LH / knob Rh 를 각각 공용 지그로 만들어 두 레코드가 생긴 경우 → 목록엔 1건)
+    function _collapseCoUseJigs(jigs) {
+        _coUseGroups = {};
+        const byGroup = {};
+        (jigs || []).forEach(function (j) {
+            const gk = _jigCarKeys(j).slice().sort().join('&') + '::' + (j.line || '');
+            (byGroup[gk] = byGroup[gk] || []).push(j);
+        });
+        const out = [];
+        Object.keys(byGroup).forEach(function (gk) {
+            const list = byGroup[gk].slice().sort(function (a, b) {
+                return _jigPartNames(b).length - _jigPartNames(a).length;
+            });
+            const buckets = [];
+            list.forEach(function (j) {
+                const nm = new Set(_jigPartNames(j).map(function (n) { return String(n || '').trim(); }).filter(Boolean));
+                let placed = null;
+                for (let i = 0; i < buckets.length; i++) {
+                    const b = buckets[i];
+                    if (!nm.size || !b.names.size) continue;
+                    const jInB = [...nm].every(function (n) { return b.names.has(n); });
+                    const bInJ = [...b.names].every(function (n) { return nm.has(n); });
+                    if (jInB || bInJ) { placed = b; break; }
+                }
+                if (placed) { placed.members.push(j); nm.forEach(function (n) { placed.names.add(n); }); }
+                else buckets.push({ names: nm, members: [j] });
+            });
+            buckets.forEach(function (b) {
+                if (b.members.length === 1) { out.push(b.members[0]); return; }
+                const primary = b.members.slice().sort(function (x, y) { return _lifePct(y) - _lifePct(x); })[0];
+                const ids = b.members.map(function (m) { return m.id; });
+                _coUseGroups[primary.id] = ids;
+                out.push(Object.assign({}, primary, {
+                    usedCount: b.members.reduce(function (s, m) { return s + (Number(m.usedCount) || 0); }, 0),
+                    todayUsedCount: b.members.reduce(function (s, m) { return s + (Number(m.todayUsedCount) || 0); }, 0),
+                    todayPlanUseDay: Math.max.apply(null, b.members.map(function (m) { return Number(m.todayPlanUseDay) || 0; })),
+                    todayPlanUseNow: Math.max.apply(null, b.members.map(function (m) { return Number(m.todayPlanUseNow) || 0; })),
+                    preMesUsedCount: b.members.reduce(function (s, m) { return s + (Number(m.preMesUsedCount) || 0); }, 0),
+                    partAliases: [...new Set(b.members.reduce(function (acc, m) { return acc.concat(_jigPartNames(m)); }, []))],
+                    _coUseIds: ids,
+                    _coUseCount: b.members.length
+                }));
+            });
+        });
+        return out;
     }
 
     // 같은 지그를 공용으로 쓸 수 있는 차종군 (A3 / A3 PA)
@@ -1016,9 +1072,13 @@ var JigModule = (function () {
 
     function _usageLogsForJig(jigId) {
         const logs = Storage.getAll(LOG_STORE) || [];
-        const replacementDate = _latestReplacementDate(logs, jigId);
+        const ids = _coUseIdsFor(jigId);
+        const replacementDate = ids.reduce(function (acc, id) {
+            const d = _latestReplacementDate(logs, id) || '';
+            return d > acc ? d : acc;
+        }, '') || null;
         return logs.filter(function (log) {
-            if (log.jigId !== jigId) return false;
+            if (ids.indexOf(log.jigId) < 0) return false;
             if (!_isOnOrAfterReplacement(log.date, replacementDate)) return false;
             if (_isResetWorkType(log.workType)) return false;
             if (_isCountAdjustLog(log)) return true;
@@ -1265,7 +1325,7 @@ var JigModule = (function () {
             UIUtils.toast('현재 누적 보정은 관리자만 입력할 수 있습니다.', 'warning');
             return;
         }
-        const jigs = _enrichedJigs()
+        const jigs = _collapseCoUseJigs(_enrichedJigs())
             .sort(function (a, b) {
                 const ai = CAR_ORDER.indexOf(_jigCarKey(a));
                 const bi = CAR_ORDER.indexOf(_jigCarKey(b));
@@ -1288,7 +1348,7 @@ var JigModule = (function () {
         const td = 'padding:6px 8px;border-bottom:1px solid var(--border-color);font-size:0.8rem;';
         const note = '<div style="margin:0 0 12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(234,88,12,0.28);background:rgba(234,88,12,0.05);font-size:0.78rem;color:var(--text-secondary);">' +
             '품목의 <strong>현재 누적횟수</strong>를 입력값으로 덮어씁니다. MES 실적에 더하지 않습니다.<br>' +
-            '컬러만 다른 품목(6PS · BC5 등)은 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0회로 저장됩니다.<br>' +
+            '컬러만 다른 품목(6PS · BC5 등)이나 공용 지그(LH/RH 등)는 같은 지그로 묶어 한 줄에 표시합니다. 공란은 0회로 저장됩니다.<br>' +
             '이후 도장 작업 실적은 보정한 누적 위에 더해집니다. MES 실적과 같은 값을 넣으면 보정이 해제됩니다.<br>' +
             '<strong>이전 교체일</strong>(YYMMDD)을 입력하면 그 날짜의 교체 이력으로 저장되고, 이후 누적은 그 날짜 이후 실적만 집계합니다. 공란이면 교체일은 변경하지 않습니다. (각 행에 현재 저장된 교체일이 표시됩니다.)' +
             '</div>';
@@ -1693,6 +1753,7 @@ var JigModule = (function () {
                 carCell +
                 '<td class="jig-col-part" style="' + td + '">' +
                     '<span class="jig-part-name-text" title="' + _esc(partTitle) + '">' + _esc(j.partName || '-') + '</span>' +
+                    (j._coUseCount > 1 ? '<span style="margin-left:6px;padding:1px 6px;border-radius:999px;background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;font-size:0.66rem;font-weight:800;">공용 ' + j._coUseCount + '건</span>' : '') +
                     todayBadge + actionBadge +
                     (aliases.length ? '<span class="jig-part-alias">병합: ' + aliases.map(_esc).join(', ') + '</span>' : '') +
                 '</td>' +
@@ -1748,7 +1809,7 @@ var JigModule = (function () {
     function renderBlocks(jigs) {
         const el = document.getElementById('jigBlocks');
         if (!el) return;
-        const pool = jigs || [];
+        const pool = _collapseCoUseJigs(jigs || []);
         if (!pool.length) {
             el.innerHTML = `<div style="text-align:center;padding:60px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:3rem;display:block;opacity:0.3;margin-bottom:8px;">build</span>
@@ -2679,9 +2740,9 @@ var JigModule = (function () {
         const el = document.getElementById('jigMasterView');
         if (!el) return;
         const itemTypeMap = _productItemTypeMap();
-        const visible = (Storage.getAll(STORE) || []).filter(function (j) {
+        const visible = _collapseCoUseJigs((Storage.getAll(STORE) || []).filter(function (j) {
             return _showAsItems || !_isAsItemType(_jigItemType(j, itemTypeMap));
-        });
+        }));
         const cars = _sortedUniqueCars(visible);
         const countByCar = {};
         visible.forEach(function (j) {
@@ -4253,9 +4314,12 @@ var JigModule = (function () {
         if (!date) { UIUtils.toast(`${action}일을 입력하세요.`, 'warning'); return; }
         if (!worker) { UIUtils.toast(`${action} 작업자를 입력하세요.`, 'warning'); return; }
         if (!_resetPhotoUrl) { UIUtils.toast('지그박스 교체일 작성 사진을 첨부하세요.', 'warning'); return; }
-        const logs = (Storage.getAll(LOG_STORE) || []).filter(l => l.jigId === id && !_isResetWorkType(l.workType));
+        const ids = _coUseIdsFor(id);
+        const logs = (Storage.getAll(LOG_STORE) || []).filter(l => ids.indexOf(l.jigId) >= 0 && !_isResetWorkType(l.workType));
         for (const log of logs) await Storage.remove(LOG_STORE, log.id);
-        await Storage.add(LOG_STORE, { jigId: id, date, workType: action, useCount: 0, note: `${action} 초기화`, worker, photoUrl: _resetPhotoUrl });
+        for (const jid of ids) {
+            await Storage.add(LOG_STORE, { jigId: jid, date, workType: action, useCount: 0, note: `${action} 초기화`, worker, photoUrl: _resetPhotoUrl });
+        }
         UIUtils.closeModal();
         UIUtils.toast('사용 횟수가 초기화되었습니다.', 'success');
         loadAll();

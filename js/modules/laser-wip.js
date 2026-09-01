@@ -1950,6 +1950,7 @@ var LaserWipModule = (function() {
             const book = w.stocktakeBookQty != null ? Math.round(Number(w.stocktakeBookQty) || 0) : null;
             const counted = w.stocktakeCountedQty != null ? Math.round(Number(w.stocktakeCountedQty) || 0) : null;
             const cut = Math.round(Number(w.quantity) || 0);
+            const isIncr = !!w.isResidualManualIn;
             const encKey = _productKey(w.carModel || '', w.partName || '', w.color || '');
             const safeId = String(w.id || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'");
             const detailFn = popup
@@ -1966,7 +1967,7 @@ var LaserWipModule = (function() {
                 <td style="padding:8px 10px;font-size:0.78rem;color:var(--text-secondary,#475569);max-width:320px;white-space:normal;">${_esc(_stocktakeLotSummary(w) || '-')}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${book != null ? UIUtils.formatNumber(book) : '-'}</td>
                 <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:var(--accent-orange,#f59e0b);">${counted != null ? UIUtils.formatNumber(counted) : '-'}</td>
-                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:var(--accent-red);">${cut ? '−' + UIUtils.formatNumber(cut) : '-'}</td>
+                <td style="text-align:right;white-space:nowrap;padding:8px 10px;font-weight:700;color:${isIncr ? 'var(--accent-green,#16a34a)' : 'var(--accent-red)'};">${cut ? (isIncr ? '+' : '−') + UIUtils.formatNumber(cut) : '-'}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;color:var(--text-muted,#64748b);">${_esc(w.note || '-')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;font-size:0.8rem;color:var(--text-secondary,#475569);">${_esc(w.author || '-')}</td>
                 <td style="white-space:nowrap;padding:8px 10px;">
@@ -5403,7 +5404,15 @@ function lwStFilterRows(q){
             let routeLabel;
             let routeColor;
             let routeDetail;
-            if (isLotAdjust) {
+            if (w.isResidualStocktake) {
+                routeLabel = '재고 실사';
+                routeColor = '#0369a1';
+                const stLotTxt = _stocktakeLotSummary(w);
+                routeDetail = (stLotTxt ? stLotTxt + ' — ' : '')
+                    + (w.note
+                        || ('실사 ' + UIUtils.formatNumber(Number(w.stocktakeCountedQty) || 0)
+                            + ' / 장부 ' + UIUtils.formatNumber(Number(w.stocktakeBookQty) || 0)));
+            } else if (isLotAdjust) {
                 routeLabel = 'LOT 보정';
                 routeColor = '#2563eb';
                 routeDetail = machine
@@ -5417,14 +5426,6 @@ function lwStFilterRows(q){
                 routeLabel = '외관검사 포장출고';
                 routeColor = '#7c3aed';
                 routeDetail = machine || w.note || '외관검사 포장 사용';
-            } else if (w.isResidualStocktake) {
-                routeLabel = '재고 실사';
-                routeColor = '#0369a1';
-                const stLotTxt = _stocktakeLotSummary(w);
-                routeDetail = (stLotTxt ? stLotTxt + ' — ' : '')
-                    + (w.note
-                        || ('실사 ' + UIUtils.formatNumber(Number(w.stocktakeCountedQty) || 0)
-                            + ' / 장부 ' + UIUtils.formatNumber(Number(w.stocktakeBookQty) || 0)));
             } else {
                 routeLabel = '레이져 작업출고';
                 routeColor = '#7c3aed';
@@ -6081,8 +6082,10 @@ function _num(value) {
                 if (qty <= 0) return;
                 incomingRows.push(Object.assign({}, base, {
                     qty: qty,
-                    route: w.isResidualLotAdjust ? 'LOT 보정' : '수동 입고',
-                    note: w.note || w.machine || w.author || ''
+                    route: w.isResidualStocktake ? '재고 실사' : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 입고'),
+                    note: (w.isResidualStocktake && _stocktakeLotSummary(w))
+                        ? (_stocktakeLotSummary(w) + (w.note ? ' · ' + w.note : ''))
+                        : (w.note || w.machine || w.author || '')
                 }));
                 return;
             }
@@ -7429,8 +7432,25 @@ function _num(value) {
     // 각 건은 잔량 상세의 '재고 실사' 이력으로 남아 개별 수정·삭제로 되돌릴 수 있다.
     function openResidualBulkCleanup() {
         if (!_canAdjustWip()) { UIUtils.toast('수정/보정 권한이 있는 사용자만 사용할 수 있습니다.', 'warning'); return; }
-        const rows = _calcLaserResidualWip().filter(function(r) { return (Number(r.residualQty) || 0) > 0; });
-        if (!rows.length) { UIUtils.toast('실사할 잔량이 없습니다.', 'info'); return; }
+        const wipRows = _calcLaserResidualWip().filter(function(r) { return (Number(r.residualQty) || 0) > 0; });
+        const _seenKey = new Set(wipRows.map(function(r) { return _productKey(r.carModel, r.partName, r.color || ''); }));
+        // 장부 잔량 0 인 품목도 실사 대상에 포함한다(실물이 있는데 장부가 0인 경우 +로 입력).
+        const zeroRows = _getResidualProducts()
+            .filter(function(p) { return !_isResidualExemptProduct(p.carModel, p.partName); })
+            .filter(function(p) { return !_seenKey.has(_productKey(p.carModel || '', p.partName || '', p.color || '')); })
+            .map(function(p) {
+                return {
+                    carModel: p.carModel || '', partName: p.partName || '', color: p.color || '',
+                    residualQty: 0,
+                    packUnit: _num(p.packUnit || p.packingUnit || p.packageUnit || p.packQty || p.packingQty) || 0
+                };
+            });
+        const rows = wipRows.concat(zeroRows).sort(function(a, b) {
+            return String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko')
+                || String(a.partName || '').localeCompare(String(b.partName || ''), 'ko')
+                || String(a.color || '').localeCompare(String(b.color || ''), 'ko');
+        });
+        if (!rows.length) { UIUtils.toast('실사할 품목이 없습니다.', 'info'); return; }
         const today = new Date().toISOString().slice(0, 10);
         const totalNow = rows.reduce(function(s, r) { return s + (Number(r.residualQty) || 0); }, 0);
         const cars = [...new Set(rows.map(function(r) { return r.carModel || ''; }).filter(Boolean))]
@@ -7494,7 +7514,7 @@ function _num(value) {
                     <td style="white-space:nowrap;">${injLabel}</td>
                     <td style="text-align:right;color:var(--accent-orange,#f59e0b);font-weight:600;font-variant-numeric:tabular-nums;">${UIUtils.formatNumber(ln.book)}</td>
                     <td style="text-align:right;">
-                        <input type="number" id="lwBulkTgt${seq}" value="${ln.book}" min="0" max="${ln.book}"
+                        <input type="number" id="lwBulkTgt${seq}" value="${ln.book}" min="0"
                             style="width:84px;text-align:right;" class="form-input">
                     </td>
                 </tr>`;
@@ -7505,7 +7525,7 @@ function _num(value) {
             <div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:0.82rem;color:var(--text-secondary);line-height:1.5;">
                 품목의 보유 <strong>LOT별</strong>로 <strong>실사 수량</strong>(실제 창고 수량)을 입력하세요. 기본값은 <strong>현재 장부 잔량</strong>입니다. 틀린 LOT만 고치면 됩니다.<br>
                 장부와의 차이는 작업·검사와 무관한 <strong>'재고 실사 조정'</strong>으로만 반영되며, <strong>검사 대기 목록에는 올라가지 않습니다.</strong>
-                실사 후에도 <strong>LOT 구분은 그대로 유지</strong>됩니다. 각 LOT의 장부 잔량보다 큰 값은 반영되지 않습니다(그 품목은 건너뜁니다).
+                실사 후에도 <strong>LOT 구분은 그대로 유지</strong>됩니다. <strong>장부보다 많거나 적어도 모두 반영</strong>됩니다(장부 0인 품목도 실물 수량을 입력하세요). LOT이 없는 잔량은 반영 후 품목 상세의 「LOT 지정」에서 지정하세요.
             </div>
             <div class="form-row" style="margin-bottom:12px;">
                 <div class="form-group">
@@ -7603,7 +7623,7 @@ function _num(value) {
             }
             const p = byProd[pi];
             p.book += book;
-            if (counted < 0 || counted > book) { p.invalid = true; return; }
+            if (counted < 0) { p.invalid = true; return; }
             p.counted += counted;
             const pl = tr.getAttribute('data-pl') || '';
             const il = tr.getAttribute('data-il') || '';
@@ -7616,34 +7636,38 @@ function _num(value) {
         Object.keys(byProd).forEach(function(pi) {
             const p = byProd[pi];
             if (p.invalid) { skipped++; return; }
-            const cut = p.book - p.counted;
-            if (cut <= 0) return; // 변경 없음 / 증가는 반영하지 않음
+            if (p.counted === p.book) return; // 변경 없음
             targets.push(p);
         });
 
         if (!targets.length) {
-            UIUtils.toast(skipped ? '반영할 품목이 없습니다. (장부보다 큰 값은 건너뜁니다)' : '변경된 값이 없습니다.', 'info');
+            UIUtils.toast(skipped ? '반영할 품목이 없습니다. (잘못된 입력 제외)' : '변경된 값이 없습니다.', 'info');
             return;
         }
 
-        const totalCut = targets.reduce(function(s, t) { return s + (t.book - t.counted); }, 0);
-        const msg = `${targets.length}개 품목의 재고 실사를 반영합니다. 합계 ${UIUtils.formatNumber(totalCut)} EA 감소.`
-            + (skipped ? ` (입력값이 장부보다 큰 ${skipped}개 품목은 제외)` : '')
+        let plusTot = 0, minusTot = 0;
+        targets.forEach(function(t) {
+            const d = t.counted - t.book;
+            if (d > 0) plusTot += d; else minusTot += -d;
+        });
+        const msg = `${targets.length}개 품목의 재고 실사를 반영합니다.`
+            + ` 감소 ${UIUtils.formatNumber(minusTot)} EA · 증가 ${UIUtils.formatNumber(plusTot)} EA.`
+            + (skipped ? ` (잘못된 입력 ${skipped}개 품목 제외)` : '')
             + ` 보정 후 잔량은 잔량 재고 현황에 LOT 구분과 함께 남고, 검사 대기에는 올라가지 않습니다. 반영할까요?`;
 
         UIUtils.confirm(msg, async function() {
-            await _applyResidualBulkCleanup(targets, totalCut, date, note, author);
+            await _applyResidualBulkCleanup(targets, { plus: plusTot, minus: minusTot }, date, note, author);
         });
     }
 
-    async function _applyResidualBulkCleanup(targets, totalCut, date, note, author) {
+    async function _applyResidualBulkCleanup(targets, totals, date, note, author) {
         let done = 0;
         const day = String(date || '').slice(0, 10);
         try {
             for (let i = 0; i < targets.length; i++) {
                 const t = targets[i];
-                const cut = Math.max(0, t.book - t.counted);
-                if (cut <= 0) { done++; continue; }
+                const diff = Math.round(Number(t.counted) || 0) - Math.round(Number(t.book) || 0);
+                if (diff === 0) { done++; continue; }
 
                 // 같은 품목·같은 날짜의 기존 재고 실사 기록은 이번 실사로 대체한다.
                 // (재고 실사는 "현재 실물 = N개" 를 확정하는 것이므로, 같은 날 다시 세면
@@ -7668,11 +7692,12 @@ function _num(value) {
                     carModel: t.carModel,
                     partName: t.partName,
                     color: t.color,
-                    quantity: cut,
+                    quantity: Math.abs(diff),
                     note: note,
                     packUnit: t.packUnit,
                     isManual: true,
-                    isResidualManualOut: true,
+                    isResidualManualIn: diff > 0,
+                    isResidualManualOut: diff < 0,
                     isResidualStocktake: true,
                     stocktakeCountedQty: t.counted,
                     stocktakeBookQty: t.book,
@@ -7690,7 +7715,8 @@ function _num(value) {
         }
 
         UIUtils.closeModal();
-        UIUtils.toast(`레이져 잔량 재고 실사 ${done}개 품목 반영 완료 — 합계 ${UIUtils.formatNumber(totalCut)} EA 감소`, 'success');
+        const _t = totals || {};
+        UIUtils.toast(`레이져 포장 잔량 재고 실사 ${done}개 품목 반영 완료 — 감소 ${UIUtils.formatNumber(_t.minus || 0)} · 증가 ${UIUtils.formatNumber(_t.plus || 0)} EA`, 'success');
         refresh();
     }
 
