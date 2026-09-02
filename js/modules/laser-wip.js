@@ -4289,116 +4289,92 @@ function lwStFilterRows(q){
         }
 
         const date = (document.getElementById('lwAssignResDate') || {}).value || new Date().toISOString().slice(0, 10);
-        const detailBefore = _calcResidualLotDetail(carModel, partName, color);
-        const unassignedBefore = Math.max(0, Number(detailBefore.manualAdj) || 0);
-        const maxAssign = unassignedBefore > 0 ? unassignedBefore : Math.max(0, Number(currentQty) || 0);
+
+        // 현재 잔량 상태(LOT별 + 미지정)를 그대로 스냅샷으로 잡고, 지정 수량만큼만
+        // "미지정 → 지정 LOT" 로 옮긴 재고 실사 레코드 1건을 남긴다.
+        // 총 잔량은 변하지 않으며, 엔진이 가장 신뢰하는 "최신 실사" 경로를 타므로
+        // 이후 재고정 로직이 지정 결과를 덮어쓰지 않는다.
+        const detail = _calcResidualLotDetail(carModel, partName, color);
+        const curLots = (detail.lots || [])
+            .map(function (l) {
+                return {
+                    paintLot: _normalizePaintLot(l.paintLot),
+                    injLot: _normalizeInjLot(l.injLot),
+                    qty: Math.max(0, Math.round(Number(l.qty) || 0))
+                };
+            })
+            .filter(function (l) { return l.qty > 0; });
+        const unassignedNow = Math.max(0, Math.round(Number(detail.manualAdj) || 0));
+
         let targetQty = Math.max(0, parseInt((document.getElementById('lwAssignResQty') || {}).value || '0', 10) || 0);
         if (targetQty <= 0) {
             UIUtils.toast('지정 수량을 입력해 주세요.', 'warning');
             return;
         }
-        if (maxAssign > 0 && targetQty > maxAssign) {
-            targetQty = maxAssign;
+        if (unassignedNow <= 0) {
+            UIUtils.toast('지정할 LOT 미지정 잔량이 없습니다.', 'info');
+            return;
         }
-        const note = ((document.getElementById('lwAssignResNote') || {}).value || '').trim() || 'LOT 지정';
+        if (targetQty > unassignedNow) targetQty = unassignedNow;
+
+        const nPaint = _normalizePaintLot(paintLot);
+        const nInj = _normalizeInjLot(injLot);
+        const key = _residualLotKey(nPaint, nInj);
+        const merged = curLots.slice();
+        const hit = merged.find(function (l) { return _residualLotKey(l.paintLot, l.injLot) === key; });
+        if (hit) hit.qty += targetQty;
+        else merged.push({ paintLot: nPaint, injLot: nInj, qty: targetQty });
+        const remainUnassigned = Math.max(0, unassignedNow - targetQty);
+        const countedTotal = merged.reduce(function (s, l) { return s + l.qty; }, 0) + remainUnassigned;
+
+        const note = ((document.getElementById('lwAssignResNote') || {}).value || '').trim()
+            || ('LOT 지정 ' + paintLot + '/' + injLot);
+        const prod = _getResidualProducts().find(function (p) {
+            return p.carModel === carModel && p.partName === partName && (!color || p.color === color);
+        });
+        const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
 
         try {
-            // 1) 이력 리셋 스냅샷의 미지정 잔량을 지정 LOT로 전환 (리셋 후 미지정 잔량의 핵심 원인)
-            const resetResult = await _convertUnassignedInResidualReset(
-                carModel, partName, color, paintLot, injLot, targetQty
-            );
-
-            // 2) 리셋 이전/이후 수기 미지정 기록에도 LOT 메타데이터를 채운다.
-            const unassigned = _findUnassignedResidualRecords(carModel, partName, color);
-            for (let i = 0; i < unassigned.length; i++) {
-                await Storage.update(STORE_LASER, unassigned[i].id, {
-                    lotNo: injLot,
-                    paintDate: paintLot,
-                    residualPaintLot: paintLot
-                });
+            // 같은 날 기존 재고 실사 스냅샷은 감사용으로 내려 최신 지정이 유효 실사가 되게 한다
+            // (재고 실사 저장 로직과 동일한 처리).
+            const sameDayStale = (_getLaserWorks()).filter(function (w) {
+                return w && w.isResidualStocktake && !w.isResidualAuditOnly
+                    && (w.carModel || '') === carModel && (w.partName || '') === partName
+                    && (!color || (w.color || '') === color)
+                    && String(w.date || '').slice(0, 10) === String(date).slice(0, 10);
+            });
+            for (let i = 0; i < sameDayStale.length; i++) {
+                await Storage.update(STORE_LASER, sameDayStale[i].id, { isResidualAuditOnly: true });
             }
 
-            // 3) 스냅샷 전환만으로 부족하면(리셋 없는 경우 등) 지정 LOT로 절대 보정 입고를 남긴다.
-            const detailAfterMeta = _calcResidualLotDetail(carModel, partName, color);
-            const stillUnassigned = Math.max(0, Number(detailAfterMeta.manualAdj) || 0);
-            const assignedNow = (detailAfterMeta.lots || []).reduce(function(sum, lot) {
-                if (_normalizePaintLot(lot.paintLot) !== _normalizePaintLot(paintLot)) return sum;
-                if (_normalizeInjLot(lot.injLot) !== _normalizeInjLot(injLot)) return sum;
-                return sum + Math.max(0, Number(lot.qty) || 0);
-            }, 0);
-
-            if (stillUnassigned > 0 && resetResult.converted < targetQty) {
-                // 스냅샷에 미지정이 더 남아 있으면 남은 분도 지정 LOT로 한 번 더 전환
-                await _convertUnassignedInResidualReset(
-                    carModel, partName, color, paintLot, injLot, Math.min(stillUnassigned, targetQty - resetResult.converted)
-                );
-            }
-
-            const detailFinalCheck = _calcResidualLotDetail(carModel, partName, color);
-            const assignedFinal = (detailFinalCheck.lots || []).reduce(function(sum, lot) {
-                if (_normalizePaintLot(lot.paintLot) !== _normalizePaintLot(paintLot)) return sum;
-                if (_normalizeInjLot(lot.injLot) !== _normalizeInjLot(injLot)) return sum;
-                return sum + Math.max(0, Number(lot.qty) || 0);
-            }, 0);
-            const unassignedFinal = Math.max(0, Number(detailFinalCheck.manualAdj) || 0);
-
-            // 리셋이 없고 미지정만 있던 경우: 미지정 소진 + 지정 LOT 반영을 절대보정으로 맞춘다.
-            if (unassignedFinal >= targetQty && assignedFinal < targetQty) {
-                const prod = _getResidualProducts().find(function(p) {
-                    return p.carModel === carModel && p.partName === partName && (!color || p.color === color);
-                });
-                const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
-                // 미지정 잔량을 줄이기 위해 수기 출고(미지정) + 지정 LOT 절대보정
-                await Storage.add(STORE_LASER, {
-                    date, carModel, partName, color,
-                    note: note + ' (미지정 차감)',
-                    packUnit, isManual: true,
-                    quantity: targetQty,
-                    isResidualManualOut: true,
-                    author: _currentUserName()
-                });
-                await Storage.add(STORE_LASER, {
-                    date, carModel, partName, color,
-                    lotNo: injLot,
-                    paintDate: paintLot,
-                    residualPaintLot: paintLot,
-                    note: note,
-                    packUnit, isManual: true,
-                    quantity: targetQty,
-                    isResidualManualIn: true,
-                    isResidualLotAdjust: true,
-                    residualLotAbsoluteQty: assignedFinal + targetQty,
-                    author: _currentUserName()
-                });
-            } else if (!resetResult.changed && unassigned.length === 0 && assignedFinal < targetQty) {
-                const prod = _getResidualProducts().find(function(p) {
-                    return p.carModel === carModel && p.partName === partName && (!color || p.color === color);
-                });
-                const packUnit = prod ? _num(prod.packUnit || prod.packingUnit || prod.packageUnit || prod.packQty || prod.packingQty) : 0;
-                await Storage.add(STORE_LASER, {
-                    date, carModel, partName, color,
-                    lotNo: injLot,
-                    paintDate: paintLot,
-                    residualPaintLot: paintLot,
-                    note: note,
-                    packUnit, isManual: true,
-                    quantity: targetQty,
-                    isResidualManualIn: true,
-                    author: _currentUserName()
-                });
-            }
+            await Storage.add(STORE_LASER, {
+                date: date,
+                carModel: carModel, partName: partName, color: color,
+                note: note,
+                packUnit: packUnit,
+                isManual: true,
+                quantity: 0,
+                isResidualManualIn: true,
+                isResidualStocktake: true,
+                isResidualLotAssign: true,
+                stocktakeCountedQty: countedTotal,
+                stocktakeBookQty: countedTotal,
+                stocktakeLots: merged.map(function (l) {
+                    return { paintLot: l.paintLot, injLot: l.injLot, qty: l.qty };
+                }),
+                stocktakeUnassignedCounted: remainUnassigned,
+                author: _currentUserName()
+            });
         } catch (err) {
             console.error('[LaserWip] saveAssignResidualLotModal failed:', err);
             UIUtils.toast('LOT 지정 저장에 실패했습니다.', 'error');
             return;
         }
 
-        const detailDone = _calcResidualLotDetail(carModel, partName, color);
-        const leftUnassigned = Math.max(0, Number(detailDone.manualAdj) || 0);
         UIUtils.closeChildModal();
         UIUtils.closeModal();
-        if (leftUnassigned > 0) {
-            UIUtils.toast(`LOT ${paintLot}/${injLot} 지정 완료. 미지정 잔량 ${UIUtils.formatNumber(leftUnassigned)} EA가 남아 있습니다.`, 'warning');
+        if (remainUnassigned > 0) {
+            UIUtils.toast(`LOT ${paintLot}/${injLot} 지정 완료. 미지정 잔량 ${UIUtils.formatNumber(remainUnassigned)} EA가 남아 있습니다.`, 'warning');
         } else {
             UIUtils.toast(`LOT 미지정 ${UIUtils.formatNumber(targetQty)} EA → ${paintLot}/${injLot} 지정 완료`, 'success');
         }
