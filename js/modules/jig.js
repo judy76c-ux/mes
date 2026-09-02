@@ -1859,7 +1859,7 @@ var JigModule = (function () {
             border: '#fecaca',
             bg: '#fef2f2',
             hint: '조치가 다가옵니다. JIG 발주가 필요합니다.',
-            actionHtml: '<button type="button" class="btn btn-sm btn-outline" onclick="Router.navigate(\'jig-ordering\')" style="padding:2px 8px;font-size:0.72rem;font-weight:700;border-color:#fecaca;color:#b91c1c;">발주 관리</button>' +
+            actionHtml: '<button type="button" class="btn btn-sm btn-outline" onclick="JigModule.autoRegisterActionOrders()" style="padding:2px 8px;font-size:0.72rem;font-weight:700;border-color:#fecaca;color:#b91c1c;" title="조치 필요(90% 이상) 지그를 발주 관리에 자동 등록하고 발주 관리 화면으로 이동합니다.">발주 관리</button>' +
                 _laserJigNotifyButtonHtml()
         }, actionJigs, orderingByJigId, { showActionBadge: true, todayIdMap: todayAllIds, sortByPct: true });
 
@@ -4172,6 +4172,41 @@ var JigModule = (function () {
             </div>`;
     }
 
+    /** 조치 필요(수명 90% 이상) 지그를 발주 관리에 자동 등록한 뒤 발주 관리 화면으로 이동한다.
+     *  이미 발주가 등록된 지그는 건너뛴다. */
+    async function autoRegisterActionOrders() {
+        const actionJigs = (_enrichedJigs() || []).filter(_needsLifeAction);
+        const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
+        const orderedJigIds = new Set(orderings.map(function (o) { return o.jigId; }).filter(Boolean));
+        const targets = actionJigs.filter(function (j) { return !orderedJigIds.has(j.id); });
+
+        if (!actionJigs.length) {
+            UIUtils.toast('조치 필요 지그가 없습니다.', 'info');
+            return;
+        }
+        if (!targets.length) {
+            UIUtils.toast('조치 필요 지그는 이미 모두 발주 등록되어 있습니다.', 'info');
+            Router.navigate('jig-ordering');
+            return;
+        }
+
+        const today = _today();
+        let n = 0;
+        for (const j of targets) {
+            const pct = Math.min(100, Math.round(_lifePct(j)));
+            await Storage.add(DB.STORES.JIG_ORDERING, {
+                jigId: j.id,
+                orderDate: today,
+                dueDate: '',
+                status: '대기',
+                note: '수명 ' + pct + '% 도달 · 자동 등록'
+            });
+            n++;
+        }
+        UIUtils.toast(n + '건 발주 등록 완료.', 'success');
+        Router.navigate('jig-ordering');
+    }
+
     function openOrderingModal(id) {
         const orderings = Storage.getAll(DB.STORES.JIG_ORDERING) || [];
         const jigs = (Storage.getAll(STORE) || []).sort((a, b) => (a.carModel || '').localeCompare(b.carModel || '', 'ko') || (a.partName || '').localeCompare(b.partName || '', 'ko'));
@@ -4580,6 +4615,7 @@ var JigModule = (function () {
         filterMasterCar,
         recalcAllJigMasterLife,
         fixUnmatchedJigPartNames,
+        autoRegisterActionOrders,
         toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,
