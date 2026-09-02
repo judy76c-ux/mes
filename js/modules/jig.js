@@ -2806,10 +2806,16 @@ var JigModule = (function () {
                 <div class="card-body">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
                         <h4 style="margin:0;">도장 지그 대장</h4>
-                        ${_isAdminUser() ? `<button type="button" class="btn btn-outline btn-sm" onclick="JigModule.recalcAllJigMasterLife()"
+                        ${_isAdminUser() ? `<div style="display:flex;gap:8px;flex-wrap:wrap;">
+                          <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.fixUnmatchedJigPartNames()"
+                            title="구분이 미지정인 지그의 품명을 제품 기본정보(쉼표·공백 차이 무시)와 매칭해 정식 품명으로 보정합니다.">
+                            <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">rule</span> 미지정 품명 보정
+                          </button>
+                          <button type="button" class="btn btn-outline btn-sm" onclick="JigModule.recalcAllJigMasterLife()"
                             title="측정 포인트가 등록된 모든 차종의 지그를 소수 정밀도 유지 방식으로 다시 계산합니다.">
                             <span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">sync</span> 전체 지그 수명 재계산
-                        </button>` : ''}
+                          </button>
+                        </div>` : ''}
                     </div>
                     <div style="margin-bottom:10px;padding:8px 12px;background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:8px;font-size:0.78rem;color:var(--text-secondary);line-height:1.45;">
                         수명 근거: <strong>제한 두께 도달 도장횟수 = JIG 제한 두께 ÷ 1회 도막형성 두께</strong>
@@ -2896,6 +2902,78 @@ var JigModule = (function () {
                     updated++;
                 }
                 UIUtils.toast(updated + '건 재계산 완료.', 'success');
+                renderJigMaster();
+            }
+        );
+    }
+
+    /** 품명 정규화 — 쉼표/공백/대소문자 차이를 무시하고 비교하기 위한 키 */
+    function _normPartKey(s) {
+        return String(s || '')
+            .toUpperCase()
+            .replace(/,/g, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    /** 관리자 전용 — 구분이 "미지정"인 지그(제품 기본정보와 품명이 정확히 일치하지 않아 매칭 실패)를
+     *  같은 차종의 도장 제품 기본정보와 정규화(쉼표/공백 무시) 비교해, 일치하는 제품의 정식 품명으로 보정한다. */
+    async function fixUnmatchedJigPartNames() {
+        if (!_isAdminUser()) {
+            UIUtils.toast('관리자만 실행할 수 있습니다.', 'warning');
+            return;
+        }
+        const itemTypeMap = _productItemTypeMap();
+        const prods = _paintingProducts();
+        // 차종별 정규화 품명 → 정식 품명
+        const byCar = {};
+        prods.forEach(function (p) {
+            const car = String(p.carModel || '').trim();
+            const part = String(p.partName || '').trim();
+            if (!car || !part) return;
+            (byCar[car] = byCar[car] || {})[_normPartKey(part)] = part;
+        });
+
+        const all = Storage.getAll(STORE) || [];
+        const changes = [];
+        all.forEach(function (j) {
+            // 이미 제품과 매칭되는(구분이 잡히는) 지그는 건드리지 않는다
+            if (_jigItemType(j, itemTypeMap)) return;
+            const car = _jigCarKey(j);
+            const dict = byCar[car];
+            if (!dict) return;
+            const fix = function (name) {
+                const t = String(name || '').trim();
+                if (!t) return t;
+                const hit = dict[_normPartKey(t)];
+                return (hit && hit !== t) ? hit : t;
+            };
+            const newPart = fix(j.partName);
+            const oldAliases = Array.isArray(j.partAliases) ? j.partAliases : [];
+            const newAliases = oldAliases.map(fix);
+            const changed = newPart !== j.partName
+                || newAliases.some(function (v, i) { return v !== oldAliases[i]; });
+            if (changed) {
+                changes.push({ id: j.id, car: car, from: j.partName, to: newPart, partAliases: newAliases });
+            }
+        });
+
+        if (!changes.length) {
+            UIUtils.toast('보정할 품명이 없습니다. (미지정 지그가 없거나, 제품 기본정보에서 일치하는 품명을 찾지 못했습니다.)', 'info');
+            return;
+        }
+
+        UIUtils.confirm(
+            changes.length + '건의 지그 품명을 제품 기본정보에 맞춰 보정합니다.\n\n'
+            + changes.slice(0, 12).map(function (c) { return '· [' + (c.car || '-') + '] ' + c.from + '  →  ' + c.to; }).join('\n')
+            + (changes.length > 12 ? '\n… 외 ' + (changes.length - 12) + '건' : ''),
+            async function () {
+                let n = 0;
+                for (const c of changes) {
+                    await Storage.update(STORE, c.id, { partName: c.to, partAliases: c.partAliases });
+                    n++;
+                }
+                UIUtils.toast(n + '건 품명 보정 완료.', 'success');
                 renderJigMaster();
             }
         );
@@ -4501,6 +4579,7 @@ var JigModule = (function () {
         onMasterCarFilterChange,
         filterMasterCar,
         recalcAllJigMasterLife,
+        fixUnmatchedJigPartNames,
         toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,
