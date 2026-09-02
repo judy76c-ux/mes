@@ -10,6 +10,9 @@ const PaintInventoryModule = (function() {
     // 입고 대기 목록 진단 스냅샷 — renderPaintInspStandby가 갱신, diagnosePaintStandby()로 조회
     let _lastPaintStandbyDiag = null;
 
+    // 입고 대기 "의심 누락" 진단 적용 기준일 — 이 날짜 이전 검사분은 과거 데이터로 보고 배너에서 제외
+    const STANDBY_DIAG_SINCE = '2026-09-02';
+
     // 이 페이지의 작성 책임자(작성 담당자) — 서버 config에 사용자 id 배열로 저장
     const AUTHOR_CONFIG_KEY = 'page_authors_paint-inventory';
 
@@ -1725,8 +1728,12 @@ const PaintInventoryModule = (function() {
             if (processedInspIds.has(i.id)) return { reason: '이미 창고 입고 완료', benign: true };
             const mid = getMaterialId(i.paintName);
             if (!mid) return null;
-            const lk = `${mid}||${i.lotNo}`;
             const inspDay = String(i.date || '').slice(0, 10);
+            // 기준일 이전 검사분은 과거 데이터 → 의심 누락으로 띄우지 않는다 (정상 제외 처리)
+            if (inspDay && inspDay < STANDBY_DIAG_SINCE) return { reason: '기준일 이전 검사 (진단 제외)', benign: true };
+            // LOT 미기재는 자재 단위 오탐이 심해 진단 보류
+            if (!String(i.lotNo || '').trim()) return { reason: 'LOT 미기재 — 진단 보류', benign: true };
+            const lk = `${mid}||${i.lotNo}`;
             // ✓ 같은 LOT 번호라도 검사일보다 "이전"에 등록된 수기/일괄 재고는 지난 배치이므로
             //   이번 검사(새 납품)를 가리면 안 된다. 검사일 이후(같은날 포함) 등록분만 중복으로 본다.
             if (legacyStockDates[lk] != null && legacyStockDates[lk] >= inspDay) {
