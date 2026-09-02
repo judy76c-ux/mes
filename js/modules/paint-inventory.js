@@ -1696,11 +1696,22 @@ const PaintInventoryModule = (function() {
         const processedInspIds = new Set(
             inventory.filter(i => i.sourceInspectionId && !_isCurrentStockEditRecord(i)).map(i => i.sourceInspectionId)
         );
-        const legacyStockSet = new Set(
-            inventory
-                .filter(i => i.type !== '출고' && !i.sourceInspectionId && !_isCurrentStockEditRecord(i))
-                .map(i => `${i.materialId}||${i.lotNo}`)
-        );
+        // materialId||lotNo → 가장 최근 (수기·검사연동X) 입고 재고 날짜
+        const legacyStockDates = {};
+        inventory
+            .filter(i => i.type !== '출고' && !i.sourceInspectionId && !_isCurrentStockEditRecord(i))
+            .forEach(i => {
+                const k = `${i.materialId}||${i.lotNo}`;
+                const d = String(i.date || '').slice(0, 10);
+                if (legacyStockDates[k] == null || d > legacyStockDates[k]) legacyStockDates[k] = d;
+            });
+        // materialId||lotNo → 가장 최근 일괄등록 재고설정 날짜
+        const bulkStockDates = {};
+        inventory.filter(i => _isCurrentStockEditRecord(i)).forEach(i => {
+            const k = `${i.materialId}||${i.lotNo}`;
+            const d = String(i.date || '').slice(0, 10);
+            if (bulkStockDates[k] == null || d > bulkStockDates[k]) bulkStockDates[k] = d;
+        });
 
         // paintName → materialId 매핑 헬퍼
         function getMaterialId(paintName) {
@@ -1708,36 +1719,40 @@ const PaintInventoryModule = (function() {
             return mat ? mat.id : null;
         }
 
-        // 일괄 등록(bulk)으로 재고가 설정된 LOT 집합 — 그 LOT과 정확히 같은 검사 건만 대기품에서 제외한다.
-        // ✓ 예전엔 자재(materialId) 단위로 통째로 제외했는데, 그러면 그 자재를 일괄 등록으로 한 번이라도
-        //   손댄 뒤로는 새로 들어오는(다른 LOT) 수입검사가 영원히 입고 대기품에 안 뜨는 버그가 됐다.
-        const bulkHandledLotKeys = new Set(
-            inventory.filter(i => _isCurrentStockEditRecord(i)).map(i => `${i.materialId}||${i.lotNo}`)
-        );
-
+        // 반환: { reason, benign }  benign=true 는 정상(입고완료/취소) → 경고 배너에 안 띄움
         function _standbyExcludeReason(i) {
-            if (isPaintInspectionStandbyCanceled(i)) return '입고취소 처리됨';
-            if (processedInspIds.has(i.id)) return '이미 창고 입고 완료';
+            if (isPaintInspectionStandbyCanceled(i)) return { reason: '입고취소 처리됨', benign: true };
+            if (processedInspIds.has(i.id)) return { reason: '이미 창고 입고 완료', benign: true };
             const mid = getMaterialId(i.paintName);
-            if (!mid) return '';
-            if (legacyStockSet.has(`${mid}||${i.lotNo}`)) return '같은 자재·LOT의 수기(검사연동X) 재고가 이미 있음';
-            if (bulkHandledLotKeys.has(`${mid}||${i.lotNo}`)) return '같은 자재·LOT가 일괄등록으로 재고 설정됨';
-            return '';
+            if (!mid) return null;
+            const lk = `${mid}||${i.lotNo}`;
+            const inspDay = String(i.date || '').slice(0, 10);
+            // ✓ 같은 LOT 번호라도 검사일보다 "이전"에 등록된 수기/일괄 재고는 지난 배치이므로
+            //   이번 검사(새 납품)를 가리면 안 된다. 검사일 이후(같은날 포함) 등록분만 중복으로 본다.
+            if (legacyStockDates[lk] != null && legacyStockDates[lk] >= inspDay) {
+                return { reason: '같은 자재·LOT의 수기(검사연동X) 재고가 검사일 이후 등록됨', benign: false };
+            }
+            if (bulkStockDates[lk] != null && bulkStockDates[lk] >= inspDay) {
+                return { reason: '같은 자재·LOT가 일괄등록으로 재고 설정됨', benign: false };
+            }
+            return null;
         }
         const _excluded = [];
         const pending = passed.filter(i => {
-            const reason = _standbyExcludeReason(i);
-            if (reason) { _excluded.push({ insp: i, reason: reason }); return false; }
+            const r = _standbyExcludeReason(i);
+            if (r) { _excluded.push({ insp: i, reason: r.reason, benign: r.benign }); return false; }
             return true;
         });
+        const _excludedShow = _excluded.filter(x => !x.benign);
         _lastPaintStandbyDiag = {
             전체검사: inspections.length,
             합격특채: passed.length,
             대기: pending.length,
-            제외: _excluded.map(x => ({
+            의심제외: _excludedShow.map(x => ({
                 도료명: x.insp.paintName, LOT: x.insp.lotNo, 검사일: (x.insp.date || '').slice(0, 10),
                 입고수량: x.insp.incomingQty, 판정: x.insp.verdict, 사유: x.reason
             })),
+            정상제외: _excluded.filter(x => x.benign).length,
             합격특채아님_금일: _notPassed
         };
 
@@ -1750,12 +1765,13 @@ const PaintInventoryModule = (function() {
             }
         }
 
-        // 합격/특채인데 대기에서 빠진 항목이 있으면 경고 배너 (자재 누락 추적용)
-        const _missBannerHtml = (_excluded.length || _notPassed.length)
+        // 검사 완료했지만 대기에 없는 "의심" 항목만 배너로 (정상 입고완료/취소는 제외)
+        const _missItems = _excludedShow.map(x => ({ name: x.insp.paintName, lot: x.insp.lotNo, reason: x.reason }))
+            .concat(_notPassed.map(x => ({ name: x.도료명, lot: x.LOT, reason: x.사유 })));
+        const _missBannerHtml = _missItems.length
             ? `<div style="margin:10px 16px;padding:10px 12px;border-radius:8px;border:1px solid rgba(220,38,38,0.28);background:rgba(220,38,38,0.06);font-size:0.8rem;color:var(--text-secondary);line-height:1.5;">
-                    <strong style="color:var(--accent-red,#dc2626);">⚠ 검사 완료했지만 입고 대기에 없는 도료 ${_excluded.length + _notPassed.length}건</strong>
-                    ${_excluded.map(x => `<div>· ${_escapeHtml(x.insp.paintName || '-')} / LOT ${_escapeHtml(x.insp.lotNo || '-')} — ${_escapeHtml(x.reason)}</div>`).join('')}
-                    ${_notPassed.map(x => `<div>· ${_escapeHtml(x.도료명 || '-')} / LOT ${_escapeHtml(x.LOT || '-')} — ${_escapeHtml(x.사유)}</div>`).join('')}
+                    <strong style="color:var(--accent-red,#dc2626);">⚠ 검사 완료했지만 입고 대기에 없는 도료 ${_missItems.length}건</strong>
+                    ${_missItems.map(x => `<div>· ${_escapeHtml(x.name || '-')} / LOT ${_escapeHtml(x.lot || '-')} — ${_escapeHtml(x.reason)}</div>`).join('')}
                     <div style="margin-top:4px;color:var(--text-muted);">콘솔에서 <code>PaintInventoryModule.diagnosePaintStandby()</code> 로 상세 확인</div>
                 </div>`
             : '';
@@ -5370,8 +5386,8 @@ const PaintInventoryModule = (function() {
         try { renderPaintInspStandby(); } catch (e) { /* body 없어도 계산은 됨 */ }
         const d = _lastPaintStandbyDiag;
         if (!d) { console.log('진단 데이터 없음 — 도료 창고 화면을 한 번 연 뒤 다시 실행하세요.'); return null; }
-        console.log(`전체 검사 ${d.전체검사} · 합격/특채 ${d.합격특채} · 입고대기 ${d.대기} · 제외 ${d.제외.length} · (금일)합격특채아님 ${d.합격특채아님_금일.length}`);
-        if (d.제외.length) { console.log('── 합격/특채인데 대기에서 제외된 항목 ──'); console.table(d.제외); }
+        console.log(`전체 검사 ${d.전체검사} · 합격/특채 ${d.합격특채} · 입고대기 ${d.대기} · 정상제외(입고완료·취소) ${d.정상제외} · 의심제외 ${d.의심제외.length} · (금일)합격특채아님 ${d.합격특채아님_금일.length}`);
+        if (d.의심제외.length) { console.log('── 합격/특채인데 대기에서 빠진 의심 항목 ──'); console.table(d.의심제외); }
         if (d.합격특채아님_금일.length) { console.log('── 금일 검사 중 합격/특채·수량 조건 미충족 ──'); console.table(d.합격특채아님_금일); }
         return d;
     }
