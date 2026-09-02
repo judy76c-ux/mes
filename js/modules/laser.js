@@ -5134,10 +5134,12 @@ var LaserInspectionModule = (function() {
 
         const carModelEl = document.getElementById('liCarModel');
         const partNameEl = document.getElementById('liPartName');
-        const prevResidualQty = parseInt(document.getElementById('liPrevResidual')?.value || 0);
+        let   prevResidualQty = parseInt(document.getElementById('liPrevResidual')?.value || 0);
         const packUnit        = parseInt(document.getElementById('liPackUnit')?.value || 0);
         const packBoxCount    = parseInt(document.getElementById('liPackBoxCount')?.value || 0);
         const packQty         = packUnit * packBoxCount;
+        // 포장을 하나도 안 했으면 기존 잔량은 소진되지 않는다 (유령 소진 → 미차감 누적 방지).
+        if (!(packQty > 0)) prevResidualQty = 0;
         const available       = prevResidualQty + goodQty;
         const residualQty     = available - packQty;
         const packVarianceQty = Math.max(0, packQty - available);

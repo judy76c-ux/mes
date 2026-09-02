@@ -3365,19 +3365,29 @@ function lwStFilterRows(q){
             if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
-            const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
-            // 이 작업이 포장할 때 소진한 "기존 잔량"을 옛 LOT 잔량에서 먼저 빼준다.
-            // 이걸 빼지 않으면 아래 +resQty(신규 잔량)만 계속 새 LOT으로 쌓이고, 실제로는
-            // 다 써버린 기존 LOT 잔량이 영구히 남아 잔량이 끝없이 누적되는 버그가 생긴다.
-            // (consume 이벤트를 delta 이벤트보다 먼저 push해 같은 시각 동률일 때도 항상
-            //  "옛 LOT부터 소진 → 그다음 새 LOT 적립" 순서로 재생되게 한다)
+            const packedQty = Math.max(0, Number(w.shippingEligibleQty) || Number(w.packQty) || 0);
             const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
-            if (prevUsed > 0 && !w.residualPackOutRecorded) {
+
+            // ★ 이번 작업이 포장을 하나도 안 했으면(양품 < 포장단위) 기존 잔량은 소진되지 않는다.
+            //   prevResidualQty/laserResidualQty 가 잘못 저장돼 있어도(유령 소진 → 미차감 누적)
+            //   여기서 self-consistent 하게 처리한다: 기존 잔량 유지 + 이번 양품만 잔량으로 적립.
+            let resQty, consumePrev;
+            if (packedQty <= 0) {
+                resQty = goodQty;
+                consumePrev = 0;
+            } else {
+                resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+                consumePrev = prevUsed;
+            }
+
+            // 포장 시 소진한 "기존 잔량"을 옛 LOT 잔량에서 먼저 빼준다. (consume 이벤트를 delta 보다
+            // 먼저 push해 같은 시각 동률일 때도 "옛 LOT 소진 → 새 LOT 적립" 순서로 재생되게 한다)
+            if (consumePrev > 0 && !w.residualPackOutRecorded) {
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
                     type: 'unassigned',
-                    qty: -prevUsed,
+                    qty: -consumePrev,
                     sourceId: w.id || '',
                     author: w.author || ''
                 });
@@ -3469,6 +3479,21 @@ function lwStFilterRows(q){
                     author: w.author || ''
                 });
             }
+        });
+
+        // ③ 미차감 반영/리셋 — "처리한 시점"의 이벤트로 스트림에 넣는다.
+        //    (예전엔 재생이 다 끝난 뒤 일괄 적용해, 처리일 이후 새로 생긴 잔량까지 깎아버렸다)
+        _unmatchedActionsForProduct(_residualUnmatchedActions, carModel, partName, color).forEach(function(act) {
+            if (useSnapshot && _isBeforeHistoryReset(act.date, resetAt, act.createdAt)) return;
+            events.push({
+                date: act.date || '',
+                createdAt: act.createdAt || act.id || '',
+                type: 'unmatched_action',
+                action: act.unmatchedAction,
+                declared: Math.max(0, Number(act.quantity) || 0),
+                author: act.author || '',
+                skipFifoTrace: true
+            });
         });
 
         events.sort(_compareEventOccurrence);
@@ -3588,6 +3613,25 @@ function lwStFilterRows(q){
                 }
                 return;
             }
+            if (e.type === 'unmatched_action') {
+                // 이 시점까지 쌓인 미차감(unmatched)에만 적용한다.
+                const amount = e.declared > 0 ? Math.min(e.declared, unmatched) : unmatched;
+                if (amount <= 0) { unmatched = 0; return; }
+                if (e.action === 'absorb') {
+                    const before = _lotSumOnly() + Math.max(0, manualAdj);
+                    let remain = amount;
+                    const fromPool = Math.min(Math.max(0, manualAdj), remain);
+                    manualAdj -= fromPool;
+                    remain -= fromPool;
+                    if (remain > 0) fifoDeductFromLots(remain, e, false);
+                    const after = _lotSumOnly() + Math.max(0, manualAdj);
+                    unmatched = Math.max(0, unmatched - Math.max(0, before - after));
+                } else if (e.action === 'clear') {
+                    unmatched = Math.max(0, unmatched - amount);
+                    unmatchedWriteOff += amount;
+                }
+                return;
+            }
             const row = ensureLot(e.key, e.paintLot, e.injLot);
             if (e.type === 'absolute') {
                 row.qty = Math.max(0, Number(e.qty) || 0);
@@ -3600,36 +3644,7 @@ function lwStFilterRows(q){
             }
         });
 
-        // 미차감 반영/리셋 (시간순 — 이벤트 재생 이후 누적 채무에 적용)
-        _unmatchedActionsForProduct(_residualUnmatchedActions, carModel, partName, color).forEach(function(act) {
-            const action = act.unmatchedAction;
-            const declared = Math.max(0, Number(act.quantity) || 0);
-            const amount = declared > 0 ? Math.min(declared, unmatched) : unmatched;
-            if (amount <= 0) {
-                unmatched = 0;
-                return;
-            }
-            if (action === 'absorb') {
-                const before = Object.values(lotMap).reduce(function(s, l) {
-                    return s + Math.max(0, Number(l.qty) || 0);
-                }, 0) + Math.max(0, manualAdj);
-                // 미지정 풀 → named LOT FIFO
-                let remain = amount;
-                const fromPool = Math.min(manualAdj, remain);
-                manualAdj -= fromPool;
-                remain -= fromPool;
-                if (remain > 0) fifoDeductFromLots(remain, { date: act.date || '', createdAt: act.createdAt || '' }, false);
-                const after = Object.values(lotMap).reduce(function(s, l) {
-                    return s + Math.max(0, Number(l.qty) || 0);
-                }, 0) + Math.max(0, manualAdj);
-                unmatched = Math.max(0, unmatched - Math.max(0, before - after));
-                return;
-            }
-            if (action === 'clear') {
-                unmatched = Math.max(0, unmatched - amount);
-                unmatchedWriteOff += amount;
-            }
-        });
+        // (미차감 반영/리셋은 위 이벤트 스트림에서 'unmatched_action' 으로 시점별 처리됨)
 
         // 미차감 반영이 실사 이후 잔량을 0으로 밀어버리는 경우, 마지막 실사 수량으로 다시 맞춘다.
         // (실사 이후에 실제 입출고가 있으면 그대로 둔다)
