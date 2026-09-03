@@ -11443,6 +11443,7 @@ const PaintingInspectionModule = (function() {
     let _currentInspectionExpectedSec = 0; // 현재 검사 모달의 예상 검사 시간(초)
     let _piWorkId = null;
     let _piWorkInspectedQty = 0;
+    let _inspectionSaveInFlight = false;
 
     // 현재 카운팅 상태
     let state = {
@@ -11815,19 +11816,125 @@ const PaintingInspectionModule = (function() {
         return _inspGood(rec) + _inspDefectTotal(rec);
     }
 
+    function _workInspectionKey(workOrId) {
+        if (workOrId && typeof workOrId === 'object') {
+            return String(workOrId.id || workOrId.workId || '');
+        }
+        return String(workOrId || '');
+    }
+
+    function _listWorkInspections(workOrId, opts) {
+        const workKey = _workInspectionKey(workOrId);
+        if (!workKey) return [];
+        const sorted = (Storage.getAll(STORE) || [])
+            .filter(function(i) { return String(i.workId || i.productId || '') === workKey; })
+            .sort(function(a, b) {
+                return String(a.date || '').localeCompare(String(b.date || ''))
+                    || String(a.inspectionStartTime || '').localeCompare(String(b.inspectionStartTime || ''))
+                    || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
+            });
+        if (opts && opts.includeDuplicates) return sorted;
+        return _excludeDuplicateInspections(sorted, sorted);
+    }
+
+    function _inspectionWorkGroupKey(rec) {
+        const id = String((rec && (rec.workId || rec.productId)) || '');
+        if (id) return 'id:' + id;
+        return 'item:' + [
+            (rec && rec.carModel) || '',
+            (rec && rec.partName) || '',
+            (rec && rec.color) || '',
+            (rec && rec.paintingDate) || '',
+            (rec && rec.lotNo) || ''
+        ].join('|');
+    }
+
+    function _inspectionContentFingerprint(rec) {
+        const defects = ((rec && rec.defects) || [])
+            .map(function(d) {
+                const name = String((d && (d.defectName || d.name || d.defectId)) || '');
+                const count = Number(d && (d.defectCount != null ? d.defectCount : d.count)) || 0;
+                return name + ':' + count;
+            })
+            .filter(function(s) { return s && s !== ':0'; })
+            .sort()
+            .join('|');
+        return [
+            _inspInspectionQty(rec),
+            _inspGood(rec),
+            _inspDefectOnly(rec),
+            defects
+        ].join('#');
+    }
+
+    function _duplicateInspectionIdSet(records) {
+        const sorted = (records || []).slice().sort(function(a, b) {
+            return String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
+                || String(a.date || '').localeCompare(String(b.date || ''))
+                || String(a.inspectionStartTime || '').localeCompare(String(b.inspectionStartTime || ''))
+                || String(a.id || '').localeCompare(String(b.id || ''));
+        });
+        const seen = {};
+        const dupIds = {};
+        sorted.forEach(function(rec) {
+            if (!rec || !rec.id) return;
+            if (_inspInspectionQty(rec) <= 0) return;
+            const fp = _inspectionWorkGroupKey(rec) + '::' + _inspectionContentFingerprint(rec);
+            if (seen[fp]) dupIds[rec.id] = seen[fp];
+            else seen[fp] = rec.id;
+        });
+        return dupIds;
+    }
+
+    function _excludeDuplicateInspections(records, allRecords) {
+        const dupIds = _duplicateInspectionIdSet(allRecords || records);
+        return (records || []).filter(function(r) { return !r || !r.id || !dupIds[r.id]; });
+    }
+
     function _getPartialInspectionQtys(work) {
         const productionQty = Number(work && work.productionQty) || 0;
-        const workKey = work && (work.id || work.workId);
-        const inspections = Storage.getAll(STORE) || [];
-        const consumedFromHistory = inspections
-            .filter(i => (i.workId || i.productId) === workKey)
-            .reduce((s, i) => s + _inspInspectionQty(i), 0);
-        const inspectedQty = Math.max(Number(work && work.inspectedQty) || 0, consumedFromHistory);
-        const storedRemain = Number(work && work.remainingQty);
-        const remainingQty = Number.isFinite(storedRemain) && storedRemain >= 0
-            ? storedRemain
-            : Math.max(0, productionQty - inspectedQty);
-        return { productionQty, inspectedQty, remainingQty };
+        const history = _listWorkInspections(work);
+        const consumedFromHistory = history.reduce(function(s, i) { return s + _inspInspectionQty(i); }, 0);
+        const storedInspected = Number(work && work.inspectedQty) || 0;
+        // 이력이 있으면 이력 합계가 기준. 저장된 inspectedQty를 더하면 삭제 후에도 잔여가 내려가지 않는다.
+        const inspectedQty = history.length > 0 ? consumedFromHistory : storedInspected;
+        // 잔여량은 저장된 remainingQty가 아니라 원수량 − 실제 검사 이력 합계가 기준이다.
+        // (이중 저장 후 remainingQty만 280으로 남는 오류를 막는다)
+        const remainingQty = Math.max(0, productionQty - inspectedQty);
+        return { productionQty, inspectedQty, remainingQty, historyCount: history.length };
+    }
+
+    function _findDuplicateInspection(work, payload) {
+        if (_inspInspectionQty(payload) <= 0) return null;
+        const fp = _inspectionContentFingerprint(payload);
+        return _listWorkInspections(work, { includeDuplicates: true }).find(function(i) {
+            return _inspInspectionQty(i) > 0 && _inspectionContentFingerprint(i) === fp;
+        }) || null;
+    }
+
+    async function _refreshWorkInspectionProgress(workId, extraPatch) {
+        const work = Storage.getById(PAINTING_WORK_STORE, workId);
+        if (!work) return null;
+        const qtys = _getPartialInspectionQtys(work);
+        let inspectionStatus = 'pending';
+        if (qtys.inspectedQty > 0 && qtys.remainingQty <= 0) inspectionStatus = 'completed';
+        else if (qtys.inspectedQty > 0) inspectionStatus = 'partial';
+        const patch = Object.assign({
+            inspectionStatus: inspectionStatus,
+            inspectedQty: qtys.inspectedQty,
+            remainingQty: qtys.remainingQty,
+            updatedAt: new Date().toISOString()
+        }, extraPatch || {});
+        await Storage.update(PAINTING_WORK_STORE, workId, patch);
+        return Object.assign({}, qtys, { inspectionStatus: inspectionStatus });
+    }
+
+    function _setInspectionSaveBusy(busy) {
+        const btn = document.getElementById('piSaveInspectionBtn');
+        if (!btn) return;
+        btn.disabled = !!busy;
+        btn.style.opacity = busy ? '0.65' : '';
+        btn.style.pointerEvents = busy ? 'none' : '';
     }
 
     function _captureRegisteredBy() {
@@ -12392,13 +12499,7 @@ const PaintingInspectionModule = (function() {
         }
 
         function workPartialHistory(workId) {
-            return inspections
-                .filter(i => (i.workId || i.productId) === workId)
-                .sort((a, b) =>
-                    String(a.date || '').localeCompare(String(b.date || ''))
-                    || String(a.inspectionStartTime || '').localeCompare(String(b.inspectionStartTime || ''))
-                    || String(a.createdAt || '').localeCompare(String(b.createdAt || ''))
-                );
+            return _listWorkInspections(workId);
         }
 
         // 검사수량 = 양품 + 불량(리워크 포함). 리워크는 불량의 일부(재도장 소재).
@@ -12464,15 +12565,28 @@ const PaintingInspectionModule = (function() {
             return `<td style="text-align:right;white-space:nowrap;color:var(--text-muted);border-top:1px solid ${PARTIAL_PARENT_BORDER};background:${PARTIAL_CHILD_BG};">—</td>`;
         }
 
-        // 검사 미완료 작업 (inspectionStatus !== 'completed')만 필터링
+        // 검사 미완료 작업만 표시. 이력 합계가 원수량 이상이면 완료로 보고 목록에서 제외한다.
+        const healCompletedIds = [];
         const inspectionWorks = paintingWorks.filter(w => {
             if (w.inspectionStatus === 'completed') return false;
             const product = findProduct(w);
             if (!product) return false;
             const paintLineName = (w.line || '').trim();
             if (_laserAfterPaintLine(product, paintLineName)) return false;
+            const qtys = _getPartialInspectionQtys(w);
+            if (qtys.inspectedQty > 0 && qtys.remainingQty <= 0) {
+                if (w.id) healCompletedIds.push(w.id);
+                return false;
+            }
             return true;
         });
+        if (healCompletedIds.length) {
+            Promise.all(healCompletedIds.map(function(id) {
+                return _refreshWorkInspectionProgress(id);
+            })).catch(function(e) {
+                console.warn('[PaintingInspection] 완료 상태 보정 실패:', e);
+            });
+        }
 
         if (inspectionWorks.length === 0) {
             el.innerHTML = `<p style="color:var(--text-muted);font-size:0.88rem;">외관 검사 공정 제품의 도장 작업 완료 데이터가 없습니다.</p>`;
@@ -12499,16 +12613,13 @@ const PaintingInspectionModule = (function() {
                 : '';
 
             const originalQty = Number(w.productionQty) || 0;
-            const isPartial = w.inspectionStatus === 'partial';
-            const history = isPartial ? workPartialHistory(w.id) : [];
-            const consumedFromHistory = history.reduce((s, i) => s + inspConsumed(i), 0);
-            const inspectedQty = Number(w.inspectedQty) || consumedFromHistory;
-            const remainingStored = Number(w.remainingQty);
-            const remain = Number.isFinite(remainingStored) && remainingStored >= 0
-                ? remainingStored
-                : Math.max(0, originalQty - Math.max(inspectedQty, consumedFromHistory));
+            const qtys = _getPartialInspectionQtys(w);
+            const history = workPartialHistory(w.id);
+            const inspectedQty = qtys.inspectedQty;
+            const remain = qtys.remainingQty;
+            const isPartial = w.inspectionStatus === 'partial' || (history.length > 0 && remain > 0);
             const progressPercent = originalQty > 0
-                ? Math.round((Math.max(inspectedQty, consumedFromHistory) / originalQty) * 100)
+                ? Math.round((inspectedQty / originalQty) * 100)
                 : 0;
 
             const partialBadge = isPartial
@@ -12598,7 +12709,7 @@ const PaintingInspectionModule = (function() {
             }).join('');
 
             const nextRound = history.length + 1;
-            const waitingRow = `
+            const waitingRow = remain > 0 ? `
                 <tr>
                     ${childRowLabel(
                         `<span style="color:${PARTIAL_ACCENT};font-weight:800;margin-right:4px;">ㄴ</span>` +
@@ -12607,7 +12718,7 @@ const PaintingInspectionModule = (function() {
                     )}
                     ${childQtyCell(
                         UIUtils.formatNumber(remain) + ' <span style="font-size:0.68rem;font-weight:600;color:' + PARTIAL_ACCENT + ';">' + nextRound + '차 대기</span>',
-                        `원 ${UIUtils.formatNumber(originalQty)} − 누적 ${UIUtils.formatNumber(Math.max(inspectedQty, consumedFromHistory))}`
+                        `원 ${UIUtils.formatNumber(originalQty)} − 누적 ${UIUtils.formatNumber(inspectedQty)}`
                     )}
                     ${childEmptyCell()}
                     ${childNumCell(null)}
@@ -12620,7 +12731,7 @@ const PaintingInspectionModule = (function() {
                             <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;margin-right:2px;">edit</span>계속 검사
                         </button>`
                     )}
-                </tr>`;
+                </tr>` : '';
 
             return parentRow + historyRows + waitingRow;
         }).join('');
@@ -12739,6 +12850,8 @@ const PaintingInspectionModule = (function() {
                 UIUtils.toast('도장 작업을 찾을 수 없습니다.', 'error');
                 return;
             }
+            const freshWork = Storage.getById(PAINTING_WORK_STORE, work.id || work.workId || workId);
+            if (freshWork) work = freshWork;
 
             _piWorkId = workId;
 
@@ -12747,11 +12860,21 @@ const PaintingInspectionModule = (function() {
                 (work.lotNo || '-');
             const injectionMeta = _getInjectionMetaForWork(work);
 
-        // ✓ Case 1: 부분 검사 도장 작업 처리
-            const isPartialWork = work.inspectionStatus === 'partial';
-            const partialQtys = isPartialWork ? _getPartialInspectionQtys(work) : null;
-            const inspectedQty = partialQtys ? partialQtys.inspectedQty : 0;
-            const remainingQty = partialQtys
+        // ✓ Case 1: 부분 검사 도장 작업 처리 — 잔여량은 검사 이력 합계 기준
+            const partialQtys = _getPartialInspectionQtys(work);
+            if (partialQtys.inspectedQty > 0 && partialQtys.remainingQty <= 0) {
+                UIUtils.toast('이미 원수량만큼 검사가 완료되어 추가 입력할 수 없습니다.', 'warning');
+                _refreshWorkInspectionProgress(work.id || workId).then(function() {
+                    renderInspectionWaitingList();
+                }).catch(function() {
+                    renderInspectionWaitingList();
+                });
+                return;
+            }
+            const isPartialWork = work.inspectionStatus === 'partial'
+                || (partialQtys.inspectedQty > 0 && partialQtys.remainingQty > 0);
+            const inspectedQty = isPartialWork ? partialQtys.inspectedQty : 0;
+            const remainingQty = isPartialWork
                 ? partialQtys.remainingQty
                 : (Number(work.productionQty) || 0);
             _piWorkInspectedQty = inspectedQty;
@@ -13044,7 +13167,7 @@ const PaintingInspectionModule = (function() {
                             <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule._saveInspectionDraft('${workId}')" style="white-space:nowrap;color:var(--accent-orange);border-color:var(--accent-orange);" title="검사 도중 다른 작업으로 변경시 임시 저장">
                                 <span class="material-symbols-outlined" style="font-size:16px;">bookmark_add</span> 임시 저장
                             </button>
-                            <button class="btn btn-primary btn-sm" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="white-space:nowrap;">
+                            <button class="btn btn-primary btn-sm" id="piSaveInspectionBtn" onclick="PaintingInspectionModule._saveInspection('${workId}')" style="white-space:nowrap;">
                                 <span class="material-symbols-outlined" style="font-size:16px;">save</span> 검사 완료
                             </button>
                             <button class="btn btn-outline btn-sm" onclick="PaintingInspectionModule._closeInspectionModal()" style="white-space:nowrap;">
@@ -14249,7 +14372,7 @@ const PaintingInspectionModule = (function() {
         } else if (!workRef.inputQty || Number(workRef.inputQty) === oldQty) {
             patch.inputQty = qty;
         }
-        const inspected = Number(workRef.inspectedQty) || _piWorkInspectedQty || 0;
+        const inspected = _getPartialInspectionQtys(workRef).inspectedQty || _piWorkInspectedQty || 0;
         if (workRef.inspectionStatus === 'partial' || inspected > 0) {
             patch.remainingQty = Math.max(0, qty - inspected);
             patch.inspectionStatus = patch.remainingQty > 0 ? 'partial' : (workRef.inspectionStatus || 'partial');
@@ -14756,6 +14879,21 @@ const PaintingInspectionModule = (function() {
 
     // 검사 데이터 저장 함수
     async function _saveInspection(workId) {
+        if (_inspectionSaveInFlight) {
+            UIUtils.toast('저장 처리 중입니다. 잠시만 기다려 주세요.', 'warning');
+            return;
+        }
+        _inspectionSaveInFlight = true;
+        _setInspectionSaveBusy(true);
+        try {
+            await _commitInspectionSave(workId);
+        } finally {
+            _inspectionSaveInFlight = false;
+            _setInspectionSaveBusy(false);
+        }
+    }
+
+    async function _commitInspectionSave(workId) {
         if (!_canWriteInspection()) {
             UIUtils.toast('도장 검사 입력 권한이 없습니다.', 'warning');
             return;
@@ -14788,9 +14926,18 @@ const PaintingInspectionModule = (function() {
             UIUtils.toast('검사수량이 0입니다. 양품수를 입력해주세요.', 'warning');
             return;
         }
-        // ✓ 부분완료 시 이번 회차 검사수량이 남은 수량을 초과할 수 없음
-        if (isPartial && effectiveInspQty > availableQty) {
-            UIUtils.toast(`이번 검사수량(${UIUtils.formatNumber(effectiveInspQty)})이 남은 수량(${UIUtils.formatNumber(availableQty)})을 초과할 수 없습니다.`, 'warning');
+        // 잔여량은 폼 hidden이 아니라 최신 검사 이력 합계로 다시 계산한다.
+        const liveQtys = _getPartialInspectionQtys(work);
+        const liveRemaining = liveQtys.inspectedQty > 0
+            ? liveQtys.remainingQty
+            : Math.max(0, (Number(work.productionQty) || 0) || availableQty);
+        if (liveQtys.inspectedQty > 0 && liveRemaining <= 0) {
+            UIUtils.toast('이미 원수량만큼 검사가 완료되어 추가 입력할 수 없습니다.', 'warning');
+            await _refreshWorkInspectionProgress(workId);
+            return;
+        }
+        if (effectiveInspQty > liveRemaining) {
+            UIUtils.toast(`이번 검사수량(${UIUtils.formatNumber(effectiveInspQty)})이 남은 수량(${UIUtils.formatNumber(liveRemaining)})을 초과할 수 없습니다.`, 'warning');
             return;
         }
         if (!_validateDefectQtyWithinWorkQty(defectQty, _getPaintingWorkQty(work) || effectiveInspQty)) {
@@ -14901,6 +15048,19 @@ const PaintingInspectionModule = (function() {
             return;
         }
 
+        const duplicate = _findDuplicateInspection(work, {
+            inspectionQty: effectiveInspQty,
+            goodQty: goodQty,
+            defectQty: defectQty,
+            defects: defectDetails,
+            date: inspectionDate,
+            inspectionStartTime: inspectionStartTime
+        });
+        if (duplicate) {
+            UIUtils.toast('동일한 수량·일시의 검사 실적이 이미 등록되어 있습니다. 중복 입력할 수 없습니다.', 'warning');
+            return;
+        }
+
         // 검사 결과 1건만 저장
         const savedInspection = await Storage.add(STORE, {
             ...baseData,
@@ -14909,49 +15069,33 @@ const PaintingInspectionModule = (function() {
             isPartial: isPartial, // ✓ Case 1: 부분 검사 플래그
             createdAt: new Date().toISOString()
         });
+        const remainingAfterSave = Math.max(0, liveRemaining - effectiveInspQty);
         _notifyPaintInspectionRegistered(savedInspection, work, {
             isPartial: isPartial,
-            remainingQty: isPartial
-                ? Math.max(0, (work.productionQty || 0) - ((work.inspectedQty || 0) + effectiveInspQty))
-                : 0
+            remainingQty: isPartial ? remainingAfterSave : 0
         });
 
         // 리워크로 보내기(외관검사 → 리워크 재공 입고)는 UI/기능 삭제됨
 
-        // ✓ Case 1: 부분 완료 처리
+        const extraPatch = isPartial
+            ? { lastInspectionDate: inspectionDate }
+            : {
+                inspectionDate: inspectionDate,
+                inspectionStartTime: inspectionStartTime,
+                inspectionEndTime: inspectionEndTime,
+                inspectors: inspectors,
+                lastInspectionDate: inspectionDate
+            };
+        const progress = await _refreshWorkInspectionProgress(workId, extraPatch);
+        const cumulativeInspectedQty = progress ? progress.inspectedQty : (liveQtys.inspectedQty + effectiveInspQty);
+        const remainingQty = progress ? progress.remainingQty : remainingAfterSave;
+
         if (isPartial) {
-            // ✓ 다회차 부분검사 누적 처리 — 이전 회차까지 누적 검사수량에 이번 회차를 더한다.
-            //   (이전 버그: work.productionQty - effectiveInspQty로 계산해 2회차부터 누적이 무시됨)
-            const previousInspectedQty = work.inspectedQty || 0;
-            const cumulativeInspectedQty = previousInspectedQty + effectiveInspQty;
-            const remainingQty = Math.max(0, (work.productionQty || 0) - cumulativeInspectedQty);
-            // 이번 회차로 전량 소진되면 부분 상태를 해제하고 완료로 전환
-            const nextStatus = remainingQty > 0 ? 'partial' : 'completed';
-
-            // 도장 작업 업데이트
-            await Storage.update(PAINTING_WORK_STORE, workId, {
-                inspectionStatus: nextStatus,
-                inspectedQty: cumulativeInspectedQty, // 누적 검사 완료 수량
-                remainingQty: remainingQty, // 미검사 수량
-                lastInspectionDate: inspectionDate,
-                updatedAt: new Date().toISOString()
-            });
-
-            // 부분 완료 메시지
             const msg = remainingQty > 0
                 ? `부분 검사 완료: 이번 회차 ${UIUtils.formatNumber(effectiveInspQty)} EA 검사, 누적 ${UIUtils.formatNumber(cumulativeInspectedQty)} EA / 남은 ${UIUtils.formatNumber(remainingQty)} EA (외관검사 대기 상태 유지)`
                 : `부분 검사로 전량 소진되어 검사 완료 처리되었습니다. (누적 ${UIUtils.formatNumber(cumulativeInspectedQty)} EA)`;
             UIUtils.toast(msg, 'success');
         } else {
-            // 해당 작업의 상태를 "검사 완료"로 변경
-            await Storage.update(PAINTING_WORK_STORE, workId, {
-                inspectionStatus: 'completed',
-                inspectionDate: inspectionDate,
-                inspectionStartTime: inspectionStartTime,
-                inspectionEndTime: inspectionEndTime,
-                inspectors: inspectors,
-                updatedAt: new Date().toISOString()
-            });
             UIUtils.toast('검사 데이터가 저장되었습니다.', 'success');
         }
 
@@ -15105,7 +15249,10 @@ const PaintingInspectionModule = (function() {
         });
 
         // 공용 필터 적용
-        let filtered = _applyCommonFilters(allData, startDate, endDate, filterCarModel, filterPartName);
+        let filtered = _excludeDuplicateInspections(
+            _applyCommonFilters(allData, startDate, endDate, filterCarModel, filterPartName),
+            allData
+        );
 
         // 검사 기록 정규화 (새 구조: defects 배열 / 기존 구조: 개별 레코드)
         const grouped = {};
@@ -15419,7 +15566,9 @@ const PaintingInspectionModule = (function() {
         const partName = document.getElementById('completionPartName')?.value || '';
 
         const allData = Storage.getAll(STORE) || [];
-        const filtered = _applyCommonFilters(allData, startDate, endDate, carModel, partName);
+        const filteredRaw = _applyCommonFilters(allData, startDate, endDate, carModel, partName);
+        const filtered = _excludeDuplicateInspections(filteredRaw, allData);
+        const hiddenDupCount = filteredRaw.length - filtered.length;
         const defectTypes = Storage.getAll(DB.STORES.DEFECT_TYPES) || [];
 
         // defectType 맵
@@ -15501,6 +15650,7 @@ const PaintingInspectionModule = (function() {
         }).join('');
 
         container.innerHTML = `
+            ${hiddenDupCount > 0 ? `<div style="padding:8px 12px;font-size:0.75rem;color:var(--text-muted);">동일 작업·동일 수량·동일 불량의 중복 실적 ${UIUtils.formatNumber(hiddenDupCount)}건은 표시하지 않았습니다.</div>` : ''}
             <div class="data-table-wrapper">
             <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
                 <thead>
@@ -16117,7 +16267,10 @@ const PaintingInspectionModule = (function() {
         const partName = document.getElementById('statsPartName')?.value || '';
 
         const allData = Storage.getAll(STORE) || [];
-        const filtered = _applyCommonFilters(allData, startDate, endDate, carModel, partName);
+        const filtered = _excludeDuplicateInspections(
+            _applyCommonFilters(allData, startDate, endDate, carModel, partName),
+            allData
+        );
 
         const stats = _calculateStatistics(filtered);
         const container = document.getElementById('statisticsContent');
@@ -16477,6 +16630,14 @@ const PaintingInspectionModule = (function() {
         if (!_validateDefectQtyWithinWorkQty(detailDefectTotal, workQty)) {
             return false;
         }
+        if (work) {
+            const liveQtys = _getPartialInspectionQtys(work);
+            const remainingWithoutThis = liveQtys.remainingQty + _inspInspectionQty(inspection);
+            if (inspectionQty > remainingWithoutThis) {
+                UIUtils.toast(`수정 수량(${UIUtils.formatNumber(inspectionQty)})이 남은 검사 가능 수량(${UIUtils.formatNumber(remainingWithoutThis)})을 초과할 수 없습니다.`, 'warning');
+                return false;
+            }
+        }
 
         // 업데이트
         const updated = {
@@ -16497,6 +16658,9 @@ const PaintingInspectionModule = (function() {
         };
 
         await Storage.update(STORE, inspectionId, updated);
+        if (workId) {
+            await _refreshWorkInspectionProgress(workId);
+        }
         UIUtils.toast('검사 실적이 수정되었습니다.', 'success');
         return true;
     }
@@ -16521,14 +16685,9 @@ const PaintingInspectionModule = (function() {
 
         await Storage.remove(STORE, inspectionId);
 
-        // 해당 작업의 상태를 초기화 (검사 미완료로)
         const workId = inspection.workId || inspection.productId;
         if (workId) {
-            await Storage.update(PAINTING_WORK_STORE, workId, {
-                inspectionStatus: 'pending',
-                inspectionDate: null,
-                updatedAt: new Date().toISOString()
-            });
+            await _refreshWorkInspectionProgress(workId, { inspectionDate: null });
         }
 
         UIUtils.toast('검사 실적이 삭제되었습니다.', 'success');

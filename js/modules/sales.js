@@ -784,6 +784,78 @@ var SalesDeliveryModule = (function() {
 })();
 
 /**
+ * 취합 시트/엑셀 파싱 이력 + 파싱 순서 저장소.
+ *  - history: 언제 파싱했는지, 어느 날짜까지 파싱했는지 기록
+ *  - order  : 차종·품명이 파싱에서 처음 등장한 순서(누적) — '영업 계획/부족 현황' 정렬 기준
+ * 두 모듈(SalesDeliveryPlanModule 엑셀 업로드 / DeliveryConsolidateModule 붙여넣기)에서 공유한다.
+ */
+var SalesParseLog = (function () {
+    const KEY = 'salesDeliveryParseLog';
+    let _cache = null;
+
+    function _blank() { return { history: [], order: [] }; }
+
+    function _norm(data) {
+        if (!data || typeof data !== 'object') return _blank();
+        if (!Array.isArray(data.history)) data.history = [];
+        if (!Array.isArray(data.order)) data.order = [];
+        return data;
+    }
+
+    async function load(force) {
+        if (_cache && !force) return _cache;
+        try {
+            _cache = _norm(await Storage.getConfigValue(KEY));
+        } catch (e) {
+            _cache = _blank();
+        }
+        return _cache;
+    }
+
+    function _key(carModel, partName) {
+        return `${String(carModel || '').trim() || '-'}||${String(partName || '').trim()}`;
+    }
+
+    // rows: [{ carModel, partName, date }] — 파싱 직후 원본(파싱) 순서
+    async function record(rows, source) {
+        const data = await load();
+        const list = (rows || []).filter(r => r && (r.partName || r.carModel));
+        if (!list.length) return data;
+
+        const dates = list.map(r => r.date).filter(Boolean).sort();
+        data.history.unshift({
+            at: new Date().toISOString(),
+            from: dates[0] || '',
+            to: dates[dates.length - 1] || '',
+            rows: list.length,
+            items: new Set(list.map(r => _key(r.carModel, r.partName))).size,
+            source: source || ''
+        });
+        data.history = data.history.slice(0, 50);
+
+        const seen = new Set(data.order);
+        list.forEach(r => {
+            const k = _key(r.carModel, r.partName);
+            if (!seen.has(k)) { seen.add(k); data.order.push(k); }
+        });
+
+        try { await Storage.setConfigValue(KEY, data); } catch (e) { /* 무시 */ }
+        return data;
+    }
+
+    // 차종·품명 → 파싱 순서 인덱스 (미등장 시 매우 큰 값 → 목록 뒤로)
+    function orderIndex(carModel, partName) {
+        if (!_cache) return Number.MAX_SAFE_INTEGER;
+        const i = _cache.order.indexOf(_key(carModel, partName));
+        return i < 0 ? Number.MAX_SAFE_INTEGER : i;
+    }
+
+    function history() { return _cache ? _cache.history.slice() : []; }
+
+    return { load, record, orderIndex, history, KEY };
+})();
+
+/**
  * 2) 납품 계획 (Delivery Plan)
  */
 var SalesDeliveryPlanModule = (function() {
@@ -818,6 +890,16 @@ var SalesDeliveryPlanModule = (function() {
 
     function _norm(value) {
         return String(value || '').trim().toLowerCase();
+    }
+
+    function _carKey(value) {
+        return _norm(value).replace(/\s+/g, '');
+    }
+
+    function _sameCarModel(a, b) {
+        const ak = _carKey(a);
+        const bk = _carKey(b);
+        return !!ak && !!bk && ak === bk;
     }
 
     function _addDays(dateText, days) {
@@ -877,7 +959,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function _matches(row, item) {
         if (_norm(row.partName) !== _norm(item.partName)) return false;
-        if (item.carModel && row.carModel && _norm(row.carModel) !== _norm(item.carModel)) return false;
+        if (item.carModel && row.carModel && !_sameCarModel(row.carModel, item.carModel)) return false;
         if (item.color && row.color && _norm(row.color) !== _norm(item.color)) return false;
         if (item.customer && row.customer && _norm(row.customer) !== _norm(item.customer)) return false;
         return true;
@@ -903,12 +985,15 @@ var SalesDeliveryPlanModule = (function() {
         const products = _products();
         return products.find(p =>
             _norm(p.partName) === _norm(item.partName) &&
-            (!item.carModel || _norm(p.carModel) === _norm(item.carModel)) &&
+            (!item.carModel || _sameCarModel(p.carModel, item.carModel)) &&
             (!item.color || !p.color || _norm(p.color) === _norm(item.color))
         ) || products.find(p =>
             _norm(p.partName) === _norm(item.partName) &&
-            (!item.carModel || _norm(p.carModel) === _norm(item.carModel))
-        ) || null;
+            (!item.carModel || _sameCarModel(p.carModel, item.carModel))
+        ) || (() => {
+            const sameName = products.filter(p => _norm(p.partName) === _norm(item.partName));
+            return sameName.length === 1 ? sameName[0] : null;
+        })();
     }
 
     function _packUnitFromProduct(product, fallback) {
@@ -1182,6 +1267,8 @@ var SalesDeliveryPlanModule = (function() {
                     </div>
                 </div>
 
+                <details id="sdpParseLog" style="margin-bottom:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"></details>
+
                 <div class="card">
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">event_note</span> 영업 계획/부족 현황</h4>
@@ -1198,7 +1285,9 @@ var SalesDeliveryPlanModule = (function() {
         search();
     }
 
-    function search() {
+    async function search() {
+        await SalesParseLog.load();
+        _renderParseLog();
         const start = document.getElementById('sdpStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
         const customer = _norm(document.getElementById('sdpCustomerFilter')?.value);
@@ -1209,7 +1298,7 @@ var SalesDeliveryPlanModule = (function() {
         if (customer) plans = plans.filter(p => _norm(_customerOf(p)) === customer);
         if (car) plans = plans.filter(p => {
             const product = _findProduct(p);
-            return _norm(p.carModel) === car || _norm(product?.carModel) === car;
+            return _carKey(p.carModel) === car.replace(/\s+/g, '') || _carKey(product?.carModel) === car.replace(/\s+/g, '');
         });
 
         const rows = _buildRows(plans, days, start, end);
@@ -1223,23 +1312,28 @@ var SalesDeliveryPlanModule = (function() {
         const map = {};
 
         plans.forEach(plan => {
+            const product = _findProduct(plan);
+            const rowCustomer = plan.customer || product?.customer || '';
+            const rowCarModel = product?.carModel || plan.carModel || '';
+            const rowPartName = product?.partName || plan.partName || '';
+            const rowColor = plan.color || product?.color || '';
+            const rowPackUnit = _packUnitFromProduct(product, plan.packUnit);
             const key = [
-                plan.customer || '',
-                plan.carModel || '',
-                plan.partName || '',
-                plan.color || '',
-                plan.packUnit || ''
+                rowCustomer,
+                rowCarModel,
+                rowPartName,
+                rowColor,
+                rowPackUnit
             ].join('||');
             if (!map[key]) {
-                const product = _findProduct(plan);
                 map[key] = {
                     key,
                     ids: [],
-                    customer: plan.customer || product?.customer || '',
-                    carModel: plan.carModel || product?.carModel || '',
-                    partName: plan.partName || '',
-                    color: plan.color || product?.color || '',
-                    packUnit: _packUnitFromProduct(product, plan.packUnit),
+                    customer: rowCustomer,
+                    carModel: rowCarModel,
+                    partName: rowPartName,
+                    color: rowColor,
+                    packUnit: rowPackUnit,
                     product,
                     processEnd: _endProcess(product),
                     planByDate: {},
@@ -1280,11 +1374,60 @@ var SalesDeliveryPlanModule = (function() {
             row.hasShortage = (row.injectionShortage + row.paintShortage + row.laserShortage) > 0;
         });
 
-        return Object.values(map).sort((a, b) =>
-            a.customer.localeCompare(b.customer, 'ko') ||
-            a.carModel.localeCompare(b.carModel, 'ko') ||
-            a.partName.localeCompare(b.partName, 'ko')
-        );
+        // 파싱된 차종·품명 순서를 우선 적용, 파싱 이력에 없는 항목은 뒤에 가나다순으로
+        return Object.values(map).sort((a, b) => {
+            const oa = SalesParseLog.orderIndex(a.carModel, a.partName);
+            const ob = SalesParseLog.orderIndex(b.carModel, b.partName);
+            if (oa !== ob) return oa - ob;
+            return a.customer.localeCompare(b.customer, 'ko') ||
+                a.carModel.localeCompare(b.carModel, 'ko') ||
+                a.partName.localeCompare(b.partName, 'ko');
+        });
+    }
+
+    function _renderParseLog() {
+        const el = document.getElementById('sdpParseLog');
+        if (!el) return;
+        const hist = SalesParseLog.history();
+        const wasOpen = el.hasAttribute('open');
+        if (!hist.length) {
+            el.innerHTML = `
+                <summary style="padding:8px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;user-select:none;">
+                    <span class="material-symbols-outlined" style="font-size:0.95rem;vertical-align:middle;color:var(--text-muted);">history</span>
+                    파싱 이력 <span style="font-weight:400;color:var(--text-muted);">— 아직 기록 없음</span>
+                </summary>`;
+            return;
+        }
+        const last = hist[0];
+        const fmtAt = s => { const d = new Date(s); return isNaN(d) ? s : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
+        const md = s => s ? s.slice(5).replace('-', '월 ') + '일' : '-';
+        const rowsHtml = hist.map(h => `
+            <tr>
+                <td style="padding:4px 10px;white-space:nowrap;">${fmtAt(h.at)}</td>
+                <td style="padding:4px 10px;white-space:nowrap;">${md(h.from)} ~ ${md(h.to)}</td>
+                <td style="padding:4px 10px;text-align:right;white-space:nowrap;">${_fmt(h.items)}개 품목 / ${_fmt(h.rows)}건</td>
+                <td style="padding:4px 10px;color:var(--text-muted);white-space:nowrap;">${_esc(h.source || '')}</td>
+            </tr>`).join('');
+        el.innerHTML = `
+            <summary style="padding:8px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;user-select:none;">
+                <span class="material-symbols-outlined" style="font-size:0.95rem;vertical-align:middle;color:var(--text-muted);">history</span>
+                파싱 이력
+                <span style="font-weight:400;color:var(--text-muted);">— 최근: ${fmtAt(last.at)} · ${md(last.from)} ~ ${md(last.to)}까지</span>
+            </summary>
+            <div style="padding:0 14px 12px;overflow-x:auto;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+                    <thead>
+                        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border-color);">
+                            <th style="padding:4px 10px;font-weight:600;">파싱 일시</th>
+                            <th style="padding:4px 10px;font-weight:600;">파싱한 납품일 범위</th>
+                            <th style="padding:4px 10px;font-weight:600;text-align:right;">건수</th>
+                            <th style="padding:4px 10px;font-weight:600;">경로</th>
+                        </tr>
+                    </thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+        if (wasOpen) el.setAttribute('open', '');
     }
 
     function _renderStats(rows) {
@@ -2705,6 +2848,7 @@ var SalesDeliveryPlanModule = (function() {
 
         let insertCount = 0;
         let errMsg = '';
+        const parsedForLog = [];
         try {
             for (const row of _xlsxParsedData) {
                 const base = {
@@ -2719,11 +2863,16 @@ var SalesDeliveryPlanModule = (function() {
                     const existing = _recordsForCell(base, dateStr);
                     const existingQty = existing.reduce((s, r) => s + _num(r.planQty), 0);
                     await _upsertPlanCell(base, dateStr, existingQty + qty);
+                    parsedForLog.push({ carModel: base.carModel, partName: base.partName, date: dateStr });
                     insertCount++;
                 }
             }
         } catch (err) {
             errMsg = err.message || String(err);
+        }
+
+        if (parsedForLog.length) {
+            try { await SalesParseLog.record(parsedForLog, '납품등록 (엑셀)'); } catch (e) { /* 무시 */ }
         }
 
         _xlsxParsedData = null;
@@ -2972,6 +3121,56 @@ var DeliveryConsolidateModule = (function() {
         return String(raw ?? '').replace(/\s+/g, ' ').trim();
     }
 
+    function _normText(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function _carKey(value) {
+        return _normText(value).replace(/\s+/g, '');
+    }
+
+    function _sameCarModel(a, b) {
+        const ak = _carKey(a);
+        const bk = _carKey(b);
+        return !!ak && !!bk && ak === bk;
+    }
+
+    function _customerOfProduct(product) {
+        return product?.customer || product?.deliveryCustomer || product?.client || product?.buyer || product?.shipTo || product?.destination || '';
+    }
+
+    function _packUnitFromProduct(product, fallback) {
+        return fallback || product?.packUnit || product?.packageUnit || product?.packQty || product?.packageQty || product?.deliveryPackQty || '';
+    }
+
+    function _findProductForPlan(item) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        return products.find(p =>
+            _normText(p.partName) === _normText(item.partName) &&
+            (!item.carModel || _sameCarModel(p.carModel, item.carModel)) &&
+            (!item.color || !p.color || _normText(p.color) === _normText(item.color))
+        ) || products.find(p =>
+            _normText(p.partName) === _normText(item.partName) &&
+            (!item.carModel || _sameCarModel(p.carModel, item.carModel))
+        ) || (() => {
+            const sameName = products.filter(p => _normText(p.partName) === _normText(item.partName));
+            return sameName.length === 1 ? sameName[0] : null;
+        })();
+    }
+
+    function _canonicalPlanItem(item) {
+        const product = _findProductForPlan(item);
+        if (!product) return item;
+        return {
+            ...item,
+            customer: item.customer || _customerOfProduct(product),
+            carModel: product.carModel || item.carModel,
+            partName: product.partName || item.partName,
+            color: item.color || product.color || '',
+            packUnit: _packUnitFromProduct(product, item.packUnit)
+        };
+    }
+
     function parsePasted() {
         const text = (document.getElementById('dpcPasteArea') || {}).value || '';
         const statusEl = document.getElementById('dpcParseStatus');
@@ -3044,7 +3243,7 @@ var DeliveryConsolidateModule = (function() {
             });
         }
 
-        _parsedRows = rows;
+        _parsedRows = rows.map(_canonicalPlanItem);
 
         if (statusEl) {
             statusEl.innerHTML = rows.length
@@ -3113,19 +3312,30 @@ var DeliveryConsolidateModule = (function() {
         const items = _parsedRows.filter(r => checkedKeys.has(r.key));
         if (!items.length) { UIUtils.toast('저장할 항목을 선택하세요.', 'warning'); return; }
 
+        // 파싱된 순서(취합 시트의 행 순서)를 보존하기 위한 시퀀스 번호
+        let maxSeq = (Storage.getAll(STAGING_STORE) || [])
+            .reduce((m, r) => Math.max(m, Number(r.seq) || 0), 0);
+        // _parsedRows 원본 순서대로 저장 (checkedKeys 필터만 적용, 정렬하지 않음)
         for (const item of items) {
+            const canonical = _canonicalPlanItem(item);
             await Storage.add(STAGING_STORE, {
-                date: item.date,
-                carModel: item.carModel,
-                partName: item.partName,
-                packUnit: item.packUnit,
-                customer: item.customer,
-                planQty: item.qty,
+                date: canonical.date,
+                carModel: canonical.carModel,
+                partName: canonical.partName,
+                color: canonical.color || '',
+                packUnit: canonical.packUnit,
+                customer: canonical.customer,
+                planQty: canonical.qty,
                 status: '대기',
                 source: '취합 시트 붙여넣기',
+                seq: ++maxSeq,
                 registeredAt: new Date().toISOString()
             });
         }
+
+        try {
+            await SalesParseLog.record(items, '취합 시트 붙여넣기');
+        } catch (e) { /* 무시 */ }
 
         UIUtils.toast(`${items.length}건을 취합 대기함에 저장했습니다.`, 'success');
         clearPreview();
@@ -3160,12 +3370,18 @@ var DeliveryConsolidateModule = (function() {
         const dates = [...new Set(items.map(r => r.date))].sort();
         const keyOf = r => `${r.carModel || '-'}||${r.partName}`;
         const itemMap = new Map();
-        items.forEach(r => {
+        items.forEach((r, i) => {
             const key = keyOf(r);
-            if (!itemMap.has(key)) itemMap.set(key, { carModel: r.carModel || '-', partName: r.partName });
+            // 파싱 순서: seq가 있으면 seq, 없으면 최초 등장 인덱스
+            const ord = Number.isFinite(Number(r.seq)) && r.seq != null ? Number(r.seq) : i;
+            if (!itemMap.has(key)) {
+                itemMap.set(key, { carModel: r.carModel || '-', partName: r.partName, ord });
+            } else {
+                const cur = itemMap.get(key);
+                if (ord < cur.ord) cur.ord = ord;
+            }
         });
-        const rowsList = [...itemMap.entries()].sort((a, b) =>
-            a[1].carModel.localeCompare(b[1].carModel) || a[1].partName.localeCompare(b[1].partName));
+        const rowsList = [...itemMap.entries()].sort((a, b) => a[1].ord - b[1].ord);
 
         const cellMap = {};
         items.forEach(r => {
@@ -3236,9 +3452,12 @@ var DeliveryConsolidateModule = (function() {
         const badge = document.getElementById('dpcStagingBadge');
         if (!body) return;
 
-        const items = (Storage.getAll(STAGING_STORE) || [])
-            .filter(r => r.status !== '반영완료')
-            .sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''));
+        const allItems = (Storage.getAll(STAGING_STORE) || [])
+            .filter(r => r.status !== '반영완료');
+        // 목록형: 날짜순 정렬 / 피벗형: 취합 시트에 파싱된 순서(seq) 유지
+        const items = _stagingViewMode === 'list'
+            ? allItems.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''))
+            : allItems.slice().sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
 
         if (badge) {
             if (items.length) { badge.textContent = `${items.length}건`; badge.style.display = ''; }
@@ -3289,14 +3508,15 @@ var DeliveryConsolidateModule = (function() {
 
         const items = (Storage.getAll(STAGING_STORE) || []).filter(r => checkedIds.has(r.id));
         for (const item of items) {
+            const canonical = _canonicalPlanItem(item);
             await Storage.add(PLAN_STORE, {
-                date: item.date,
-                customer: item.customer || '',
-                carModel: item.carModel || '',
-                partName: item.partName || '',
-                color: '',
-                packUnit: item.packUnit || '',
-                planQty: item.planQty,
+                date: canonical.date,
+                customer: canonical.customer || '',
+                carModel: canonical.carModel || '',
+                partName: canonical.partName || '',
+                color: canonical.color || '',
+                packUnit: canonical.packUnit || '',
+                planQty: canonical.planQty,
                 note: '취합 시트 붙여넣기로 반영'
             });
             await Storage.remove(STAGING_STORE, item.id);

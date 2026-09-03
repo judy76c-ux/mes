@@ -21447,9 +21447,10 @@ var ProdQualityModule = (function() {
     }
 
     function _pickBestIssue(issues, measureIds) {
-        if (!issues || !issues.length) return null;
+        const list = (issues || []).filter(Boolean);
+        if (!list.length) return null;
         const ids = measureIds || _measureIssueIdSet();
-        return issues.reduce(function(best, cur) {
+        return list.reduce(function(best, cur) {
             if (!best) return cur;
             const rb = _issueRank(best, ids);
             const rc = _issueRank(cur, ids);
@@ -21459,7 +21460,45 @@ var ProdQualityModule = (function() {
         }, null);
     }
 
-    function _issueForSource(source, issueByWork, issueByPlan, issueByFp) {
+    function _siblingIssues(issue) {
+        if (!issue) return [];
+        const pid = _normalizePlanId(issue.planId);
+        const wid = String(issue.workId || '');
+        const pk = _qualityProductKey(issue);
+        const fp = _qualityFingerprint(issue);
+        return _issues().filter(function(o) {
+            if (!o || String(o.id || '') === String(issue.id || '')) return false;
+            if (wid && o.workId && String(o.workId) === wid) return true;
+            if (pid && _normalizePlanId(o.planId) === pid) return true;
+            if (fp && _qualityFingerprint(o) === fp) return true;
+            if (pk && _qualityProductKey(o) === pk) return true;
+            return false;
+        });
+    }
+
+    function _recordForIssue(issue, recordMap) {
+        if (!issue) return null;
+        const map = recordMap || _measureRecordMap();
+        const direct = map.get(String(issue.id));
+        if (direct) return direct;
+        const siblings = _siblingIssues(issue);
+        for (let i = 0; i < siblings.length; i++) {
+            const rec = map.get(String(siblings[i].id));
+            if (rec) return rec;
+        }
+        return null;
+    }
+
+    function _issueHasMeasureData(issue, recordMap) {
+        if (!issue) return false;
+        const map = recordMap || _measureRecordMap();
+        if (map.has(String(issue.id)) || issue.dataRecordId) return true;
+        return _siblingIssues(issue).some(function(o) {
+            return !!(o && (map.has(String(o.id)) || o.dataRecordId));
+        });
+    }
+
+    function _issueForSource(source, issueByWork, issueByPlan, issueByFp, issueByPk) {
         if (!source) return null;
         const cands = [];
         const pid = _normalizePlanId(source.planId);
@@ -21472,6 +21511,10 @@ var ProdQualityModule = (function() {
             const fp = _qualityFingerprint(source);
             if (fp && issueByFp.get(fp)) cands.push(issueByFp.get(fp));
         }
+        if (issueByPk) {
+            const pk = _qualityProductKey(source);
+            if (pk && issueByPk.get(pk)) cands.push(issueByPk.get(pk));
+        }
         return _pickBestIssue(cands);
     }
 
@@ -21479,6 +21522,7 @@ var ProdQualityModule = (function() {
         const groupsWork = {};
         const groupsPlan = {};
         const groupsFp = {};
+        const groupsPk = {};
         const measureIds = _measureIssueIdSet();
         _issues().forEach(function(i) {
             if (i.workId) {
@@ -21493,10 +21537,15 @@ var ProdQualityModule = (function() {
             if (fp && String(i.date || '')) {
                 (groupsFp[fp] = groupsFp[fp] || []).push(i);
             }
+            const pk = _qualityProductKey(i);
+            if (pk && String(i.date || '')) {
+                (groupsPk[pk] = groupsPk[pk] || []).push(i);
+            }
         });
         const issueByWork = new Map();
         const issueByPlan = new Map();
         const issueByFp = new Map();
+        const issueByPk = new Map();
         Object.keys(groupsWork).forEach(function(k) {
             issueByWork.set(k, _pickBestIssue(groupsWork[k], measureIds));
         });
@@ -21506,7 +21555,10 @@ var ProdQualityModule = (function() {
         Object.keys(groupsFp).forEach(function(k) {
             issueByFp.set(k, _pickBestIssue(groupsFp[k], measureIds));
         });
-        return { issueByWork, issueByPlan, issueByFp };
+        Object.keys(groupsPk).forEach(function(k) {
+            issueByPk.set(k, _pickBestIssue(groupsPk[k], measureIds));
+        });
+        return { issueByWork, issueByPlan, issueByFp, issueByPk };
     }
 
     function _qualityListSources() {
@@ -21619,7 +21671,7 @@ var ProdQualityModule = (function() {
         const seen = {};
         _qualityListSources().forEach(function (w) {
             const issue = _issueForSource(w, maps.issueByWork, maps.issueByPlan, maps.issueByFp);
-            const hasData = !!(issue && recordMap.get(String(issue.id)));
+            const hasData = !!(issue && (_issueHasMeasureData(issue, recordMap) || recordMap.get(String(issue.id))));
             if (!_isOverdueQualitySource(w, hasData)) return;
             const date = String(w.date || '').slice(0, 10);
             if (!date || date >= UIUtils.today()) return;
@@ -21835,6 +21887,10 @@ var ProdQualityModule = (function() {
         // 예전처럼 '미입력 전부'를 넣으면 자동생성 중복 양식이 날짜 필터와 무관하게 쌓였다.
         allIssues.forEach(function(d) {
             if (recordMap.has(String(d.id))) return;
+            // 형제(중복 자동생성) 발행본에 DATA가 있거나 인쇄가 끝났으면 이 건은 잉여이므로 상시 포함하지 않는다.
+            if (_siblingIssues(d).some(function(o) {
+                return o && (o.printedAt || recordMap.has(String(o.id)) || o.dataRecordId);
+            })) return;
             const linkedWork = allWorks.some(function(w) {
                 if (d.workId && String(w.id) === String(d.workId)) return true;
                 if (d.planId && String(w.planId || '') === String(d.planId)) return true;
@@ -22055,7 +22111,8 @@ var ProdQualityModule = (function() {
             const issue = _issueForSource(w, issueByWork, issueByPlan, issueByFp)
                 || _issueForSource(w, allMaps.issueByWork, allMaps.issueByPlan, allMaps.issueByFp)
                 || null;
-            const record = issue ? recordMap.get(String(issue.id)) : null;
+            // 중복 자동생성된 형제 발행본에 DATA가 붙어 있어도 '입력완료'로 인식 (기간 필터와 무관하게 일관)
+            const record = issue ? _recordForIssue(issue, recordMap) : null;
             const tmpl = _templateFor(w.carModel, w.color);
             const hasTemplate = !!tmpl;
             const printed = !!(issue && issue.printedAt);
@@ -22128,8 +22185,16 @@ var ProdQualityModule = (function() {
             const pk = _qualityProductKey(d);
             if (pk && shownProductKeys.has(pk)) return;
 
-            const record = recordMap.get(String(d.id));
+            // 같은 품목의 형제(중복 자동생성) 발행본이 이미 표시됐거나,
+            // 인쇄·DATA가 완료된 형제가 있으면 이 건은 잉여 자동생성 양식이므로 목록에서 제외한다.
+            // (기간을 넓게 조회하면 완료본이 보이는데, 좁게 조회하면 이 잉여본만 남아 '미입력'으로 오인되던 버그)
+            const sibs = _siblingIssues(d);
+            if (sibs.some(o => o && shownIssueIds.has(o.id))) return;
+
+            const record = _recordForIssue(d, recordMap);
             const printed = !!d.printedAt;
+            if (!record && !printed &&
+                sibs.some(o => o && (o.printedAt || recordMap.has(String(o.id)) || o.dataRecordId))) return;
             const sortKey = String(d.createdAt || d.updatedAt || d.id || d.date || '');
             const statusCell = printed
                 ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(d.printedAt))}</div>`
@@ -22187,9 +22252,13 @@ var ProdQualityModule = (function() {
     }
 
     function _measureRecordForIssue(issueId) {
-        return _measureRecords()
+        const direct = _measureRecords()
             .filter(r => String(r.issueId || '') === String(issueId || ''))
-            .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))[0] || null;
+            .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')))[0];
+        if (direct) return direct;
+        // 형제(중복 자동생성) 발행본에 DATA가 붙어 있는 경우 그 기록을 사용
+        const issue = Storage.getById(STORE, issueId);
+        return issue ? _recordForIssue(issue) : null;
     }
 
     function _measureGroupOfItem(item = {}) {
@@ -22289,6 +22358,8 @@ var ProdQualityModule = (function() {
         };
         const rows = items.map((item, idx) => {
             const group = item.measureGroup;
+            // 발행 시점에 품목별 기준이 비어 있었으면 현재 기준으로 보완
+            const specText = _composeRangeSpec(item) || String(item.spec || '').trim() || _resolveHistorySpec(issue, item) || '';
             return `
                 <tr class="pq-data-row"
                     data-key="${_esc(item.key || item.label || '')}"
@@ -22296,10 +22367,10 @@ var ProdQualityModule = (function() {
                     data-group="${_esc(group)}"
                     data-unit="${_esc(item.unit || '')}"
                     data-method="${_esc(item.method || '')}"
-                    data-spec="${_esc(_composeRangeSpec(item) || item.spec || '')}">
+                    data-spec="${_esc(specText)}">
                     <td style="text-align:center;font-weight:700;color:var(--text-secondary);">${idx + 1}</td>
                     <td><strong>${_esc(item.label || '-')}</strong><br><span style="font-size:0.72rem;color:var(--text-muted);">${_esc(item.method || '-')}</span></td>
-                    <td style="font-size:0.82rem;">${_esc(_composeRangeSpec(item) || item.spec || '-')}</td>
+                    <td style="font-size:0.82rem;">${_esc(specText || '-')}</td>
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     ${typeOrder.map(type => typeHeaders.includes(type)
                         ? `<td><input type="number" step="${_measureStep(group)}" class="form-input pq-data-val" data-type="${_esc(type)}" value="${_esc(valueOf(item, type))}" style="height:38px;text-align:right;font-weight:700;"${group === 'film' ? ' onblur="ProdQualityModule._formatFilmValue(this)"' : ''}></td>`
@@ -22562,7 +22633,7 @@ var ProdQualityModule = (function() {
             carModel: issue.carModel || '',
             partName: issue.partName || '',
             color: issue.color || '',
-            lotNo: issue.lotNo || '',
+            lotNo: issue.lotNo || _resolveHistoryInjLot({ issueId: issue.id, date: issue.date, recordDate, carModel: issue.carModel, partName: issue.partName, color: issue.color }) || '',
             productionQty: Number(issue.productionQty) || 0,
             inspector,
             items,
@@ -22622,7 +22693,7 @@ var ProdQualityModule = (function() {
                             <table class="data-table" style="font-size:0.82rem;">
                                 <thead>
                                     <tr>
-                                        <th>월</th><th>일</th><th>차종</th><th>품명</th><th>컬러</th><th>LOT</th><th>항목</th><th>기준</th><th>초물</th><th>중물</th><th>종물</th><th>단위</th><th>기록</th>
+                                        <th style="white-space:nowrap;">작성일</th><th>차종</th><th>품명</th><th>컬러</th><th style="white-space:nowrap;">도장 LOT</th><th style="white-space:nowrap;">사출 LOT</th><th>항목</th><th>기준</th><th>초물</th><th>중물</th><th>종물</th><th>단위</th><th>기록</th>
                                         ${kind === 'film' && _isAdminUser() ? '<th style="white-space:nowrap;text-align:center;">작업</th>' : ''}
                                     </tr>
                                 </thead>
@@ -22799,6 +22870,58 @@ var ProdQualityModule = (function() {
         return rows;
     }
 
+    // 사출 LOT — 측정 기록에 저장이 안 됐으면(발행본이 계획 자동생성본이라 작업일지와 아직 연결 안 됨 등)
+    // 발행본 → 형제 발행본 → 도장 작업일지 순으로 역추적한다.
+    function _resolveHistoryInjLot(record = {}) {
+        const direct = String(record.lotNo || '').trim();
+        if (direct) return direct;
+        const lotOfWork = w => {
+            if (!w) return '';
+            return String(w.lotNo || '').trim()
+                || (Array.isArray(w.lots) ? w.lots.map(l => l && l.lotNo).filter(Boolean).join(', ') : '');
+        };
+        const issue = record.issueId ? Storage.getById(STORE, record.issueId) : null;
+        if (issue) {
+            let lot = String(issue.lotNo || '').trim();
+            if (!lot) {
+                for (const sib of _siblingIssues(issue)) {
+                    const s = String((sib && sib.lotNo) || '').trim();
+                    if (s) { lot = s; break; }
+                }
+            }
+            if (!lot && issue.workId) lot = lotOfWork(Storage.getById(PAINT_WORK_STORE, issue.workId));
+            if (lot) return lot;
+        }
+        // 같은 날·차종·품명·컬러의 도장 작업일지에서 사출 LOT 탐색
+        const d = String(record.date || record.recordDate || '').slice(0, 10);
+        if (!d) return '';
+        const key = [d, _normText(record.carModel), _normText(record.partName), _normText(record.color)].join('|').toLowerCase();
+        const w = (Storage.getAll(PAINT_WORK_STORE) || []).find(x =>
+            [String(x.date || '').slice(0, 10), _normText(x.carModel), _normText(x.partName), _normText(x.color)].join('|').toLowerCase() === key
+        );
+        return lotOfWork(w);
+    }
+
+    // 이력 행의 '기준' — 저장 당시 기준이 비어 있던(발행 시점에 품목별 기준 미설정) 기록은
+    // 현재 품목별 항목 기준에서 같은 항목의 기준을 찾아 표시한다.
+    function _resolveHistorySpec(record = {}, item = {}) {
+        const stored = String(item.spec || '').trim();
+        if (stored && stored !== '-') return stored;
+        const specItems = _productSpecItems(record.carModel || '', record.partName || '', record.color || '', {
+            fallbackToMaster: false,
+            paintProcess: record.line || ''
+        });
+        if (!specItems.length) return stored;
+        const key = String(item.key || '').toLowerCase();
+        const label = String(item.label || '').trim();
+        const match = specItems.find(si =>
+            (key && String(si.key || '').toLowerCase() === key) ||
+            (label && String(si.label || '').trim() === label)
+        );
+        if (!match) return stored;
+        return _composeRangeSpec(match) || String(match.spec || '').trim() || stored;
+    }
+
     function renderMeasureHistoryTable(kind = 'colorGloss') {
         const tbody = document.getElementById('pqMeasureHistoryBody');
         if (!tbody) return;
@@ -22812,25 +22935,36 @@ var ProdQualityModule = (function() {
             tbody.innerHTML = `<tr><td colspan="${colCount}" style="text-align:center;padding:30px;color:var(--text-muted);">기록이 없습니다.</td></tr>`;
             return;
         }
+        const _ymd8 = v => String(v || '').slice(0, 10).replace(/[^0-9]/g, '').slice(0, 8);
         tbody.innerHTML = rows.map(({ record, item }) => {
-            const date = record.recordDate || record.date || '';
+            // 초품 작성일 (yyyymmdd) — 측정 DATA 기록일
+            const authoredYmd = _ymd8(record.recordDate || record.date || record.createdAt);
+            // 도장 LOT = 도장 작업일(yyyymmdd), 사출 LOT = 투입 사출 LOT 번호
+            const paintLotYmd = _ymd8(record.date || record.recordDate);
+            const injLot = _resolveHistoryInjLot(record);
             const values = item.values || {};
             const delCell = canDeleteFilm
                 ? `<td style="white-space:nowrap;text-align:center;"><button type="button" class="btn btn-sm btn-danger" onclick="ProdQualityModule.removeMeasureFilmData('${_js(record.id)}')">삭제</button></td>`
                 : '';
+            const specText = _resolveHistorySpec(record, item);
+            const hasVals = _itemHasNumericVals({ values });
+            // 기준이 어디에도 없고 측정값도 없으면 이 품목은 색차/광택·도막 관리 대상이 아님 → '해당 없음'
+            const notApplicable = !specText && !hasVals;
+            const na = '<span style="color:var(--text-muted);">해당 없음</span>';
+            const valTd = key => `<td style="text-align:right;font-weight:700;${notApplicable ? 'color:var(--text-muted);font-weight:400;' : ''}">${notApplicable ? na : _esc(_formatMeasureValueForGroup(values[key], item.group) || '-')}</td>`;
             return `
-                <tr>
-                    <td>${_esc(date.slice(0, 7) || '-')}</td>
-                    <td>${_esc(date.slice(8, 10) || '-')}</td>
+                <tr${notApplicable ? ' style="background:var(--bg-secondary);"' : ''}>
+                    <td style="font-family:monospace;white-space:nowrap;">${_esc(authoredYmd || '-')}</td>
                     <td><strong>${_esc(record.carModel || '-')}</strong></td>
                     <td>${_esc(record.partName || '-')}</td>
                     <td>${_esc(record.color || '-')}</td>
-                    <td style="font-family:monospace;font-size:0.78rem;">${_esc(record.lotNo || '-')}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;white-space:nowrap;">${_esc(paintLotYmd || '-')}</td>
+                    <td style="font-family:monospace;font-size:0.78rem;">${_esc(injLot || '-')}</td>
                     <td><span class="badge badge-info">${_esc(item.groupLabel || _measureGroupLabel(item.group))}</span> ${_esc(item.label || '-')}</td>
-                    <td>${_esc(item.spec || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['초물'], item.group) || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['중물'], item.group) || '-')}</td>
-                    <td style="text-align:right;font-weight:700;">${_esc(_formatMeasureValueForGroup(values['종물'], item.group) || '-')}</td>
+                    <td>${notApplicable ? na : _esc(specText || '-')}</td>
+                    ${valTd('초물')}
+                    ${valTd('중물')}
+                    ${valTd('종물')}
                     <td style="text-align:center;">${_esc(item.unit || '-')}</td>
                     <td style="font-size:0.76rem;color:var(--text-muted);">${_esc(_formatPrintDateTime(record.updatedAt || record.createdAt))}</td>
                     ${delCell}

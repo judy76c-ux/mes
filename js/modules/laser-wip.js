@@ -60,7 +60,7 @@ var LaserWipModule = (function() {
 
     function _inFlowDateRange(dateVal, start, end) {
         const d = _flowDateKey(dateVal);
-        if (!d) return true;
+        if (!d) return !(start || end);
         if (start && d < start) return false;
         if (end && d > end) return false;
         return true;
@@ -68,10 +68,12 @@ var LaserWipModule = (function() {
 
     function _flowDateBarHtml(scope) {
         const startId = scope === 'residual' ? 'resFlowStart' : 'alFlowStart';
-        const dates = document.getElementById(startId)
-            ? _readFlowDatesFromDom(scope)
-            : _ensureFlowDates(scope);
+        const dates = _ensureFlowDates(scope);
         const endId = scope === 'residual' ? 'resFlowEnd' : 'alFlowEnd';
+        const monthBtn = scope === 'residual'
+            ? `<button type="button" class="btn btn-sm btn-outline" style="height:32px;white-space:nowrap;"
+                    onclick="LaserWipModule.resetFlowDatesToMonth('${scope}')">최근 1개월</button>`
+            : '';
         return `<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">조회기간</span>
             <input type="date" class="form-input" id="${startId}" value="${_esc(dates.start)}"
@@ -85,6 +87,7 @@ var LaserWipModule = (function() {
                 onclick="LaserWipModule.applyFlowDateFilter('${scope}')">
                 <span class="material-symbols-outlined" style="font-size:1rem;">search</span> 조회
             </button>
+            ${monthBtn}
         </div>`;
     }
 
@@ -128,6 +131,25 @@ var LaserWipModule = (function() {
         }
         const flowEl = document.getElementById('alFlowBody');
         if (flowEl) flowEl.innerHTML = _afterLaserFlowHistHtml(_flowFilterOpts('after'));
+    }
+
+    function resetFlowDatesToMonth(scope) {
+        const start = _flowDefaultStart();
+        const end = _flowDefaultEnd();
+        if (scope === 'residual') {
+            _resFlowStart = start;
+            _resFlowEnd = end;
+        } else {
+            _alFlowStart = start;
+            _alFlowEnd = end;
+        }
+        const startId = scope === 'residual' ? 'resFlowStart' : 'alFlowStart';
+        const endId = scope === 'residual' ? 'resFlowEnd' : 'alFlowEnd';
+        const sEl = document.getElementById(startId);
+        const eEl = document.getElementById(endId);
+        if (sEl) sEl.value = start;
+        if (eEl) eEl.value = end;
+        applyFlowDateFilter(scope);
     }
 
     function _matchCarPartFilter(row, carFilter, partFilter) {
@@ -1738,6 +1760,7 @@ var LaserWipModule = (function() {
     }
 
     function _renderAfterLaserResidualTab(el) {
+        _ensureFlowDates('residual');
         const rows          = _calcLaserResidualWip();
         const inStockRows   = rows.filter(function(r) { return (Number(r.residualQty) || 0) > 0; });
         const totalResidual = inStockRows.reduce((s,r) => s + r.residualQty, 0);
@@ -1810,12 +1833,12 @@ var LaserWipModule = (function() {
                 <div class="card-header" style="flex-wrap:wrap;gap:8px;align-items:center;">
                     <h4><span class="material-symbols-outlined">table_rows</span> 입출고 현황</h4>
                     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-left:auto;">
-                        <span style="font-size:0.75rem;color:var(--text-muted);">입고(잔량 발생·수동입고) · 출고(외관검사 포장출고·수동출고)</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);">최근 1개월 · 입고(잔량 발생·수동입고) · 출고(외관검사 포장출고·수동출고)</span>
                         ${_flowDateBarHtml('residual')}
                     </div>
                 </div>
                 <div class="card-body" id="resFlowBody" style="padding:0;">
-                    ${_residualFlowHistHtml(_flowFilterOpts('residual'))}
+                    ${_residualFlowHistHtml({ car: _resFilterCar, part: _resFilterPart, start: _resFlowStart, end: _resFlowEnd })}
                 </div>
             </div>
             ${_canEditWip() ? `
@@ -3042,6 +3065,14 @@ function lwStFilterRows(q){
             }
             return null;
         }
+        const residualLots = _planResidualOutAllocation(
+            opts.carModel || '',
+            opts.partName || '',
+            opts.color || '',
+            qty,
+            existing && existing.id ? [existing.id] : []
+        );
+        const assignedLots = residualLots.filter(function(l) { return l && !l.unassigned; });
         const record = {
             date: opts.date || UIUtils.today(),
             carModel: opts.carModel || '',
@@ -3054,6 +3085,9 @@ function lwStFilterRows(q){
             isInspectionResidualOut: true,
             sourceInspectionId: inspectionId,
             sourceWorkLogId: opts.workLogId || '',
+            residualLots: residualLots,
+            residualPaintLot: assignedLots.length === 1 ? assignedLots[0].paintLot : '',
+            lotNo: assignedLots.length === 1 ? assignedLots[0].injLot : '',
             author: _currentUserName(),
             machine: opts.machine || ''
         };
@@ -3323,13 +3357,75 @@ function lwStFilterRows(q){
         return fallback;
     }
 
-    function _calcResidualLotDetail(carModel, partName, color) {
+    function _normalizedResidualLots(w) {
+        const raw = w && Array.isArray(w.residualLots) ? w.residualLots : null;
+        if (!raw || !raw.length) return null;
+        const lots = [];
+        raw.forEach(function(l) {
+            const qty = Math.max(0, Math.floor(Number(l && l.qty) || 0));
+            if (qty <= 0) return;
+            if (l.unassigned || !l.paintLot || !l.injLot || l.paintLot === 'LOT 미지정') {
+                lots.push({ unassigned: true, paintLot: '', injLot: '', qty: qty });
+            } else {
+                lots.push({
+                    unassigned: false,
+                    paintLot: _normalizePaintLot(l.paintLot),
+                    injLot: _normalizeInjLot(l.injLot),
+                    qty: qty
+                });
+            }
+        });
+        return lots.length ? lots : null;
+    }
+
+    function _planResidualOutAllocation(carModel, partName, color, qty, excludeIds) {
+        qty = Math.max(0, Math.floor(Number(qty) || 0));
+        if (qty <= 0) return [];
+        const detail = _calcResidualLotDetail(carModel, partName, color, { excludeIds: excludeIds || [] });
+        let remaining = qty;
+        const lots = [];
+        const fromUnassigned = Math.min(Math.max(0, Number(detail.manualAdj) || 0), remaining);
+        if (fromUnassigned > 0) {
+            lots.push({ unassigned: true, paintLot: '', injLot: '', qty: fromUnassigned });
+            remaining -= fromUnassigned;
+        }
+        (detail.lots || []).slice().sort(function(a, b) {
+            return String(a.paintLot || '').localeCompare(String(b.paintLot || '')) ||
+                String(a.injLot || '').localeCompare(String(b.injLot || ''));
+        }).forEach(function(lot) {
+            if (remaining <= 0) return;
+            const available = Math.max(0, Number(lot.qty) || 0);
+            const used = Math.min(available, remaining);
+            if (used > 0) {
+                lots.push({
+                    unassigned: false,
+                    paintLot: lot.paintLot,
+                    injLot: lot.injLot,
+                    qty: used
+                });
+                remaining -= used;
+            }
+        });
+        if (remaining > 0) {
+            lots.push({ unassigned: true, paintLot: '', injLot: '', qty: remaining });
+        }
+        return lots;
+    }
+
+    function _calcResidualLotDetail(carModel, partName, color, opts) {
         // 레이져 → 도장-B 재공품은 포장 공정이 없어 레이져 잔량이 존재할 수 없다.
         // packUnit이 설정돼 있거나 컬러 명칭 변경 잔재가 있어도 잔량을 계산하지 않는다(재발 방지).
+        opts = opts || {};
         if (_isResidualExemptProduct(carModel, partName)) {
             return { lots: [], manualAdj: 0, fifoTrace: [], unmatched: 0, unmatchedWriteOff: 0 };
         }
+        const excludeSet = {};
+        (opts.excludeIds || []).forEach(function(id) {
+            if (id) excludeSet[String(id)] = true;
+        });
         const laserAllWorks = (_getLaserWorks()).filter(function(w) {
+            if (!w) return false;
+            if (w.id && excludeSet[String(w.id)]) return false;
             return (w.carModel || '') === carModel && (w.partName || '') === partName && (!color || (w.color || '') === color);
         });
 
@@ -3478,7 +3574,36 @@ function lwStFilterRows(q){
                 });
                 return;
             }
-            if (paintLot && injLot) {
+            const plannedLots = _normalizedResidualLots(w);
+            if (plannedLots) {
+                const sign = w.isResidualManualIn ? 1 : -1;
+                plannedLots.forEach(function(lot, idx) {
+                    if (lot.unassigned) {
+                        events.push({
+                            date: w.date || '',
+                            createdAt: w.createdAt || w.id || '',
+                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            type: 'unassigned',
+                            qty: sign * lot.qty,
+                            sourceId: w.id || '',
+                            author: w.author || '',
+                            skipFifoTrace: true,
+                            poolOnly: true
+                        });
+                    } else {
+                        events.push({
+                            date: w.date || '',
+                            createdAt: w.createdAt || w.id || '',
+                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            type: 'delta',
+                            key: _residualLotKey(lot.paintLot, lot.injLot),
+                            paintLot: lot.paintLot,
+                            injLot: lot.injLot,
+                            qty: sign * lot.qty
+                        });
+                    }
+                });
+            } else if (paintLot && injLot) {
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
@@ -3628,7 +3753,8 @@ function lwStFilterRows(q){
                     const fromPool = Math.min(manualAdj, remainingOut);
                     manualAdj -= fromPool;
                     remainingOut -= fromPool;
-                    if (remainingOut > 0) fifoDeductFromLots(remainingOut, e, true);
+                    if (remainingOut > 0 && !e.poolOnly) fifoDeductFromLots(remainingOut, e, true);
+                    else if (remainingOut > 0) unmatched += remainingOut;
                 }
                 return;
             }
@@ -5384,6 +5510,7 @@ function lwStFilterRows(q){
                 editKind: 'laser_work'
             });
         });
+        const pendingLegacyPackOuts = [];
         laserAllWorks.filter(function(w) {
             return (w.isResidualManualIn || w.isResidualManualOut) && !w.isResidualAuditOnly;
         }).forEach(function(w) {
@@ -5395,6 +5522,38 @@ function lwStFilterRows(q){
             const lotKey = (paintLot !== '-' && injLot !== '-') ? _residualLotKey(paintLot, injLot) : ('__MANUAL__|' + (w.id || ''));
             const absQty = w.residualLotAbsoluteQty;
             const machine = _resolveResidualMachine(carModel, partName, color, paintLot, injLot, w.date, w.machine);
+            if (w.isInspectionResidualOut) {
+                const planned = _normalizedResidualLots(w);
+                if (planned) {
+                    planned.forEach(function(lot, idx) {
+                        const lotPaint = lot.unassigned ? 'LOT 미지정' : lot.paintLot;
+                        const lotInj = lot.unassigned ? '-' : lot.injLot;
+                        histItems.push({
+                            date: w.date || '-',
+                            isOut: true,
+                            routeLabel: '외관검사 포장출고',
+                            routeColor: '#7c3aed',
+                            routeDetail: machine || w.note || '외관검사 포장 사용',
+                            lot: lotInj,
+                            paintLot: lotPaint,
+                            injLot: lotInj,
+                            lotKey: lot.unassigned
+                                ? ('__MANUAL__|' + (w.id || '') + '|' + idx)
+                                : _residualLotKey(lot.paintLot, lot.injLot),
+                            qty: lot.qty,
+                            author: w.author || '-',
+                            note: w.note || '',
+                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            createdAt: w.createdAt || '',
+                            sourceId: w.id || '',
+                            editKind: 'residual_manual'
+                        });
+                    });
+                    return;
+                }
+                pendingLegacyPackOuts.push(w);
+                return;
+            }
             let routeLabel;
             let routeColor;
             let routeDetail;
@@ -5416,10 +5575,6 @@ function lwStFilterRows(q){
                 routeLabel = '수기 입고';
                 routeColor = '#16a34a';
                 routeDetail = machine || w.note || '잔량 수기 입고';
-            } else if (w.isInspectionResidualOut) {
-                routeLabel = '외관검사 포장출고';
-                routeColor = '#7c3aed';
-                routeDetail = machine || w.note || '외관검사 포장 사용';
             } else {
                 routeLabel = '레이져 작업출고';
                 routeColor = '#7c3aed';
@@ -5452,11 +5607,36 @@ function lwStFilterRows(q){
             });
         });
 
-        // LOT 미지정 출고가 FIFO로 실제 LOT에서 빠져나간 내역을 그 LOT의 이력 행으로도 남긴다.
-        // (원본 미지정 출고 행은 그대로 유지하고, 어디서 빠졌는지 보여주는 배분 행을 추가한다.
-        //  총량은 이미 원본 미지정 출고 행에 반영돼 있으므로, 이 배분 행은 해당 LOT의
-        //  기존/현재 수량을 맞추는 표시용이지 전체 합계에 이중 반영되지 않는다 — LOT별로만 재생한다.)
+        // 포장출고(레거시 LOT 미기록)는 FIFO 배분을 외관검사 포장출고 행으로 보여 주고
+        // "미지정 출고 배분" 추가 행은 만들지 않는다. (1155 사용 후 -303/-7이 따로 생기는 혼동 방지)
+        const legacyPackOutById = {};
+        pendingLegacyPackOuts.forEach(function(w) { legacyPackOutById[String(w.id || '')] = w; });
+        const foldedPackOutQty = {};
         (fifoTrace || []).forEach(function(t) {
+            const src = legacyPackOutById[String(t.sourceId || '')];
+            if (src) {
+                foldedPackOutQty[String(src.id)] = (foldedPackOutQty[String(src.id)] || 0) + (Number(t.qty) || 0);
+                const machine = _resolveResidualMachine(carModel, partName, color, t.paintLot, t.injLot, t.date, src.machine);
+                histItems.push({
+                    date: t.date || src.date || '-',
+                    isOut: true,
+                    routeLabel: '외관검사 포장출고',
+                    routeColor: '#7c3aed',
+                    routeDetail: machine || src.note || '외관검사 포장 사용',
+                    lot: t.injLot,
+                    paintLot: t.paintLot,
+                    injLot: t.injLot,
+                    lotKey: t.key,
+                    qty: t.qty,
+                    author: t.author || src.author || '-',
+                    note: src.note || '외관검사 포장 사용',
+                    _seq: (t.createdAt || t.date || '') + '_fifo',
+                    createdAt: t.createdAt || src.createdAt || '',
+                    sourceId: src.id || '',
+                    editKind: 'residual_manual'
+                });
+                return;
+            }
             histItems.push({
                 date: t.date || '-',
                 isOut: true,
@@ -5474,6 +5654,30 @@ function lwStFilterRows(q){
                 createdAt: t.createdAt || '',
                 sourceId: t.sourceId || '',
                 editKind: null
+            });
+        });
+        pendingLegacyPackOuts.forEach(function(w) {
+            const used = foldedPackOutQty[String(w.id || '')] || 0;
+            const remainder = used > 0 ? Math.max(0, (Number(w.quantity) || 0) - used) : (Number(w.quantity) || 0);
+            if (remainder <= 0) return;
+            const machine = _resolveResidualMachine(carModel, partName, color, '', '', w.date, w.machine);
+            histItems.push({
+                date: w.date || '-',
+                isOut: true,
+                routeLabel: '외관검사 포장출고',
+                routeColor: '#7c3aed',
+                routeDetail: machine || w.note || '외관검사 포장 사용',
+                lot: '-',
+                paintLot: 'LOT 미지정',
+                injLot: '-',
+                lotKey: '__MANUAL__|' + (w.id || ''),
+                qty: remainder,
+                author: w.author || '-',
+                note: w.note || '',
+                _seq: String(w.createdAt || w.id || '') + '_packout',
+                createdAt: w.createdAt || '',
+                sourceId: w.id || '',
+                editKind: 'residual_manual'
             });
         });
 
@@ -6060,14 +6264,29 @@ function _num(value) {
             if (w.isResidualManualOut) {
                 const qty = Number(w.quantity) || 0;
                 if (qty <= 0) return;
+                const planned = w.isInspectionResidualOut ? _normalizedResidualLots(w) : null;
+                const route = w.isInspectionResidualOut ? '외관검사 포장출고'
+                    : (w.isResidualStocktake ? '재고 실사'
+                    : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고'));
+                const note = (w.isResidualStocktake && _stocktakeLotSummary(w))
+                    ? (_stocktakeLotSummary(w) + (w.note ? ' · ' + w.note : ''))
+                    : (w.note || w.machine || w.author || '');
+                if (planned && planned.length) {
+                    planned.forEach(function(lot) {
+                        outgoingRows.push(Object.assign({}, base, {
+                            qty: lot.qty,
+                            paintLot: lot.unassigned ? 'LOT 미지정' : lot.paintLot,
+                            injLot: lot.unassigned ? '-' : lot.injLot,
+                            route: route,
+                            note: note
+                        }));
+                    });
+                    return;
+                }
                 outgoingRows.push(Object.assign({}, base, {
                     qty: qty,
-                    route: w.isInspectionResidualOut ? '외관검사 포장출고'
-                        : (w.isResidualStocktake ? '재고 실사'
-                        : (w.isResidualLotAdjust ? 'LOT 보정' : '수동 출고')),
-                    note: (w.isResidualStocktake && _stocktakeLotSummary(w))
-                        ? (_stocktakeLotSummary(w) + (w.note ? ' · ' + w.note : ''))
-                        : (w.note || w.machine || w.author || '')
+                    route: route,
+                    note: note
                 }));
                 return;
             }
@@ -6129,6 +6348,8 @@ function _num(value) {
 
     function _residualFlowHistHtml(filter) {
         filter = filter || {};
+        if (!filter.start) filter.start = _flowDefaultStart();
+        if (!filter.end) filter.end = _flowDefaultEnd();
         let { incomingRows, outgoingRows } = _buildResidualFlowRows();
         incomingRows = (incomingRows || []).filter(function(r) {
             return _matchCarPartFilter(r, filter.car || '', filter.part || '')
@@ -6141,8 +6362,11 @@ function _num(value) {
         const emptyRow = function(label, colSpan) {
             return `<tr><td colspan="${colSpan}" style="text-align:center;color:var(--text-muted);padding:18px;font-size:0.84rem;">${label}</td></tr>`;
         };
-        const ioTableStyle = 'font-size:0.85rem;width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;';
+        const ioTableStyle = 'font-size:0.85rem;width:max-content;table-layout:auto;border-collapse:collapse;';
         const thNowrap = 'white-space:nowrap;padding:8px 10px;';
+        const periodLabel = (filter.start || filter.end)
+            ? `${_esc(filter.start || '')} ~ ${_esc(filter.end || '')}`
+            : '';
         const rowHtml = function(r, kind) {
             const qtyColor = kind === 'in' ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-blue)';
             const border = kind === 'in' ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-blue)';
@@ -6167,9 +6391,8 @@ function _num(value) {
         };
 
         if (!incomingRows.length && !outgoingRows.length) {
-            const ranged = !!(filter.start || filter.end);
             return `<p style="color:var(--text-muted);font-size:0.88rem;padding:24px;text-align:center;">
-                ${(filter.car || filter.part || ranged) ? '검색 조건에 맞는 잔량 입출고 이력이 없습니다.' : '레이져 잔량 입출고 이력이 없습니다.'}
+                ${periodLabel ? periodLabel + ' 구간에 잔량 입출고 이력이 없습니다.' : '레이져 잔량 입출고 이력이 없습니다.'}
             </p>`;
         }
 
@@ -6183,16 +6406,16 @@ function _num(value) {
         return `
             <div style="display:flex;flex-direction:column;gap:18px;padding:16px;">
                 <div>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
                         <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.95rem;">
                             <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-orange,#f59e0b);">input</span>
                             입고현황
                             <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(잔량 발생 · 수동입고)</span>
                         </h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">${incomingRows.length}건</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${periodLabel} · ${incomingRows.length}건</span>
                     </div>
                     <div class="data-table-wrapper" style="overflow-x:auto;">
-                        <table class="data-table" style="${ioTableStyle}">
+                        <table class="data-table data-table--content" style="${ioTableStyle}">
                             <thead>
                                 <tr>
                                     <th style="${thNowrap}">입고일</th>
@@ -6211,16 +6434,16 @@ function _num(value) {
                     </div>
                 </div>
                 <div>
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;gap:8px;flex-wrap:wrap;">
                         <h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.95rem;">
                             <span class="material-symbols-outlined" style="font-size:18px;color:var(--accent-blue);">output</span>
                             출고현황
-                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(수동출고 · LOT 보정)</span>
+                            <span style="font-size:0.75rem;color:var(--text-muted);font-weight:500;">(외관검사 포장출고 · 수동출고 · LOT 보정)</span>
                         </h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);">${outgoingRows.length}건</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);white-space:nowrap;">${periodLabel} · ${outgoingRows.length}건</span>
                     </div>
                     <div class="data-table-wrapper" style="overflow-x:auto;">
-                        <table class="data-table" style="${ioTableStyle}">
+                        <table class="data-table data-table--content" style="${ioTableStyle}">
                             <thead>
                                 <tr>
                                     <th style="${thNowrap}">출고일</th>
@@ -7764,7 +7987,7 @@ function _num(value) {
              getWipStock, getWipLotDetail, _calcWip, showWipDetail, showResidualDetail,
              getAfterLaserFlowRows: _buildAfterLaserFlowRows,
              filterHistoryByPaintLot,
-             applyListFilter, clearListFilter, applyFlowDateFilter,
+             applyListFilter, clearListFilter, applyFlowDateFilter, resetFlowDatesToMonth,
              openHistRouteLink,
              openUnmatchedActionModal, confirmUnmatchedAction,
              openUnmatchedActionEdit, saveUnmatchedActionEdit, deleteUnmatchedAction,
