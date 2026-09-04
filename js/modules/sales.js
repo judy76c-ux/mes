@@ -902,6 +902,24 @@ var SalesDeliveryPlanModule = (function() {
         return !!ak && !!bk && ak === bk;
     }
 
+    function _compatibleCarModel(a, b) {
+        const ak = _carKey(a);
+        const bk = _carKey(b);
+        if (!ak || !bk) return true;
+        return ak === bk || (ak.length > bk.length && ak.endsWith(bk));
+    }
+
+    function _compactPart(value) {
+        return _norm(value).replace(/[\[\]()（）\s]/g, '');
+    }
+
+    function _productPartMatches(product, item) {
+        const productPart = _compactPart(product?.partName || '');
+        const itemPart = _compactPart(item?.partName || '');
+        if (!productPart || !itemPart) return false;
+        return productPart === itemPart || itemPart.endsWith(productPart);
+    }
+
     function _addDays(dateText, days) {
         const date = new Date(`${dateText}T00:00:00`);
         date.setDate(date.getDate() + days);
@@ -958,6 +976,7 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _matches(row, item) {
+        if (row.productId && item.productId && row.productId !== item.productId) return false;
         if (_norm(row.partName) !== _norm(item.partName)) return false;
         if (item.carModel && row.carModel && !_sameCarModel(row.carModel, item.carModel)) return false;
         if (item.color && row.color && _norm(row.color) !== _norm(item.color)) return false;
@@ -975,6 +994,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function _productKey(item) {
         return [
+            item?.productId || '',
             item?.carModel || '',
             item?.partName || item?.name || '',
             item?.color || item?.paintColor || ''
@@ -983,6 +1003,10 @@ var SalesDeliveryPlanModule = (function() {
 
     function _findProduct(item) {
         const products = _products();
+        if (item?.productId) {
+            const byId = products.find(p => p.id === item.productId);
+            if (byId) return byId;
+        }
         return products.find(p =>
             _norm(p.partName) === _norm(item.partName) &&
             (!item.carModel || _sameCarModel(p.carModel, item.carModel)) &&
@@ -990,6 +1014,13 @@ var SalesDeliveryPlanModule = (function() {
         ) || products.find(p =>
             _norm(p.partName) === _norm(item.partName) &&
             (!item.carModel || _sameCarModel(p.carModel, item.carModel))
+        ) || products.find(p =>
+            _productPartMatches(p, item) &&
+            _compatibleCarModel(p.carModel, item.carModel) &&
+            (!item.color || !p.color || _norm(p.color) === _norm(item.color))
+        ) || products.find(p =>
+            _productPartMatches(p, item) &&
+            _compatibleCarModel(p.carModel, item.carModel)
         ) || (() => {
             const sameName = products.filter(p => _norm(p.partName) === _norm(item.partName));
             return sameName.length === 1 ? sameName[0] : null;
@@ -1169,6 +1200,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function _productBase(product, selectedCustomer = '') {
         return {
+            productId: product.id || '',
             customer: selectedCustomer || _customerOf(product),
             carModel: product.carModel || '',
             partName: product.partName || product.name || '',
@@ -1192,14 +1224,16 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     async function _upsertPlanCell(base, date, qty, note = '') {
+        const product = base.product || _findProduct(base);
         const records = _recordsForCell(base, date);
         const data = {
             date,
-            customer: base.customer || '',
-            carModel: base.carModel || '',
-            partName: base.partName || '',
-            color: base.color || '',
-            packUnit: base.packUnit || '',
+            productId: product?.id || base.productId || '',
+            customer: base.customer || _customerOf(product) || '',
+            carModel: product?.carModel || base.carModel || '',
+            partName: product?.partName || base.partName || '',
+            color: base.color || product?.color || '',
+            packUnit: _packUnitFromProduct(product, base.packUnit),
             planQty: qty,
             note
         };
@@ -1319,6 +1353,7 @@ var SalesDeliveryPlanModule = (function() {
             const rowColor = plan.color || product?.color || '';
             const rowPackUnit = _packUnitFromProduct(product, plan.packUnit);
             const key = [
+                product?.id || plan.productId || '',
                 rowCustomer,
                 rowCarModel,
                 rowPartName,
@@ -1329,6 +1364,7 @@ var SalesDeliveryPlanModule = (function() {
                 map[key] = {
                     key,
                     ids: [],
+                    productId: product?.id || plan.productId || '',
                     customer: rowCustomer,
                     carModel: rowCarModel,
                     partName: rowPartName,
@@ -1374,14 +1410,26 @@ var SalesDeliveryPlanModule = (function() {
             row.hasShortage = (row.injectionShortage + row.paintShortage + row.laserShortage) > 0;
         });
 
-        // 파싱된 차종·품명 순서를 우선 적용, 파싱 이력에 없는 항목은 뒤에 가나다순으로
-        return Object.values(map).sort((a, b) => {
+        const rows = Object.values(map);
+        const carOrder = new Map();
+        rows.forEach(row => {
+            const carKey = _carKey(row.carModel);
+            const order = SalesParseLog.orderIndex(row.carModel, row.partName);
+            if (!carKey || order === Number.MAX_SAFE_INTEGER) return;
+            carOrder.set(carKey, Math.min(carOrder.get(carKey) ?? Number.MAX_SAFE_INTEGER, order));
+        });
+
+        // 파싱된 차종 묶음 순서를 먼저 적용해 같은 차종 품목이 흩어지지 않게 한다.
+        return rows.sort((a, b) => {
+            const ca = carOrder.get(_carKey(a.carModel)) ?? Number.MAX_SAFE_INTEGER;
+            const cb = carOrder.get(_carKey(b.carModel)) ?? Number.MAX_SAFE_INTEGER;
+            if (ca !== cb) return ca - cb;
             const oa = SalesParseLog.orderIndex(a.carModel, a.partName);
             const ob = SalesParseLog.orderIndex(b.carModel, b.partName);
             if (oa !== ob) return oa - ob;
-            return a.customer.localeCompare(b.customer, 'ko') ||
-                a.carModel.localeCompare(b.carModel, 'ko') ||
-                a.partName.localeCompare(b.partName, 'ko');
+            return a.carModel.localeCompare(b.carModel, 'ko') ||
+                a.partName.localeCompare(b.partName, 'ko') ||
+                a.customer.localeCompare(b.customer, 'ko');
         });
     }
 
@@ -1718,7 +1766,7 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _readForm() {
-        return {
+        const data = {
             date: document.getElementById('sdpDate')?.value || '',
             customer: document.getElementById('sdpCustomer')?.value.trim() || '',
             carModel: document.getElementById('sdpCarModel')?.value.trim() || '',
@@ -1727,6 +1775,17 @@ var SalesDeliveryPlanModule = (function() {
             packUnit: document.getElementById('sdpPackUnit')?.value.trim() || '',
             planQty: _num(document.getElementById('sdpPlanQty')?.value),
             note: document.getElementById('sdpNote')?.value.trim() || ''
+        };
+        const product = _findProduct(data);
+        if (!product) return data;
+        return {
+            ...data,
+            productId: product.id || '',
+            customer: data.customer || _customerOf(product),
+            carModel: product.carModel || data.carModel,
+            partName: product.partName || data.partName,
+            color: data.color || product.color || '',
+            packUnit: _packUnitFromProduct(product, data.packUnit)
         };
     }
 
@@ -2011,6 +2070,7 @@ var SalesDeliveryPlanModule = (function() {
 
         const delivData = {
             date,
+            productId: row.productId || row.product?.id || '',
             customer: row.customer || '',
             carModel: row.carModel || '',
             partName: row.partName || '',
@@ -2852,6 +2912,7 @@ var SalesDeliveryPlanModule = (function() {
         try {
             for (const row of _xlsxParsedData) {
                 const base = {
+                    productId: row.matchedProduct?.id || '',
                     customer: row.matchedCustomer || '',
                     carModel: row.matchedCarModel || '',
                     partName: row.matchedPartName,
@@ -3145,6 +3206,10 @@ var DeliveryConsolidateModule = (function() {
 
     function _findProductForPlan(item) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        if (item?.productId) {
+            const byId = products.find(p => p.id === item.productId);
+            if (byId) return byId;
+        }
         return products.find(p =>
             _normText(p.partName) === _normText(item.partName) &&
             (!item.carModel || _sameCarModel(p.carModel, item.carModel)) &&
@@ -3152,6 +3217,13 @@ var DeliveryConsolidateModule = (function() {
         ) || products.find(p =>
             _normText(p.partName) === _normText(item.partName) &&
             (!item.carModel || _sameCarModel(p.carModel, item.carModel))
+        ) || products.find(p =>
+            _productPartMatches(p, item) &&
+            _compatibleCarModel(p.carModel, item.carModel) &&
+            (!item.color || !p.color || _normText(p.color) === _normText(item.color))
+        ) || products.find(p =>
+            _productPartMatches(p, item) &&
+            _compatibleCarModel(p.carModel, item.carModel)
         ) || (() => {
             const sameName = products.filter(p => _normText(p.partName) === _normText(item.partName));
             return sameName.length === 1 ? sameName[0] : null;
@@ -3163,6 +3235,7 @@ var DeliveryConsolidateModule = (function() {
         if (!product) return item;
         return {
             ...item,
+            productId: product.id || item.productId || '',
             customer: item.customer || _customerOfProduct(product),
             carModel: product.carModel || item.carModel,
             partName: product.partName || item.partName,
@@ -3320,6 +3393,7 @@ var DeliveryConsolidateModule = (function() {
             const canonical = _canonicalPlanItem(item);
             await Storage.add(STAGING_STORE, {
                 date: canonical.date,
+                productId: canonical.productId || '',
                 carModel: canonical.carModel,
                 partName: canonical.partName,
                 color: canonical.color || '',
@@ -3511,6 +3585,7 @@ var DeliveryConsolidateModule = (function() {
             const canonical = _canonicalPlanItem(item);
             await Storage.add(PLAN_STORE, {
                 date: canonical.date,
+                productId: canonical.productId || '',
                 customer: canonical.customer || '',
                 carModel: canonical.carModel || '',
                 partName: canonical.partName || '',
