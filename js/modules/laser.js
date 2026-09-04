@@ -4555,21 +4555,22 @@ var LaserInspectionModule = (function() {
         const savedPrev = (d.prevResidualQty !== undefined && d.prevResidualQty !== null && d.prevResidualQty !== '')
             ? Number(d.prevResidualQty)
             : 0;
-        // 수정/보기 화면: 등록 시점 잔량 스냅샷이 있으면 그 값을 그대로 쓴다.
-        // (없으면 — 구 데이터 — 기존처럼 현재 잔량을 재계산해 표시)
-        const _residualSnap = (d.residualStockAtReg != null && d.residualStockAtReg !== '')
+        // 수정/보기 화면의 "현재 레이져 잔량 재고" = 이 검사 등록 시점의 잔량.
+        //  - 신규 이후 데이터: 등록 시 저장한 residualStockAtReg 스냅샷
+        //  - 구 데이터: 현재 잔량 + 이 검사가 사용한 잔량 − 이 검사가 남긴 잔량 으로 역산
+        const _thisUsed = savedPrev;
+        const _thisLeft = (d.residualQty != null && d.residualQty !== '') ? (Number(d.residualQty) || 0) : 0;
+        const _regResidual = (d.residualStockAtReg != null && d.residualStockAtReg !== '')
             ? Math.max(0, Number(d.residualStockAtReg) || 0)
-            : null;
-        const liveResidualHint = _residualSnap != null
-            ? _residualSnap
-            : _getPrevResidualQty(d.carModel, d.partName, d.color, id);
+            : Math.max(0, (_getPrevResidualQty(d.carModel, d.partName, d.color, id) + _thisUsed - _thisLeft));
+        const liveResidualHint = _regResidual;
         const packUnit = d.packUnit || (workRef && workRef.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
         const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
             _buildInspInfoCard(d) +
             _buildQtyCard(d, workRef, workRef ? _getInspBaseFromWork(workRef) : 0);
         const packCard = _isNoPackProduct(d.carModel, d.partName)
             ? _buildNoPackNoticeCard()
-            : _buildPackagingCard(d, savedPrev, packUnit, Number(d.goodQty) || 0, { liveResidual: liveResidualHint });
+            : _buildPackagingCard(d, savedPrev, packUnit, Number(d.goodQty) || 0, { liveResidual: liveResidualHint, residualIsRegSnapshot: true });
         const footer = isEdit
             ? _buildActionBar(`LaserInspectionModule._saveInspection('${id}')`,
                 d.workLogId ? { draftAction: `LaserInspectionModule._saveInspectionDraft('${d.workLogId}')` } : {})
@@ -4584,10 +4585,8 @@ var LaserInspectionModule = (function() {
             if (workRef) _recalcInspQuantities();
             _updatePackagingCalc();
             try {
-                const livePrev = _residualSnap != null
-                    ? _residualSnap
-                    : await _resolvePrevResidualQty(d.carModel, d.partName, d.color, id);
-                _setLiveResidualHint(livePrev);
+                // 수정/보기: 등록 시점 잔량 고정. 현재/변경예정 잔량으로 덮어쓰지 않는다.
+                _setLiveResidualHint(_regResidual);
             } catch (e) { /* ignore */ }
         }, 50);
     }
@@ -5342,7 +5341,10 @@ var LaserInspectionModule = (function() {
         const packQty  = Number(d.packQty) || packUnit * boxCount;
         const newResid = prevRes + goodHint - packQty;
         const liveResidual = opts.liveResidual != null ? Math.max(0, Number(opts.liveResidual) || 0) : 0;
-        const savedUse = hasSavedPrev ? prevRes : 0;
+        // opts.residualIsRegSnapshot: 수정/보기 화면. liveResidual 이 "이 검사 등록 시점의 잔량"이므로
+        // 이미 이 검사가 쓴 양(savedUse)을 되더할 필요가 없다. 최대치 = 등록 시점 잔량 그대로.
+        const regSnapshot = !!opts.residualIsRegSnapshot;
+        const savedUse = regSnapshot ? 0 : (hasSavedPrev ? prevRes : 0);
         const useMax = liveResidual + savedUse;
         const afterUse = liveResidual + savedUse - prevRes;
         const totalAvail = liveResidual + savedUse;
