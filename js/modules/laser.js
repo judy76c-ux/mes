@@ -2777,6 +2777,7 @@ var LaserInspectionModule = (function() {
     let _currentView = 'inspection';
     let _nonconformStandardImage = null;
     let _inspectionDraftCache = null; // { [workLogId]: draftData }
+    let _inspectionCommitInFlight = false; // 저장 버튼 연타·확인창 연타로 인한 중복 등록 방지
 
     function _splitDateParts(dateValue, timeValue = '') {
         const rawDate = String(dateValue || '').trim();
@@ -5019,6 +5020,20 @@ var LaserInspectionModule = (function() {
     }
 
     async function _commitInspection(existingId, data, isPartial) {
+        // 저장 버튼 연타 / FIFO 확인창 연타로 인한 중복 등록 방지
+        if (_inspectionCommitInFlight) {
+            UIUtils.toast('저장 처리 중입니다. 잠시만 기다려 주세요.', 'warning');
+            return;
+        }
+        _inspectionCommitInFlight = true;
+        try {
+            return await _commitInspectionImpl(existingId, data, isPartial);
+        } finally {
+            _inspectionCommitInFlight = false;
+        }
+    }
+
+    async function _commitInspectionImpl(existingId, data, isPartial) {
         // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동 + 부분검사 진행상태 반영
         let syncResult = null;
         try {

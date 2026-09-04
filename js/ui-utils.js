@@ -828,8 +828,51 @@ const UIUtils = (function () {
         return s;
     }
 
+    // ── 연타/더블탭 방지 ────────────────────────────────────────────────
+    // 저장·등록 버튼을 빠르게 두 번 누르면 onclick 핸들러가 2회 실행돼 같은 값이
+    // 중복 저장될 수 있다. guardClick(key, fn) 으로 감싸면 같은 key 의 작업이
+    // 끝날 때까지 재실행을 무시한다. (Storage.add 레벨의 중복 방지와 2중 안전장치)
+    //   예) onclick="UIUtils.guardClick('paint-insp-'+workId, () => Mod._save(workId), event)"
+    const _guardBusyKeys = new Set();
+    async function guardClick(key, fn, evtOrBtn, opts) {
+        opts = opts || {};
+        const k = String(key || '');
+        if (!k || typeof fn !== 'function') {
+            return (typeof fn === 'function') ? fn() : undefined;
+        }
+        if (_guardBusyKeys.has(k)) {
+            if (!opts.silent) toast('처리 중입니다. 잠시만 기다려 주세요.', 'warning');
+            return undefined;
+        }
+        _guardBusyKeys.add(k);
+        let btn = null;
+        if (evtOrBtn) {
+            if (evtOrBtn.tagName) btn = evtOrBtn;
+            else if (evtOrBtn.currentTarget && evtOrBtn.currentTarget.tagName) btn = evtOrBtn.currentTarget;
+            else if (evtOrBtn.target && evtOrBtn.target.tagName) btn = evtOrBtn.target;
+        }
+        if (btn) {
+            btn.disabled = true;
+            btn.dataset._guardPrevOpacity = btn.style.opacity || '';
+            btn.style.opacity = '0.6';
+            btn.style.pointerEvents = 'none';
+        }
+        try {
+            return await fn();
+        } finally {
+            _guardBusyKeys.delete(k);
+            if (btn) {
+                btn.disabled = false;
+                btn.style.opacity = btn.dataset._guardPrevOpacity || '';
+                btn.style.pointerEvents = '';
+                delete btn.dataset._guardPrevOpacity;
+            }
+        }
+    }
+
     // ── Public API ───────────────────────────────────────────────────────
     return {
+        guardClick,
         today,
         now,
         monthAgo,

@@ -413,6 +413,27 @@ var LaserWipModule = (function() {
         });
     }
 
+    // 외관검사를 거친 레이져 작업일지 id 집합.
+    // 레이져 포장 잔량의 증가·감소는 "외관검사에서 양품을 포장"하는 시점에만 발생한다.
+    // (작업일지만 등록되고 아직 검사 전인 건은 포장이 이뤄지지 않았으므로 잔량에 영향 없음)
+    function _inspectedLaserWorkIds() {
+        const set = new Set();
+        (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).forEach(function(i) {
+            if (i && i.workLogId) set.add(String(i.workLogId));
+        });
+        return set;
+    }
+
+    function _laserWorkInspected(w, inspectedIdSet) {
+        if (!w) return false;
+        // 검사 동기화(_syncWorkLogFromInspection)가 남긴 필드가 하나라도 있으면 검사 완료로 본다.
+        if (w.inspectionGoodQty != null || w.shippingEligibleQty != null
+            || w.laserResidualQty != null || w.prevResidualQty != null) return true;
+        if (w.inspectionStatus === 'completed' || w.inspectionStatus === 'partial') return true;
+        if (inspectedIdSet && w.id && inspectedIdSet.has(String(w.id))) return true;
+        return false;
+    }
+
     function _getPaintWorks() {
         const index = _productMasterIndex();
         const raw = Storage.getAll(STORE_PAINT);
@@ -3432,6 +3453,7 @@ function lwStFilterRows(q){
         const lotMap = {};
         var manualAdj = 0;
         const events = [];
+        const _inspectedWorkIds = _inspectedLaserWorkIds();
         const histReset = _getResidualHistoryReset(carModel, partName, color);
         const resetAt = histReset && histReset.historyOnly ? (histReset.historyResetAt || '') : '';
         const useSnapshot = !!(resetAt && Array.isArray(histReset.openingLots));
@@ -3463,6 +3485,9 @@ function lwStFilterRows(q){
             return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut;
         }).forEach(function(w) {
             if (useSnapshot && _isBeforeHistoryReset(w.date, resetAt, w.createdAt)) return;
+            // ★ 외관검사를 거치지 않은 작업일지는 아직 포장 전이므로 잔량 증감 없음.
+            //   (잔량은 외관검사에서 양품을 포장하는 시점에만 발생/소진된다)
+            if (!_laserWorkInspected(w, _inspectedWorkIds)) return;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const packedQty = Math.max(0, Number(w.shippingEligibleQty) || Number(w.packQty) || 0);
@@ -5459,7 +5484,10 @@ function lwStFilterRows(q){
         });
 
         const histItems = [];
+        const _histInspectedIds = _inspectedLaserWorkIds();
         laserAllWorks.filter(function(w) { return !w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut; }).forEach(function(w) {
+            // 외관검사 전 작업일지는 포장 잔량 이력에 나타나지 않는다.
+            if (!_laserWorkInspected(w, _histInspectedIds)) return;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
             const residualQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
@@ -6239,6 +6267,7 @@ function _num(value) {
 
     function _buildResidualFlowRows() {
         const laserWorks = _getLaserWorks();
+        const _flowInspectedIds = _inspectedLaserWorkIds();
         let incomingRows = [];
         let outgoingRows = [];
 
@@ -6305,6 +6334,9 @@ function _num(value) {
 
             // 재공(후) 수기·일반 수동출고는 잔량 입출고에 포함하지 않음
             if (w.isManualOut || w.isManual) return;
+
+            // 외관검사 전 작업일지는 아직 포장 전이므로 잔량 입출고에 포함하지 않는다.
+            if (!_laserWorkInspected(w, _flowInspectedIds)) return;
 
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;

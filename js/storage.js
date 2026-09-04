@@ -441,28 +441,78 @@ const Storage = (function() {
     return (cache[storeName] || []).find(item => item.id === id) || null;
   }
 
+  // ── 중복 저장(더블탭/연타) 방지 ──────────────────────────────────
+  // 버튼 연타·모바일 더블터치로 같은 onclick 핸들러가 2회 실행되면, 첫 저장이
+  // await ApiClient.save() 로 대기하는 사이 두 번째 실행이 통째로 돌아 동일 레코드가
+  // 2건 생긴다. store + "내용 지문"이 같은 add 가 진행 중이면 새로 만들지 않고
+  // 진행 중인 Promise 를 그대로 돌려준다. (의도적으로 몇 초 뒤 같은 값을 다시
+  // 넣는 경우는 진행 중이 아니므로 정상 저장된다 — 연타만 차단)
+  const _inflightAdds = new Map();
+  const _ADD_DEDUPE_LINGER_MS = 1200;
+
+  function _addDedupeKey(storeName, data) {
+    if (!data || typeof data !== 'object') return null;
+    // 자동 생성/가변 필드는 지문에서 제외 (그 외 폼 값·시각은 포함 → 과잉 차단 방지)
+    const SKIP = { id: 1, createdAt: 1, updatedAt: 1, _seq: 1, _rev: 1 };
+    try {
+      const norm = {};
+      Object.keys(data).sort().forEach(function(k) {
+        if (SKIP[k]) return;
+        const v = data[k];
+        if (v === undefined || v === null || v === '') return;
+        norm[k] = (typeof v === 'object') ? JSON.stringify(v) : v;
+      });
+      return storeName + '|' + JSON.stringify(norm);
+    } catch (e) {
+      return null;
+    }
+  }
+
   // 추가
-  async function add(storeName, data) {
+  function add(storeName, data) {
     _assertWritable();
     _assertDefectTypesWritable(storeName);
 
-    const newItem = {
-      id: generateId(),
-      createdAt: new Date().toISOString(),
-      ...data
-    };
-
-    try {
-      await ApiClient.save(storeName, newItem);
-    } catch (err) {
-      console.error(`[${storeName}] 저장 실패:`, err);
-      if (_isRemoteWriteFailure(err)) _setOfflineAfterWriteFailure(err);
-      throw err;
+    const dedupeKey = _addDedupeKey(storeName, data);
+    if (dedupeKey && _inflightAdds.has(dedupeKey)) {
+      console.warn(`[${storeName}] 중복 저장 감지 — 진행 중인 요청을 재사용합니다.`);
+      return _inflightAdds.get(dedupeKey);
     }
 
-    if (!cache[storeName]) cache[storeName] = [];
-    cache[storeName].push(newItem);
-    return newItem;
+    const task = (async function() {
+      const newItem = {
+        id: generateId(),
+        createdAt: new Date().toISOString(),
+        ...data
+      };
+
+      try {
+        await ApiClient.save(storeName, newItem);
+      } catch (err) {
+        console.error(`[${storeName}] 저장 실패:`, err);
+        if (_isRemoteWriteFailure(err)) _setOfflineAfterWriteFailure(err);
+        throw err;
+      }
+
+      if (!cache[storeName]) cache[storeName] = [];
+      cache[storeName].push(newItem);
+      return newItem;
+    })();
+
+    if (dedupeKey) {
+      _inflightAdds.set(dedupeKey, task);
+      task.then(function() {
+        // 저장 직후 짧은 시간 동안은 같은 내용의 재요청을 계속 흡수 (탭 2가 살짝 늦게 도착하는 경우)
+        setTimeout(function() {
+          if (_inflightAdds.get(dedupeKey) === task) _inflightAdds.delete(dedupeKey);
+        }, _ADD_DEDUPE_LINGER_MS);
+      }, function() {
+        // 실패 시에는 즉시 해제해 재시도가 가능하게 한다.
+        if (_inflightAdds.get(dedupeKey) === task) _inflightAdds.delete(dedupeKey);
+      });
+    }
+
+    return task;
   }
 
   // 수정
