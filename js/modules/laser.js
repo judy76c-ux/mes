@@ -3276,7 +3276,11 @@ var LaserInspectionModule = (function() {
         if (carModel) data = data.filter(d => d.carModel === carModel);
         if (partName) data = data.filter(d => d.partName === partName);
         data = data.slice();
-        data.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.startTime || '').localeCompare(a.startTime || ''));
+        // 검사일 + 검사 시작시간 최신순. 같으면 등록순(createdAt) 최신이 위로.
+        data.sort((a, b) =>
+            String(b.date || '').localeCompare(String(a.date || '')) ||
+            String(b.inspectionStartTime || b.startTime || '').localeCompare(String(a.inspectionStartTime || a.startTime || '')) ||
+            String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
         renderStats(data);
         renderTable(data);
     }
