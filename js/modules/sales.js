@@ -937,6 +937,11 @@ var SalesDeliveryPlanModule = (function() {
         return result;
     }
 
+    function _dateInRange(date, start, end) {
+        const d = String(date || '').slice(0, 10);
+        return !!d && (!start || d >= start) && (!end || d <= end);
+    }
+
     const DELIVERY_WEEKDAYS = ['\uC77C', '\uC6D4', '\uD654', '\uC218', '\uBAA9', '\uAE08', '\uD1A0'];
     const DELIVERY_FIXED_HOLIDAYS = new Set([
         '01-01',
@@ -1328,7 +1333,8 @@ var SalesDeliveryPlanModule = (function() {
         const car = _norm(document.getElementById('sdpCarFilter')?.value);
         const days = _days(start, end);
 
-        let plans = Storage.getByDateRange(STORE, start, end);
+        let plans = Storage.getByDateRange(STORE, start, end)
+            .filter(p => _dateInRange(p.date, start, end));
         if (customer) plans = plans.filter(p => _norm(_customerOf(p)) === customer);
         if (car) plans = plans.filter(p => {
             const product = _findProduct(p);
@@ -1342,7 +1348,9 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _buildRows(plans, days, start, end) {
-        const deliveries = Storage.getByDateRange(DB.STORES.SALES_DELIVERY, start, end);
+        plans = (plans || []).filter(plan => _dateInRange(plan.date, start, end));
+        const deliveries = Storage.getByDateRange(DB.STORES.SALES_DELIVERY, start, end)
+            .filter(d => _dateInRange(d.date, start, end));
         const map = {};
 
         plans.forEach(plan => {
@@ -1535,7 +1543,7 @@ var SalesDeliveryPlanModule = (function() {
             : past && plan > delivered
                 ? 'rgba(239,68,68,0.12)'
                 : 'rgba(245,158,11,0.14)';
-        const colW = isWeekend ? '22px' : '42px';
+        const colW = '56px';
         const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
@@ -1650,7 +1658,7 @@ var SalesDeliveryPlanModule = (function() {
 
         wrap.innerHTML = `
             <style>.sdp-status-table th,.sdp-status-table td{padding:3px 5px!important;}</style>
-            <table class="data-table sdp-status-table" style="min-width:${460 + days.length * 38}px;font-size:10px;">
+            <table class="data-table sdp-status-table" style="min-width:${720 + days.length * 56}px;font-size:10px;">
                 <thead>
                     <tr>
                         <th colspan="9" style="padding:2px 4px!important;"></th>
@@ -1668,8 +1676,7 @@ var SalesDeliveryPlanModule = (function() {
                         <th>완제품<br>재고</th>
                         ${days.map((d, i) => {
                             const info = _dayColumnInfo(d);
-                            const isWeekend = info.className === 'sdp-sat-col' || info.className === 'sdp-red-col';
-                            const colW = isWeekend ? '22px' : '38px';
+                            const colW = '56px';
                             const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
                             const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
                             return `<th class="${info.className}" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
