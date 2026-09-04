@@ -684,9 +684,8 @@ var LaserWipModule = (function() {
     }
 
     // 실사 이후에 잔량을 바꾸는 작업·입출고가 있으면, 실사 수량을 그대로 쓰지 않는다.
-    function _hasResidualMovementAfter(carModel, partName, color, stocktake, excludeIds) {
+    function _hasResidualMovementAfter(carModel, partName, color, stocktake) {
         if (!stocktake) return false;
-        const _exSet = new Set((Array.isArray(excludeIds) ? excludeIds : []).filter(Boolean).map(String));
         const stEv = {
             date: stocktake.date || '',
             createdAt: stocktake.createdAt || stocktake.id || '',
@@ -694,7 +693,6 @@ var LaserWipModule = (function() {
         };
         return (_getLaserWorks()).some(function(w) {
             if (!w || w === stocktake || String(w.id || '') === String(stocktake.id || '')) return false;
-            if (w.id && _exSet.has(String(w.id))) return false;
             if (w.isResidualAuditOnly || w.isResidualStocktake) return false;
             if ((w.carModel || '') !== carModel || (w.partName || '') !== partName) return false;
             if (color && (w.color || '') !== color) return false;
@@ -2585,7 +2583,10 @@ function lwStFilterRows(q){
                 // 최근 재고 실사가 있고 그 이후 실물 이동이 없으면 실사 수량이 곧 현재 잔량이다.
                 // (원장 재생 결과가 이력 리셋·컬러 키 불일치 등으로 어긋나도 실사 수량을 신뢰한다)
                 const lastSt = _latestResidualStocktake(r.carModel, r.partName, r.color);
-                if (lastSt && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt, _excludeIds)) {
+                // 주의: _excludeIds 를 여기 넘기지 않는다. 넘기면 "실사 이후 유일한 이동"이
+                // 제외 대상일 때 '이동 없음'으로 판정→실사수량 신뢰 경로로 빠지며, 이 경우
+                // 원장 재생(제외 반영)이 더 정확하다. 이동 판정은 원본 기준으로 유지한다.
+                if (lastSt && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt)) {
                     const counted = _stocktakeCountedQty(lastSt);
                     if (residualQty !== counted) {
                         const lotTagged = paintLotLabels.filter(function(p) { return p !== 'LOT 미지정'; }).length > 0;
