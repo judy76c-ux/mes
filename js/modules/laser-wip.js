@@ -2501,15 +2501,8 @@ function lwStFilterRows(q){
         return Math.max(0, Math.round(lotSum + unassigned));
     }
 
-    function _calcLaserResidualWip(opts) {
-        opts = opts || {};
-        const _excludeIds = Array.isArray(opts.excludeIds)
-            ? opts.excludeIds.filter(Boolean).map(String)
-            : [];
-        const _excludeSet = new Set(_excludeIds);
-        const laserWorks = _getLaserWorks().filter(function(w) {
-            return !(w && w.id && _excludeSet.has(String(w.id)));
-        });
+    function _calcLaserResidualWip() {
+        const laserWorks = _getLaserWorks();
         const residualMap = {};
 
         function ensureRow(w) {
@@ -2569,7 +2562,7 @@ function lwStFilterRows(q){
             .filter(r => !_isResidualExemptProduct(r.carModel, r.partName))
             .map(r => {
               try {
-                const detail = _calcResidualLotDetail(r.carModel, r.partName, r.color, { excludeIds: _excludeIds });
+                const detail = _calcResidualLotDetail(r.carModel, r.partName, r.color);
                 const paintLotLabels = [];
                 let unassignedQty = Math.max(0, Number(detail.manualAdj) || 0);
                 (detail.lots || []).forEach(function(l) {
@@ -2583,9 +2576,6 @@ function lwStFilterRows(q){
                 // 최근 재고 실사가 있고 그 이후 실물 이동이 없으면 실사 수량이 곧 현재 잔량이다.
                 // (원장 재생 결과가 이력 리셋·컬러 키 불일치 등으로 어긋나도 실사 수량을 신뢰한다)
                 const lastSt = _latestResidualStocktake(r.carModel, r.partName, r.color);
-                // 주의: _excludeIds 를 여기 넘기지 않는다. 넘기면 "실사 이후 유일한 이동"이
-                // 제외 대상일 때 '이동 없음'으로 판정→실사수량 신뢰 경로로 빠지며, 이 경우
-                // 원장 재생(제외 반영)이 더 정확하다. 이동 판정은 원본 기준으로 유지한다.
                 if (lastSt && !_hasResidualMovementAfter(r.carModel, r.partName, r.color, lastSt)) {
                     const counted = _stocktakeCountedQty(lastSt);
                     if (residualQty !== counted) {
@@ -7225,12 +7215,8 @@ function _num(value) {
         return !!_buildAfterLaserDrainMap()[`${carModel||''}||${partName||''}`];
     }
 
-    // opts.excludeIds: 특정 레이져 작업일지(id)의 잔량 기여를 제외하고 계산.
-    //   외관검사 "수정" 화면에서 이 검사가 만든 잔량(그 검사의 작업일지)을 빼고
-    //   "수정 전 잔량"을 보여줄 때 사용한다. (안 그러면 방금 등록한 잔량이 이미 더해진
-    //   값이 표시돼, 잔량을 다시 사용/적립하는 실수를 유발한다)
-    function getResidualQty(carModel, partName, color, opts) {
-        const rows = _calcLaserResidualWip(opts || {});
+    function getResidualQty(carModel, partName, color) {
+        const rows = _calcLaserResidualWip();
         const car = String(carModel || '').trim();
         const part = String(partName || '').trim();
         const clr = String(color || '').trim();
@@ -7269,9 +7255,9 @@ function _num(value) {
     }
 
     /** 검사 폼 등: 이력 리셋 로드 후 최신 레이져잔량 반환 */
-    async function getResidualQtyAsync(carModel, partName, color, opts) {
+    async function getResidualQtyAsync(carModel, partName, color) {
         await _ensureResidualHistoryResetsLoaded();
-        return getResidualQty(carModel, partName, color, opts || {});
+        return getResidualQty(carModel, partName, color);
     }
 
     function isResidualHistoryResetsLoaded() {
