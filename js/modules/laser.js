@@ -4551,7 +4551,8 @@ var LaserInspectionModule = (function() {
         const savedPrev = (d.prevResidualQty !== undefined && d.prevResidualQty !== null && d.prevResidualQty !== '')
             ? Number(d.prevResidualQty)
             : 0;
-        const liveResidualHint = _getPrevResidualQty(d.carModel, d.partName, d.color, id);
+        // 이 검사가 만든 잔량(그 작업일지)은 빼고 "수정 전 레이져 잔량"을 보여준다.
+        const liveResidualHint = _getPrevResidualQty(d.carModel, d.partName, d.color, id, d.workLogId);
         const packUnit = d.packUnit || (workRef && workRef.packUnit) || _findProductPackUnit(d.carModel, d.partName, d.color);
         const left = (workRef ? _buildWorkQtyCard(workRef) : _buildSelectCard(d)) +
             _buildInspInfoCard(d) +
@@ -4573,7 +4574,7 @@ var LaserInspectionModule = (function() {
             if (workRef) _recalcInspQuantities();
             _updatePackagingCalc();
             try {
-                const livePrev = await _resolvePrevResidualQty(d.carModel, d.partName, d.color, id);
+                const livePrev = await _resolvePrevResidualQty(d.carModel, d.partName, d.color, id, d.workLogId);
                 _setLiveResidualHint(livePrev);
             } catch (e) { /* ignore */ }
         }, 50);
@@ -5208,13 +5209,15 @@ var LaserInspectionModule = (function() {
         _recalcInspQuantities();
     }
 
-    function _getPrevResidualQty(carModel, partName, color, excludeId) {
+    function _getPrevResidualQty(carModel, partName, color, excludeId, excludeWorkLogId) {
         // 1순위: 레이져 후 잔량 재고 현황 (레이져잔량) — 0도 유효값
         // (이전: >0 일 때만 사용 → 리셋 미로드/일시 0이면 직전 검사 120으로 폴백하는 버그)
+        // excludeWorkLogId: 검사 "수정" 시 이 검사(작업일지)가 만든 잔량을 빼고 "수정 전 잔량"을 구한다.
+        const _wipOpts = excludeWorkLogId ? { excludeIds: [excludeWorkLogId] } : undefined;
         if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getResidualQty === 'function') {
             const resetsReady = typeof LaserWipModule.isResidualHistoryResetsLoaded !== 'function'
                 || LaserWipModule.isResidualHistoryResetsLoaded();
-            const laserResidual = Math.max(0, Number(LaserWipModule.getResidualQty(carModel, partName, color)) || 0);
+            const laserResidual = Math.max(0, Number(LaserWipModule.getResidualQty(carModel, partName, color, _wipOpts)) || 0);
             if (resetsReady) return laserResidual;
             if (laserResidual > 0) return laserResidual;
         }
@@ -5229,10 +5232,11 @@ var LaserInspectionModule = (function() {
         return match.length ? (Number(match[0].residualQty) || 0) : 0;
     }
 
-    async function _resolvePrevResidualQty(carModel, partName, color, excludeId) {
+    async function _resolvePrevResidualQty(carModel, partName, color, excludeId, excludeWorkLogId) {
+        const _wipOpts = excludeWorkLogId ? { excludeIds: [excludeWorkLogId] } : undefined;
         if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getResidualQtyAsync === 'function') {
             try {
-                return Math.max(0, Number(await LaserWipModule.getResidualQtyAsync(carModel, partName, color)) || 0);
+                return Math.max(0, Number(await LaserWipModule.getResidualQtyAsync(carModel, partName, color, _wipOpts)) || 0);
             } catch (e) {
                 console.warn('[LaserInspection] getResidualQtyAsync 실패, 동기 폴백:', e);
             }
@@ -5240,7 +5244,7 @@ var LaserInspectionModule = (function() {
         if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.ensureResidualReady === 'function') {
             try { await LaserWipModule.ensureResidualReady(); } catch (e) { /* ignore */ }
         }
-        return _getPrevResidualQty(carModel, partName, color, excludeId);
+        return _getPrevResidualQty(carModel, partName, color, excludeId, excludeWorkLogId);
     }
 
     function _setPrevResidualInput(qty) {
