@@ -119,6 +119,7 @@ const Router = (function() {
         'product-outgoing': '제품 출고',
         'sales-delivery': '출고 등록',
         'sales-delivery-plan': '영업 계획',
+        'sales-planning-materials': '생산계획 자료',
         'sales-today-shipment': '납품 출하(금일)',
         'sales-analytics': '영업관리',
         'painting-jig': '도장지그',

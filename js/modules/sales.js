@@ -49,6 +49,7 @@ const SalesUtils = {
 var SalesProcessUI = (function () {
     const MENUS = [
         { id: 'sales-delivery-plan', label: '영업 계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
+        { id: 'sales-planning-materials', label: '생산계획 자료', desc: '사출·도장·레이져 필요량 산출', icon: 'factory', accent: '#0ea5e9' },
         { id: 'sales-delivery-consolidate', label: '납품계획 취합', desc: '취합 시트 붙여넣기 → 검토 후 반영', icon: 'content_paste', accent: '#eab308' },
         { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
         { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
@@ -1347,6 +1348,15 @@ var SalesDeliveryPlanModule = (function() {
         _renderTable(rows, days);
     }
 
+    async function getPlanningMaterialRows(start, end) {
+        await SalesParseLog.load();
+        const rangeStart = start || UIUtils.today();
+        const rangeEnd = end || _addDays(rangeStart, 30);
+        const plans = Storage.getByDateRange(STORE, rangeStart, rangeEnd)
+            .filter(p => _dateInRange(p.date, rangeStart, rangeEnd));
+        return _buildRows(plans, _days(rangeStart, rangeEnd), rangeStart, rangeEnd);
+    }
+
     function _buildRows(plans, days, start, end) {
         plans = (plans || []).filter(plan => _dateInRange(plan.date, start, end));
         const deliveries = Storage.getByDateRange(DB.STORES.SALES_DELIVERY, start, end)
@@ -1543,7 +1553,7 @@ var SalesDeliveryPlanModule = (function() {
             : past && plan > delivered
                 ? 'rgba(239,68,68,0.12)'
                 : 'rgba(245,158,11,0.14)';
-        const colW = '56px';
+        const colW = '72px';
         const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
@@ -1658,10 +1668,10 @@ var SalesDeliveryPlanModule = (function() {
 
         wrap.innerHTML = `
             <style>.sdp-status-table th,.sdp-status-table td{padding:3px 5px!important;}</style>
-            <table class="data-table sdp-status-table" style="min-width:${720 + days.length * 56}px;font-size:10px;">
+            <table class="data-table sdp-status-table" style="min-width:${450 + days.length * 72}px;font-size:10px;">
                 <thead>
                     <tr>
-                        <th colspan="9" style="padding:2px 4px!important;"></th>
+                        <th colspan="6" style="padding:2px 4px!important;"></th>
                         ${_monthHeaderCells(days)}
                     </tr>
                     <tr>
@@ -1670,13 +1680,10 @@ var SalesDeliveryPlanModule = (function() {
                         <th>컬러</th>
                         <th>포장</th>
                         <th>계획<br><span style="font-size:9px;font-weight:600;">(납품/미납)</span></th>
-                        <th>사출<br>현재고/필요량</th>
-                        <th>도장<br>현재고/필요량</th>
-                        <th>레이져<br>현재고/필요량</th>
                         <th>완제품<br>재고</th>
                         ${days.map((d, i) => {
                             const info = _dayColumnInfo(d);
-                            const colW = '56px';
+                            const colW = '72px';
                             const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
                             const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
                             return `<th class="${info.className}" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
@@ -1698,9 +1705,6 @@ var SalesDeliveryPlanModule = (function() {
                                     <span class="sdp-plan-remaining" style="color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};">${_fmt(row.remaining)}</span>
                                 </div>
                             </td>
-                            <td>${_stockNeedCell(row.injectionStock, row.injectionShortage, !row.injectionHasData)}</td>
-                            <td>${_stockNeedCell(row.finishedStock + row.shippingStandby, row.paintShortage, !_isPaintEnd(row))}</td>
-                            <td>${_stockNeedCell(row.finishedStock + row.shippingStandby + row.laserStandby, row.laserShortage, !_isLaserEnd(row))}</td>
                             <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
                             ${days.map((d, i) => _dayCell(row, d, i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7))).join('')}
                         </tr>
@@ -3003,6 +3007,7 @@ var SalesDeliveryPlanModule = (function() {
         remove,
         fillFromProduct,
         exportData,
+        getPlanningMaterialRows,
         openExcelUploadModal,
         onXlsxCustomerChange,
         onXlsxPresetChange,
@@ -3016,6 +3021,215 @@ var SalesDeliveryPlanModule = (function() {
         _deleteCurrentPreset,
         _confirmExcelImport
     };
+})();
+
+/**
+ * 2-1) 생산계획 자료 — 납품계획 기반 사출/도장/레이져 필요량 산출
+ */
+var SalesPlanningMaterialsModule = (function() {
+    let _rows = [];
+
+    function _esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, ch => ({
+            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+        }[ch]));
+    }
+
+    function _num(value) {
+        return Number(value) || 0;
+    }
+
+    function _fmt(value) {
+        return UIUtils.formatNumber(_num(value));
+    }
+
+    function _norm(value) {
+        return String(value || '').trim().toLowerCase();
+    }
+
+    function _carKey(value) {
+        return _norm(value).replace(/\s+/g, '');
+    }
+
+    function _sameCarModel(a, b) {
+        const ak = _carKey(a);
+        const bk = _carKey(b);
+        return !!ak && !!bk && ak === bk;
+    }
+
+    function _addDays(dateText, days) {
+        const date = new Date(`${dateText}T00:00:00`);
+        date.setDate(date.getDate() + days);
+        return date.toISOString().slice(0, 10);
+    }
+
+    function _today() {
+        return UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+    }
+
+    function _productOf(row) {
+        if (row.product) return row.product;
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        if (row.productId) {
+            const byId = products.find(p => p.id === row.productId);
+            if (byId) return byId;
+        }
+        return products.find(p =>
+            p.partName === row.partName &&
+            _sameCarModel(p.carModel, row.carModel) &&
+            (!row.color || !p.color || p.color === row.color)
+        ) || products.find(p =>
+            p.partName === row.partName &&
+            _sameCarModel(p.carModel, row.carModel)
+        ) || null;
+    }
+
+    function _linkedInjectionMaterials(row) {
+        const product = _productOf(row);
+        const productId = row.productId || product?.id || '';
+        const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        return mats.filter(m => {
+            if (productId && Array.isArray(m.productIds) && m.productIds.includes(productId)) return true;
+            if (!_sameCarModel(m.carModel, row.carModel)) return false;
+            const names = [m.mfgProductName, m.mfgProductName2].map(v => String(v || '').trim()).filter(Boolean);
+            return names.includes(row.partName);
+        });
+    }
+
+    function _materialName(mat) {
+        return mat?.injPartName || mat?.name || mat?.materialName || '-';
+    }
+
+    function _paintMaterialName(id, paintMap) {
+        if (!id || id === '사용불필요') return id || '-';
+        const mat = paintMap[id];
+        return mat ? (mat.name || mat.materialName || id) : id;
+    }
+
+    function _paintSpecText(row) {
+        const product = _productOf(row);
+        const paintMap = {};
+        (Storage.getAll(DB.STORES.PAINT_MATERIALS) || []).forEach(m => { if (m.id) paintMap[m.id] = m; });
+        const paints = Array.isArray(product?.paintMaterials) ? product.paintMaterials : [];
+        if (!paints.length) return '-';
+        return paints.map(p => {
+            const main = _paintMaterialName(p.mainId || p.paintMaterialId, paintMap);
+            const hard = _paintMaterialName(p.hardId, paintMap);
+            const thin = _paintMaterialName(p.thinnerId, paintMap);
+            const tag = p.processTag || p.paintProcess || p.process || '';
+            const spec = p.paintSpec || p.typeFilter || '';
+            return [tag, spec, [main, hard, thin].filter(v => v && v !== '-').join(' / ')].filter(Boolean).join(' · ');
+        }).join('<br>');
+    }
+
+    function _stockNeed(current, need) {
+        const needText = need > 0 ? `-${_fmt(need)}` : _fmt(need);
+        const needColor = need > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+        return `<span style="font-weight:700;">${_fmt(current)}</span><span style="color:var(--text-muted);"> / </span><span style="font-weight:800;color:${needColor};">${needText}</span>`;
+    }
+
+    function _summaryCards(rows) {
+        const inj = rows.reduce((s, r) => s + _num(r.injectionShortage), 0);
+        const paint = rows.reduce((s, r) => s + _num(r.paintShortage), 0);
+        const laser = rows.reduce((s, r) => s + _num(r.laserShortage), 0);
+        const remain = rows.reduce((s, r) => s + _num(r.remaining), 0);
+        return `
+            <div class="stat-cards" style="margin-bottom:14px;">
+                <div class="stat-card blue"><div class="stat-card-value">${_fmt(remain)}</div><div class="stat-card-label">기간 미납 수량</div></div>
+                <div class="stat-card red"><div class="stat-card-value">${_fmt(inj)}</div><div class="stat-card-label">사출 필요량</div></div>
+                <div class="stat-card orange"><div class="stat-card-value">${_fmt(paint)}</div><div class="stat-card-label">도장/도료 필요량</div></div>
+                <div class="stat-card green"><div class="stat-card-value">${_fmt(laser)}</div><div class="stat-card-label">레이져 필요량</div></div>
+            </div>`;
+    }
+
+    function _baseCols(row) {
+        return `
+            <td style="white-space:nowrap;">${_esc(row.carModel || '-')}</td>
+            <td style="font-weight:800;min-width:190px;">${_esc(row.partName || '-')}</td>
+            <td style="white-space:nowrap;">${_esc(row.color || '-')}</td>
+            <td style="text-align:right;">${_fmt(row.remaining)}</td>`;
+    }
+
+    function _table(title, icon, headers, rows, rowHtml, emptyText) {
+        return `
+            <div class="card" style="margin-bottom:14px;">
+                <div class="card-header"><h4><span class="material-symbols-outlined">${icon}</span> ${title}</h4></div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="max-height:360px;overflow:auto;">
+                        <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;font-size:0.78rem;">
+                            <thead><tr>${headers.map(h => `<th style="white-space:nowrap;">${h}</th>`).join('')}</tr></thead>
+                            <tbody>${rows.length ? rows.map(rowHtml).join('') : `<tr><td colspan="${headers.length}" style="text-align:center;padding:24px;color:var(--text-muted);">${emptyText}</td></tr>`}</tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _renderRows() {
+        const injRows = _rows.filter(r => r.remaining > 0 && (r.injectionHasData || r.injectionShortage > 0));
+        const paintRows = _rows.filter(r => r.remaining > 0 && (r.paintShortage > 0 || _paintSpecText(r) !== '-'));
+        const laserRows = _rows.filter(r => r.remaining > 0 && (r.laserShortage > 0 || r.laserStandby > 0));
+
+        return _summaryCards(_rows) +
+            _table('사출 자재 필요', 'precision_manufacturing',
+                ['차종', '품명', '컬러', '미납', '연결 사출자재', '사출 현재/필요'],
+                injRows,
+                row => {
+                    const mats = _linkedInjectionMaterials(row).map(_materialName).join('<br>') || '-';
+                    return `<tr>${_baseCols(row)}<td>${mats}</td><td style="text-align:right;">${_stockNeed(row.injectionStock, row.injectionShortage)}</td></tr>`;
+                },
+                '기간 내 사출 자재 산출 대상이 없습니다.'
+            ) +
+            _table('도장/도료 자재 필요', 'format_color_fill',
+                ['차종', '품명', '컬러', '미납', '제품 도료 기준', '도장 현재/필요'],
+                paintRows,
+                row => `<tr>${_baseCols(row)}<td>${_paintSpecText(row)}</td><td style="text-align:right;">${_stockNeed(row.finishedStock + row.shippingStandby, row.paintShortage)}</td></tr>`,
+                '기간 내 도장/도료 산출 대상이 없습니다.'
+            ) +
+            _table('레이져 공정 필요', 'flare',
+                ['차종', '품명', '컬러', '미납', '레이져 대기', '완제품+대기/필요'],
+                laserRows,
+                row => `<tr>${_baseCols(row)}<td style="text-align:right;">${_fmt(row.laserStandby)}</td><td style="text-align:right;">${_stockNeed(row.finishedStock + row.shippingStandby + row.laserStandby, row.laserShortage)}</td></tr>`,
+                '기간 내 레이져 산출 대상이 없습니다.'
+            );
+    }
+
+    async function search() {
+        const start = document.getElementById('spmStart')?.value || _today();
+        const end = document.getElementById('spmEnd')?.value || _addDays(start, 30);
+        const body = document.getElementById('spmBody');
+        if (body) body.innerHTML = `<div style="padding:24px;color:var(--text-muted);">계산 중...</div>`;
+        _rows = await SalesDeliveryPlanModule.getPlanningMaterialRows(start, end);
+        if (body) body.innerHTML = _renderRows();
+    }
+
+    function render(container) {
+        const start = _today();
+        const end = _addDays(start, 30);
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${SalesProcessUI.renderSection('sales-planning-materials')}
+                <div class="filter-bar" style="flex-wrap:wrap;gap:10px;align-items:flex-end;">
+                    <div class="form-group">
+                        <label class="form-label">시작일</label>
+                        <input type="date" class="form-input" id="spmStart" value="${_esc(start)}">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">종료일</label>
+                        <input type="date" class="form-input" id="spmEnd" value="${_esc(end)}">
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="SalesPlanningMaterialsModule.search()">
+                            <span class="material-symbols-outlined">search</span> 조회
+                        </button>
+                    </div>
+                </div>
+                <div id="spmBody"></div>
+            </div>`;
+        search();
+    }
+
+    return { render, search };
 })();
 
 /**
