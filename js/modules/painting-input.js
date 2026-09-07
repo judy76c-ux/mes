@@ -3542,13 +3542,76 @@ var PaintingInputModule = (function () {
         }
     }
 
+    /**
+     * 반납 건의 컬러를 되찾는다.
+     *
+     * 사출 창고 재고는 `차종||사출명||컬러` 키로 품목을 구분한다. 컬러가 빈 채로 반납이
+     * 확정되면 원래 품목(예: CROM)이 아니라 "컬러 없음"이라는 별개 품목으로 입고돼,
+     * 전체 입고 이력엔 보이는데 정작 그 품목의 재고·입출고 이력엔 안 잡힌다
+     * (사용자 보고: 240 EA 반납했는데 재고가 안 늘어남).
+     *
+     * 호출부가 컬러를 못 넘기는 경우(도장 실적 레코드엔 사출 컬러 필드가 없다)를 대비해
+     * 반납 LOT이 실제로 어느 품목으로 들어왔었는지 역추적한다.
+     *   ① 도장현장 입고 이력 → ② 사출창고 입고 이력 → ③ 사출자재 마스터의 유일 컬러
+     */
+    function _resolveReturnColor(carModel, partName, lots) {
+        const wantLots = {};
+        (lots || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) wantLots[n] = true;
+        });
+        const car = String(carModel || '').trim();
+        const part = String(partName || '').trim();
+
+        function scan(storeName, isInbound) {
+            if (typeof DB === 'undefined' || !DB.STORES || !DB.STORES[storeName]) return '';
+            const rows = Storage.getAll(DB.STORES[storeName]) || [];
+            for (let i = rows.length - 1; i >= 0; i--) {
+                const r = rows[i];
+                if (!r || !r.color) continue;
+                if (isInbound && String(r.type || '') === '출고') continue;
+                if (car && r.carModel && String(r.carModel).trim() !== car) continue;
+                if (part && !_partNamesMatch(r.partName, part, car)) continue;
+                const list = (r.lots && r.lots.length)
+                    ? r.lots
+                    : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+                for (let j = 0; j < list.length; j++) {
+                    if (wantLots[String((list[j] && list[j].lotNo) || '').trim()]) {
+                        return String(r.color).trim();
+                    }
+                }
+            }
+            return '';
+        }
+
+        let found = scan('PAINTING_INPUT_INVENTORY', true) || scan('INJECTION_INVENTORY', true);
+        if (found) return found;
+
+        // ③ 마스터에 이 차종·사출명의 컬러가 하나뿐이면 그 값으로 확정할 수 있다.
+        if (typeof DB !== 'undefined' && DB.STORES && DB.STORES.INJECTION_MATERIALS && part) {
+            const colors = {};
+            (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
+                if (!m || !m.injColor) return;
+                if (car && m.carModel && String(m.carModel).trim() !== car) return;
+                if (!_partNamesMatch(m.injPartName, part, car)) return;
+                String(m.injColor).split(/[,，、\/]/).forEach(function (c) {
+                    const v = c.trim();
+                    if (v) colors[v] = true;
+                });
+            });
+            const keys = Object.keys(colors);
+            if (keys.length === 1) return keys[0];
+        }
+        return '';
+    }
+
     /** 계획 미달 등으로 남은 도장현장 자재를 사출창고로 반납 처리 (반납 대기 상태로 기록) */
     async function createSiteReturn(opts) {
         opts = opts || {};
         const line = _normLine(opts.line);
         const carModel = String(opts.carModel || '').trim();
         const partName = String(opts.partName || '').trim();
-        const color = String(opts.color || '').trim();
+        let color = String(opts.color || '').trim();
         const lots = (opts.lots || []).map(function (l) {
             return { lotNo: String((l && l.lotNo) || '').trim(), qty: Math.max(0, Number(l && l.qty) || 0) };
         }).filter(function (l) { return l.lotNo && l.qty > 0; });
@@ -3565,6 +3628,8 @@ var PaintingInputModule = (function () {
         });
         if (!carModel || !partName) throw new Error('차종/사출명이 없습니다.');
         if (!mergedLots.length) throw new Error('반납할 LOT·수량이 없습니다.');
+        // 호출부가 컬러를 못 넘겼으면 반납 LOT의 원래 입고 이력에서 되찾는다.
+        if (!color) color = _resolveReturnColor(carModel, partName, mergedLots);
         const totalQty = mergedLots.reduce(function (s, l) { return s + l.qty; }, 0);
         const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
         const isReworkReturn = _shouldReturnToReworkWip(Object.assign({}, opts, {
@@ -3893,6 +3958,7 @@ var PaintingInputModule = (function () {
         deductForWork: deductForWork,
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,
+        resolveReturnColor: _resolveReturnColor,
         updateSiteReturn: updateSiteReturn,
         openReworkInboundReturnModal: openReworkInboundReturnModal,
         submitReworkInboundReturn: submitReworkInboundReturn,

@@ -6582,7 +6582,11 @@ const PaintingWorkModule = (function() {
                     carModel: ctx.data.carModel,
                     partName: (ctx.remainLots[0] && ctx.remainLots[0].partName)
                         || ctx.data.injPartName || ctx.data.partName,
-                    color: ctx.data.injColor || ctx.data.color,
+                    // injColor는 사출자재 마스터 필드지 도장 실적 필드가 아니라 항상 undefined이고,
+                    // 폴백인 data.color는 도장 컬러다. 사출 LOT 자신이 들고 있는 컬러를 먼저 쓴다 —
+                    // 컬러가 비면 사출창고에서 '컬러 없음'이라는 별개 품목으로 입고돼 재고가 안 는다.
+                    color: (ctx.remainLots.find(function (l) { return l && l.color; }) || {}).color
+                        || ctx.data.injColor || ctx.data.color,
                     lots: ctx.remainLots.map(function (l) { return { lotNo: l.lotNo, qty: l.balance }; }),
                     reason: reason,
                     returnedBy: (user && (user.displayName || user.username)) || '',
@@ -8680,7 +8684,10 @@ const PaintingWorkModule = (function() {
                 line: d.line,
                 carModel: d.carModel,
                 partName: _resolveInjPartNameForWork(d.carModel, d.partName, d.color) || d.injPartName || d.partName,
-                color: d.injColor || d.color,
+                // 실적에 적힌 사출 LOT의 컬러가 1순위 — d.injColor는 존재하지 않는 필드고
+                // d.color는 도장 컬러라, 그대로 쓰면 컬러 없는 별개 품목으로 반납 입고된다.
+                color: ((d.lots || []).find(function (l) { return l && l.color; }) || {}).color
+                    || d.injColor || d.color,
                 lots: lots,
                 reason: reason,
                 returnedBy: (user && (user.displayName || user.username)) || '',

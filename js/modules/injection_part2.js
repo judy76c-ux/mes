@@ -2650,8 +2650,49 @@ var InjectionWarehouseModule = (function() {
         return stockMap;
     }
 
+    /**
+     * 컬러 없이 확정돼 버린 「도장현장 반납」 입고 기록을 한 번 고쳐준다.
+     *
+     * 반납 등록 쪽에서 컬러를 못 넘기던 시절(도장 실적엔 사출 컬러 필드가 없어 항상 빈 값)에
+     * 만들어진 기록들은 `차종||사출명||`이라는 컬러 없는 별개 품목으로 쌓여 있다. 그대로 두면
+     * 원래 품목(예: CROM) 재고에 영영 합쳐지지 않으므로, LOT의 원래 입고 이력으로 컬러를
+     * 되찾아 채운다. 되찾지 못하면 손대지 않고 남겨 둔다(사람이 확인해야 하는 건).
+     */
+    let _returnColorBackfillDone = false;
+    async function _backfillSiteReturnColors() {
+        if (_returnColorBackfillDone) return;
+        _returnColorBackfillDone = true;
+        if (typeof PaintingInputModule === 'undefined'
+            || typeof PaintingInputModule.resolveReturnColor !== 'function') return;
+        try {
+            const rows = (Storage.getAll(STORE) || []).filter(function (r) {
+                return r && String(r.type || '') === '입고'
+                    && String(r.source || '') === '도장현장 반납'
+                    && !String(r.color || '').trim();
+            });
+            let fixed = 0;
+            for (let i = 0; i < rows.length; i++) {
+                const r = rows[i];
+                const color = PaintingInputModule.resolveReturnColor(r.carModel, r.partName, r.lots || []);
+                if (!color) continue;
+                await Storage.update(STORE, r.id, { color: color });
+                fixed++;
+            }
+            if (fixed > 0) {
+                console.info('[InjectionWarehouseModule] 컬러 없는 반납 입고 ' + fixed + '건 보정 완료');
+                if (typeof UIUtils !== 'undefined' && UIUtils.toast) {
+                    UIUtils.toast('컬러 정보가 빠져 있던 반납 입고 ' + fixed + '건을 원래 품목으로 합쳤습니다.', 'info');
+                }
+                loadData();
+            }
+        } catch (e) {
+            console.warn('[InjectionWarehouseModule] 반납 입고 컬러 보정 실패:', e);
+        }
+    }
+
     function loadData() {
         _resetAuthLotQtyCache();
+        _backfillSiteReturnColors();
         const data = Storage.getAll(STORE);
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
 
@@ -5203,7 +5244,14 @@ var InjectionWarehouseModule = (function() {
             ? r.lots.map(function (l) { return (l.lotNo || '-') + ' (' + UIUtils.formatNumber(l.qty) + ' EA)'; }).join(', ')
             : (r.lotNo || '-');
         const knownColors = _knownColorsFor(r.carModel, r.partName);
-        const colorMissing = !r.color;
+        // 컬러가 빈 반납 건은 LOT의 원래 입고 이력에서 되찾아 채워준다 — 빈 채로 확정하면
+        // 사출창고에 '컬러 없음' 품목이 따로 생겨 원래 품목 재고가 늘지 않는다.
+        let prefillColor = String(r.color || '').trim();
+        if (!prefillColor && typeof PaintingInputModule.resolveReturnColor === 'function') {
+            try { prefillColor = PaintingInputModule.resolveReturnColor(r.carModel, r.partName, r.lots || []) || ''; }
+            catch (e) { console.warn('[InjectionWarehouseModule] 반납 컬러 역추적 실패:', e); }
+        }
+        const colorMissing = !prefillColor;
         const isRework = _isReworkSiteReturn(r);
         const destText = isRework
             ? '처리 즉시 이 소재가 <strong>재사용 자재 재고</strong>로 반영됩니다. (IL 등은 사출 창고 재고가 아니라 재사용 자재가 원래 출처입니다)'
@@ -5220,7 +5268,7 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div class="form-group" style="margin-bottom:12px;">
                 <label class="form-label">컬러 ${colorMissing ? '<span style="color:var(--accent-red);">* 확인 필요</span>' : ''}</label>
-                <input type="text" class="form-input" id="injSiteReturnColorInput" value="${_escapeHtml(r.color || '')}"
+                <input type="text" class="form-input" id="injSiteReturnColorInput" value="${_escapeHtml(prefillColor)}"
                     list="injSiteReturnColorList" placeholder="예: CROM">
                 <datalist id="injSiteReturnColorList">
                     ${knownColors.map(function (c) { return `<option value="${_escapeHtml(c)}">`; }).join('')}
@@ -5272,7 +5320,14 @@ var InjectionWarehouseModule = (function() {
             }
             const actor = _getResetActorFields();
             const colorInput = document.getElementById('injSiteReturnColorInput');
-            const confirmedColor = colorInput ? colorInput.value.trim() : (r.color || '');
+            const confirmedColor = colorInput ? colorInput.value.trim() : String(r.color || '').trim();
+            // 컬러 없이 입고시키면 `차종||사출명||컬러` 키가 달라져 원래 품목이 아닌
+            // 별개 품목으로 쌓인다(재고 미증가). 여기서 반드시 막는다.
+            if (!confirmedColor) {
+                UIUtils.toast('컬러를 입력해야 입고 처리할 수 있습니다. 실물 컬러를 확인해 주세요.', 'warning');
+                if (colorInput) colorInput.focus();
+                return;
+            }
             // IL 등 리워크 투입품은 애초에 사출 창고 재고가 아니다 — 이 반납을
             // INJECTION_INVENTORY로 입고시키면 사출 창고에 엉뚱한 품목이 쌓이고, 정작 도장현장
             // 출고로 줄어든 재사용 자재 재고는 영영 복구되지 않는다(사용자 보고: "반납 시
