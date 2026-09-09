@@ -3836,17 +3836,17 @@ var JigModule = (function () {
         const html = '<!doctype html><html lang="ko"><head><meta charset="utf-8">' +
             '<title>' + _esc(label) + '</title>' +
             '<style>' +
-            'html,body{margin:0;height:100%;background:#111827;color:#e5e7eb;font-family:"Malgun Gothic",sans-serif;}' +
+            'html,body{margin:0;height:100%;background:#fff;color:#111827;font-family:"Malgun Gothic",sans-serif;}' +
             '.wrap{display:flex;flex-direction:column;height:100%;}' +
-            '.stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px;}' +
-            '.stage img{display:block;max-width:92%;max-height:92%;object-fit:contain;transform-origin:center center;transition:transform .12s ease;background:#0b1220;}' +
-            '.bar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px 16px;background:#1f2937;border-top:1px solid #374151;}' +
-            '.bar .size{font-size:13px;font-weight:700;color:#d1d5db;min-width:110px;font-variant-numeric:tabular-nums;}' +
+            '.stage{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;overflow:auto;padding:12px;background:#fff;}' +
+            '.stage img{display:block;max-width:92%;max-height:92%;object-fit:contain;transform-origin:center center;transition:transform .12s ease;background:#fff;}' +
+            '.bar{flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:12px 14px 16px;background:#fff;border-top:1px solid #e5e7eb;}' +
+            '.bar .size{font-size:13px;font-weight:700;color:#111827;min-width:110px;font-variant-numeric:tabular-nums;}' +
             '.bar .actions{display:flex;align-items:center;justify-content:center;gap:10px;flex:1;}' +
             '.bar button{appearance:none;border:0;border-radius:8px;padding:10px 16px;font-size:14px;font-weight:700;cursor:pointer;display:inline-flex;align-items:center;gap:6px;}' +
             '.bar .rot{background:#2563eb;color:#fff;}' +
             '.bar .rot:hover{background:#1d4ed8;}' +
-            '.hint{font-size:12px;color:#9ca3af;min-width:40px;text-align:right;}' +
+            '.hint{font-size:12px;color:#374151;min-width:40px;text-align:right;}' +
             '</style></head><body>' +
             '<div class="wrap"><div class="stage"><img id="photo" alt="' + _esc(label) + '" src="' + _esc(url) + '"></div>' +
             '<div class="bar">' +

@@ -981,6 +981,15 @@ var SalesDeliveryPlanModule = (function() {
         };
     }
 
+    function _isWeekendDay(day) {
+        const week = new Date(`${day}T00:00:00`).getDay();
+        return week === 0 || week === 6;
+    }
+
+    function _dayColumnWidth(day) {
+        return _isWeekendDay(day) ? 36 : 72;
+    }
+
     function _matches(row, item) {
         if (row.productId && item.productId && row.productId !== item.productId) return false;
         if (_norm(row.partName) !== _norm(item.partName)) return false;
@@ -1543,17 +1552,8 @@ var SalesDeliveryPlanModule = (function() {
     function _dayCell(row, day, isMonthStart = false) {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
-        const past = day < UIUtils.today();
         const info = _dayColumnInfo(day);
-        const isWeekend = info.className === 'sdp-sat-col' || info.className === 'sdp-red-col';
-        const bg = !plan && !delivered
-            ? (info.className === 'sdp-red-col' ? 'rgba(254,226,226,0.55)' : (info.className === 'sdp-sat-col' ? 'rgba(219,234,254,0.45)' : '#fff'))
-            : delivered >= plan && plan > 0
-            ? 'rgba(16,185,129,0.16)'
-            : past && plan > delivered
-                ? 'rgba(239,68,68,0.12)'
-                : 'rgba(245,158,11,0.14)';
-        const colW = '72px';
+        const colW = `${_dayColumnWidth(day)}px`;
         const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
@@ -1565,7 +1565,7 @@ var SalesDeliveryPlanModule = (function() {
                 ondragend="SalesDeliveryPlanModule.endPlanDrag(event)"
                 title="클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동"
                 class="${info.className} sdp-plan-day-cell ${plan > 0 ? 'sdp-plan-draggable' : ''}"
-                style="min-width:${colW};max-width:${colW};background:${bg};text-align:center;font-size:10px;cursor:pointer;padding:3px 1px;${borderStyle}">
+                style="min-width:${colW};max-width:${colW};text-align:center;font-size:10px;cursor:pointer;padding:3px 1px;${borderStyle}">
                 ${plan ? `<div style="font-weight:400;">${_fmt(plan)}</div>` : ''}
                 ${delivered ? `<div style="color:var(--accent-green);font-weight:400;">납 ${_fmt(delivered)}</div>` : ''}
             </td>
@@ -1665,10 +1665,23 @@ var SalesDeliveryPlanModule = (function() {
             wrap.innerHTML = `<div style="padding:46px;text-align:center;color:var(--text-muted);">등록된 납품 계획이 없습니다.</div>`;
             return;
         }
+        const dayColumnsWidth = days.reduce((sum, day) => sum + _dayColumnWidth(day), 0);
+        const colgroup = `
+            <colgroup>
+                <col style="width:48px;">
+                <col style="width:180px;">
+                <col style="width:44px;">
+                <col style="width:36px;">
+                <col style="width:88px;">
+                <col style="width:54px;">
+                ${days.map(day => `<col style="width:${_dayColumnWidth(day)}px;">`).join('')}
+            </colgroup>
+        `;
 
         wrap.innerHTML = `
             <style>.sdp-status-table th,.sdp-status-table td{padding:3px 5px!important;}</style>
-            <table class="data-table sdp-status-table" style="min-width:${450 + days.length * 72}px;font-size:10px;">
+            <table class="data-table sdp-status-table" style="min-width:${450 + dayColumnsWidth}px;font-size:10px;">
+                ${colgroup}
                 <thead>
                     <tr>
                         <th colspan="6" style="padding:2px 4px!important;"></th>
@@ -1683,7 +1696,7 @@ var SalesDeliveryPlanModule = (function() {
                         <th>완제품<br>재고</th>
                         ${days.map((d, i) => {
                             const info = _dayColumnInfo(d);
-                            const colW = '72px';
+                            const colW = `${_dayColumnWidth(d)}px`;
                             const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
                             const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
                             return `<th class="${info.className}" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
@@ -1691,8 +1704,11 @@ var SalesDeliveryPlanModule = (function() {
                     </tr>
                 </thead>
                 <tbody>
-                    ${rows.map(row => `
-                        <tr style="${row.hasShortage ? 'background:rgba(239,68,68,0.035);' : ''}">
+                    ${rows.map((row, index) => {
+                        const prev = rows[index - 1];
+                        const startsCarGroup = index > 0 && _carKey(prev?.carModel) !== _carKey(row.carModel);
+                        return `
+                        <tr class="${startsCarGroup ? 'sdp-car-group-start' : ''}">
                             <td>${_esc(row.carModel || '-')}</td>
                             <td style="font-weight:800;">${_esc(row.partName || '-')}</td>
                             <td>${_esc(row.color || '-')}</td>
@@ -1708,7 +1724,7 @@ var SalesDeliveryPlanModule = (function() {
                             <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
                             ${days.map((d, i) => _dayCell(row, d, i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7))).join('')}
                         </tr>
-                    `).join('')}
+                    `; }).join('')}
                 </tbody>
             </table>
         `;

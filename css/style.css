@@ -1721,8 +1721,13 @@ input[type="time"] {
     z-index: 6;
 }
 
-.sdp-status-table tbody tr[style*="rgba(239,68,68"] td:nth-child(-n+6) {
-    background: #fff7f7;
+.sdp-status-table tbody tr.sdp-car-group-start td {
+    border-top: 2px solid #94a3b8;
+    box-shadow: inset 0 2px 0 #94a3b8;
+}
+
+.sdp-status-table tbody tr.sdp-car-group-start td:nth-child(-n+6) {
+    box-shadow: inset 0 2px 0 #94a3b8;
 }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(1),
@@ -1797,12 +1802,12 @@ input[type="time"] {
 
 .sdp-status-table .sdp-red-col,
 .sdp-grid-entry-table .sdp-red-col {
-    background: rgba(254, 226, 226, 0.65);
+    background: #fff;
 }
 
 .sdp-status-table .sdp-sat-col,
 .sdp-grid-entry-table .sdp-sat-col {
-    background: rgba(219, 234, 254, 0.55);
+    background: #fff;
     color: #1d4ed8;
 }
 

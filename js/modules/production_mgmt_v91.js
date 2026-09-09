@@ -5980,6 +5980,7 @@ var ProdStandardsModule = (function() {
                             </label>`;
                         }).join('')}
                     </div>
+                    </div>
                 </div>`;
         }).join('');
         return `
@@ -20739,15 +20740,24 @@ var ProdQualityModule = (function() {
         const sameColorPanel = !viewOnly && sameColorProducts.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
                 <div class="card-body" style="padding:12px 16px;">
-                    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;gap:8px;">
-                        <div style="display:flex;align-items:center;gap:7px;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                        <label style="display:flex;align-items:center;gap:7px;cursor:pointer;">
+                            <input type="checkbox" id="pqSameColorEnable" onchange="ProdQualityModule.toggleSameColorPanel()"
+                                style="width:15px;height:15px;accent-color:var(--accent-blue);">
                             <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">content_copy</span>
                             <span style="font-weight:700;font-size:0.88rem;">동일 컬러 품목에 기준값 동시 적용</span>
-                        </div>
-                        <div style="display:flex;gap:6px;">
+                            <span style="font-size:0.74rem;font-weight:700;color:var(--accent-blue);">대상 ${sameColorProducts.length}개</span>
+                            <span id="pqSameColorCount" style="font-size:0.74rem;font-weight:700;color:var(--text-muted);">선택 0 / ${sameColorProducts.length}</span>
+                            <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">(체크하면 대상 품목 목록이 열립니다)</span>
+                        </label>
+                        <div id="pqSameColorBtns" style="display:none;gap:6px;">
                             <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule._checkAllSameColor(true)" style="font-size:0.75rem;padding:3px 10px;">전체 선택</button>
                             <button type="button" class="btn btn-sm btn-outline" onclick="ProdQualityModule._checkAllSameColor(false)" style="font-size:0.75rem;padding:3px 10px;">전체 해제</button>
                         </div>
+                    </div>
+                    <div id="pqSameColorBody" style="display:none;margin-top:10px;">
+                    <div style="font-size:0.78rem;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:6px;padding:7px 10px;margin-bottom:10px;">
+                        <strong>주의</strong> — 체크한 품목의 <strong>기존 기준값은 아래 값으로 덮어써집니다.</strong> 최초 입력에는 편리하지만, 이미 운영 중인 품목을 함께 체크하면 기존 기준이 사라집니다.
                     </div>
                     <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
                         컬러: <strong>${_esc(color)||'공통'}</strong> — 체크한 품목에 아래 기준값이 동일하게 저장됩니다.
@@ -20766,6 +20776,7 @@ var ProdQualityModule = (function() {
                                         border:1px solid var(--border-color);border-radius:7px;background:var(--bg-secondary);cursor:pointer;
                                         font-size:0.83rem;min-width:140px;">
                                 <input type="checkbox" class="pq-same-color-chk" value="${_esc(p.id)}"
+                                    onchange="ProdQualityModule._updateSameColorCount()"
                                     style="width:15px;height:15px;accent-color:var(--accent-blue);">
                                 <span style="font-weight:600;">${_esc(pcm)} / ${_esc(pn||p.id)}</span>
                                 <span style="font-size:0.72rem;font-weight:700;color:${pColor};margin-left:auto;">${pFilled}/${pTotal}</span>
@@ -20783,6 +20794,9 @@ var ProdQualityModule = (function() {
                             <span class="material-symbols-outlined">arrow_back</span> 품목별 항목 기준
                         </button>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.previewSpecPrint('${_js(productId)}','${_js(proc)}')" title="현재 기준값으로 초중종물 C/S 인쇄물을 미리봅니다">
+                                <span class="material-symbols-outlined">print</span> 인쇄물 미리보기
+                            </button>
                             ${viewOnly ? `
                                 <button class="btn btn-primary" onclick="${canEdit ? `ProdQualityModule.openSpecPage('${_js(productId)}','edit','${_js(proc)}')` : 'return false;'}" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
                                     <span class="material-symbols-outlined">edit</span> 편집
@@ -20867,8 +20881,29 @@ var ProdQualityModule = (function() {
         if (!viewOnly) _pqUpdatePresetDetection();
     }
 
+    // 동일 컬러 동시 적용 패널: 체크했을 때만 펼치고, 해제하면 선택도 모두 초기화한다.
+    function toggleSameColorPanel() {
+        const on = !!document.getElementById('pqSameColorEnable')?.checked;
+        const body = document.getElementById('pqSameColorBody');
+        const btns = document.getElementById('pqSameColorBtns');
+        if (body) body.style.display = on ? 'block' : 'none';
+        if (btns) btns.style.display = on ? 'flex' : 'none';
+        if (!on) _checkAllSameColor(false);
+    }
+
     function _checkAllSameColor(checked) {
         document.querySelectorAll('.pq-same-color-chk').forEach(el => { el.checked = checked; });
+        _updateSameColorCount();
+    }
+
+    // 동일 컬러 패널 헤더의 '선택 n / 전체 m' 카운터 갱신
+    function _updateSameColorCount() {
+        const el = document.getElementById('pqSameColorCount');
+        if (!el) return;
+        const all = document.querySelectorAll('.pq-same-color-chk');
+        const sel = document.querySelectorAll('.pq-same-color-chk:checked');
+        el.textContent = `선택 ${sel.length} / ${all.length}`;
+        el.style.color = sel.length ? '#d97706' : 'var(--text-muted)';
     }
 
     function _getSameColorTemplateCandidates(productId, color, paintProcess = '') {
@@ -20881,11 +20916,13 @@ var ProdQualityModule = (function() {
             .filter(t => _normText(t.color || '') === targetColor)
             .filter(t => _normText(t.paintProcess || '') === targetProc)
             .filter(t => {
+                // 컬러 비교는 목록/체크패널과 동일하게 _resolveProductColor(공정별 paintColorA/B 우선)로 통일.
+                // p.color만 보면 같은 차종의 대부분 품목이 후보에서 누락된다.
                 const product = products.find(p =>
                     p.id !== productId &&
                     _normText(p.carModel) === _normText(t.carModel) &&
                     _normText(p.partName || '') === _normText(t.partName || '') &&
-                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || '') === targetColor
+                    _resolveProductColor(p, targetProc) === targetColor
                 );
                 return !!product;
             })
@@ -25137,7 +25174,8 @@ var ProdQualityModule = (function() {
     }
 
     function _buildPrintSheetHtml(id) {
-        const d = Storage.getById(STORE, id);
+        // id 대신 발행 문서 객체를 직접 넘기면(미리보기) 저장 없이 그대로 렌더한다.
+        const d = (id && typeof id === 'object') ? id : Storage.getById(STORE, id);
         if (!d) return '';
         // 발행 당시 저장된 items가 기본 마스터(색차·광택 등)여도,
         // 인쇄/재인쇄는 현재 품목별 항목 기준(프리셋)을 우선 적용한다.
@@ -25334,6 +25372,41 @@ var ProdQualityModule = (function() {
         printIssues([id]);
     }
 
+    // 품목 기준값 화면에서 초중종물 C/S 인쇄물을 저장 없이 미리보기로 연다.
+    function previewSpecPrint(productId, paintProcess) {
+        const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === productId);
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const proc = _normText(paintProcess || '');
+        const color = _resolveProductColor(product, proc);
+        const draft = {
+            _docKind: ISSUE_KIND,
+            id: '',
+            date: UIUtils.today(),
+            type: '초물/중물/종물',
+            types: ['초물', '중물', '종물'],
+            line: proc,
+            carModel: _normText(product.carModel),
+            partName: _normText(product.partName || ''),
+            color,
+            lotNo: '',
+            productionQty: 0,
+            startTime: '',
+            endTime: '',
+            workHours: 0,
+            items: [],
+            status: '미리보기',
+            inspector: '',
+            writer: '',
+            note: ''
+        };
+        const html = _buildPrintSheetHtml(draft);
+        if (!html) {
+            UIUtils.toast('미리보기를 만들 수 없습니다. 관리항목/기준값을 먼저 설정하세요.', 'warning');
+            return;
+        }
+        _openQualityPrintWindow([{ id: '', html }]);
+    }
+
     function printIssues(ids, opts) {
         opts = opts || {};
         const unique = [];
@@ -25471,7 +25544,7 @@ var ProdQualityModule = (function() {
     }
 
     function _openQualityPrintWindow(pages, existingWin) {
-        const issueIds = (pages || []).map(function(p) { return p.id; });
+        const issueIds = (pages || []).map(function(p) { return p.id; }).filter(Boolean);
         const multi = pages.length > 1;
         const html = `<!doctype html><html class="${multi ? 'print-multi' : ''}"><head><meta charset="utf-8"><title>초중종물 C/S</title>
 <style>
@@ -25482,7 +25555,7 @@ body{font-family:Arial,'Malgun Gothic',sans-serif;color:#111827;background:#eef2
 .print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
 .print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
-.print-page{width:297mm;height:210mm;margin:18px auto;overflow:hidden;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
+.print-page{width:283mm;height:200mm;margin:18px auto;overflow:hidden;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
 .sheet{width:100%;height:100%;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid}
 .title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:12mm;margin-bottom:1.5mm;border:1.6px solid #111827;background:#fff;flex:0 0 auto}
 .title-logo{position:absolute;left:3mm;top:50%;transform:translateY(-50%);width:46mm;height:10mm;display:flex;align-items:center;justify-content:flex-start;background:#fff}
@@ -25510,8 +25583,8 @@ table{border-collapse:collapse;width:100%}
 .item-detail{font-size:13px;font-weight:700;line-height:1.15}
 .item-sub-en{display:block;font-size:9px;font-weight:700;line-height:1.1}
 .item-target{display:block;font-size:9px;font-weight:800;line-height:1.15;color:#a16207}
-.spec-upper{font-size:14px;font-weight:900}.spec-lower,.spec-text{font-size:12px;line-height:1.25;font-weight:900}
-.film-range-spec{text-align:center!important;vertical-align:middle!important;font-weight:900}
+.spec-upper{font-size:19px;font-weight:900}.spec-lower,.spec-text{font-size:16px;line-height:1.25;font-weight:900}
+.film-range-spec{text-align:center!important;vertical-align:middle!important;font-weight:900;font-size:19px}
 .cycle-note{display:flex;align-items:center;gap:8px;min-height:7mm;margin:0 0 1.5mm;border:1.2px solid #111827;background:#f8fafc;padding:1mm 2mm;font-size:10.5px;font-weight:800;color:#0f172a;flex:0 0 auto}
 .cycle-note strong{display:inline-flex;align-items:center;align-self:stretch;padding:0 2mm;margin:-1mm 1mm -1mm -2mm;background:#e8eef6;border-right:1.2px solid #111827;white-space:nowrap}
 .cycle-note span{display:inline-flex;align-items:center;padding:1px 6px;border:1px solid #cbd5e1;background:#fff;border-radius:3px;white-space:nowrap}
@@ -25530,7 +25603,7 @@ table{border-collapse:collapse;width:100%}
 .main tr.color-row .item-detail{font-size:11px;line-height:1.02}
 .main tr.color-row .item-sub-en{font-size:8px}
 .main tr.color-row .item-target{font-size:8px}
-.main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:12px;line-height:1.05;font-weight:900}
+.main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:16px;line-height:1.1;font-weight:900}
 .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
 .main tr.color-row .measure-cell span{min-height:10mm;width:72%;font-size:0}
 @media print{
@@ -25586,8 +25659,11 @@ function fitOnePage() {
     page.querySelectorAll('.measure-cell span').forEach(el => {
       el.style.width = ''; el.style.height = ''; el.style.minHeight = ''; el.style.fontSize = '';
     });
-    const pageW = mm(297);
-    const pageH = mm(210);
+    // @page{size:A4 landscape;margin:5mm 7mm} 기준 실제 인쇄 가능 영역.
+    // 여기에 297x210(용지 전체)을 쓰면 인라인 스타일이 인쇄용 CSS를 덮어써서
+    // 오른쪽(판정 열)과 아래쪽이 잘린 채로 인쇄/PDF 저장된다.
+    const pageW = mm(283);
+    const pageH = mm(200);
     page.style.width = pageW + 'px';
     page.style.height = pageH + 'px';
     sheet.style.width = pageW + 'px';
@@ -25633,7 +25709,7 @@ function fitOnePage() {
     const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
     if (scale < 0.998) {
       sheet.style.transformOrigin = 'top left';
-      sheet.style.transform = 'scale(' + Math.max(0.82, scale).toFixed(4) + ')';
+      sheet.style.transform = 'scale(' + Math.max(0.6, scale).toFixed(4) + ')';
     }
   });
 }
@@ -25735,6 +25811,9 @@ window.addEventListener('afterprint', () => {
         ,saveSpecPage
         ,_checkAllSameColor
         ,applyPresetToSpec
+        ,previewSpecPrint
+        ,toggleSameColorPanel
+        ,_updateSameColorCount
         ,applySameColorTemplateToSpec
         ,onSpecLoadAnyCarModelChange
         ,applyAnyTemplateToSpec
