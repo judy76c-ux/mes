@@ -15,6 +15,7 @@ var JigModule = (function () {
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
     const LINE_ORDER_RATE = 1.01; // 101%
+    const PRODUCTION_NEED_RATE = 0.05; // 5%
     const THICKNESS_JIG_COUNT = 3;
     const THICKNESS_STAGE_COUNT = 3;
     const THICKNESS_POINT_PHOTO_COUNT = 3;
@@ -567,9 +568,18 @@ var JigModule = (function () {
         return lines;
     }
 
+    const JIG_PART_NAME_RENAMES = {
+        'P702 PRNDM Button-M': 'P702 Button-M'
+    };
+
+    function _normalizeJigPartName(partName) {
+        const name = String(partName || '').trim();
+        return JIG_PART_NAME_RENAMES[name] || name;
+    }
+
     function _jigPartNames(jig) {
         return [jig && jig.partName, ...((jig && jig.partAliases) || [])]
-            .map(v => String(v || '').trim())
+            .map(_normalizeJigPartName)
             .filter(Boolean);
     }
 
@@ -1866,10 +1876,10 @@ var JigModule = (function () {
         const todayHtml = _lifePinSection({
             title: '금일 작업 품목 지그',
             icon: 'today',
-            color: '#c2410c',
-            hintColor: '#9a3412',
-            border: '#fdba74',
-            bg: '#fff7ed',
+            color: '#047857',
+            hintColor: '#065f46',
+            border: '#86efac',
+            bg: '#dcfce7',
             hint: '금일사용 = 실적 / 현재시각 예측 · 금일계획 (계획 시간 비례)'
         }, todayJigs, orderingByJigId, { showTodayBadge: true });
 
@@ -2598,6 +2608,59 @@ var JigModule = (function () {
         return lines.map(l => `<span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7rem;margin-right:4px;white-space:nowrap;">${_esc(l)}</span>`).join('');
     }
 
+    function _lineCycleForAppliedLine(appliedLine) {
+        return String(appliedLine || '').includes('B') ? B_LINE_CYCLE : A_LINE_CYCLE;
+    }
+
+    function _formatLineValueList(items, className) {
+        const rows = (items || []).filter(function (item) { return item && item.line; });
+        if (!rows.length) return '<span style="color:var(--text-muted);">-</span>';
+        return rows.map(function (item) {
+            return '<div class="' + (className || '') + '" style="white-space:nowrap;line-height:1.45;">' +
+                '<span style="font-size:0.68rem;color:var(--text-muted);margin-right:4px;">' + _esc(item.line.replace('도장-', '')) + '</span>' +
+                item.html +
+                '</div>';
+        }).join('');
+    }
+
+    function _masterCvtInfos(jig) {
+        const lines = Array.isArray(jig && jig.appliedLines) ? jig.appliedLines.filter(Boolean) : [];
+        const names = _jigPartNames(jig);
+        const car = jig && jig.carModel;
+        return lines.map(function (line) {
+            let cvt = 0;
+            for (let i = 0; i < names.length; i++) {
+                cvt = _getProductCvtForAppliedLine(car, names[i], line);
+                if (cvt) break;
+            }
+            return { line: line, cvt: cvt };
+        });
+    }
+
+    function _masterProductionNeedQty(cvt, appliedLine) {
+        const n = Number(cvt) || 0;
+        if (n <= 0) return 0;
+        return Math.ceil(_lineCycleForAppliedLine(appliedLine) * n * PRODUCTION_NEED_RATE);
+    }
+
+    function _masterCvtCell(jig) {
+        return _formatLineValueList(_masterCvtInfos(jig).map(function (info) {
+            return { line: info.line, html: info.cvt ? _fmt(info.cvt) : '<span style="color:var(--text-muted);">-</span>' };
+        }), 'jig-cvt-value');
+    }
+
+    function _masterProductionNeedCell(jig) {
+        return _formatLineValueList(_masterCvtInfos(jig).map(function (info) {
+            const needQty = _masterProductionNeedQty(info.cvt, info.line);
+            return {
+                line: info.line,
+                html: needQty
+                    ? '<span style="font-weight:800;color:var(--accent-blue);">' + _fmt(needQty) + '</span>'
+                    : '<span style="color:var(--text-muted);">-</span>'
+            };
+        }), 'jig-need-value');
+    }
+
     function _photoThumbs(jig, key) {
         const photos = Array.isArray(jig[key]) ? jig[key].filter(Boolean).slice(0, 2) : [];
         if (!photos.length) return '<span style="color:var(--text-muted);">-</span>';
@@ -2769,7 +2832,8 @@ var JigModule = (function () {
             const limitCoat = life.limitCoat;
             const manage = life.manage;
             const allParts = _masterSelectedPartNames(j);
-            const aliases = allParts.filter(function (p) { return p !== j.partName; });
+            const displayPartName = _normalizeJigPartName(j.partName || allParts[0] || '');
+            const aliases = allParts.filter(function (p) { return p !== displayPartName; });
             const car = _jigCarKey(j) || '차종 미지정';
             const isNewCar = car !== prevCar;
             prevCar = car;
@@ -2780,7 +2844,7 @@ var JigModule = (function () {
                 carCell +
                 '<td style="white-space:nowrap;">' + _itemTypeBadge(_jigItemType(j, itemTypeMap)) + '</td>' +
                 '<td style="white-space:nowrap;" title="' + _esc(allParts.join(', ')) + '">' +
-                    '<span style="font-weight:600;">' + _esc(j.partName || '-') + '</span>' +
+                    '<span style="font-weight:600;">' + _esc(displayPartName || '-') + '</span>' +
                     (aliases.length ? '<span style="font-size:0.72rem;color:var(--text-muted);margin-left:6px;">+' + aliases.length + '</span>' : '') +
                 '</td>' +
                 '<td style="text-align:right;white-space:nowrap;">' + _fmtMm(j.initialThicknessMm) + '</td>' +
@@ -2790,6 +2854,8 @@ var JigModule = (function () {
                 '<td style="text-align:right;white-space:nowrap;font-weight:800;color:var(--accent-blue);">' + _fmtCountOrDash(manage) + '</td>' +
                 '<td style="text-align:right;white-space:nowrap;">' + (j.orderQty ? _fmt(j.orderQty) : '-') + '</td>' +
                 '<td style="white-space:nowrap;">' + _appliedLineBadges(j.appliedLines) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _masterCvtCell(j) + '</td>' +
+                '<td style="text-align:right;white-space:nowrap;">' + _masterProductionNeedCell(j) + '</td>' +
                 '<td style="white-space:nowrap;">' + _esc(j.material || '-') + '</td>' +
                 '<td style="white-space:nowrap;">' + _esc(j.supplier || '-') + '</td>' +
                 '<td style="white-space:nowrap;">' + _esc(j.madeDate || j.registDate || '-') + '</td>' +
@@ -2836,6 +2902,8 @@ var JigModule = (function () {
                                     <th style="text-align:right;white-space:nowrap;">관리횟수<br><small style="font-weight:400;">(회)</small></th>
                                     <th style="text-align:right;white-space:nowrap;">발주</th>
                                     <th style="white-space:nowrap;">적용라인</th>
+                                    <th style="text-align:right;white-space:nowrap;">CVT</th>
+                                    <th style="text-align:right;white-space:nowrap;">필요수량</th>
                                     <th style="white-space:nowrap;">재질</th>
                                     <th style="white-space:nowrap;">구매처</th>
                                     <th style="white-space:nowrap;">제작일</th>
@@ -2847,7 +2915,7 @@ var JigModule = (function () {
                             </thead>
                             <tbody>
                                 ${jigs.length ? rows : `
-                                    <tr><td colspan="17" style="text-align:center;padding:36px;color:var(--text-muted);white-space:normal;">${emptyText}</td></tr>
+                                    <tr><td colspan="19" style="text-align:center;padding:36px;color:var(--text-muted);white-space:normal;">${emptyText}</td></tr>
                                 `}
                             </tbody>
                         </table>
@@ -2945,6 +3013,8 @@ var JigModule = (function () {
             const fix = function (name) {
                 const t = String(name || '').trim();
                 if (!t) return t;
+                const renamed = _normalizeJigPartName(t);
+                if (renamed !== t) return renamed;
                 const hit = dict[_normPartKey(t)];
                 return (hit && hit !== t) ? hit : t;
             };
@@ -3273,35 +3343,39 @@ var JigModule = (function () {
     function _calcLineOrderQty(carModel, partName, appliedLine, spindle, integrated, integratedCvt) {
         const masterCvt = _getProductCvtForAppliedLine(carModel, partName, appliedLine);
         if (!masterCvt && !integrated) {
-            return { orderQty: 0, needQty: 0, cvt: 0, masterCvt: 0, hint: appliedLine + ' CVT 없음' };
+            return { orderQty: 0, needQty: 0, productionNeedQty: 0, cvt: 0, masterCvt: 0, hint: appliedLine + ' CVT 없음' };
         }
         if (integrated) {
             const manualCvt = Number(integratedCvt) || 0;
             if (!manualCvt) {
-                return { orderQty: 0, needQty: 0, cvt: 0, masterCvt: masterCvt, hint: appliedLine + ' 일체형 CVT 입력 필요' };
+                return { orderQty: 0, needQty: 0, productionNeedQty: _masterProductionNeedQty(masterCvt, appliedLine), cvt: 0, masterCvt: masterCvt, hint: appliedLine + ' 일체형 CVT 입력 필요' };
             }
             const needQty = spindle * manualCvt;
             const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
+            const productionNeedQty = _masterProductionNeedQty(masterCvt || manualCvt, appliedLine);
             const cvtLabel = masterCvt > 0 && masterCvt !== manualCvt
                 ? ('CVT ' + masterCvt + '→' + manualCvt + '(일체형)')
                 : ('CVT ' + manualCvt + '(일체형)');
             return {
                 orderQty: orderQty,
                 needQty: needQty,
+                productionNeedQty: productionNeedQty,
                 cvt: manualCvt,
                 masterCvt: masterCvt,
-                hint: spindle.toLocaleString('ko-KR') + ' × ' + cvtLabel + ' = 필요 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
+                hint: spindle.toLocaleString('ko-KR') + ' × ' + cvtLabel + ' = 발주기준 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
             };
         }
         const calcCvt = masterCvt;
         const needQty = spindle * calcCvt;
         const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
+        const productionNeedQty = _masterProductionNeedQty(calcCvt, appliedLine);
         return {
             orderQty: orderQty,
             needQty: needQty,
+            productionNeedQty: productionNeedQty,
             cvt: calcCvt,
             masterCvt: masterCvt,
-            hint: spindle.toLocaleString('ko-KR') + ' × CVT ' + calcCvt + ' = 필요 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
+            hint: spindle.toLocaleString('ko-KR') + ' × CVT ' + calcCvt + ' = 발주기준 ' + needQty.toLocaleString('ko-KR') + ' EA × 101% → ' + orderQty.toLocaleString('ko-KR') + ' EA'
         };
     }
 
@@ -3309,6 +3383,31 @@ var JigModule = (function () {
         return Array.from(document.querySelectorAll('.jigMasterAppliedLine:checked'))
             .map(function (el) { return el.value; })
             .filter(function (line) { return line === '도장-A' || line === '도장-B'; });
+    }
+
+    function _setMasterNeedDisplays(items) {
+        const cvtEl = document.getElementById('jigMasterCvtDisplay');
+        const needEl = document.getElementById('jigMasterProductionNeedQty');
+        const rows = (items || []).filter(function (item) { return item && item.line; });
+        if (cvtEl) {
+            cvtEl.innerHTML = rows.length
+                ? _formatLineValueList(rows.map(function (item) {
+                    return { line: item.line, html: item.cvt ? _fmt(item.cvt) : '<span style="color:var(--text-muted);">-</span>' };
+                }))
+                : '<span style="color:var(--text-muted);">도장-A/B 선택 시 표시</span>';
+        }
+        if (needEl) {
+            needEl.innerHTML = rows.length
+                ? _formatLineValueList(rows.map(function (item) {
+                    return {
+                        line: item.line,
+                        html: item.productionNeedQty
+                            ? '<span style="font-weight:800;color:var(--accent-blue);">' + _fmt(item.productionNeedQty) + '</span>'
+                            : '<span style="color:var(--text-muted);">-</span>'
+                    };
+                }))
+                : '<span style="color:var(--text-muted);">-</span>';
+        }
     }
 
     function recalcMasterOrderQty() {
@@ -3319,6 +3418,7 @@ var JigModule = (function () {
         if (!autoLines.length) {
             qtyEl.readOnly = false;
             qtyEl.style.background = '';
+            _setMasterNeedDisplays([]);
             if (hintEl) hintEl.textContent = '도장-A/B 선택 시 자동 계산됩니다.';
             return;
         }
@@ -3328,10 +3428,12 @@ var JigModule = (function () {
             qtyEl.value = '';
             qtyEl.readOnly = true;
             qtyEl.style.background = 'var(--bg-secondary)';
+            _setMasterNeedDisplays([]);
             if (hintEl) hintEl.textContent = '차종·품명 선택 후 발주 수량이 자동 계산됩니다.';
             return;
         }
         const hints = [];
+        const displayRows = [];
         let totalOrder = 0;
         const integrated = _isIntegratedJigChecked();
         const integratedCvt = _getIntegratedJigCvt();
@@ -3339,13 +3441,16 @@ var JigModule = (function () {
         if (autoLines.includes('도장-A')) {
             const calcA = _calcLineOrderQty(carModel, partName, '도장-A', A_LINE_CYCLE, integrated, integratedCvt);
             if (calcA.orderQty > 0) totalOrder += calcA.orderQty;
+            displayRows.push({ line: '도장-A', cvt: calcA.masterCvt, productionNeedQty: calcA.productionNeedQty });
             hints.push('도장-A: ' + calcA.hint);
         }
         if (autoLines.includes('도장-B')) {
             const calcB = _calcLineOrderQty(carModel, partName, '도장-B', B_LINE_CYCLE, integrated, integratedCvt);
             if (calcB.orderQty > 0) totalOrder += calcB.orderQty;
+            displayRows.push({ line: '도장-B', cvt: calcB.masterCvt, productionNeedQty: calcB.productionNeedQty });
             hints.push('도장-B: ' + calcB.hint);
         }
+        _setMasterNeedDisplays(displayRows);
         qtyEl.value = totalOrder > 0 ? totalOrder : '';
         qtyEl.readOnly = true;
         qtyEl.style.background = 'var(--bg-secondary)';
@@ -3583,6 +3688,17 @@ var JigModule = (function () {
                             </label>
                         `).join('')}
                     </div>
+                    <div style="display:grid;grid-template-columns:120px 160px;gap:8px;margin-top:6px;align-items:stretch;">
+                        <div style="border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;background:var(--bg-secondary);">
+                            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:700;margin-bottom:2px;">CVT</div>
+                            <div id="jigMasterCvtDisplay" style="font-size:0.86rem;text-align:right;font-weight:700;">-</div>
+                        </div>
+                        <div style="border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;background:var(--bg-secondary);">
+                            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:700;margin-bottom:2px;">생산 필요수량</div>
+                            <div id="jigMasterProductionNeedQty" style="font-size:0.86rem;text-align:right;font-weight:800;color:var(--accent-blue);">-</div>
+                        </div>
+                    </div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">제품 기초정보 CVT 기준 · A라인 1,092 × CVT × 5% / B라인 175 × CVT × 5%</div>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:4px;">

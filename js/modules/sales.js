@@ -50,7 +50,6 @@ var SalesProcessUI = (function () {
     const MENUS = [
         { id: 'sales-delivery-plan', label: '영업 계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
         { id: 'sales-planning-materials', label: '생산계획 자료', desc: '사출·도장·레이져 필요량 산출', icon: 'factory', accent: '#0ea5e9' },
-        { id: 'sales-delivery-consolidate', label: '납품계획 취합', desc: '취합 시트 붙여넣기 → 검토 후 반영', icon: 'content_paste', accent: '#eab308' },
         { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
         { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
         { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' },
@@ -785,10 +784,10 @@ var SalesDeliveryModule = (function() {
 })();
 
 /**
- * 취합 시트/엑셀 파싱 이력 + 파싱 순서 저장소.
+ * 엑셀 업로드 파싱 이력 + 파싱 순서 저장소 (SalesDeliveryPlanModule 전용).
  *  - history: 언제 파싱했는지, 어느 날짜까지 파싱했는지 기록
- *  - order  : 차종·품명이 파싱에서 처음 등장한 순서(누적) — '영업 계획/부족 현황' 정렬 기준
- * 두 모듈(SalesDeliveryPlanModule 엑셀 업로드 / DeliveryConsolidateModule 붙여넣기)에서 공유한다.
+ *  - order  : 차종·품명이 파싱에서 처음 등장한 순서(누적) — 사용자가 직접 지정한 순번
+ *             (product.deliverySortOrder)이 없을 때만 정렬 기준으로 쓰는 보조 수단.
  */
 var SalesParseLog = (function () {
     const KEY = 'salesDeliveryParseLog';
@@ -865,6 +864,7 @@ var SalesDeliveryPlanModule = (function() {
     let _lastRows = [];
     let _lastDays = [];
     let _gridRows = [];
+    let _gridDays = [];
     let _dragPlan = null;
     let _dragSuppressClickUntil = 0;
 
@@ -1109,11 +1109,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function _buildDatalists() {
         const products = _products();
-        const customers = [
-            ...products.map(p => p.customer),
-            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer),
-            ...(Storage.getAll(STORE) || []).map(d => d.customer)
-        ];
+        const customers = products.map(_customerOf); // 제품 마스터만 — 오염된 계획/납품 값 제외
         return `
             <datalist id="sdpCarList">${UIUtils.sortCarModels(products.map(p => p.carModel), products).map(v => `<option value="${_esc(v)}"></option>`).join('')}</datalist>
             <datalist id="sdpPartList">${_optionList(products.map(p => p.partName))}</datalist>
@@ -1133,12 +1129,11 @@ var SalesDeliveryPlanModule = (function() {
             .join('');
     }
 
+    // 납품처 목록은 제품 마스터(기초정보)만 신뢰한다. 예전에는 납품계획·납품실적 원장의
+    // customer 값도 그대로 끌어와, 오염된 값("6/30" 등 날짜 문자열이 납품처로 잘못 들어간
+    // 계획 804건)까지 드롭다운에 그대로 노출됐다. 제품 마스터에 실제로 등록된 납품처만 보여준다.
     function _deliveryCustomers() {
-        return [
-            ..._products().map(_customerOf),
-            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(_customerOf),
-            ...(Storage.getAll(STORE) || []).map(_customerOf)
-        ];
+        return _products().map(_customerOf);
     }
 
     function _deliveryCars(customer = '') {
@@ -1306,6 +1301,12 @@ var SalesDeliveryPlanModule = (function() {
                             <span class="material-symbols-outlined">search</span> 조회
                         </button>
                     </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">
+                            <input type="checkbox" id="sdpHideNoPlan" onchange="SalesDeliveryPlanModule.toggleHideNoPlan()">
+                            계획 없는 품목 숨기기
+                        </label>
+                    </div>
                     <div class="form-group" style="align-self:flex-end;margin-left:auto;display:flex;gap:8px;">
                         <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
                             <span class="material-symbols-outlined">grid_on</span> 차종별 등록
@@ -1315,8 +1316,6 @@ var SalesDeliveryPlanModule = (function() {
                         </button>
                     </div>
                 </div>
-
-                <details id="sdpParseLog" style="margin-bottom:10px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);"></details>
 
                 <div class="card">
                     <div class="card-header">
@@ -1335,8 +1334,7 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     async function search() {
-        await SalesParseLog.load();
-        _renderParseLog();
+        await SalesParseLog.load(); // orderIndex(정렬 순서 보조)는 계속 쓰므로 로드는 유지
         const start = document.getElementById('sdpStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
         const customer = _norm(document.getElementById('sdpCustomerFilter')?.value);
@@ -1351,10 +1349,37 @@ var SalesDeliveryPlanModule = (function() {
             return _carKey(p.carModel) === car.replace(/\s+/g, '') || _carKey(product?.carModel) === car.replace(/\s+/g, '');
         });
 
-        const rows = _buildRows(plans, days, start, end);
+        // 계획이 하나도 없는 양산품도 목록에 나오도록, 제품 마스터의 양산품 전체를 먼저 행으로
+        // 깔아둔다. 계획이 있으면 그 위에 그대로 합쳐진다(_buildRows의 key 매칭).
+        const seedProducts = _productionProducts(customer, car);
+
+        const rows = _buildRows(plans, days, start, end, seedProducts);
         _lastRows = rows;
         _lastDays = days;
-        _renderTable(rows, days);
+        _renderTable(_visibleRows(rows), days);
+    }
+
+    /** 계획·납품 실적이 전혀 없는(=totalPlan, delivered 모두 0) 행 — 숨기기 체크 시 제외 대상 */
+    function _visibleRows(rows) {
+        const hideNoPlan = !!document.getElementById('sdpHideNoPlan')?.checked;
+        if (!hideNoPlan) return rows;
+        return rows.filter(r => r.totalPlan > 0 || r.delivered > 0);
+    }
+
+    /** "계획 없는 품목 숨기기" 체크 토글 — 이미 불러온 _lastRows를 다시 조회하지 않고 필터만 다시 적용 */
+    function toggleHideNoPlan() {
+        _renderTable(_visibleRows(_lastRows), _lastDays);
+    }
+
+    /** 제품 마스터의 "양산품" 전체 — 계획 유무와 무관하게 목록에 항상 나올 후보. */
+    function _productionProducts(customer, car) {
+        return _products().filter(p => {
+            if ((p.itemType || '') !== '양산품') return false;
+            if (!(p.partName || p.name)) return false;
+            if (customer && _norm(_customerOf(p)) !== customer) return false;
+            if (car && _carKey(p.carModel) !== car.replace(/\s+/g, '')) return false;
+            return true;
+        });
     }
 
     async function getPlanningMaterialRows(start, end) {
@@ -1366,15 +1391,48 @@ var SalesDeliveryPlanModule = (function() {
         return _buildRows(plans, _days(rangeStart, rangeEnd), rangeStart, rangeEnd);
     }
 
-    function _buildRows(plans, days, start, end) {
+    function _buildRows(plans, days, start, end, seedProducts) {
         plans = (plans || []).filter(plan => _dateInRange(plan.date, start, end));
         const deliveries = Storage.getByDateRange(DB.STORES.SALES_DELIVERY, start, end)
             .filter(d => _dateInRange(d.date, start, end));
         const map = {};
 
+        // 계획이 없어도 목록에 보여야 하는 양산품을 먼저 빈 행으로 깔아둔다.
+        // 아래 plans.forEach가 같은 key로 만나면 이 빈 행 위에 계획이 그대로 합쳐진다.
+        (seedProducts || []).forEach(product => {
+            const rowCustomer = _customerOf(product) || '';
+            const rowCarModel = product.carModel || '';
+            const rowPartName = product.partName || product.name || '';
+            const rowColor = product.color || product.paintColor || '';
+            const rowPackUnit = _packUnitFromProduct(product, '');
+            const key = [product.id || '', rowCustomer, rowCarModel, rowPartName, rowColor, rowPackUnit].join('||');
+            if (map[key]) return;
+            map[key] = {
+                key,
+                ids: [],
+                productId: product.id || '',
+                customer: rowCustomer,
+                carModel: rowCarModel,
+                partName: rowPartName,
+                color: rowColor,
+                packUnit: rowPackUnit,
+                product,
+                processEnd: _endProcess(product),
+                planByDate: {},
+                deliveryByDate: {},
+                totalPlan: 0,
+                delivered: 0
+            };
+        });
+
         plans.forEach(plan => {
             const product = _findProduct(plan);
-            const rowCustomer = plan.customer || product?.customer || '';
+            // 제품이 정상적으로 매칭되면 마스터의 납품처를 우선한다. plan.customer는 신뢰할 수
+            // 없는 경우가 실제로 있었다(예: "6/30"·"8/28" 같은 날짜 문자열이 그대로 들어간 계획
+            // 804건/2610건 — 아마 엑셀 업로드 시 날짜 열을 납품처 열로 잘못 매핑한 것으로 보임).
+            // plan.customer를 우선하면 같은 제품이 오염된 값마다 별도 행으로 쪼개져 "중복"으로
+            // 보였다. 제품이 안 잡히는(고아) 계획일 때만 plan.customer로 폴백한다.
+            const rowCustomer = (product && _customerOf(product)) || plan.customer || '';
             const rowCarModel = product?.carModel || plan.carModel || '';
             const rowPartName = product?.partName || plan.partName || '';
             const rowColor = plan.color || product?.color || '';
@@ -1441,68 +1499,36 @@ var SalesDeliveryPlanModule = (function() {
         const carOrder = new Map();
         rows.forEach(row => {
             const carKey = _carKey(row.carModel);
-            const order = SalesParseLog.orderIndex(row.carModel, row.partName);
-            if (!carKey || order === Number.MAX_SAFE_INTEGER) return;
+            if (!carKey) return;
+            const order = Math.min(_deliverySortOrderOf(row.product), SalesParseLog.orderIndex(row.carModel, row.partName));
+            if (order === Number.MAX_SAFE_INTEGER) return;
             carOrder.set(carKey, Math.min(carOrder.get(carKey) ?? Number.MAX_SAFE_INTEGER, order));
         });
 
-        // 파싱된 차종 묶음 순서를 먼저 적용해 같은 차종 품목이 흩어지지 않게 한다.
+        // 차종 묶음 순서를 먼저 적용해 같은 차종 품목이 흩어지지 않게 한다. 같은 차종 안에서는
+        // 사용자가 직접 지정한 순번(product.deliverySortOrder)을 우선하고, 없으면 예전 엑셀 파싱
+        // 순서, 그래도 없으면 가나다 순으로 정렬한다.
         return rows.sort((a, b) => {
             const ca = carOrder.get(_carKey(a.carModel)) ?? Number.MAX_SAFE_INTEGER;
             const cb = carOrder.get(_carKey(b.carModel)) ?? Number.MAX_SAFE_INTEGER;
             if (ca !== cb) return ca - cb;
+            if (a.carModel !== b.carModel) return a.carModel.localeCompare(b.carModel, 'ko');
+            const da = _deliverySortOrderOf(a.product);
+            const db = _deliverySortOrderOf(b.product);
+            if (da !== db) return da - db;
             const oa = SalesParseLog.orderIndex(a.carModel, a.partName);
             const ob = SalesParseLog.orderIndex(b.carModel, b.partName);
             if (oa !== ob) return oa - ob;
-            return a.carModel.localeCompare(b.carModel, 'ko') ||
-                a.partName.localeCompare(b.partName, 'ko') ||
+            return a.partName.localeCompare(b.partName, 'ko') ||
                 a.customer.localeCompare(b.customer, 'ko');
         });
     }
 
-    function _renderParseLog() {
-        const el = document.getElementById('sdpParseLog');
-        if (!el) return;
-        const hist = SalesParseLog.history();
-        const wasOpen = el.hasAttribute('open');
-        if (!hist.length) {
-            el.innerHTML = `
-                <summary style="padding:8px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;user-select:none;">
-                    <span class="material-symbols-outlined" style="font-size:0.95rem;vertical-align:middle;color:var(--text-muted);">history</span>
-                    파싱 이력 <span style="font-weight:400;color:var(--text-muted);">— 아직 기록 없음</span>
-                </summary>`;
-            return;
-        }
-        const last = hist[0];
-        const fmtAt = s => { const d = new Date(s); return isNaN(d) ? s : `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; };
-        const md = s => s ? s.slice(5).replace('-', '월 ') + '일' : '-';
-        const rowsHtml = hist.map(h => `
-            <tr>
-                <td style="padding:4px 10px;white-space:nowrap;">${fmtAt(h.at)}</td>
-                <td style="padding:4px 10px;white-space:nowrap;">${md(h.from)} ~ ${md(h.to)}</td>
-                <td style="padding:4px 10px;text-align:right;white-space:nowrap;">${_fmt(h.items)}개 품목 / ${_fmt(h.rows)}건</td>
-                <td style="padding:4px 10px;color:var(--text-muted);white-space:nowrap;">${_esc(h.source || '')}</td>
-            </tr>`).join('');
-        el.innerHTML = `
-            <summary style="padding:8px 14px;font-size:0.82rem;font-weight:600;cursor:pointer;user-select:none;">
-                <span class="material-symbols-outlined" style="font-size:0.95rem;vertical-align:middle;color:var(--text-muted);">history</span>
-                파싱 이력
-                <span style="font-weight:400;color:var(--text-muted);">— 최근: ${fmtAt(last.at)} · ${md(last.from)} ~ ${md(last.to)}까지</span>
-            </summary>
-            <div style="padding:0 14px 12px;overflow-x:auto;">
-                <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
-                    <thead>
-                        <tr style="color:var(--text-muted);text-align:left;border-bottom:1px solid var(--border-color);">
-                            <th style="padding:4px 10px;font-weight:600;">파싱 일시</th>
-                            <th style="padding:4px 10px;font-weight:600;">파싱한 납품일 범위</th>
-                            <th style="padding:4px 10px;font-weight:600;text-align:right;">건수</th>
-                            <th style="padding:4px 10px;font-weight:600;">경로</th>
-                        </tr>
-                    </thead>
-                    <tbody>${rowsHtml}</tbody>
-                </table>
-            </div>`;
-        if (wasOpen) el.setAttribute('open', '');
+    /** 사용자가 직접 지정한 납품계획 정렬 순번(product.deliverySortOrder) — 없으면 맨 뒤로 민다. */
+    function _deliverySortOrderOf(product) {
+        if (!product || product.deliverySortOrder == null || product.deliverySortOrder === '') return Number.MAX_SAFE_INTEGER;
+        const n = Number(product.deliverySortOrder);
+        return isNaN(n) ? Number.MAX_SAFE_INTEGER : n;
     }
 
     function _renderStats(rows) {
@@ -1825,17 +1851,14 @@ var SalesDeliveryPlanModule = (function() {
 
     function _gridEditorHtml() {
         const products = _products();
-        const customers = [
-            ...products.map(p => p.customer),
-            ...(Storage.getAll(DB.STORES.SALES_DELIVERY) || []).map(d => d.customer),
-            ...(Storage.getAll(STORE) || []).map(d => d.customer)
-        ];
+        const customers = products.map(_customerOf); // 제품 마스터만 — 오염된 계획/납품 값 제외
         const start = document.getElementById('sdpStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
 
         return `
             <div style="padding:6px 8px;border:1px solid var(--border-color);background:#fff;margin-bottom:8px;color:var(--text-secondary);font-size:11px;">
-                납품처와 차종을 선택한 뒤, 날짜 칸을 클릭해서 수량을 입력하세요. 기존 계획이 있는 칸은 수량이 표시되며, 빈칸으로 저장하면 해당 계획은 삭제됩니다.
+                납품처와 차종을 선택한 뒤, 날짜 칸을 클릭해서 수량을 입력하세요. 기존 계획이 있는 칸은 수량이 표시되며, 빈칸으로 저장하면 해당 계획은 삭제됩니다.<br>
+                엑셀에서 셀(행/열 여러 개도 가능)을 복사한 뒤 시작할 칸을 클릭하고 붙여넣기(Ctrl+V)하면, 그 칸부터 이어서 채워집니다.
             </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:6px;margin-bottom:8px;padding:8px;font-size:11px;">
                 <div class="form-group">
@@ -1863,6 +1886,11 @@ var SalesDeliveryPlanModule = (function() {
                         <span class="material-symbols-outlined">refresh</span> 목록 적용
                     </button>
                 </div>
+                <div class="form-group" style="align-self:flex-end;">
+                    <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.saveGridOrder()" title="맨 왼쪽 '순번' 칸에 입력한 숫자를 저장하고, 그 순서대로 다시 정렬합니다.">
+                        <span class="material-symbols-outlined">low_priority</span> 순서 저장
+                    </button>
+                </div>
             </div>
             <div id="sdpGridEditorBody" class="data-table-wrapper" style="max-height:calc(100vh - 210px);overflow:auto;border:1px solid #94a3b8;border-radius:0;"></div>
         `;
@@ -1871,13 +1899,13 @@ var SalesDeliveryPlanModule = (function() {
     function _gridInputStyle(qty) {
         return [
             'width:100%',
-            'height:17px',
+            'height:19px',
             'border:0',
             'border-radius:0',
             'text-align:right',
             'font-weight:800',
-            'font-size:10px',
-            'line-height:17px',
+            'font-size:12px',
+            'line-height:19px',
             'padding:0 2px',
             qty > 0 ? 'background:rgba(59,130,246,0.08);color:var(--accent-blue)' : 'background:transparent;color:var(--text-primary)'
         ].join(';');
@@ -1890,6 +1918,18 @@ var SalesDeliveryPlanModule = (function() {
         const car = document.getElementById('sdpGridCar')?.value || '';
         const days = _days(start, end);
         const dayInfos = days.map(_dayColumnInfo);
+        _gridDays = days;
+
+        const wrap = document.getElementById('sdpGridEditorBody');
+        if (!wrap) return;
+
+        // 차종을 고르기 전에는 전체 차종·전체 품목이 한꺼번에 쏟아져 나와 표가 너무 길어진다.
+        // 차종별로 등록하는 워크플로우라 차종을 먼저 고르게 하고, 고르기 전엔 빈 목록으로 둔다.
+        if (!car) {
+            _gridRows = [];
+            wrap.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">차종을 선택하면 목록이 표시됩니다.</div>`;
+            return;
+        }
 
         const products = _productsByCustomer(customer)
             .filter(p => p.partName || p.name)
@@ -1897,12 +1937,11 @@ var SalesDeliveryPlanModule = (function() {
             .sort((a, b) =>
                 String(a.customer || '').localeCompare(String(b.customer || ''), 'ko') ||
                 String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
+                (_deliverySortOrderOf(a) - _deliverySortOrderOf(b)) ||
                 String(a.partName || a.name || '').localeCompare(String(b.partName || b.name || ''), 'ko')
             );
 
         _gridRows = products.map(p => _productBase(p, customer));
-        const wrap = document.getElementById('sdpGridEditorBody');
-        if (!wrap) return;
 
         if (!_gridRows.length) {
             wrap.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">선택 조건에 맞는 제품이 없습니다.</div>`;
@@ -1910,9 +1949,10 @@ var SalesDeliveryPlanModule = (function() {
         }
 
         wrap.innerHTML = `
-            <table class="data-table sdp-grid-entry-table" style="min-width:${332 + dayInfos.length * 34}px;font-size:10px;">
+            <table class="data-table sdp-grid-entry-table" style="min-width:${368 + dayInfos.length * 34}px;font-size:12px;">
                 <thead>
                     <tr>
+                        <th style="width:36px;" title="차종 안에서의 표시 순서 — 숫자를 입력하고 '순서 저장'을 누르면 저장·재정렬됩니다.">순번</th>
                         <th class="sdp-customer-col" style="width:44px;">납품처</th>
                         <th style="width:48px;">차종</th>
                         <th style="width:132px;">품명</th>
@@ -1930,6 +1970,12 @@ var SalesDeliveryPlanModule = (function() {
                 <tbody>
                     ${_gridRows.map((row, index) => `
                         <tr>
+                            <td class="sdp-fixed-col" style="padding:0 1px;">
+                                <input type="number" class="sdp-order-cell" data-row="${index}"
+                                    value="${row.product && row.product.deliverySortOrder != null ? _esc(row.product.deliverySortOrder) : ''}"
+                                    placeholder="-" onclick="this.select()" onfocus="this.select()"
+                                    style="width:100%;height:19px;border:0;text-align:center;font-size:12px;background:transparent;">
+                            </td>
                             <td class="sdp-fixed-col sdp-customer-col" title="${_esc(row.customer || '-')}">${_esc(row.customer || '-')}</td>
                             <td class="sdp-fixed-col">${_esc(row.carModel || '-')}</td>
                             <td class="sdp-fixed-col">${_esc(row.partName || '-')}</td>
@@ -1943,6 +1989,7 @@ var SalesDeliveryPlanModule = (function() {
                                         <input type="number" min="0" class="sdp-grid-cell"
                                             data-row="${index}" data-date="${day}" value="${qty || ''}"
                                             placeholder="" onclick="this.select()" onfocus="this.select()"
+                                            onpaste="SalesDeliveryPlanModule.onGridCellPaste(event,this)"
                                             style="${_gridInputStyle(qty)}">
                                     </td>
                                 `;
@@ -1952,6 +1999,79 @@ var SalesDeliveryPlanModule = (function() {
                 </tbody>
             </table>
         `;
+    }
+
+    /** '순번' 칸에 입력한 값을 제품 마스터(product.deliverySortOrder)에 저장하고,
+     *  그 순서대로 다시 그린다. 이 값을 정해두면 이후 화면·엑셀 붙여넣기 모두
+     *  사용자가 실제 쓰는 엑셀 시트의 행 순서와 맞춰 정렬된다. */
+    async function saveGridOrder() {
+        const wrap = document.getElementById('sdpGridEditorBody');
+        if (!wrap) return;
+        const inputs = Array.from(wrap.querySelectorAll('.sdp-order-cell'));
+        if (!inputs.length) return;
+
+        let changed = 0;
+        for (const input of inputs) {
+            const row = _gridRows[Number(input.dataset.row)];
+            const product = row && row.product;
+            if (!product || !product.id) continue;
+            const raw = input.value.trim();
+            const nextOrder = raw === '' ? null : Number(raw);
+            if (raw !== '' && isNaN(nextOrder)) continue;
+            const prevOrder = product.deliverySortOrder == null ? null : Number(product.deliverySortOrder);
+            if (nextOrder === prevOrder) continue;
+            await Storage.update(DB.STORES.PRODUCTS, product.id, { deliverySortOrder: nextOrder });
+            product.deliverySortOrder = nextOrder;
+            changed += 1;
+        }
+
+        UIUtils.toast(changed ? `순번 ${changed}건 저장했습니다.` : '변경된 순번이 없습니다.', changed ? 'success' : 'info');
+        renderGridEditorRows();
+    }
+
+    /** 엑셀에서 복사한 셀(행/열 여러 개 가능)을 붙여넣은 칸부터 이어서 채운다.
+     *  엑셀 복사는 클립보드에 행은 개행, 열은 탭(\t)으로 구분된 텍스트로 담긴다
+     *  (개행은 \r\n·\r·\n 중 하나 — OS·엑셀 버전에 따라 다를 수 있어 전부 처리한다).
+     *  값이 하나뿐(탭·개행이 전혀 없음)이면 브라우저 기본 붙여넣기 동작에 맡긴다.
+     *
+     *  날짜 문자열로 목표 칸을 다시 찾지 않고(속성 선택자 재조회는 이스케이프·불일치에
+     *  취약해 일부 열에서만 채워지는 사고가 있었다), 붙여넣은 칸의 실제 위치(같은 행의
+     *  몇 번째 칸인지)를 기준으로 오른쪽·아래쪽 형제 요소를 그대로 따라가며 채운다 —
+     *  DOM 순서가 화면에 보이는 열 순서와 항상 일치하므로 훨씬 확실하다. */
+    function onGridCellPaste(e, el) {
+        const cd = e.clipboardData || window.clipboardData;
+        const text = cd ? (cd.getData('text/plain') || cd.getData('text')) : '';
+        if (!text || !/[\t\r\n]/.test(text)) return; // 단일 값 — 기본 붙여넣기 동작 유지
+
+        e.preventDefault();
+
+        const grid = text
+            .split(/\r\n|\r|\n/)
+            .filter((line, idx, arr) => !(idx === arr.length - 1 && line === '')) // 끝의 빈 줄 제거
+            .map(line => line.split('\t').map(v => v.trim()));
+        if (!grid.length) return;
+
+        const startTr = el.closest('tr');
+        if (!startTr) return;
+        const startCells = Array.from(startTr.querySelectorAll('.sdp-grid-cell'));
+        const startCellIdx = startCells.indexOf(el);
+        if (startCellIdx < 0) return;
+
+        let tr = startTr;
+        for (let r = 0; r < grid.length && tr; r++, tr = tr.nextElementSibling) {
+            const cells = tr.querySelectorAll('.sdp-grid-cell');
+            const rowVals = grid[r];
+            for (let c = 0; c < rowVals.length; c++) {
+                const cell = cells[startCellIdx + c];
+                if (!cell) break; // 오른쪽에 더 채울 칸이 없으면 이 행은 종료
+                // 엑셀은 1,000 이상 숫자를 천단위 콤마와 함께 복사한다("1,260").
+                // _num()은 Number()를 그대로 쓰므로 콤마가 있으면 NaN→0으로 죽어
+                // 1,000 미만 값만 채워진 것처럼 보이는 사고가 났다 — 콤마를 먼저 제거한다.
+                const num = _num(String(rowVals[c]).replace(/,/g, ''));
+                cell.value = num > 0 ? String(num) : '';
+                cell.style.cssText = _gridInputStyle(num);
+            }
+        }
     }
 
     function openGridModal() {
@@ -3007,6 +3127,9 @@ var SalesDeliveryPlanModule = (function() {
         onGridCustomerChange,
         onMainCustomerChange,
         renderGridEditorRows,
+        onGridCellPaste,
+        saveGridOrder,
+        toggleHideNoPlan,
         saveGridPlans,
         openCellModal,
         saveCellPlan,
@@ -3246,604 +3369,6 @@ var SalesPlanningMaterialsModule = (function() {
     }
 
     return { render, search };
-})();
-
-/**
- * 1-1-2) 납품계획 취합 등록 — 취합 정리 엑셀 시트 범위를 그대로 복사해 붙여넣으면
- *        날짜별 납품계획으로 파싱한다. 파싱 결과는 바로 반영되지 않고 "취합 대기함"에
- *        모아두며, 검토 후 선택한 항목만 납품계획(SALES_DELIVERY_PLAN)에 반영한다.
- *        기존 영업계획 등록(SalesDeliveryPlanModule)의 수동 등록·엑셀 업로드는
- *        전혀 건드리지 않는 완전히 별도의 진입점이다.
- */
-var DeliveryConsolidateModule = (function() {
-    const STAGING_STORE = DB.STORES.DELIVERY_PLAN_STAGING;
-    const PLAN_STORE = DB.STORES.SALES_DELIVERY_PLAN;
-
-    let _parsedRows = []; // 붙여넣기 파싱 직후 미리보기 (저장 전 상태)
-
-    function _esc(value) {
-        return String(value ?? '').replace(/[&<>"']/g, ch => ({
-            '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
-        }[ch]));
-    }
-
-    function _num(v) {
-        return Number(String(v ?? '').replace(/,/g, '').trim()) || 0;
-    }
-
-    function init() {}
-
-    function render(container) {
-        const today = UIUtils.today ? UIUtils.today() : new Date().toISOString().slice(0, 10);
-        const year = today.slice(0, 4);
-
-        container.innerHTML = `
-            <div class="fade-in-up">
-                ${SalesProcessUI.renderSection('sales-delivery-consolidate')}
-
-                <div style="margin-bottom:0.75rem;padding:8px 14px;background:rgba(37,99,235,0.05);border-left:3px solid var(--accent-blue);border-radius:0 6px 6px 0;">
-                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;color:var(--accent-blue);margin-right:4px;">info</span>
-                    <span style="font-size:0.82rem;color:var(--text-secondary);">
-                        엑셀에서 취합 시트 범위를 복사(Ctrl+C)해서 아래에 붙여넣으면(Ctrl+V) 날짜별 납품계획으로 파싱합니다.
-                        기존 '영업 계획' 등록·엑셀 업로드와는 별개이며, 검토 후 확인한 항목만 납품계획에 반영됩니다.
-                    </span>
-                </div>
-
-                <div class="card" style="margin-bottom:16px;">
-                    <div class="card-header">
-                        <h4><span class="material-symbols-outlined">content_paste</span> 붙여넣기</h4>
-                    </div>
-                    <div class="card-body">
-                        <textarea id="dpcPasteArea" class="form-textarea" rows="8"
-                            placeholder="여기에 엑셀 범위를 붙여넣으세요 (Ctrl+V)"
-                            style="width:100%;font-family:monospace;font-size:0.78rem;"></textarea>
-
-                        <details style="border:1px solid var(--border);border-radius:8px;margin-top:10px;">
-                            <summary style="padding:9px 14px;font-size:0.83rem;font-weight:600;cursor:pointer;user-select:none;display:flex;align-items:center;gap:6px;list-style:none;">
-                                <span class="material-symbols-outlined" style="font-size:0.95rem;color:var(--text-muted);">tune</span>
-                                파싱 설정
-                                <span style="font-size:0.72rem;font-weight:400;color:var(--text-muted);margin-left:2px;">붙여넣은 범위 안에서의 상대 열 번호(1부터 시작)</span>
-                            </summary>
-                            <div style="padding:12px 14px;border-top:1px solid var(--border);background:var(--bg-secondary);border-radius:0 0 8px 8px;">
-                                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;">
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-size:0.74rem;">차종 열</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCarCol" value="1" type="number" min="1">
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-size:0.74rem;">품명 열</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcPartCol" value="2" type="number" min="1">
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-size:0.74rem;">포장단위 열 (0=사용안함)</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcPackCol" value="3" type="number" min="0">
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-size:0.74rem;">납품처 열 (0=사용안함)</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcCustomerCol" value="15" type="number" min="0">
-                                    </div>
-                                    <div class="form-group">
-                                        <label class="form-label" style="font-size:0.74rem;">기준 연도</label>
-                                        <input class="form-input" style="padding:5px 8px;font-size:0.82rem;" id="dpcYear" value="${year}" type="number" min="2020" max="2099">
-                                    </div>
-                                </div>
-                                <div style="font-size:0.75rem;color:var(--text-muted);margin-top:8px;">
-                                    "8월 6일" 형식의 날짜 헤더 열은 자동으로 찾습니다. 차종은 병합 셀이라 빈 칸이면 바로 위 값을 이어받습니다.
-                                </div>
-                            </div>
-                        </details>
-
-                        <div style="margin-top:10px;display:flex;gap:8px;">
-                            <button class="btn btn-primary" onclick="DeliveryConsolidateModule.parsePasted()">
-                                <span class="material-symbols-outlined" style="font-size:0.9rem;">search</span> 파싱
-                            </button>
-                            <button class="btn btn-outline" onclick="DeliveryConsolidateModule.clearPreview()">
-                                <span class="material-symbols-outlined" style="font-size:0.9rem;">clear</span> 지우기
-                            </button>
-                        </div>
-
-                        <div id="dpcParseStatus" style="font-size:0.82rem;margin-top:8px;"></div>
-                        <div id="dpcPreviewArea" style="margin-top:12px;"></div>
-                    </div>
-                </div>
-
-                <div class="card">
-                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
-                        <h4><span class="material-symbols-outlined">pending_actions</span> 취합 대기함
-                            <span id="dpcStagingBadge" style="font-size:0.75rem;background:var(--accent-orange,#f59e0b);color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;margin-left:6px;display:none;"></span>
-                        </h4>
-                        <button class="btn btn-sm btn-outline" onclick="DeliveryConsolidateModule.renderStaging()">
-                            <span class="material-symbols-outlined" style="font-size:1rem;">refresh</span>
-                        </button>
-                    </div>
-                    <div class="card-body" id="dpcStagingBody" style="padding:0;"></div>
-                </div>
-            </div>
-        `;
-
-        renderStaging();
-    }
-
-    // ── 붙여넣기 파싱 ──────────────────────────────────────────────
-    function _dateHeaderInfo(cell) {
-        // "8월 6일", "8월6일" 등 — 연도 없이 월/일만 표기된 헤더
-        const m = String(cell || '').trim().match(/^(\d{1,2})\s*월\s*(\d{1,2})\s*일$/);
-        if (!m) return null;
-        return { month: Number(m[1]), day: Number(m[2]) };
-    }
-
-    // 엑셀에서 줄바꿈 포함 셀(예: 세로글씨 차종, 여러 줄 헤더)을 복사하면
-    // 그 셀 값 전체가 큰따옴표로 감싸져 안의 개행("\n")·탭이 그대로 들어온다.
-    // 단순히 '\n' 기준으로 행을 나누면 이런 셀 안의 개행을 행 구분자로 착각해
-    // 그 지점부터 모든 열이 밀리는 문제가 생긴다 — 따옴표를 인식하는 파서로 방지.
-    function _parseTsvGrid(text) {
-        const s = String(text || '').replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-        const rows = [];
-        let row = [];
-        let field = '';
-        let inQuotes = false;
-        for (let i = 0; i < s.length; i++) {
-            const ch = s[i];
-            if (inQuotes) {
-                if (ch === '"') {
-                    if (s[i + 1] === '"') { field += '"'; i++; }
-                    else inQuotes = false;
-                } else {
-                    field += ch;
-                }
-                continue;
-            }
-            if (ch === '"' && field === '') {
-                inQuotes = true;
-            } else if (ch === '\t') {
-                row.push(field); field = '';
-            } else if (ch === '\n') {
-                row.push(field); field = '';
-                rows.push(row); row = [];
-            } else {
-                field += ch;
-            }
-        }
-        row.push(field);
-        rows.push(row);
-        return rows.filter(r => r.some(c => String(c || '').trim() !== ''));
-    }
-
-    // 세로로 한 글자씩 줄바꿈된 셀(예: "G\nO\nL\nF\n_\n\n7" → "GOLF_7") 복구용 —
-    // 차종·납품처 열은 열 폭이 좁아 세로쓰기로 표시된 병합 셀이 많다.
-    function _cleanGroupLabel(raw) {
-        return String(raw ?? '').replace(/\s+/g, '');
-    }
-
-    function _cleanText(raw) {
-        return String(raw ?? '').replace(/\s+/g, ' ').trim();
-    }
-
-    function _normText(value) {
-        return String(value || '').trim().toLowerCase();
-    }
-
-    function _carKey(value) {
-        return _normText(value).replace(/\s+/g, '');
-    }
-
-    function _sameCarModel(a, b) {
-        const ak = _carKey(a);
-        const bk = _carKey(b);
-        return !!ak && !!bk && ak === bk;
-    }
-
-    function _customerOfProduct(product) {
-        return product?.customer || product?.deliveryCustomer || product?.client || product?.buyer || product?.shipTo || product?.destination || '';
-    }
-
-    function _packUnitFromProduct(product, fallback) {
-        return fallback || product?.packUnit || product?.packageUnit || product?.packQty || product?.packageQty || product?.deliveryPackQty || '';
-    }
-
-    function _findProductForPlan(item) {
-        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        if (item?.productId) {
-            const byId = products.find(p => p.id === item.productId);
-            if (byId) return byId;
-        }
-        return products.find(p =>
-            _normText(p.partName) === _normText(item.partName) &&
-            (!item.carModel || _sameCarModel(p.carModel, item.carModel)) &&
-            (!item.color || !p.color || _normText(p.color) === _normText(item.color))
-        ) || products.find(p =>
-            _normText(p.partName) === _normText(item.partName) &&
-            (!item.carModel || _sameCarModel(p.carModel, item.carModel))
-        ) || products.find(p =>
-            _productPartMatches(p, item) &&
-            _compatibleCarModel(p.carModel, item.carModel) &&
-            (!item.color || !p.color || _normText(p.color) === _normText(item.color))
-        ) || products.find(p =>
-            _productPartMatches(p, item) &&
-            _compatibleCarModel(p.carModel, item.carModel)
-        ) || (() => {
-            const sameName = products.filter(p => _normText(p.partName) === _normText(item.partName));
-            return sameName.length === 1 ? sameName[0] : null;
-        })();
-    }
-
-    function _canonicalPlanItem(item) {
-        const product = _findProductForPlan(item);
-        if (!product) return item;
-        return {
-            ...item,
-            productId: product.id || item.productId || '',
-            customer: item.customer || _customerOfProduct(product),
-            carModel: product.carModel || item.carModel,
-            partName: product.partName || item.partName,
-            color: item.color || product.color || '',
-            packUnit: _packUnitFromProduct(product, item.packUnit)
-        };
-    }
-
-    function parsePasted() {
-        const text = (document.getElementById('dpcPasteArea') || {}).value || '';
-        const statusEl = document.getElementById('dpcParseStatus');
-        const previewEl = document.getElementById('dpcPreviewArea');
-        if (!text.trim()) {
-            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">붙여넣은 내용이 없습니다.</span>`;
-            return;
-        }
-
-        const grid = _parseTsvGrid(text);
-
-        // 날짜 헤더 행 자동 탐색 — 날짜 패턴 셀이 가장 많은 행을 헤더로 채택
-        let headerRowIdx = -1;
-        let dateCols = [];
-        grid.forEach((row, ri) => {
-            const found = [];
-            row.forEach((cell, ci) => {
-                const d = _dateHeaderInfo(cell);
-                if (d) found.push({ col: ci, month: d.month, day: d.day });
-            });
-            if (found.length > dateCols.length) {
-                dateCols = found;
-                headerRowIdx = ri;
-            }
-        });
-
-        if (!dateCols.length) {
-            if (statusEl) statusEl.innerHTML = `<span style="color:var(--accent-red);">"8월 6일" 형식의 날짜 헤더를 찾지 못했습니다. 날짜 헤더 행이 포함되도록 다시 복사해 주세요.</span>`;
-            if (previewEl) previewEl.innerHTML = '';
-            _parsedRows = [];
-            return;
-        }
-
-        const year = Number((document.getElementById('dpcYear') || {}).value) || new Date().getFullYear();
-        const carCol = (Number((document.getElementById('dpcCarCol') || {}).value) || 1) - 1;
-        const partCol = (Number((document.getElementById('dpcPartCol') || {}).value) || 2) - 1;
-        const packColRaw = Number((document.getElementById('dpcPackCol') || {}).value) || 0;
-        const packCol = packColRaw > 0 ? packColRaw - 1 : -1;
-        const customerColRaw = Number((document.getElementById('dpcCustomerCol') || {}).value) || 0;
-        const customerCol = customerColRaw > 0 ? customerColRaw - 1 : -1;
-
-        const rows = [];
-        let lastCarModel = '';
-        let lastCustomer = '';
-        for (let ri = headerRowIdx + 1; ri < grid.length; ri++) {
-            const row = grid[ri];
-            const partName = _cleanText(row[partCol]);
-            const carModelRaw = _cleanGroupLabel(row[carCol]);
-            if (carModelRaw) lastCarModel = carModelRaw;
-            const customerRaw = customerCol >= 0 ? _cleanGroupLabel(row[customerCol]) : '';
-            if (customerRaw) lastCustomer = customerRaw;
-            if (!partName) continue; // 구분선/합계 행 등은 건너뜀
-
-            const packUnit = packCol >= 0 ? _cleanText(row[packCol]) : '';
-
-            dateCols.forEach(function(dc) {
-                const qty = _num(row[dc.col]);
-                if (!qty) return; // '-' 또는 빈 칸, 0은 제외
-                const mm = String(dc.month).padStart(2, '0');
-                const dd = String(dc.day).padStart(2, '0');
-                rows.push({
-                    key: 'dpc__' + rows.length + '__' + Math.random().toString(36).slice(2, 7),
-                    date: `${year}-${mm}-${dd}`,
-                    carModel: lastCarModel,
-                    partName,
-                    packUnit,
-                    customer: lastCustomer,
-                    qty
-                });
-            });
-        }
-
-        _parsedRows = rows.map(_canonicalPlanItem);
-
-        if (statusEl) {
-            statusEl.innerHTML = rows.length
-                ? `<span style="color:var(--accent-green);">날짜 열 ${dateCols.length}개 인식 · 납품계획 ${rows.length}건 파싱됨</span>`
-                : `<span style="color:var(--accent-orange,#f59e0b);">날짜 열은 찾았지만 수량이 있는 행이 없습니다. 열 번호 설정을 확인하세요.</span>`;
-        }
-        _renderParsePreview();
-    }
-
-    function _renderParsePreview() {
-        const el = document.getElementById('dpcPreviewArea');
-        if (!el) return;
-        if (!_parsedRows.length) { el.innerHTML = ''; return; }
-
-        const preview = _parsedRows.slice(0, 300); // 미리보기만 제한, 저장은 전체 반영
-        el.innerHTML = `
-            <div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:6px;">
-                미리보기 (${preview.length}${_parsedRows.length > preview.length ? ` / 전체 ${_parsedRows.length}` : ''}건) — 필요 없는 행은 체크 해제하세요.
-            </div>
-            <div class="data-table-wrapper" style="max-height:320px;overflow:auto;border:1px solid var(--border);border-radius:8px;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th style="width:36px;"><input type="checkbox" checked onchange="DeliveryConsolidateModule.toggleParsePreviewAll(this.checked)"></th>
-                            <th>납품일</th><th>차종</th><th>품명</th><th>포장단위</th><th>납품처</th><th style="text-align:right;">수량</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${preview.map(r => `
-                            <tr data-key="${r.key}">
-                                <td style="text-align:center;"><input type="checkbox" class="dpc-parse-chk" data-key="${_esc(r.key)}" checked></td>
-                                <td>${_esc(r.date)}</td>
-                                <td>${_esc(r.carModel || '-')}</td>
-                                <td><strong>${_esc(r.partName)}</strong></td>
-                                <td>${_esc(r.packUnit || '-')}</td>
-                                <td>${_esc(r.customer || '-')}</td>
-                                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.qty)}</td>
-                            </tr>`).join('')}
-                    </tbody>
-                </table>
-            </div>
-            <div style="margin-top:10px;">
-                <button class="btn btn-primary" onclick="DeliveryConsolidateModule.saveToStaging()">
-                    <span class="material-symbols-outlined" style="font-size:0.9rem;">save</span> 선택 항목 취합 대기함에 저장
-                </button>
-            </div>`;
-    }
-
-    function toggleParsePreviewAll(checked) {
-        document.querySelectorAll('.dpc-parse-chk').forEach(el => { el.checked = checked; });
-    }
-
-    function clearPreview() {
-        _parsedRows = [];
-        const textEl = document.getElementById('dpcPasteArea');
-        const statusEl = document.getElementById('dpcParseStatus');
-        const previewEl = document.getElementById('dpcPreviewArea');
-        if (textEl) textEl.value = '';
-        if (statusEl) statusEl.innerHTML = '';
-        if (previewEl) previewEl.innerHTML = '';
-    }
-
-    async function saveToStaging() {
-        const checkedKeys = new Set();
-        document.querySelectorAll('.dpc-parse-chk:checked').forEach(chk => checkedKeys.add(chk.dataset.key));
-        const items = _parsedRows.filter(r => checkedKeys.has(r.key));
-        if (!items.length) { UIUtils.toast('저장할 항목을 선택하세요.', 'warning'); return; }
-
-        // 파싱된 순서(취합 시트의 행 순서)를 보존하기 위한 시퀀스 번호
-        let maxSeq = (Storage.getAll(STAGING_STORE) || [])
-            .reduce((m, r) => Math.max(m, Number(r.seq) || 0), 0);
-        // _parsedRows 원본 순서대로 저장 (checkedKeys 필터만 적용, 정렬하지 않음)
-        for (const item of items) {
-            const canonical = _canonicalPlanItem(item);
-            await Storage.add(STAGING_STORE, {
-                date: canonical.date,
-                productId: canonical.productId || '',
-                carModel: canonical.carModel,
-                partName: canonical.partName,
-                color: canonical.color || '',
-                packUnit: canonical.packUnit,
-                customer: canonical.customer,
-                planQty: canonical.qty,
-                status: '대기',
-                source: '취합 시트 붙여넣기',
-                seq: ++maxSeq,
-                registeredAt: new Date().toISOString()
-            });
-        }
-
-        try {
-            await SalesParseLog.record(items, '취합 시트 붙여넣기');
-        } catch (e) { /* 무시 */ }
-
-        UIUtils.toast(`${items.length}건을 취합 대기함에 저장했습니다.`, 'success');
-        clearPreview();
-        renderStaging();
-    }
-
-    // ── 취합 대기함 ────────────────────────────────────────────────
-    // 취합 대기함 보기 형태: 'pivot' = 원본 시트처럼 행=날짜/열=차종·품명, 'list' = 개별 삭제·확인용 목록형
-    let _stagingViewMode = 'pivot';
-
-    function setStagingViewMode(mode) {
-        _stagingViewMode = mode === 'list' ? 'list' : 'pivot';
-        renderStaging();
-    }
-
-    function _toolbarHtml(count) {
-        const btn = (mode, label) => `
-            <button class="btn btn-sm ${_stagingViewMode === mode ? 'btn-primary' : 'btn-outline'}"
-                onclick="DeliveryConsolidateModule.setStagingViewMode('${mode}')">${label}</button>`;
-        return `
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border-color);">
-                <div style="display:flex;gap:6px;">
-                    ${btn('pivot', '표 형태 (행=품명, 열=날짜)')}
-                    ${btn('list', '목록형 (개별 삭제)')}
-                </div>
-                <span style="font-size:0.78rem;color:var(--text-muted);">${count}건</span>
-            </div>`;
-    }
-
-    // 원본 취합 시트와 동일한 감각으로 검토할 수 있게, 행=차종/품명 · 열=납품일로 피벗한다.
-    function _renderStagingPivot(items) {
-        const dates = [...new Set(items.map(r => r.date))].sort();
-        const keyOf = r => `${r.carModel || '-'}||${r.partName}`;
-        const itemMap = new Map();
-        items.forEach((r, i) => {
-            const key = keyOf(r);
-            // 파싱 순서: seq가 있으면 seq, 없으면 최초 등장 인덱스
-            const ord = Number.isFinite(Number(r.seq)) && r.seq != null ? Number(r.seq) : i;
-            if (!itemMap.has(key)) {
-                itemMap.set(key, { carModel: r.carModel || '-', partName: r.partName, ord });
-            } else {
-                const cur = itemMap.get(key);
-                if (ord < cur.ord) cur.ord = ord;
-            }
-        });
-        const rowsList = [...itemMap.entries()].sort((a, b) => a[1].ord - b[1].ord);
-
-        const cellMap = {};
-        items.forEach(r => {
-            const k = `${keyOf(r)}||${r.date}`;
-            cellMap[k] = (cellMap[k] || 0) + (Number(r.planQty) || 0);
-        });
-
-        const headHtml = `<th style="white-space:nowrap;position:sticky;left:0;background:var(--bg-primary);z-index:1;">차종 · 품명</th>` +
-            dates.map(d => `<th style="white-space:nowrap;font-size:0.72rem;font-weight:600;padding:6px 8px;">${_esc(d)}</th>`).join('');
-
-        const bodyHtml = rowsList.map(([key, it]) => {
-            const cells = dates.map(d => {
-                const qty = cellMap[`${key}||${d}`];
-                return `<td style="text-align:right;padding:5px 8px;${qty ? 'font-weight:700;color:var(--accent-blue);' : 'color:var(--border-color);'}">${qty ? UIUtils.formatNumber(qty) : '-'}</td>`;
-            }).join('');
-            return `<tr><td style="white-space:nowrap;position:sticky;left:0;background:var(--bg-primary);">
-                        <div style="font-size:0.72rem;color:var(--text-muted);">${_esc(it.carModel)}</div>
-                        <div style="font-weight:700;">${_esc(it.partName)}</div>
-                    </td>${cells}</tr>`;
-        }).join('');
-
-        return `
-            <div class="data-table-wrapper" style="max-height:480px;overflow:auto;">
-                <table class="data-table" style="width:max-content;">
-                    <thead><tr>${headHtml}</tr></thead>
-                    <tbody>${bodyHtml}</tbody>
-                </table>
-            </div>
-            <div style="padding:8px 16px;font-size:0.76rem;color:var(--text-muted);">
-                행 ${rowsList.length}개(차종/품명) · 열 ${dates.length}개(납품일) — 개별 삭제나 반영은 '목록형'에서 하세요.
-            </div>`;
-    }
-
-    function _renderStagingList(items) {
-        return `
-            <div class="data-table-wrapper">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th style="width:36px;"><input type="checkbox" checked onchange="DeliveryConsolidateModule.toggleStagingAll(this.checked)"></th>
-                            <th>납품일</th><th>차종</th><th>품명</th><th>포장단위</th><th>납품처</th>
-                            <th style="text-align:right;">수량</th><th style="text-align:center;">작업</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${items.map(r => `
-                            <tr data-id="${r.id}">
-                                <td style="text-align:center;"><input type="checkbox" class="dpc-staging-chk" data-id="${r.id}" checked></td>
-                                <td>${_esc(r.date)}</td>
-                                <td>${_esc(r.carModel || '-')}</td>
-                                <td><strong>${_esc(r.partName)}</strong></td>
-                                <td>${_esc(r.packUnit || '-')}</td>
-                                <td>${_esc(r.customer || '-')}</td>
-                                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(r.planQty)}</td>
-                                <td style="text-align:center;">
-                                    <button class="btn btn-xs btn-outline" onclick="DeliveryConsolidateModule.removeStagingRow('${r.id}')">
-                                        <span class="material-symbols-outlined" style="font-size:14px;">close</span>
-                                    </button>
-                                </td>
-                            </tr>`).join('')}
-                    </tbody>
-                </table>
-            </div>`;
-    }
-
-    function renderStaging() {
-        const body = document.getElementById('dpcStagingBody');
-        const badge = document.getElementById('dpcStagingBadge');
-        if (!body) return;
-
-        const allItems = (Storage.getAll(STAGING_STORE) || [])
-            .filter(r => r.status !== '반영완료');
-        // 목록형: 날짜순 정렬 / 피벗형: 취합 시트에 파싱된 순서(seq) 유지
-        const items = _stagingViewMode === 'list'
-            ? allItems.slice().sort((a, b) => (a.date || '').localeCompare(b.date || '') || (a.carModel || '').localeCompare(b.carModel || ''))
-            : allItems.slice().sort((a, b) => (Number(a.seq) || 0) - (Number(b.seq) || 0));
-
-        if (badge) {
-            if (items.length) { badge.textContent = `${items.length}건`; badge.style.display = ''; }
-            else badge.style.display = 'none';
-        }
-
-        if (!items.length) {
-            body.innerHTML = `<div style="padding:18px;color:var(--text-muted);font-size:0.9rem;text-align:center;">대기 중인 취합 항목이 없습니다.</div>`;
-            return;
-        }
-
-        const commitBarHtml = `
-            <div style="padding:12px 16px;border-top:1px solid var(--border-color);background:var(--bg-secondary);">
-                <button class="btn btn-primary" onclick="DeliveryConsolidateModule.commitStaging()">
-                    <span class="material-symbols-outlined" style="font-size:18px;">playlist_add_check</span>
-                    ${_stagingViewMode === 'list' ? '선택 항목 납품계획에 반영' : '전체 납품계획에 반영'}
-                </button>
-            </div>`;
-
-        body.innerHTML = _toolbarHtml(items.length) +
-            (_stagingViewMode === 'list' ? _renderStagingList(items) : _renderStagingPivot(items)) +
-            commitBarHtml;
-
-        if (_stagingViewMode === 'pivot') {
-            // 피벗 화면은 체크박스가 없으니, 반영 시 전체를 대상으로 하도록 숨은 체크박스를 채워둔다.
-            const hidden = document.createElement('div');
-            hidden.style.display = 'none';
-            hidden.innerHTML = items.map(r => `<input type="checkbox" class="dpc-staging-chk" data-id="${r.id}" checked>`).join('');
-            body.appendChild(hidden);
-        }
-    }
-
-    function toggleStagingAll(checked) {
-        document.querySelectorAll('.dpc-staging-chk').forEach(el => { el.checked = checked; });
-    }
-
-    function removeStagingRow(id) {
-        UIUtils.confirm('이 취합 항목을 삭제하시겠습니까?', async () => {
-            await Storage.remove(STAGING_STORE, id);
-            renderStaging();
-        });
-    }
-
-    async function commitStaging() {
-        const checkedIds = new Set();
-        document.querySelectorAll('.dpc-staging-chk:checked').forEach(chk => checkedIds.add(chk.dataset.id));
-        if (!checkedIds.size) { UIUtils.toast('반영할 항목을 선택하세요.', 'warning'); return; }
-
-        const items = (Storage.getAll(STAGING_STORE) || []).filter(r => checkedIds.has(r.id));
-        for (const item of items) {
-            const canonical = _canonicalPlanItem(item);
-            await Storage.add(PLAN_STORE, {
-                date: canonical.date,
-                productId: canonical.productId || '',
-                customer: canonical.customer || '',
-                carModel: canonical.carModel || '',
-                partName: canonical.partName || '',
-                color: canonical.color || '',
-                packUnit: canonical.packUnit || '',
-                planQty: canonical.planQty,
-                note: '취합 시트 붙여넣기로 반영'
-            });
-            await Storage.remove(STAGING_STORE, item.id);
-        }
-
-        UIUtils.toast(`${items.length}건을 납품계획에 반영했습니다.`, 'success');
-        renderStaging();
-    }
-
-    return {
-        init, render,
-        parsePasted, toggleParsePreviewAll, clearPreview, saveToStaging,
-        renderStaging, toggleStagingAll, removeStagingRow, commitStaging,
-        setStagingViewMode
-    };
 })();
 
 /**

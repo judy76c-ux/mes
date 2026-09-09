@@ -1843,8 +1843,18 @@ input[type="time"] {
 }
 
 .sdp-grid-entry-table .sdp-grid-cell {
-    font-size: 10px !important;
+    font-size: 12px !important;
     padding: 0 1px !important;
+}
+
+/* 숫자만 직접 입력하는 칸 — 증감 스피너 화살표는 필요 없고 좁은 칸에서 자리만 차지한다 */
+.sdp-grid-entry-table .sdp-grid-cell::-webkit-inner-spin-button,
+.sdp-grid-entry-table .sdp-grid-cell::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+.sdp-grid-entry-table .sdp-grid-cell {
+    -moz-appearance: textfield;
 }
 
 .modal-header {
@@ -3021,6 +3031,11 @@ td.pq-overdue-date-cell {
 .jig-life-table td {
     white-space: nowrap;
     vertical-align: middle;
+}
+.jig-life-table tbody tr,
+.jig-life-table tbody tr:hover,
+.jig-life-table tbody td {
+    background: #fff !important;
 }
 .jig-life-table .jig-col-short {
     width: 1%;

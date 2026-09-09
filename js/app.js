@@ -329,7 +329,6 @@ const App = (function() {
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
-        Router.registerModule('sales-delivery-consolidate', DeliveryConsolidateModule);
         Router.registerModule('sales-today-shipment', SalesTodayShipmentModule);
         Router.registerModule('sales-analytics', SalesAnalyticsModule);
         Router.registerModule('sales-outsourcing', SalesOutsourcingModule);
