@@ -10,6 +10,7 @@ const Storage = (function() {
 
   let cache = {};
   let initialized = false;
+  let _initialDataPromise = Promise.resolve();
   let offlineMode = false;   // 세션 중 API 쓰기 실패 시 true (조회만 가능)
 
   // ── 스토어 준비 상태 추적 ────────────────────────────────────────────
@@ -134,9 +135,12 @@ const Storage = (function() {
         warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
       };
       if (options.deferInitialData) {
-        setTimeout(() => backgroundLoad().catch(e => console.warn('[Storage] background initial load failed:', e)), 0);
+        _initialDataPromise = new Promise(resolve => setTimeout(resolve, 0))
+          .then(backgroundLoad)
+          .catch(e => { console.warn('[Storage] background initial load failed:', e); });
       } else {
-        await backgroundLoad();
+        _initialDataPromise = backgroundLoad();
+        await _initialDataPromise;
       }
       console.log('✅ 스토리지 초기화 완료 (MariaDB API)');
     } catch (apiError) {
@@ -147,6 +151,10 @@ const Storage = (function() {
       err.apiError = apiError;
       throw err;
     }
+  }
+
+  function waitForInitialData() {
+    return _initialDataPromise;
   }
 
   function _getAllStoreList() {
@@ -879,6 +887,7 @@ const Storage = (function() {
     USE_INDEXEDDB,
     STORES,
     init,
+    waitForInitialData,
     getAll,
     getById,
     add,

@@ -52,44 +52,31 @@ const App = (function() {
         }
     }
 
+    function showInitialDashboardShell() {
+        const contentArea = document.getElementById('contentArea');
+        if (!contentArea || contentArea.children.length) return;
+        contentArea.innerHTML = `
+            <div class="fade-in-up" style="display:flex;flex-direction:column;gap:10px;">
+                <div style="padding:18px 20px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);color:var(--text-secondary);">
+                    대시보드를 준비하고 있습니다…
+                </div>
+            </div>`;
+    }
+
     async function init() {
         primeApiBaseOverride();
         installImeDoneBlurHandler();
         console.log('🏭 생산 공정 관리 시스템 (MES) 시작...');
+        showInitialDashboardShell();
 
         try {
             // 1. 스토리지 초기화 (MariaDB API)
-            await Storage.init();
+            // API 연결만 먼저 확인하고 데이터 목록은 백그라운드에서 채운다.
+            await Storage.init({ deferInitialData: true });
             console.log('✅ 스토리지 초기화 완료');
 
-            if (typeof DataManager !== 'undefined' && DataManager.init) {
-                await DataManager.init();
-            }
-
-            // 2. 인증 모듈 초기화 (기본 계정 보장 + 전역 인터셉터 등록)
-            await AuthModule.init();
-
-            // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
-            await _runOnceMigration(MIGRATION_FLAGS.CAR_MODEL_UPPERCASE, _migrateCarModelUppercase);
-
-            // 2-2. 제품 제조공정 '도장(A)'/'도장(B)' 오표기 → '도장-A'/'도장-B' 자동 교정
-            await _runOnceMigration(MIGRATION_FLAGS.PAINT_PROCESS_ALIAS, _migratePaintProcessAlias);
-
-            // 2-3. 레이저 잔량 원장 소급 정리 — prevResidualQty 미저장으로 기존 잔량이
-            // 차감되지 않고 계속 누적되던 과거 작업일지를 역산해 한 번만 보정
-            await _runOnceMigration(MIGRATION_FLAGS.LASER_RESIDUAL_PREV_BACKFILL, _migrateLaserResidualPrevBackfill);
-
-            // 3. 모듈 등록
+            // 2. 모듈·라우터를 먼저 시작해 대시보드 요약 화면을 즉시 표시한다.
             registerModules();
-
-            // 3-0. 임시 생산계획(재고 검증 없이 등록) — 생산일이 지난 건은 정식 계획으로 자동 전환
-            try {
-                if (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule.releasePastTemporaryPlans) {
-                    await ProductionPlanModule.releasePastTemporaryPlans();
-                }
-            } catch (e) { console.warn('임시 계획 자동 해제 실패:', e); }
-
-            // 3-1. 대형 모듈 lazy 등록 (production_mgmt_v91.js — 1.47MB)
             Router.registerLazy(
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
@@ -108,23 +95,48 @@ const App = (function() {
                     Router.registerModule('quality-performance', QualityPerformanceModule);
                     Router.registerModule('limit-samples', LimitSamplesModule);
                     Router.registerModule('prod-spc', ProdSpcModule);
-                    Router.registerModule('spc-color', {
-                        render: function(c) { ProdSpcModule.renderCategory(c, 'color'); }
-                    });
-                    Router.registerModule('spc-film', {
-                        render: function(c) { ProdSpcModule.renderCategory(c, 'film'); }
-                    });
-                    Router.registerModule('spc-gloss', {
-                        render: function(c) { ProdSpcModule.renderCategory(c, 'gloss'); }
-                    });
+                    Router.registerModule('spc-color', { render: function(c) { ProdSpcModule.renderCategory(c, 'color'); } });
+                    Router.registerModule('spc-film', { render: function(c) { ProdSpcModule.renderCategory(c, 'film'); } });
+                    Router.registerModule('spc-gloss', { render: function(c) { ProdSpcModule.renderCategory(c, 'gloss'); } });
                     Router.registerModule('prod-equipment', ProdEquipmentModule);
                 }
             );
-            console.log('✅ 모듈 등록 완료');
+            // 인증 전에는 대시보드만 직접 표시한다. 정식 라우터는 인증 완료 후 시작해
+            // 권한에 따른 메뉴 표시가 잠시 잘못 보이는 것을 막는다.
+            if (typeof DashboardModule !== 'undefined' && DashboardModule.render) {
+                DashboardModule.render(document.getElementById('contentArea'));
+            }
 
-            // 4. 라우터 초기화
+            // 화면은 이미 표시한 상태에서 초기 데이터만 완료시킨 뒤
+            // 인증·마이그레이션이 빈 캐시를 보지 않도록 순서를 보장한다.
+            if (Storage.waitForInitialData) await Storage.waitForInitialData();
+
+            if (typeof DataManager !== 'undefined' && DataManager.init) {
+                await DataManager.init();
+            }
+
+            // 2. 인증 모듈 초기화 (기본 계정 보장 + 전역 인터셉터 등록)
+            await AuthModule.init();
+
+            // 2-1. 기존 차종(carModel) 데이터 대문자 변환 (최초 1회)
+            await _runOnceMigration(MIGRATION_FLAGS.CAR_MODEL_UPPERCASE, _migrateCarModelUppercase);
+
+            // 2-2. 제품 제조공정 '도장(A)'/'도장(B)' 오표기 → '도장-A'/'도장-B' 자동 교정
+            await _runOnceMigration(MIGRATION_FLAGS.PAINT_PROCESS_ALIAS, _migratePaintProcessAlias);
+
+            // 2-3. 레이저 잔량 원장 소급 정리 — prevResidualQty 미저장으로 기존 잔량이
+            // 차감되지 않고 계속 누적되던 과거 작업일지를 역산해 한 번만 보정
+            await _runOnceMigration(MIGRATION_FLAGS.LASER_RESIDUAL_PREV_BACKFILL, _migrateLaserResidualPrevBackfill);
+
+            // 3. 임시 생산계획(재고 검증 없이 등록) — 생산일이 지난 건은 정식 계획으로 자동 전환
+            try {
+                if (typeof ProductionPlanModule !== 'undefined' && ProductionPlanModule.releasePastTemporaryPlans) {
+                    await ProductionPlanModule.releasePastTemporaryPlans();
+                }
+            } catch (e) { console.warn('임시 계획 자동 해제 실패:', e); }
+
             Router.init();
-            console.log('✅ 라우터 초기화 완료');
+            console.log('✅ 모듈·라우터 초기화 완료');
             if (typeof MesZoomFit !== 'undefined' && MesZoomFit.install) MesZoomFit.install();
             if (typeof PaintingWorkModule !== 'undefined' && PaintingWorkModule.startQualityIssueWatch) {
                 PaintingWorkModule.startQualityIssueWatch();
