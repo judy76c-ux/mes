@@ -1206,7 +1206,7 @@ var SalesDeliveryPlanModule = (function() {
 
     function onGridCustomerChange() {
         _refreshGridCarOptions();
-        renderGridEditorRows();
+        requestGridReload();
     }
 
     function _productBase(product, selectedCustomer = '') {
@@ -1223,8 +1223,15 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function _recordsForCell(base, date) {
-        return (Storage.getAll(STORE) || []).filter(plan =>
-            plan.date === date &&
+        const targetDate = String(date || '').slice(0, 10);
+        const allPlans = Storage.getAll(STORE) || [];
+        const ids = base?.planIdsByDate?.[targetDate];
+        if (Array.isArray(ids) && ids.length) {
+            const idSet = new Set(ids.map(String));
+            return allPlans.filter(plan => idSet.has(String(plan.id)));
+        }
+        return allPlans.filter(plan =>
+            String(plan.date || '').slice(0, 10) === targetDate &&
             _matches(plan, base) &&
             (!base.packUnit || !plan.packUnit || _norm(plan.packUnit) === _norm(base.packUnit))
         );
@@ -1438,6 +1445,7 @@ var SalesDeliveryPlanModule = (function() {
                 product,
                 processEnd: _endProcess(product),
                 planByDate: {},
+                planIdsByDate: {},
                 deliveryByDate: {},
                 totalPlan: 0,
                 delivered: 0
@@ -1477,6 +1485,7 @@ var SalesDeliveryPlanModule = (function() {
                     product,
                     processEnd: _endProcess(product),
                     planByDate: {},
+                    planIdsByDate: {},
                     deliveryByDate: {},
                     totalPlan: 0,
                     delivered: 0
@@ -1485,14 +1494,18 @@ var SalesDeliveryPlanModule = (function() {
             const row = map[key];
             row.ids.push(plan.id);
             row.totalPlan += _num(plan.planQty);
-            row.planByDate[plan.date] = (row.planByDate[plan.date] || 0) + _num(plan.planQty);
+            const planDate = String(plan.date || '').slice(0, 10);
+            row.planByDate[planDate] = (row.planByDate[planDate] || 0) + _num(plan.planQty);
+            if (!row.planIdsByDate[planDate]) row.planIdsByDate[planDate] = [];
+            row.planIdsByDate[planDate].push(plan.id);
         });
 
         Object.values(map).forEach(row => {
             deliveries.filter(d => _matches(d, row)).forEach(d => {
                 const qty = _num(d.qty ?? d.quantity);
                 row.delivered += qty;
-                row.deliveryByDate[d.date] = (row.deliveryByDate[d.date] || 0) + qty;
+                const deliveryDate = String(d.date || '').slice(0, 10);
+                row.deliveryByDate[deliveryDate] = (row.deliveryByDate[deliveryDate] || 0) + qty;
             });
 
             row.remaining = Math.max(0, row.totalPlan - row.delivered);
@@ -1877,6 +1890,7 @@ var SalesDeliveryPlanModule = (function() {
         return `
             <div style="padding:6px 8px;border:1px solid var(--border-color);background:#fff;margin-bottom:8px;color:var(--text-secondary);font-size:11px;">
                 납품처와 차종을 선택한 뒤, 날짜 칸을 클릭해서 수량을 입력하세요. 기존 계획이 있는 칸은 수량이 표시되며, 빈칸으로 저장하면 해당 계획은 삭제됩니다.<br>
+                <strong style="color:var(--accent-red);">저장하면 이 차종·이 기간의 계획은 아래 표 내용으로 덮어쓰기됩니다</strong> — 표에 없거나 비운 칸은 0이 됩니다.<br>
                 엑셀에서 셀(행/열 여러 개도 가능)을 복사한 뒤 시작할 칸을 클릭하고 붙여넣기(Ctrl+V)하면, 그 칸부터 행·열 그대로 채워집니다.
                 맨 왼쪽 위 칸(순번 칸 포함)에 붙여넣으면 첫 행·첫 날짜부터 채워집니다.<br>
                 품명 왼쪽의 <strong>⠿</strong> 손잡이를 끌면 품명 순서를 바꿀 수 있고, 놓는 즉시 순번이 저장됩니다.
@@ -1885,11 +1899,11 @@ var SalesDeliveryPlanModule = (function() {
             <div class="filter-bar" style="flex-wrap:wrap;gap:6px;margin-bottom:8px;padding:8px;font-size:11px;">
                 <div class="form-group">
                     <label class="form-label">시작일</label>
-                    <input type="date" class="form-input" id="sdpGridStart" value="${_esc(start)}" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                    <input type="date" class="form-input" id="sdpGridStart" value="${_esc(start)}" onchange="SalesDeliveryPlanModule.requestGridReload()">
                 </div>
                 <div class="form-group">
                     <label class="form-label">종료일</label>
-                    <input type="date" class="form-input" id="sdpGridEnd" value="${_esc(end)}" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                    <input type="date" class="form-input" id="sdpGridEnd" value="${_esc(end)}" onchange="SalesDeliveryPlanModule.requestGridReload()">
                 </div>
                 <div class="form-group">
                     <label class="form-label">납품처</label>
@@ -1899,7 +1913,7 @@ var SalesDeliveryPlanModule = (function() {
                 </div>
                 <div class="form-group">
                     <label class="form-label">차종</label>
-                    <select class="form-select" id="sdpGridCar" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
+                    <select class="form-select" id="sdpGridCar" onchange="SalesDeliveryPlanModule.requestGridReload()">
                         ${_selectOptions(_massProductionCars(UIUtils.sortCarModels(products.map(p => p.carModel), products)), '', '-- 차종 선택 --')}
                     </select>
                 </div>
@@ -2181,34 +2195,221 @@ var SalesDeliveryPlanModule = (function() {
                 </tbody>
             </table>
         `;
+
+        _bindGridRangeSelection(wrap);
+    }
+
+    // ── 엑셀식 범위 선택 ────────────────────────────────────────────────
+    // 수량 칸을 드래그해 사각형 영역을 잡고, Delete(또는 Backspace)로 한 번에 비운다.
+    // 계획을 통째로 지울 때 칸을 하나씩 지우는 건 너무 느리다.
+    /** {r1,c1,r2,c2} — 앵커와 현재 지점(정규화 전). 선택이 없으면 null */
+    let _gridSel = null;
+    let _gridSelDragging = false;
+
+    /** 이 칸의 좌표 = (tbody 안 행 위치, 그 행의 수량 칸 중 몇 번째) */
+    function _gridCellPos(cell) {
+        const tr = cell && cell.closest('tr');
+        const tbody = tr && tr.parentElement;
+        if (!tr || !tbody) return null;
+        const r = Array.prototype.indexOf.call(tbody.children, tr);
+        const c = Array.prototype.indexOf.call(tr.querySelectorAll('.sdp-grid-cell'), cell);
+        return (r < 0 || c < 0) ? null : { r, c };
+    }
+
+    function _gridSelBounds() {
+        if (!_gridSel) return null;
+        return {
+            r1: Math.min(_gridSel.r1, _gridSel.r2), r2: Math.max(_gridSel.r1, _gridSel.r2),
+            c1: Math.min(_gridSel.c1, _gridSel.c2), c2: Math.max(_gridSel.c1, _gridSel.c2)
+        };
+    }
+
+    /** 선택 영역 안의 수량 칸들 */
+    function _gridSelCells(wrap) {
+        const b = _gridSelBounds();
+        const tbody = (wrap || document).querySelector('#sdpGridEditorBody tbody')
+            || document.querySelector('#sdpGridEditorBody tbody');
+        if (!b || !tbody) return [];
+        const out = [];
+        for (let r = b.r1; r <= b.r2; r++) {
+            const tr = tbody.children[r];
+            if (!tr) continue;
+            const cells = tr.querySelectorAll('.sdp-grid-cell');
+            for (let c = b.c1; c <= b.c2; c++) {
+                if (cells[c]) out.push(cells[c]);
+            }
+        }
+        return out;
+    }
+
+    function _paintGridSelection(tbody) {
+        tbody.querySelectorAll('td.sdp-cell-selected')
+            .forEach(td => td.classList.remove('sdp-cell-selected'));
+        if (!_gridSel) return;
+        _gridSelCells().forEach(cell => {
+            const td = cell.closest('td');
+            if (td) td.classList.add('sdp-cell-selected');
+        });
+    }
+
+    function clearGridSelection() {
+        _gridSel = null;
+        const tbody = document.querySelector('#sdpGridEditorBody tbody');
+        if (tbody) _paintGridSelection(tbody);
+    }
+
+    /** 선택 영역을 비운다. 화면 값만 바꾸므로 실제 삭제는 「저장」을 눌러야 반영된다. */
+    function _clearGridSelectedCells() {
+        const cells = _gridSelCells();
+        if (!cells.length) return 0;
+        cells.forEach(cell => {
+            cell.value = '';
+            cell.style.cssText = _gridInputStyle(0);
+        });
+        return cells.length;
+    }
+
+    function _bindGridRangeSelection(wrap) {
+        const tbody = wrap.querySelector('tbody');
+        if (!tbody) return;
+
+        tbody.addEventListener('mousedown', e => {
+            const cell = e.target.closest('.sdp-grid-cell');
+            if (!cell) { clearGridSelection(); return; }
+            const pos = _gridCellPos(cell);
+            if (!pos) return;
+            // 한 칸만 누른 상태에서는 평소처럼 입력 커서가 들어가야 하므로 preventDefault 안 함.
+            _gridSel = { r1: pos.r, c1: pos.c, r2: pos.r, c2: pos.c };
+            _gridSelDragging = true;
+            _paintGridSelection(tbody);
+        });
+
+        tbody.addEventListener('mouseover', e => {
+            if (!_gridSelDragging || !_gridSel) return;
+            const cell = e.target.closest('.sdp-grid-cell');
+            if (!cell) return;
+            const pos = _gridCellPos(cell);
+            if (!pos) return;
+            if (pos.r === _gridSel.r2 && pos.c === _gridSel.c2) return;
+            _gridSel.r2 = pos.r;
+            _gridSel.c2 = pos.c;
+            _paintGridSelection(tbody);
+            // 여러 칸을 잡는 중에는 입력 커서가 남아 있으면 헷갈린다 — 포커스를 뗀다.
+            if (document.activeElement && document.activeElement.classList.contains('sdp-grid-cell')) {
+                document.activeElement.blur();
+            }
+            if (window.getSelection) { try { window.getSelection().removeAllRanges(); } catch (err) {} }
+        });
+
+        _bindGridSelectionGlobals();
+    }
+
+    /**
+     * mouseup·keydown은 문서 단위로 한 번만 건다.
+     *
+     * 표를 다시 그릴 때마다 걸면 리스너가 쌓여 Delete 한 번에 여러 번 처리된다.
+     * keydown을 tbody에 걸 수도 없다 — 여러 칸을 잡는 순간 입력칸 포커스를 떼기 때문에
+     * 그 뒤의 키 입력은 tbody로 오지 않는다(선택해놓고 Del을 눌러도 반응 없음).
+     */
+    let _gridSelGlobalsBound = false;
+    function _bindGridSelectionGlobals() {
+        if (_gridSelGlobalsBound) return;
+        _gridSelGlobalsBound = true;
+
+        document.addEventListener('mouseup', () => { _gridSelDragging = false; });
+
+        document.addEventListener('keydown', e => {
+            if (e.key !== 'Delete' && e.key !== 'Backspace') return;
+            if (!document.getElementById('sdpGridEditorBody')) return;
+            const b = _gridSelBounds();
+            if (!b) return;
+            const multi = (b.r2 - b.r1) > 0 || (b.c2 - b.c1) > 0;
+            // 한 칸만 선택된 상태면 입력칸 기본 동작(글자 지우기)에 맡긴다.
+            if (!multi) return;
+            e.preventDefault();
+            const n = _clearGridSelectedCells();
+            if (n) UIUtils.toast(`${n}칸을 비웠습니다. 「저장」을 눌러야 실제로 삭제됩니다.`, 'info');
+        });
+
+        // 표 밖을 클릭하면 선택 해제 — 선택 표시만 남아 헷갈리는 것을 막는다.
+        document.addEventListener('mousedown', e => {
+            if (!_gridSel) return;
+            if (e.target.closest && e.target.closest('#sdpGridEditorBody')) return;
+            clearGridSelection();
+        });
     }
 
     /** '순번' 칸에 입력한 값을 제품 마스터(product.deliverySortOrder)에 저장하고,
      *  그 순서대로 다시 그린다. 이 값을 정해두면 이후 화면·엑셀 붙여넣기 모두
      *  사용자가 실제 쓰는 엑셀 시트의 행 순서와 맞춰 정렬된다. */
+    /** 표의 수량 칸 중 저장 안 된 편집이 있는지 (지운 칸도 편집이다) */
+    function _gridHasUnsavedEdits() {
+        const cells = Array.from(document.querySelectorAll('#sdpGridEditorBody .sdp-grid-cell'));
+        return cells.some(cell => {
+            const row = _gridRows[Number(cell.dataset.row)];
+            const date = cell.dataset.date;
+            if (!row || !date) return false;
+            return _num(cell.value) !== _planQtyForCell(row, date);
+        });
+    }
+
+    /** 조건(기간·납품처·차종)이 바뀌어 표를 새로 받을 때 — 입력 중이던 값을 말없이 버리지 않는다. */
+    function requestGridReload() {
+        if (_gridHasUnsavedEdits()
+            && !confirm('저장하지 않은 수량 입력이 있습니다. 표를 새로 불러오면 그 입력은 사라집니다. 계속할까요?')) {
+            return;
+        }
+        renderGridEditorRows();
+    }
+
     async function saveGridOrder() {
         const wrap = document.getElementById('sdpGridEditorBody');
-        if (!wrap) return;
-        const inputs = Array.from(wrap.querySelectorAll('.sdp-order-cell'));
-        if (!inputs.length) return;
-
-        let changed = 0;
-        for (const input of inputs) {
-            const row = _gridRows[Number(input.dataset.row)];
-            const product = row && row.product;
-            if (!product || !product.id) continue;
-            const raw = input.value.trim();
-            const nextOrder = raw === '' ? null : Number(raw);
-            if (raw !== '' && isNaN(nextOrder)) continue;
-            const prevOrder = product.deliverySortOrder == null ? null : Number(product.deliverySortOrder);
-            if (nextOrder === prevOrder) continue;
-            await Storage.update(DB.STORES.PRODUCTS, product.id, { deliverySortOrder: nextOrder });
-            product.deliverySortOrder = nextOrder;
-            changed += 1;
+        const tbody = wrap && wrap.querySelector('tbody');
+        if (!tbody || !tbody.children.length) return;
+        if (!_gridOrderEditable) {
+            UIUtils.toast('순서 저장은 납품처를 「전체」로 두고 하세요 — 일부만 보고 저장하면 나머지 순번이 어긋납니다.', 'warning');
+            return;
         }
 
+        // 표를 다시 그리지 않고 `<tr>`만 재배치한다.
+        //
+        // 예전에는 마지막에 renderGridEditorRows()로 표를 통째로 새로 그렸는데, 그러면
+        // 아직 저장 안 한 수량 입력이 DB 값으로 되돌아간다 — 사용자가 지운 칸의 수량이
+        // 순서 저장만 눌렀는데 되살아나던 문제. 수량은 「저장」 버튼의 몫이므로
+        // 순서 저장은 순번에만 손대고 입력 중인 값은 그대로 둔다.
+        const items = Array.from(tbody.children).map((tr, i) => {
+            const anyCell = tr.querySelector('.sdp-grid-cell, .sdp-order-cell');
+            const orderInput = tr.querySelector('.sdp-order-cell');
+            const raw = orderInput ? String(orderInput.value).trim() : '';
+            const n = raw === '' ? Number.MAX_SAFE_INTEGER : Number(raw);
+            return {
+                tr,
+                cur: i,
+                order: isNaN(n) ? Number.MAX_SAFE_INTEGER : n,
+                row: anyCell ? _gridRows[Number(anyCell.dataset.row)] : null
+            };
+        });
+        if (items.some(it => !it.row)) {
+            console.warn('[SalesDeliveryPlan] 행 매핑을 찾지 못해 순서 저장을 중단합니다.');
+            UIUtils.toast('행 정보를 읽지 못했습니다. 표를 다시 불러온 뒤 시도하세요.', 'error');
+            return;
+        }
+
+        // 같은 숫자를 적었으면 지금 화면 순서를 유지한다(안정 정렬).
+        items.sort((a, b) => (a.order - b.order) || (a.cur - b.cur));
+        items.forEach(it => tbody.appendChild(it.tr));
+
+        // 배열을 새 순서로 세우고 data-row를 다시 적는다 — 이걸 빼먹으면 수량이 엉뚱한
+        // 품목에 저장된다(드래그에서 이미 겪은 사고).
+        _gridRows = items.map(it => it.row);
+        Array.from(tbody.children).forEach((tr, i) => {
+            tr.querySelectorAll('.sdp-grid-cell, .sdp-order-cell')
+                .forEach(cell => { cell.dataset.row = String(i); });
+        });
+
+        _syncGridOrderInputs(tbody);
+        const changed = await _assignGridOrderNumbers();
         UIUtils.toast(changed ? `순번 ${changed}건 저장했습니다.` : '변경된 순번이 없습니다.', changed ? 'success' : 'info');
-        renderGridEditorRows();
     }
 
     /** 엑셀에서 복사한 셀(행/열 여러 개 가능)을 붙여넣은 칸부터 이어서 채운다.
@@ -2294,9 +2495,66 @@ var SalesDeliveryPlanModule = (function() {
             }
         }
 
+        const swept = await _sweepStalePlansForGrid();
+
         UIUtils.closeModal();
-        UIUtils.toast(`${changed}개 납품 계획 셀이 저장되었습니다.`, 'success');
+        UIUtils.toast(
+            `${changed}개 납품 계획 셀이 저장되었습니다.` +
+            (swept ? ` 화면에 없던 기존 계획 ${swept}건은 정리했습니다.` : ''),
+            'success');
         search();
+    }
+
+    /**
+     * 등록 화면은 「업데이트」다 — 저장하면 그 차종·그 기간의 계획은 화면 내용이 곧 정답이어야
+     * 하고, 빈칸은 0(=계획 없음)이어야 한다.
+     *
+     * 그런데 _upsertPlanCell이 지우는 건 `_matches`로 같은 품목이라고 인정되는 계획뿐이다.
+     * 차종이 'q2'로 잘못 적혔거나 납품처에 날짜가 들어간 옛 계획은 같은 품목으로 인정되지
+     * 않아 살아남고, 정작 영업계획 화면은 품명으로 제품을 되찾아(_findProduct) 그 계획들을
+     * 같은 행에 합산한다. 그래서 "등록했는데 영업계획 수량이 안 바뀐다"가 된다.
+     *
+     * 여기서는 **영업계획 화면이 이 행으로 해석하는 계획**을 같은 기준(_findProduct)으로 찾아,
+     * 방금 저장한 것 말고는 지운다. 화면에서 비운 칸이 실제로 0이 된다.
+     *
+     * 범위는 이번에 연 등록 화면의 **기간 × 표에 나온 제품**으로 한정한다.
+     */
+    async function _sweepStalePlansForGrid() {
+        if (!_gridRows.length || !_gridDays.length) return 0;
+        const start = _gridDays[0];
+        const end = _gridDays[_gridDays.length - 1];
+
+        const gridProductIds = new Set(
+            _gridRows.map(r => r.product && r.product.id).filter(Boolean)
+        );
+        if (!gridProductIds.size) return 0;
+
+        // 방금 저장해 남긴 레코드는 건드리면 안 된다.
+        const keepIds = new Set();
+        _gridRows.forEach(row => {
+            _gridDays.forEach(day => {
+                _recordsForCell(row, day).forEach(r => keepIds.add(String(r.id)));
+            });
+        });
+
+        const stale = (Storage.getAll(STORE) || []).filter(plan => {
+            if (!plan || keepIds.has(String(plan.id))) return false;
+            if (!_dateInRange(plan.date, start, end)) return false;
+            const product = _findProduct(plan);
+            return !!(product && gridProductIds.has(product.id));
+        });
+
+        if (stale.length) {
+            // 무엇을 지웠는지 남긴다 — 덮어쓰기는 되돌리기 어려우므로 추적 근거가 있어야 한다.
+            console.info('[SalesDeliveryPlan] 덮어쓰기로 정리한 기존 계획', stale.map(p => ({
+                id: p.id, date: p.date, carModel: p.carModel, partName: p.partName,
+                color: p.color, customer: p.customer, planQty: p.planQty
+            })));
+        }
+        for (const plan of stale) {
+            await Storage.remove(STORE, plan.id);
+        }
+        return stale.length;
     }
 
     function openCellModal(rowKey, date) {
@@ -3311,6 +3569,8 @@ var SalesDeliveryPlanModule = (function() {
         onGridCustomerChange,
         onMainCustomerChange,
         renderGridEditorRows,
+        requestGridReload,
+        clearGridSelection,
         onGridCellPaste,
         saveGridOrder,
         toggleHideNoPlan,
