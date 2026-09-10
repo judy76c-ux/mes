@@ -702,8 +702,36 @@ const UIUtils = (function () {
         </span>`;
     }
 
+    /**
+     * 기초정보(제품 마스터 · 사출자재 마스터)에 등록된 차종 집합.
+     *
+     * 차종 목록을 거래 기록(입출고·실적)에서 긁어 만들면, 잘못 들어간 값이 그대로
+     * 드롭다운에 올라온다(사용자 보고: '사출', '사출"', '7"', '리 "' 등 기초정보에 없는 차종).
+     * 차종의 기준은 기초정보 한 곳이어야 하므로, 여기서 허용 목록을 만든다.
+     */
+    function masterCarModelSet() {
+        const set = new Set();
+        if (typeof Storage === 'undefined' || !Storage.getAll || typeof DB === 'undefined' || !DB.STORES) return set;
+        ['PRODUCTS', 'INJECTION_MATERIALS'].forEach(key => {
+            if (!DB.STORES[key]) return;
+            (Storage.getAll(DB.STORES[key]) || []).forEach(m => {
+                const car = String((m && m.carModel) || '').trim();
+                if (car) set.add(car);
+            });
+        });
+        return set;
+    }
+
+    /** 기초정보에 없는 차종을 걸러낸다. 기초정보가 비어 있으면(초기 셋업 등) 손대지 않는다. */
+    function filterKnownCarModels(values) {
+        const list = (values || []).map(v => String(v || '').trim()).filter(Boolean);
+        const known = masterCarModelSet();
+        if (!known.size) return list;
+        return list.filter(v => known.has(v));
+    }
+
     function sortCarModels(values, sourceRows) {
-        const models = [...new Set((values || []).map(v => String(v || '').trim()).filter(Boolean))];
+        const models = [...new Set(filterKnownCarModels(values))];
         const rows = Array.isArray(sourceRows) && sourceRows.length
             ? sourceRows
             : (typeof Storage !== 'undefined' && Storage.getAll && typeof DB !== 'undefined'
@@ -894,6 +922,8 @@ const UIUtils = (function () {
         badge,
         itemTypeBadge,
         sortCarModels,
+        masterCarModelSet,
+        filterKnownCarModels,
         renderPagination,
         makeDraggableModal,
         normalizeColorAlias

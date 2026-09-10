@@ -3,6 +3,8 @@
 // ===================================================================
 var InjectionWarehouseModule = (function() {
     const STORE = DB.STORES.INJECTION_INVENTORY;
+    /** 차종 필터의 특수값 — 기초정보에 없는 차종으로 쌓인 재고만 모아 본다. */
+    const UNKNOWN_CAR_FILTER = '__UNKNOWN_CAR__';
     let _pendingInspDate = '';
     // 수입검사에서 연 입고 폼 — LOT·수량을 합격수량으로 고정 (입력·수정 불가)
     let _lockedInspInbound = null;
@@ -2753,13 +2755,27 @@ var InjectionWarehouseModule = (function() {
 
 
         // ── 차종 드롭다운 채우기 ───────────────────────────────────
-        const carModels = UIUtils.sortCarModels(Object.values(stockMap).map(v => v.carModel));
+        // 목록은 기초정보(제품·사출자재 마스터)에 등록된 차종만 올린다. 다만 기초정보에 없는
+        // 차종으로 쌓인 재고를 목록에서 빼기만 하면 그 재고가 화면에서 사라져 버리므로,
+        // 그런 값이 있으면 「⚠ 기초정보 미등록」 항목을 따로 만들어 눈에 보이게 한다.
+        const allCarModels = Object.values(stockMap).map(v => v.carModel);
+        const carModels = UIUtils.sortCarModels(allCarModels);
+        const knownSet = new Set(carModels);
+        const unknownCars = [...new Set(allCarModels
+            .map(v => String(v || '').trim())
+            .filter(v => v && !knownSet.has(v)))];
+        if (unknownCars.length) {
+            console.warn('[InjectionWarehouseModule] 기초정보에 없는 차종:', unknownCars.join(', '));
+        }
         ['injTileCarFilter', 'injTxCarIn', 'injTxCarOut'].forEach(id => {
             const sel = document.getElementById(id);
             if (!sel) return;
             const cur = sel.value;
             sel.innerHTML = `<option value="">전체 차종</option>` +
-                carModels.map(c => `<option value="${c}">${c}</option>`).join('');
+                carModels.map(c => `<option value="${c}">${c}</option>`).join('') +
+                (unknownCars.length
+                    ? `<option value="${UNKNOWN_CAR_FILTER}">⚠ 기초정보 미등록 (${unknownCars.length})</option>`
+                    : '');
             sel.value = cur;
         });
 
@@ -3019,11 +3035,17 @@ var InjectionWarehouseModule = (function() {
         _renderAliasCleanupBanner(materials, data);
 
         const filterCar = (document.getElementById('injTileCarFilter') || {}).value || '';
+        // 「⚠ 기초정보 미등록」을 고르면 마스터에 없는 차종의 재고만 모아 보여준다.
+        const knownCars = typeof UIUtils.masterCarModelSet === 'function'
+            ? UIUtils.masterCarModelSet() : new Set();
 
         // 차종별 그룹핑 (재고 없는 품목 포함)
         const byCarModel = {};
         Object.values(mergedMap).forEach(item => {
-            if (filterCar && item.carModel !== filterCar) return;
+            const car = String(item.carModel || '').trim();
+            if (filterCar === UNKNOWN_CAR_FILTER) {
+                if (!car || (knownCars.size && knownCars.has(car))) return;
+            } else if (filterCar && item.carModel !== filterCar) return;
             if (_isDisplayInvalidColor(item.color)) return;
             const groupKey = item.carModel || '(차종 미설정)';
             if (!byCarModel[groupKey]) byCarModel[groupKey] = [];

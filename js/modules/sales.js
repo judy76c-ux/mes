@@ -1196,7 +1196,8 @@ var SalesDeliveryPlanModule = (function() {
         const carEl = document.getElementById('sdpGridCar');
         if (!carEl) return;
 
-        const cars = _deliveryCars(customer);
+        // 등록 화면은 양산품 대상 — A/S 전용 차종은 목록에 올리지 않는다.
+        const cars = _massProductionCars(_deliveryCars(customer));
         const current = carEl.value || '';
         const keepCurrent = !current || _unique(cars).some(c => _norm(c) === _norm(current));
         carEl.innerHTML = _selectOptions(cars, keepCurrent ? current : '', '-- 차종 선택 --');
@@ -1369,6 +1370,24 @@ var SalesDeliveryPlanModule = (function() {
     /** "계획 없는 품목 숨기기" 체크 토글 — 이미 불러온 _lastRows를 다시 조회하지 않고 필터만 다시 적용 */
     function toggleHideNoPlan() {
         _renderTable(_visibleRows(_lastRows), _lastDays);
+    }
+
+    /**
+     * 양산품이 하나라도 등록된 차종만 남긴다.
+     *
+     * 납품계획 등록은 양산품 대상 업무라, A/S 전용 차종까지 차종 목록에 올라오면
+     * 고를 일 없는 항목만 늘어난다(사용자 요청: "양산 품목만 나오면 됨").
+     * 판정 기준은 제품 마스터의 itemType — 이 화면의 다른 곳들과 같은 기준을 쓴다.
+     */
+    function _massProductionCars(cars) {
+        const allow = new Set();
+        _products().forEach(p => {
+            if ((p.itemType || '') !== '양산품') return;
+            const car = String(p.carModel || '').trim();
+            if (car) allow.add(_carKey(car));
+        });
+        if (!allow.size) return cars;   // 마스터에 양산품 표시가 없으면 거르지 않는다
+        return (cars || []).filter(c => allow.has(_carKey(c)));
     }
 
     /** 제품 마스터의 "양산품" 전체 — 계획 유무와 무관하게 목록에 항상 나올 후보. */
@@ -1858,7 +1877,10 @@ var SalesDeliveryPlanModule = (function() {
         return `
             <div style="padding:6px 8px;border:1px solid var(--border-color);background:#fff;margin-bottom:8px;color:var(--text-secondary);font-size:11px;">
                 납품처와 차종을 선택한 뒤, 날짜 칸을 클릭해서 수량을 입력하세요. 기존 계획이 있는 칸은 수량이 표시되며, 빈칸으로 저장하면 해당 계획은 삭제됩니다.<br>
-                엑셀에서 셀(행/열 여러 개도 가능)을 복사한 뒤 시작할 칸을 클릭하고 붙여넣기(Ctrl+V)하면, 그 칸부터 이어서 채워집니다.
+                엑셀에서 셀(행/열 여러 개도 가능)을 복사한 뒤 시작할 칸을 클릭하고 붙여넣기(Ctrl+V)하면, 그 칸부터 행·열 그대로 채워집니다.
+                맨 왼쪽 위 칸(순번 칸 포함)에 붙여넣으면 첫 행·첫 날짜부터 채워집니다.<br>
+                품명 왼쪽의 <strong>⠿</strong> 손잡이를 끌면 품명 순서를 바꿀 수 있고, 놓는 즉시 순번이 저장됩니다.
+                <strong>순서 저장</strong>은 순번 칸에 숫자를 직접 적었을 때 씁니다.
             </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:6px;margin-bottom:8px;padding:8px;font-size:11px;">
                 <div class="form-group">
@@ -1878,13 +1900,8 @@ var SalesDeliveryPlanModule = (function() {
                 <div class="form-group">
                     <label class="form-label">차종</label>
                     <select class="form-select" id="sdpGridCar" onchange="SalesDeliveryPlanModule.renderGridEditorRows()">
-                        ${_selectOptions(UIUtils.sortCarModels(products.map(p => p.carModel), products), '', '-- 차종 선택 --')}
+                        ${_selectOptions(_massProductionCars(UIUtils.sortCarModels(products.map(p => p.carModel), products)), '', '-- 차종 선택 --')}
                     </select>
-                </div>
-                <div class="form-group" style="align-self:flex-end;">
-                    <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.renderGridEditorRows()">
-                        <span class="material-symbols-outlined">refresh</span> 목록 적용
-                    </button>
                 </div>
                 <div class="form-group" style="align-self:flex-end;">
                     <button class="btn btn-outline" onclick="SalesDeliveryPlanModule.saveGridOrder()" title="맨 왼쪽 '순번' 칸에 입력한 숫자를 저장하고, 그 순서대로 다시 정렬합니다.">
@@ -1911,6 +1928,147 @@ var SalesDeliveryPlanModule = (function() {
         ].join(';');
     }
 
+    /**
+     * 지금 표에 보이는 순서대로 1..N 순번을 매기고, 바뀐 것만 제품 마스터에 저장한다.
+     * 화면(_gridRows)의 순서가 곧 순번이라, 드래그로 행을 옮긴 뒤에도 그대로 쓴다.
+     * 저장은 비동기지만 화면 숫자는 즉시 맞춘다(_gridRows에 먼저 반영).
+     */
+    function _assignGridOrderNumbers() {
+        const dirty = [];
+        _gridRows.forEach((row, index) => {
+            const product = row && row.product;
+            if (!product || !product.id) return;
+            const next = index + 1;
+            const prev = product.deliverySortOrder == null || product.deliverySortOrder === ''
+                ? null : Number(product.deliverySortOrder);
+            if (prev === next) return;
+            product.deliverySortOrder = next;
+            dirty.push({ id: product.id, order: next });
+        });
+        if (!dirty.length) return Promise.resolve(0);
+        return (async () => {
+            for (const d of dirty) {
+                try { await Storage.update(DB.STORES.PRODUCTS, d.id, { deliverySortOrder: d.order }); }
+                catch (e) { console.warn('[SalesDeliveryPlan] 순번 저장 실패:', e); }
+            }
+            return dirty.length;
+        })();
+    }
+
+    /** 행 드래그 재정렬 — 드래그 중인 행의 화면 인덱스 */
+    let _gridRowDragIndex = null;
+    /** 순번 자동 부여·드래그 재정렬이 가능한 상태인지(납품처 전체일 때만) */
+    let _gridOrderEditable = true;
+
+    function startGridRowDrag(event, index) {
+        if (!_gridOrderEditable) {
+            event.preventDefault();
+            UIUtils.toast('순서 변경은 납품처를 「전체」로 두고 하세요 — 일부만 보고 옮기면 나머지 순번이 어긋납니다.', 'warning');
+            return;
+        }
+        _gridRowDragIndex = Number(index);
+        const tr = event.currentTarget.closest('tr');
+        if (tr) tr.classList.add('sdp-row-dragging');
+        try {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', String(index));
+            if (tr) event.dataTransfer.setDragImage(tr, 12, 10);
+        } catch (e) { /* 일부 브라우저는 setDragImage 미지원 */ }
+    }
+
+    function overGridRowDrop(event) {
+        if (_gridRowDragIndex == null) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = 'move';
+        const tr = event.currentTarget.closest('tr');
+        if (!tr || tr.classList.contains('sdp-row-dragging')) return;
+        // 위/아래 어느 쪽에 놓일지 선으로 보여준다 — 안 그러면 어디로 갈지 모른 채 놓게 된다.
+        const rect = tr.getBoundingClientRect();
+        const below = (event.clientY - rect.top) > rect.height / 2;
+        _clearGridRowDropMarks(tr.parentElement);
+        tr.classList.add(below ? 'sdp-row-drop-below' : 'sdp-row-drop-above');
+    }
+
+    function _clearGridRowDropMarks(tbody) {
+        if (!tbody) return;
+        tbody.querySelectorAll('.sdp-row-drop-above, .sdp-row-drop-below').forEach(el => {
+            el.classList.remove('sdp-row-drop-above', 'sdp-row-drop-below');
+        });
+    }
+
+    /**
+     * 행을 놓은 자리로 옮긴다.
+     *
+     * 표를 다시 그리지 않고 `<tr>` 요소만 옮긴다 — 아직 저장 안 한 수량 입력값이
+     * 날아가면 안 되기 때문이다. 셀의 data-row는 _gridRows의 인덱스를 가리키므로
+     * 요소를 옮겨도 매핑은 그대로 유효하다. _gridRows 자체도 같은 순서로 맞춰
+     * 순번(1..N)과 다음 렌더링 순서가 화면과 어긋나지 않게 한다.
+     */
+    async function dropGridRow(event) {
+        if (_gridRowDragIndex == null) return;
+        event.preventDefault();
+        const tr = event.currentTarget.closest('tr');
+        const tbody = tr && tr.parentElement;
+        if (!tr || !tbody) { endGridRowDrag(event); return; }
+
+        const rect = tr.getBoundingClientRect();
+        const below = (event.clientY - rect.top) > rect.height / 2;
+        _clearGridRowDropMarks(tbody);
+
+        const dragTr = tbody.querySelector('.sdp-row-dragging');
+        if (!dragTr || dragTr === tr) { endGridRowDrag(event); return; }
+
+        tbody.insertBefore(dragTr, below ? tr.nextSibling : tr);
+
+        // 화면(DOM) 순서를 정답으로 삼아 _gridRows를 다시 세운다.
+        const trs = Array.from(tbody.children);
+        const ordered = trs
+            .map(el => {
+                const cell = el.querySelector('.sdp-grid-cell, .sdp-order-cell');
+                return cell ? _gridRows[Number(cell.dataset.row)] : null;
+            })
+            .filter(Boolean);
+
+        if (ordered.length === trs.length && ordered.length === _gridRows.length) {
+            _gridRows = ordered;
+            // ★ data-row는 _gridRows의 "인덱스"다. 위에서 배열을 새로 세웠으므로 같은 숫자가
+            //   다른 품목을 가리키게 된다 — 여기서 다시 적어주지 않으면 저장할 때 수량이
+            //   엉뚱한 품목에 붙는다(행을 옮긴 뒤 LENS 수량이 COVER 행에 들어가던 사고).
+            trs.forEach((el, i) => {
+                el.querySelectorAll('.sdp-grid-cell, .sdp-order-cell')
+                    .forEach(cell => { cell.dataset.row = String(i); });
+            });
+        } else {
+            // 매핑을 확신할 수 없으면 순서를 건드리지 않는다 — 잘못 저장하느니 안 옮기는 게 낫다.
+            console.warn('[SalesDeliveryPlan] 행 순서 재계산 실패 — 순번 저장을 건너뜁니다.');
+            endGridRowDrag(event);
+            renderGridEditorRows();
+            return;
+        }
+
+        endGridRowDrag(event);
+        _syncGridOrderInputs(tbody);
+        const saved = await _assignGridOrderNumbers();
+        if (saved) UIUtils.toast('순번을 저장했습니다.', 'success');
+    }
+
+    function endGridRowDrag(event) {
+        const tbody = event && event.currentTarget && event.currentTarget.closest('tbody');
+        _clearGridRowDropMarks(tbody || document.getElementById('sdpGridEditorBody'));
+        document.querySelectorAll('.sdp-row-dragging').forEach(el => el.classList.remove('sdp-row-dragging'));
+        _gridRowDragIndex = null;
+    }
+
+    /** 순번 입력칸을 현재 화면 순서(1..N)로 다시 적는다. */
+    function _syncGridOrderInputs(tbody) {
+        const body = tbody || document.querySelector('#sdpGridEditorBody tbody');
+        if (!body) return;
+        Array.from(body.children).forEach((tr, i) => {
+            const input = tr.querySelector('.sdp-order-cell');
+            if (input) input.value = String(i + 1);
+        });
+    }
+
     function renderGridEditorRows() {
         const start = document.getElementById('sdpGridStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpGridEnd')?.value || _addDays(start, 30);
@@ -1934,14 +2092,27 @@ var SalesDeliveryPlanModule = (function() {
         const products = _productsByCustomer(customer)
             .filter(p => p.partName || p.name)
             .filter(p => !car || _norm(p.carModel) === _norm(car))
+            // 순번(deliverySortOrder)이 1순위다. 예전에는 납품처·차종이 앞에 있어서, 순번을
+            // 바꿔도 다시 그리면 납품처 순으로 되돌아갔다(드래그로 옮겨놓고 '순서 저장'을
+            // 누르면 원위치되던 문제). 순번은 사용자가 직접 정한 값이라 무엇보다 우선한다.
+            // 순번이 아직 없는 품목만 뒤에서 납품처·품명 순으로 줄을 세운다.
             .sort((a, b) =>
+                (_deliverySortOrderOf(a) - _deliverySortOrderOf(b)) ||
                 String(a.customer || '').localeCompare(String(b.customer || ''), 'ko') ||
                 String(a.carModel || '').localeCompare(String(b.carModel || ''), 'ko') ||
-                (_deliverySortOrderOf(a) - _deliverySortOrderOf(b)) ||
                 String(a.partName || a.name || '').localeCompare(String(b.partName || b.name || ''), 'ko')
             );
 
         _gridRows = products.map(p => _productBase(p, customer));
+
+        // 차종을 고르면 그 차종 안에서 1..N 순번을 바로 매겨 저장한다. 순번이 비어 있으면
+        // 매번 가나다 순으로 밀려 사용자가 쓰는 엑셀 시트의 행 순서와 어긋나는데, 화면에
+        // '-'만 보이니 왜 어긋나는지도 알 수 없었다. 번호를 눈에 보이게 고정해 둔다.
+        //
+        // 단, 납품처를 골라 일부만 보고 있을 때는 매기지 않는다. 그 부분집합으로 1..N을
+        // 다시 쓰면 화면에 없는 다른 납품처 품목들의 순번까지 뭉개진다.
+        _gridOrderEditable = !customer;
+        if (_gridOrderEditable) _assignGridOrderNumbers();
 
         if (!_gridRows.length) {
             wrap.innerHTML = `<div style="padding:36px;text-align:center;color:var(--text-muted);">선택 조건에 맞는 제품이 없습니다.</div>`;
@@ -1969,12 +2140,23 @@ var SalesDeliveryPlanModule = (function() {
                 </thead>
                 <tbody>
                     ${_gridRows.map((row, index) => `
-                        <tr>
+                        <tr ondragover="SalesDeliveryPlanModule.overGridRowDrop(event)"
+                            ondrop="SalesDeliveryPlanModule.dropGridRow(event)">
                             <td class="sdp-fixed-col" style="padding:0 1px;">
-                                <input type="number" class="sdp-order-cell" data-row="${index}"
-                                    value="${row.product && row.product.deliverySortOrder != null ? _esc(row.product.deliverySortOrder) : ''}"
-                                    placeholder="-" onclick="this.select()" onfocus="this.select()"
-                                    style="width:100%;height:19px;border:0;text-align:center;font-size:12px;background:transparent;">
+                                <div style="display:flex;align-items:center;gap:1px;">
+                                    <span class="sdp-row-handle" draggable="${_gridOrderEditable ? 'true' : 'false'}"
+                                        ondragstart="SalesDeliveryPlanModule.startGridRowDrag(event,${index})"
+                                        ondragend="SalesDeliveryPlanModule.endGridRowDrag(event)"
+                                        title="${_gridOrderEditable
+                                            ? '끌어서 품명 순서를 바꿉니다. 놓으면 순번이 저장됩니다.'
+                                            : '순서 변경은 납품처를 「전체」로 두고 하세요.'}"
+                                        style="cursor:${_gridOrderEditable ? 'grab' : 'not-allowed'};color:var(--text-muted);font-size:11px;line-height:1;user-select:none;padding:0 1px;">⠿</span>
+                                    <input type="number" class="sdp-order-cell" data-row="${index}"
+                                        value="${row.product && row.product.deliverySortOrder != null ? _esc(row.product.deliverySortOrder) : ''}"
+                                        placeholder="-" onclick="this.select()" onfocus="this.select()"
+                                        onpaste="SalesDeliveryPlanModule.onGridCellPaste(event,this)"
+                                        style="width:100%;height:19px;border:0;text-align:center;font-size:12px;background:transparent;">
+                                </div>
                             </td>
                             <td class="sdp-fixed-col sdp-customer-col" title="${_esc(row.customer || '-')}">${_esc(row.customer || '-')}</td>
                             <td class="sdp-fixed-col">${_esc(row.carModel || '-')}</td>
@@ -2054,8 +2236,10 @@ var SalesDeliveryPlanModule = (function() {
         const startTr = el.closest('tr');
         if (!startTr) return;
         const startCells = Array.from(startTr.querySelectorAll('.sdp-grid-cell'));
-        const startCellIdx = startCells.indexOf(el);
-        if (startCellIdx < 0) return;
+        // 순번 칸에 붙여넣으면 그 행의 첫 날짜 칸부터 채운다 — "왼쪽 맨 위에서 붙여넣어도
+        // 행·열이 맞아야 한다"는 요구를 만족시키려면 시작점이 날짜 영역의 0번이어야 한다.
+        const startCellIdx = el.classList.contains('sdp-order-cell') ? 0 : startCells.indexOf(el);
+        if (startCellIdx < 0 || !startCells.length) return;
 
         let tr = startTr;
         for (let r = 0; r < grid.length && tr; r++, tr = tr.nextElementSibling) {
@@ -3134,6 +3318,10 @@ var SalesDeliveryPlanModule = (function() {
         openCellModal,
         saveCellPlan,
         handleDayCellClick,
+        startGridRowDrag,
+        overGridRowDrop,
+        dropGridRow,
+        endGridRowDrag,
         startPlanDrag,
         overPlanDrop,
         leavePlanDrop,
