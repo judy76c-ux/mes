@@ -9,6 +9,17 @@ const DashboardModule = (function() {
     // background cache warm → 대시보드 1회 재렌더 (토스트/과도한 반복 방지)
     let _cacheWarmUnsub = null;
     let _cacheWarmRefreshTimer = null;
+    let _summary = null;
+
+    async function _loadSummary() {
+        if (typeof ApiClient === 'undefined' || typeof ApiClient.getDashboardSummary !== 'function') return;
+        try {
+            _summary = await ApiClient.getDashboardSummary(UIUtils.today());
+            renderProductionTiles();
+        } catch (e) {
+            console.warn('[Dashboard] summary load failed:', e);
+        }
+    }
     function _bindCacheWarmRefreshOnce() {
         if (typeof Storage === 'undefined' || typeof Storage.onCacheWarm !== 'function') return;
         if (_cacheWarmUnsub) return;
@@ -180,6 +191,7 @@ const DashboardModule = (function() {
         renderImprovementTiles();
         renderBoardSection();
         _bindCacheWarmRefreshOnce();
+        _loadSummary();
     }
 
     function _scheduleIdleWork(fn, timeoutMs) {
@@ -764,15 +776,14 @@ const DashboardModule = (function() {
         const prodInv   = Storage.getAll(STORE.PRODUCT_INVENTORY);
         const standby   = Storage.getAll(STORE.SHIPPING_STANDBY);
 
-        const todayPlans  = plans.filter(p => p.date === todayStr).length;
-        const injTotal    = injInv.reduce((s,i)  => s + (Number(i.quantity) || 0), 0);
+        const todayPlans  = _summary ? Number(_summary.todayPlans) || 0 : plans.filter(p => p.date === todayStr).length;
+        const injTotal    = _summary ? Number(_summary.injectionInventory) || 0 : injInv.reduce((s,i) => s + (Number(i.quantity) || 0), 0);
         const paintTodayRows = paintWork.filter(p => p.date === todayStr);
-        const paintTodayA = paintTodayRows.filter(p => !/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
-        const paintTodayB = paintTodayRows.filter(p => /도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
-        const defectToday = paintInsp.filter(p => p.date === todayStr)
-                                     .reduce((s,d) => s + (Number(d.defectCount) || 0), 0);
-        const prodTotal   = prodInv.reduce((s,i) => s + (Number(i.quantity) || 0), 0);
-        const sbCount     = standby.filter(s => s.status === '대기').length;
+        const paintTodayA = _summary ? Number(_summary.paintingTodayA) || 0 : paintTodayRows.filter(p => !/도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
+        const paintTodayB = _summary ? Number(_summary.paintingTodayB) || 0 : paintTodayRows.filter(p => /도장[-\s]?B|\(B\)|B\s*라인|^B$/i.test(String(p.line || '').trim())).length;
+        const defectToday = _summary ? Number(_summary.defectToday) || 0 : paintInsp.filter(p => p.date === todayStr).reduce((s,d) => s + (Number(d.defectCount) || 0), 0);
+        const prodTotal   = _summary ? Number(_summary.productInventory) || 0 : prodInv.reduce((s,i) => s + (Number(i.quantity) || 0), 0);
+        const sbCount     = _summary ? Number(_summary.shippingWaiting) || 0 : standby.filter(s => s.status === '대기').length;
 
         el.innerHTML = `
         <div class="card" style="margin-bottom:0;padding:8px 12px 10px;">

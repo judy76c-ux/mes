@@ -1203,7 +1203,7 @@ var ReworkWipModule = (function () {
      * refReturnId가 있으면 그 건만, 없으면 차종·품명·컬러·LOT·수량이 모두 맞는 site_return
      * 입고만 지운다 — 조건을 느슨하게 잡으면 멀쩡한 반납 입고까지 지워지므로 좁게 매칭한다.
      */
-    async function removeSiteReturnReceipt(opts) {
+    function findSiteReturnReceipt(opts) {
         opts = opts || {};
         const returnId = String(opts.refReturnId || '').trim();
         const carModel = String(opts.carModel || '').trim();
@@ -1214,9 +1214,9 @@ var ReworkWipModule = (function () {
             if (n) lotQty[n] = (lotQty[n] || 0) + (Math.max(0, Math.floor(Number(l && l.qty) || 0)));
         });
 
-        const targets = _getAll().filter(function (rec) {
+        return _getAll().filter(function (rec) {
             if (!rec || rec.type !== '입고' || String(rec.source || '') !== 'site_return') return false;
-            if (returnId) return String(rec.refReturnId || '') === returnId;
+            if (returnId && String(rec.refReturnId || '') === returnId) return true;
             if (rec.refReturnId) return false;   // 다른 반납 건에 이미 귀속된 기록은 건드리지 않는다
             if (carModel && String(rec.carModel || '').trim() !== carModel) return false;
             if (partName && !_partsMatch(rec.partName, partName, rec.carModel)) return false;
@@ -1224,7 +1224,10 @@ var ReworkWipModule = (function () {
             if (!lot || lotQty[lot] == null) return false;
             return Math.max(0, Math.floor(Number(rec.qty) || 0)) === lotQty[lot];
         });
+    }
 
+    async function removeSiteReturnReceipt(opts) {
+        const targets = findSiteReturnReceipt(opts);
         for (let i = 0; i < targets.length; i++) {
             await Storage.remove(WIP_STORE, targets[i].id);
         }
@@ -1353,6 +1356,7 @@ var ReworkWipModule = (function () {
         dispatchFromPaintingWork,
         receiveSiteReturn,
         removeSiteReturnReceipt,
+        findSiteReturnReceipt,
         openStockDetailModal,
         addFromPaintingInspection,
         getStockQty,

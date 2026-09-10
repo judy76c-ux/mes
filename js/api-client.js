@@ -87,6 +87,11 @@ const ApiClient = (function() {
     console.log('✅ API 서버 연결 성공:', result.timestamp);
   }
 
+  async function getDashboardSummary(date) {
+    const query = date ? `?date=${encodeURIComponent(date)}` : '';
+    return request('GET', `/api/dashboard/summary${query}`, undefined, 10000);
+  }
+
   // 전체 조회
   async function getAll(storeName) {
     return request('GET', `/api/docs/${storeName}`, undefined, 60000);
@@ -321,7 +326,7 @@ const ApiClient = (function() {
   function getBase() { return getApiBase(); }
 
   return {
-    init, getAll, save, saveAll, remove, getConfig, setConfig,
+    init, getAll, getDashboardSummary, save, saveAll, remove, getConfig, setConfig,
     getBackupConfig, saveBackupConfig, listBackups, createBackup,
     cleanupBackups, deleteBackup, backupDownloadUrl, restoreBackup,
     getNasConfig, saveNasConfig,

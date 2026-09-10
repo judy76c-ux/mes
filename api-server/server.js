@@ -272,6 +272,29 @@ app.get('/api/system', async (req, res) => {
   }
 });
 
+// 대시보드 첫 화면용 요약값. 전체 문서 목록을 브라우저로 전송하지 않는다.
+app.get('/api/dashboard/summary', async (req, res) => {
+  const date = String(req.query.date || '').slice(0, 10) || new Date().toISOString().slice(0, 10);
+  try {
+    const [rows] = await pool.query(`
+      SELECT
+        COALESCE(SUM(CASE WHEN store_name = 'production_plans' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.date')) = ? THEN 1 ELSE 0 END), 0) AS todayPlans,
+        COALESCE(SUM(CASE WHEN store_name = 'injection_inventory' THEN CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(data, '$.quantity')), '0') AS DECIMAL(18,3)) ELSE 0 END), 0) AS injectionInventory,
+        COALESCE(SUM(CASE WHEN store_name = 'painting_work' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.date')) = ? AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.line')) NOT REGEXP '(^|[^A-Za-z])B([^A-Za-z]|$)|도장[- ]?B' THEN 1 ELSE 0 END), 0) AS paintingTodayA,
+        COALESCE(SUM(CASE WHEN store_name = 'painting_work' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.date')) = ? AND (JSON_UNQUOTE(JSON_EXTRACT(data, '$.line')) REGEXP '(^|[^A-Za-z])B([^A-Za-z]|$)' OR JSON_UNQUOTE(JSON_EXTRACT(data, '$.line')) REGEXP '도장[- ]?B') THEN 1 ELSE 0 END), 0) AS paintingTodayB,
+        COALESCE(SUM(CASE WHEN store_name = 'painting_inspections' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.date')) = ? THEN CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(data, '$.defectCount')), '0') AS DECIMAL(18,3)) ELSE 0 END), 0) AS defectToday,
+        COALESCE(SUM(CASE WHEN store_name = 'product_inventory' THEN CAST(COALESCE(JSON_UNQUOTE(JSON_EXTRACT(data, '$.quantity')), '0') AS DECIMAL(18,3)) ELSE 0 END), 0) AS productInventory,
+        COALESCE(SUM(CASE WHEN store_name = 'shipping_standby' AND JSON_UNQUOTE(JSON_EXTRACT(data, '$.status')) = '대기' THEN 1 ELSE 0 END), 0) AS shippingWaiting
+      FROM mes_documents
+      WHERE store_name IN ('production_plans','injection_inventory','painting_work','painting_inspections','product_inventory','shipping_standby')
+    `, [date, date, date, date]);
+    const row = rows[0] || {};
+    res.json(Object.fromEntries(Object.entries(row).map(([key, value]) => [key, Number(value) || 0])));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ?? 臾몄꽌 ?꾩껜 議고쉶 ??
 app.get('/api/docs/:storeName', async (req, res) => {
   const { storeName } = req.params;

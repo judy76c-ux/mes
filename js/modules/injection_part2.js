@@ -5205,19 +5205,94 @@ var InjectionWarehouseModule = (function() {
      * 조용히 틀리는 게 이 사고의 본질이라, 자동으로 고치지 않고 화면에 드러내 관리자가
      * 확인하고 옮기게 한다.
      */
+    /** 반납 건의 컬러 — 비어 있으면 LOT 입고 이력에서 되찾는다(실패해도 화면을 깨뜨리지 않음). */
+    function _resolveReturnColorSafe(r) {
+        try {
+            if (typeof PaintingInputModule === 'undefined'
+                || typeof PaintingInputModule.resolveReturnColor !== 'function') return '';
+            return PaintingInputModule.resolveReturnColor(r.carModel, r.partName, r.lots || []) || '';
+        } catch (e) { return ''; }
+    }
+
+    /** 반납 건의 LOT→수량 지도 (합계 대조용) */
+    function _returnLotQtyMap(r) {
+        const m = {};
+        const lots = (Array.isArray(r && r.lots) && r.lots.length)
+            ? r.lots
+            : (r && r.lotNo ? [{ lotNo: r.lotNo, qty: r.quantity }] : []);
+        lots.forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) m[n] = (m[n] || 0) + (Number(l && l.qty) || 0);
+        });
+        return m;
+    }
+
+    /**
+     * 이 반납이 이미 사출창고로 입고됐는지.
+     *
+     * refReturnId로 잇는 게 정석이지만, 그 필드가 붙기 전에 만들어진 입고 기록도 있다.
+     * 그것까지 "미입고"로 잡으면 관리자가 「사출창고로 이동」을 눌러 **이중 입고**가 난다.
+     * 그래서 참조 id가 없으면 차종·품명·LOT·수량이 모두 맞는 「도장현장 반납」 입고를
+     * 같은 건으로 본다.
+     */
+    function _returnAlreadyInWarehouse(r, invRows) {
+        const rid = String((r && r.id) || '');
+        const rows = invRows || Storage.getAll(STORE) || [];
+        const wantLots = _returnLotQtyMap(r);
+        const wantKeys = Object.keys(wantLots);
+        const car = String((r && r.carModel) || '').trim();
+        const part = String((r && r.partName) || '').trim();
+
+        return rows.some(function (x) {
+            if (!x || String(x.type || '') !== '입고') return false;
+            if (String(x.refReturnId || '') === rid) return true;
+            if (x.refReturnId) return false;                       // 다른 반납 건에 귀속된 입고
+            if (String(x.source || '') !== '도장현장 반납') return false;
+            if (car && String(x.carModel || '').trim() !== car) return false;
+            if (part && String(x.partName || '').trim() !== part) return false;
+            if (!wantKeys.length) return false;
+            const got = _returnLotQtyMap(x);
+            if (Object.keys(got).length !== wantKeys.length) return false;
+            return wantKeys.every(function (k) { return got[k] === wantLots[k]; });
+        });
+    }
+
+    /** 이 반납이 재사용 자재 재고로 들어가 있는지 (오입고 여부를 단정하기 전 실제 확인) */
+    function _returnLandedInRework(r) {
+        try {
+            if (typeof ReworkWipModule === 'undefined'
+                || typeof ReworkWipModule.findSiteReturnReceipt !== 'function') return false;
+            return ReworkWipModule.findSiteReturnReceipt({
+                refReturnId: r.id, carModel: r.carModel, partName: r.partName,
+                color: r.color, lots: r.lots || []
+            }).length > 0;
+        } catch (e) { return false; }
+    }
+
+    /**
+     * 확정됐는데 사출 창고 재고에 반영되지 않은 반납을 찾아낸다.
+     *
+     * 대표 원인은 목적지 오판정(품명이 IL이라는 이유로 재사용 자재로 감)이지만, 확정 도중
+     * 입고 기록 생성이 실패한 고아 건도 같은 증상이라 함께 잡는다. 어느 쪽인지는 단정하지
+     * 않고 `landedInRework`로 구분해 화면에 사실만 적는다.
+     */
     function _findMisroutedReturns() {
         if (typeof DB === 'undefined' || !DB.STORES || !DB.STORES.PAINTING_INPUT_INVENTORY) return [];
         const invRows = Storage.getAll(STORE) || [];
-        const receivedIds = {};
-        invRows.forEach(function (r) {
-            if (r && String(r.type || '') === '입고' && r.refReturnId) receivedIds[String(r.refReturnId)] = true;
-        });
         return (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).filter(function (r) {
             if (!r || !r.isSiteReturn || r.returnStatus !== 'confirmed') return false;
-            if (receivedIds[String(r.id)]) return false;          // 이미 사출창고로 입고된 건
             if (r.refReworkOutId) return false;                   // 애초에 리워크 입고 건의 반납
+            if (_returnAlreadyInWarehouse(r, invRows)) return false;
             const info = _resolveSiteReturnDest(r);
             return info.dest === 'injection' && info.evidence;    // 근거상 사출창고인데 안 들어옴
+        }).map(function (r) {
+            // 컬러가 빈 옛 기록은 LOT 이력에서 되찾아 화면에도 보여준다 — '-'로 두면
+            // 관리자가 어느 품목으로 들어갈지 모른 채 버튼을 누르게 된다.
+            const color = String(r.color || '').trim() || _resolveReturnColorSafe(r);
+            return Object.assign({}, r, {
+                _resolvedColor: color,
+                _landedInRework: _returnLandedInRework(r)
+            });
         });
     }
 
@@ -5225,32 +5300,42 @@ var InjectionWarehouseModule = (function() {
     async function repairMisroutedReturn(id) {
         const r = Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id);
         if (!r || !r.isSiteReturn) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'error'); return; }
-        const already = (Storage.getAll(STORE) || []).some(function (x) {
-            return x && String(x.type || '') === '입고' && String(x.refReturnId || '') === String(id);
-        });
-        if (already) {
+        // refReturnId가 없던 시절의 입고 기록까지 대조한다 — 이 가드가 느슨하면 이중 입고가 난다.
+        if (_returnAlreadyInWarehouse(r)) {
             UIUtils.toast('이미 사출창고로 입고된 반납입니다.', 'info');
             renderSiteReturns();
             return;
         }
         const lots = (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; });
-        const color = String(r.color || '').trim()
-            || (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.resolveReturnColor
-                ? PaintingInputModule.resolveReturnColor(r.carModel, r.partName, lots) : '');
-        if (!color) {
-            UIUtils.toast('컬러를 확인할 수 없어 옮길 수 없습니다. 반납 건의 컬러를 먼저 채워 주세요.', 'warning');
-            return;
+        let color = String(r.color || '').trim();
+        if (!color && typeof PaintingInputModule !== 'undefined'
+            && typeof PaintingInputModule.resolveReturnColor === 'function') {
+            color = PaintingInputModule.resolveReturnColor(r.carModel, r.partName, lots) || '';
         }
+        if (!color) {
+            // LOT 이력에도 근거가 없는 옛 기록 — 컬러 없이 넣으면 '컬러 없음' 품목이 또 생긴다.
+            const known = _knownColorsFor(r.carModel, r.partName);
+            const promptMsg = r.carModel + ' / ' + r.partName
+                + ' · LOT ' + lots.map(function (l) { return l.lotNo; }).join(', ')
+                + ' — 이 반납 건에 컬러 정보가 없습니다. 실물 컬러를 입력하세요.'
+                + (known.length ? ' (등록된 컬러: ' + known.join(', ') + ')' : '');
+            color = String(prompt(promptMsg, known.length === 1 ? known[0] : '') || '').trim();
+            if (!color) {
+                UIUtils.toast('컬러를 입력해야 사출창고로 옮길 수 있습니다.', 'warning');
+                return;
+            }
+        }
+        const inRework = _returnLandedInRework(r);
         if (!confirm(
             `${r.carModel} / ${r.partName} / ${color} · ${UIUtils.formatNumber(r.quantity)} EA를 ` +
-            '재사용 자재 재고에서 빼고 사출 창고 재고로 옮깁니다. 계속할까요?')) return;
+            (inRework ? '재사용 자재 재고에서 빼고 ' : '') + '사출 창고 재고로 입고합니다. 계속할까요?')) return;
 
         const actor = _getResetActorFields();
         try {
             // 먼저 잘못 들어간 재사용 자재 입고를 걷어낸다 — 실패해도 사출창고 입고는 진행하되
             // 몇 건을 못 지웠는지 알려 사람이 직접 정리할 수 있게 한다.
             let removed = 0;
-            if (typeof ReworkWipModule !== 'undefined'
+            if (inRework && typeof ReworkWipModule !== 'undefined'
                 && typeof ReworkWipModule.removeSiteReturnReceipt === 'function') {
                 removed = await ReworkWipModule.removeSiteReturnReceipt({
                     refReturnId: r.id, carModel: r.carModel, partName: r.partName, color: color, lots: lots
@@ -5274,12 +5359,13 @@ var InjectionWarehouseModule = (function() {
                 returnDest: 'injection',
                 returnDestReason: '관리자 보정 — 사출창고 자재로 확인',
                 returnDestEvidence: true,
-                isReworkReturn: false
+                isReworkReturn: false,
+                color: color
             });
             UIUtils.toast(
-                `사출 창고로 옮겼습니다 — ${UIUtils.formatNumber(r.quantity)} EA` +
-                (removed ? '' : ' (재사용 자재 쪽 기록은 찾지 못해 그대로입니다 — 확인 필요)'),
-                removed ? 'success' : 'warning');
+                `사출 창고로 입고했습니다 — ${UIUtils.formatNumber(r.quantity)} EA (${color})` +
+                (inRework && !removed ? ' · 재사용 자재 쪽 기록을 지우지 못했습니다 — 확인 필요' : ''),
+                (inRework && !removed) ? 'warning' : 'success');
             renderSiteReturns();
             loadData();
         } catch (e) {
@@ -5328,15 +5414,21 @@ var InjectionWarehouseModule = (function() {
                 <td style="white-space:nowrap;"><strong>${_escapeHtml(r.carModel || '-')}</strong></td>
                 <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}
                     <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(220,38,38,.12);color:#dc2626;">창고 미입고</span></td>
-                <td style="white-space:nowrap;">${_escapeHtml(r.color || '-')}</td>
+                <td style="white-space:nowrap;">${r._resolvedColor
+                    ? _escapeHtml(r._resolvedColor) + (r.color ? '' : ' <span style="font-size:0.68rem;color:var(--text-muted);">(LOT 이력에서 확인)</span>')
+                    : '<span style="color:var(--accent-red);font-weight:700;">컬러 확인 필요</span>'}</td>
                 <td>${_escapeHtml(lots)}</td>
                 <td style="text-align:right;font-weight:800;white-space:nowrap;">${UIUtils.formatNumber(r.quantity)}</td>
                 <td colspan="2" style="font-size:0.8rem;color:#dc2626;">
-                    반납 확정됐지만 사출 창고 재고에 반영되지 않았습니다(재사용 자재로 잘못 입고됨).</td>
+                    ${r._landedInRework
+                        ? '반납 확정됐지만 사출 창고가 아니라 <strong>재사용 자재</strong>로 입고됐습니다.'
+                        : '반납 확정됐지만 <strong>사출 창고 재고에 반영되지 않았습니다</strong>(입고 기록 없음). 실물을 확인한 뒤 옮기세요.'}</td>
                 <td style="white-space:nowrap;">
-                    ${isAdmin
-                        ? `<button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.repairMisroutedReturn('${r.id}')">사출창고로 이동</button>`
-                        : '<span style="font-size:0.78rem;color:var(--text-muted);">관리자 처리 필요</span>'}
+                    ${!isAdmin
+                        ? '<span style="font-size:0.78rem;color:var(--text-muted);">관리자 처리 필요</span>'
+                        : (r._resolvedColor
+                            ? `<button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.repairMisroutedReturn('${r.id}')">사출창고로 이동</button>`
+                            : `<button class="btn btn-sm btn-outline" onclick="InjectionWarehouseModule.repairMisroutedReturn('${r.id}')">컬러 입력 후 이동</button>`)}
                 </td>
             </tr>`;
         }).join('');
@@ -5356,7 +5448,13 @@ var InjectionWarehouseModule = (function() {
                 <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}${_isReworkSiteReturn(r)
                     ? ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">재사용 자재</span>'
                     : ''}</td>
-                <td style="white-space:nowrap;">${_escapeHtml(r.color || '-')}</td>
+                <td style="white-space:nowrap;">${(function () {
+                    // 컬러가 빈 옛 반납 건은 LOT 이력에서 되찾아 보여준다 — '-'로 두면 어느
+                    // 품목으로 들어갈지 모른 채 입고 처리하게 된다.
+                    const c = String(r.color || '').trim() || _resolveReturnColorSafe(r);
+                    if (!c) return '<span style="color:var(--accent-red);font-weight:700;">확인 필요</span>';
+                    return _escapeHtml(c) + (r.color ? '' : ' <span style="font-size:0.68rem;color:var(--text-muted);">(LOT 이력)</span>');
+                })()}</td>
                 <td>${_escapeHtml(lotsTxt)}</td>
                 <td style="text-align:right;font-weight:800;white-space:nowrap;">${UIUtils.formatNumber(r.quantity)}</td>
                 <td style="font-size:0.8rem;color:var(--text-secondary);max-width:220px;">${_escapeHtml(r.returnReason || '-')}</td>

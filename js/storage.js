@@ -121,16 +121,23 @@ const Storage = (function() {
   }
 
   // 초기화: MES API(MariaDB) 연결 필수 — file://·http 모두 동일 경로
-  async function init() {
+  async function init(options = {}) {
     _ensureCacheDefaults();
 
     try {
       await ApiClient.init();
       offlineMode = false;
-      await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
-      await _runSchemaMigration();
       initialized = true;
-      warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
+      const backgroundLoad = async () => {
+        await loadPriorityToCache(DEFAULT_PRIORITY_STORES, { useRemote: true });
+        await _runSchemaMigration();
+        warmRemainingStoresAsync(_getRemainingStores(DEFAULT_PRIORITY_STORES), { useRemote: true });
+      };
+      if (options.deferInitialData) {
+        setTimeout(() => backgroundLoad().catch(e => console.warn('[Storage] background initial load failed:', e)), 0);
+      } else {
+        await backgroundLoad();
+      }
       console.log('✅ 스토리지 초기화 완료 (MariaDB API)');
     } catch (apiError) {
       console.error('❌ MES API 서버 연결 실패:', apiError.message);
