@@ -1184,6 +1184,9 @@ var ReworkWipModule = (function () {
                 location: '도장현장',
                 note: note,
                 source: 'site_return',
+                // 어느 반납 건에서 온 입고인지 남긴다 — 목적지가 잘못 판정돼 여기로 잘못
+                // 들어온 경우 그 건만 정확히 찾아 되돌릴 수 있어야 한다.
+                refReturnId: String(opts.refReturnId || ''),
                 createdAt: new Date().toISOString()
             };
             _applyLotFieldsToRec(rec, { injLot: injLot, inspDate: inspDate, paintLot: paintLot }, trace);
@@ -1192,6 +1195,42 @@ var ReworkWipModule = (function () {
         const el = document.getElementById('contentArea');
         if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
         return created;
+    }
+
+    /**
+     * 도장현장 반납 입고를 재사용 자재 재고에서 제거한다.
+     * 목적지 판정이 잘못돼(사출창고 자재인데 재사용 자재로 입고) 생긴 기록을 되돌리는 용도.
+     * refReturnId가 있으면 그 건만, 없으면 차종·품명·컬러·LOT·수량이 모두 맞는 site_return
+     * 입고만 지운다 — 조건을 느슨하게 잡으면 멀쩡한 반납 입고까지 지워지므로 좁게 매칭한다.
+     */
+    async function removeSiteReturnReceipt(opts) {
+        opts = opts || {};
+        const returnId = String(opts.refReturnId || '').trim();
+        const carModel = String(opts.carModel || '').trim();
+        const partName = _toInjPartName(carModel, opts.partName) || String(opts.partName || '').trim();
+        const lotQty = {};
+        (opts.lots || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) lotQty[n] = (lotQty[n] || 0) + (Math.max(0, Math.floor(Number(l && l.qty) || 0)));
+        });
+
+        const targets = _getAll().filter(function (rec) {
+            if (!rec || rec.type !== '입고' || String(rec.source || '') !== 'site_return') return false;
+            if (returnId) return String(rec.refReturnId || '') === returnId;
+            if (rec.refReturnId) return false;   // 다른 반납 건에 이미 귀속된 기록은 건드리지 않는다
+            if (carModel && String(rec.carModel || '').trim() !== carModel) return false;
+            if (partName && !_partsMatch(rec.partName, partName, rec.carModel)) return false;
+            const lot = _lotFieldsOf(rec).injLot;
+            if (!lot || lotQty[lot] == null) return false;
+            return Math.max(0, Math.floor(Number(rec.qty) || 0)) === lotQty[lot];
+        });
+
+        for (let i = 0; i < targets.length; i++) {
+            await Storage.remove(WIP_STORE, targets[i].id);
+        }
+        const el = document.getElementById('contentArea');
+        if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
+        return targets.length;
     }
 
     function _reworkTypeBadge(t) {
@@ -1313,6 +1352,7 @@ var ReworkWipModule = (function () {
         submitDispatch,
         dispatchFromPaintingWork,
         receiveSiteReturn,
+        removeSiteReturnReceipt,
         openStockDetailModal,
         addFromPaintingInspection,
         getStockQty,

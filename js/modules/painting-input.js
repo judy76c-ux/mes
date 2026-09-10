@@ -3318,29 +3318,88 @@ var PaintingInputModule = (function () {
         return Object.assign({}, shaped, { received: !!recv, receiveRec: recv || null });
     }
 
-    /** 이 반납이 사출창고가 아니라 리워크 재공으로 돌아가야 하는지 */
-    function _shouldReturnToReworkWip(opts) {
+    /**
+     * 반납 목적지 판정 — 이 자재가 **실제로 어디서 나왔는지**로 정한다.
+     *
+     * 예전에는 품명이 'IL'이면 무조건 재사용 자재로 보냈다(_isReworkSourcedPart 이름 매칭).
+     * 그런데 같은 IL이라도 사출창고 생산출고로 현장에 온 물량이 있다 — 그걸 반납하면
+     * 사출창고에서 나간 재고가 재사용 자재로 들어가 버려, 사출창고 재고는 영영 복구되지
+     * 않는다(사용자 보고: T1XX·IL·BLACK 4,500 EA 반납했는데 창고 입고 안 됨).
+     *
+     * 그래서 품명은 **증거가 하나도 없을 때의 마지막 폴백**으로만 쓴다.
+     * 판정 근거 순서:
+     *   ① 리워크 입고 반납 플래그(refReworkOutId 등) → 재사용 자재
+     *   ② 반납 LOT을 공급한 현장입고 기록이 리워크 경로(refReworkOutId·source) → 재사용 자재
+     *   ③ 반납 LOT을 공급한 현장입고 기록이 사출창고 생산출고(refOutId) → 사출창고
+     *   ④ 리워크 출고 LOT 집합에 느슨하게 걸림 → 재사용 자재
+     *   ⑤ 품명이 IL 계열 → 재사용 자재 (근거 없음, 이름 추정)
+     *   ⑥ 그 외 → 사출창고
+     *
+     * @returns {{dest:'rework'|'injection', reason:string, evidence:boolean}}
+     */
+    function resolveReturnDestination(opts) {
         opts = opts || {};
-        if (opts.isReworkReturn) return true;
-        try {
-            if (typeof InjectionWarehouseModule !== 'undefined'
-                && typeof InjectionWarehouseModule.isReworkSourcedPart === 'function'
-                && InjectionWarehouseModule.isReworkSourcedPart(opts.partName)) return true;
-        } catch (e) { /* ignore */ }
+        if (opts.isReworkReturn || opts.refReworkOutId) {
+            return { dest: 'rework', reason: '리워크 입고 건의 반납', evidence: true };
+        }
+
         const want = _normLine(opts.line);
+        const car = String(opts.carModel || '').trim();
+        const part = String(opts.partName || '').trim();
         const lotSet = {};
         (opts.lots || []).forEach(function (l) {
             const n = String((l && l.lotNo) || '').trim();
             if (n) lotSet[n] = true;
         });
-        return (_recordsForLine(want) || []).some(function (r) {
-            if (String(r.type || '') !== '입고') return false;
-            if (String(r.carModel || '').trim() !== String(opts.carModel || '').trim()) return false;
-            if (String(r.partName || '').trim() !== String(opts.partName || '').trim()) return false;
-            if (!isReworkSiteInbound(r)) return false;
-            const lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
-            return lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; });
-        });
+
+        function suppliedBy(pred) {
+            return (_recordsForLine(want) || []).some(function (r) {
+                if (String(r.type || '') !== '입고') return false;
+                if (car && String(r.carModel || '').trim() !== car) return false;
+                if (part && !_partNamesMatch(r.partName, part, car)) return false;
+                const lots = (Array.isArray(r.lots) && r.lots.length)
+                    ? r.lots
+                    : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
+                if (!lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; })) return false;
+                return pred(r);
+            });
+        }
+
+        // ② 리워크 경로로 현장에 들어온 LOT인가 (강한 증거: 참조 id·출처 문자열)
+        if (suppliedBy(function (r) {
+            return !!(r.isReworkInbound || r.refReworkOutId)
+                || /리워크|재사용 자재/.test(String(r.source || ''));
+        })) {
+            return { dest: 'rework', reason: '이 LOT은 재사용 자재에서 현장으로 입고됨', evidence: true };
+        }
+
+        // ③ 사출창고 생산출고로 현장에 들어온 LOT인가 (refOutId는 사출창고 경로에만 붙는다)
+        if (suppliedBy(function (r) { return !!r.refOutId; })) {
+            return { dest: 'injection', reason: '이 LOT은 사출창고 생산출고로 현장에 입고됨', evidence: true };
+        }
+
+        // ④ 리워크 출고 LOT 집합에 느슨하게 걸리는 경우
+        const looseLotSet = _reworkDispatchedLotSet(car, part, opts.color);
+        if (Object.keys(looseLotSet).length
+            && Object.keys(lotSet).some(function (n) { return looseLotSet[n]; })) {
+            return { dest: 'rework', reason: '반납 LOT이 재사용 자재 출고 LOT과 일치', evidence: true };
+        }
+
+        // ⑤ 근거가 없을 때만 품명으로 추정한다.
+        try {
+            if (typeof InjectionWarehouseModule !== 'undefined'
+                && typeof InjectionWarehouseModule.isReworkSourcedPart === 'function'
+                && InjectionWarehouseModule.isReworkSourcedPart(part)) {
+                return { dest: 'rework', reason: '품명(IL 계열) 추정 — 입고 경로 근거 없음', evidence: false };
+            }
+        } catch (e) { /* ignore */ }
+
+        return { dest: 'injection', reason: '사출창고 자재(기본)', evidence: false };
+    }
+
+    /** 이 반납이 사출창고가 아니라 리워크 재공으로 돌아가야 하는지 */
+    function _shouldReturnToReworkWip(opts) {
+        return resolveReturnDestination(opts).dest === 'rework';
     }
 
     let _pendingReworkInboundReturn = null;
@@ -3632,9 +3691,10 @@ var PaintingInputModule = (function () {
         if (!color) color = _resolveReturnColor(carModel, partName, mergedLots);
         const totalQty = mergedLots.reduce(function (s, l) { return s + l.qty; }, 0);
         const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
-        const isReworkReturn = _shouldReturnToReworkWip(Object.assign({}, opts, {
-            line: line, carModel: carModel, partName: partName, lots: mergedLots
+        const destInfo = resolveReturnDestination(Object.assign({}, opts, {
+            line: line, carModel: carModel, partName: partName, color: color, lots: mergedLots
         }));
+        const isReworkReturn = destInfo.dest === 'rework';
 
         return Storage.add(STORE, {
             date: now,
@@ -3651,6 +3711,10 @@ var PaintingInputModule = (function () {
             source: '현장 반납',
             isSiteReturn: true,
             isReworkReturn: !!isReworkReturn,
+            // 목적지 판정 근거 — 확정 단계에서 다시 추정하지 않고 이 값을 그대로 쓴다.
+            returnDest: destInfo.dest,
+            returnDestReason: destInfo.reason,
+            returnDestEvidence: !!destInfo.evidence,
             returnReason: opts.reason || '',
             returnStatus: 'pending',
             refWorkId: opts.workId || undefined,
@@ -3959,6 +4023,7 @@ var PaintingInputModule = (function () {
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
         createSiteReturn: createSiteReturn,
         resolveReturnColor: _resolveReturnColor,
+        resolveReturnDestination: resolveReturnDestination,
         updateSiteReturn: updateSiteReturn,
         openReworkInboundReturnModal: openReworkInboundReturnModal,
         submitReworkInboundReturn: submitReworkInboundReturn,

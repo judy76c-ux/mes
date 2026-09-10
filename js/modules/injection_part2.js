@@ -133,11 +133,56 @@ var InjectionWarehouseModule = (function() {
         return false;
     }
 
-    /** 도장현장 반납이 리워크 재공으로 돌아가야 하는지 — IL 품명뿐 아니라 리워크 입고 반납 플래그 */
+    /**
+     * 도장현장 반납의 목적지 판정 — 사출창고인가, 재사용 자재인가.
+     *
+     * 품명이 IL이면 무조건 재사용 자재로 보내던 로직이 사고의 원인이었다. 같은 IL이라도
+     * 사출창고 생산출고로 현장에 나간 물량이 있고, 그걸 반납하면 사출창고 재고가 복구돼야
+     * 하는데 재사용 자재로 새어 나가 창고 재고가 안 늘었다(T1XX·IL·BLACK 4,500 EA).
+     *
+     * 그래서 판정은 자재의 **실제 입고 경로**를 아는 PaintingInputModule에 위임한다.
+     * 품명 매칭은 그쪽에서도 근거가 하나도 없을 때의 마지막 폴백으로만 쓰인다.
+     */
+    function _resolveSiteReturnDest(r) {
+        const fallback = {
+            dest: (r && r.refReworkOutId) || _isReworkSourcedPart(r && r.partName)
+                ? 'rework' : 'injection',
+            reason: '입고 경로를 확인할 수 없어 기본값 적용',
+            evidence: false
+        };
+        if (!r) return fallback;
+        // 등록 시점에 근거를 갖고 판정해 둔 값이 있으면 그대로 신뢰한다.
+        if (r.returnDest === 'rework' || r.returnDest === 'injection') {
+            return {
+                dest: r.returnDest,
+                reason: r.returnDestReason || '반납 등록 시 판정',
+                evidence: !!r.returnDestEvidence
+            };
+        }
+        try {
+            if (typeof PaintingInputModule !== 'undefined'
+                && typeof PaintingInputModule.resolveReturnDestination === 'function') {
+                return PaintingInputModule.resolveReturnDestination({
+                    line: r.paintLine || r.line,
+                    carModel: r.carModel,
+                    partName: r.partName,
+                    color: r.color,
+                    lots: r.lots || (r.lotNo ? [{ lotNo: r.lotNo }] : []),
+                    // 낡은 isReworkReturn 플래그는 일부러 넘기지 않는다. 품명만 보고 잘못
+                    // 찍힌 값이 바로 이번 사고의 원인이라, 그대로 신뢰하면 재판정이 무의미해진다.
+                    // 구조적 근거인 refReworkOutId(리워크 출고 참조)만 넘긴다.
+                    refReworkOutId: r.refReworkOutId
+                });
+            }
+        } catch (e) {
+            console.warn('[InjectionWarehouseModule] 반납 목적지 판정 실패:', e);
+        }
+        return fallback;
+    }
+
+    /** 도장현장 반납이 리워크 재공으로 돌아가야 하는지 */
     function _isReworkSiteReturn(r) {
-        if (!r) return false;
-        if (r.isReworkReturn || r.refReworkOutId) return true;
-        return _isReworkSourcedPart(r.partName);
+        return _resolveSiteReturnDest(r).dest === 'rework';
     }
 
     /** 재사용 자재 재고(재공품 창고에 아직 남아있는 분) + 도장현장에 이미 입고 확인된 분(양쪽 라인
@@ -5153,6 +5198,96 @@ var InjectionWarehouseModule = (function() {
     // PAINTING_INPUT_INVENTORY에 반납 대기(pending) 기록이 생긴다. 여기서는 그 기록을 눈으로
     // 확인하고, 물류담당자가 실물을 확인한 뒤 「입고 처리」를 눌러야 비로소 이 창고 재고로
     // 정식 편입된다 — 도장현장 처리만으로 자동 재입고되지 않는다("반납"과 "재입고"의 구분).
+    /**
+     * 이미 확정됐지만 **목적지가 잘못 판정된 반납**을 찾아낸다.
+     *
+     * 품명이 IL이라는 이유만으로 사출창고 자재가 재사용 자재로 새어 나간 건들이 대상이다.
+     * 조용히 틀리는 게 이 사고의 본질이라, 자동으로 고치지 않고 화면에 드러내 관리자가
+     * 확인하고 옮기게 한다.
+     */
+    function _findMisroutedReturns() {
+        if (typeof DB === 'undefined' || !DB.STORES || !DB.STORES.PAINTING_INPUT_INVENTORY) return [];
+        const invRows = Storage.getAll(STORE) || [];
+        const receivedIds = {};
+        invRows.forEach(function (r) {
+            if (r && String(r.type || '') === '입고' && r.refReturnId) receivedIds[String(r.refReturnId)] = true;
+        });
+        return (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).filter(function (r) {
+            if (!r || !r.isSiteReturn || r.returnStatus !== 'confirmed') return false;
+            if (receivedIds[String(r.id)]) return false;          // 이미 사출창고로 입고된 건
+            if (r.refReworkOutId) return false;                   // 애초에 리워크 입고 건의 반납
+            const info = _resolveSiteReturnDest(r);
+            return info.dest === 'injection' && info.evidence;    // 근거상 사출창고인데 안 들어옴
+        });
+    }
+
+    /** 관리자 — 잘못 재사용 자재로 들어간 반납을 사출창고 재고로 옮긴다. */
+    async function repairMisroutedReturn(id) {
+        const r = Storage.getById(DB.STORES.PAINTING_INPUT_INVENTORY, id);
+        if (!r || !r.isSiteReturn) { UIUtils.toast('반납 기록을 찾을 수 없습니다.', 'error'); return; }
+        const already = (Storage.getAll(STORE) || []).some(function (x) {
+            return x && String(x.type || '') === '입고' && String(x.refReturnId || '') === String(id);
+        });
+        if (already) {
+            UIUtils.toast('이미 사출창고로 입고된 반납입니다.', 'info');
+            renderSiteReturns();
+            return;
+        }
+        const lots = (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; });
+        const color = String(r.color || '').trim()
+            || (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.resolveReturnColor
+                ? PaintingInputModule.resolveReturnColor(r.carModel, r.partName, lots) : '');
+        if (!color) {
+            UIUtils.toast('컬러를 확인할 수 없어 옮길 수 없습니다. 반납 건의 컬러를 먼저 채워 주세요.', 'warning');
+            return;
+        }
+        if (!confirm(
+            `${r.carModel} / ${r.partName} / ${color} · ${UIUtils.formatNumber(r.quantity)} EA를 ` +
+            '재사용 자재 재고에서 빼고 사출 창고 재고로 옮깁니다. 계속할까요?')) return;
+
+        const actor = _getResetActorFields();
+        try {
+            // 먼저 잘못 들어간 재사용 자재 입고를 걷어낸다 — 실패해도 사출창고 입고는 진행하되
+            // 몇 건을 못 지웠는지 알려 사람이 직접 정리할 수 있게 한다.
+            let removed = 0;
+            if (typeof ReworkWipModule !== 'undefined'
+                && typeof ReworkWipModule.removeSiteReturnReceipt === 'function') {
+                removed = await ReworkWipModule.removeSiteReturnReceipt({
+                    refReturnId: r.id, carModel: r.carModel, partName: r.partName, color: color, lots: lots
+                });
+            }
+            await _addInventoryRecord({
+                date: InvCalc.stampFor(UIUtils.today()),
+                type: '입고',
+                carModel: r.carModel || '',
+                partName: r.partName || '',
+                color: color,
+                lots: lots,
+                lotNo: r.lotNo || (lots[0] && lots[0].lotNo) || '',
+                quantity: Number(r.quantity) || 0,
+                unit: 'EA',
+                source: '도장현장 반납',
+                receivedBy: actor.receivedBy,
+                refReturnId: r.id
+            });
+            await Storage.update(DB.STORES.PAINTING_INPUT_INVENTORY, r.id, {
+                returnDest: 'injection',
+                returnDestReason: '관리자 보정 — 사출창고 자재로 확인',
+                returnDestEvidence: true,
+                isReworkReturn: false
+            });
+            UIUtils.toast(
+                `사출 창고로 옮겼습니다 — ${UIUtils.formatNumber(r.quantity)} EA` +
+                (removed ? '' : ' (재사용 자재 쪽 기록은 찾지 못해 그대로입니다 — 확인 필요)'),
+                removed ? 'success' : 'warning');
+            renderSiteReturns();
+            loadData();
+        } catch (e) {
+            console.error('[InjectionWarehouseModule] 반납 목적지 보정 실패:', e);
+            UIUtils.toast('보정 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
+    }
+
     async function renderSiteReturns() {
         const card = document.getElementById('injSiteReturnCard');
         const body = document.getElementById('injSiteReturnBody');
@@ -5170,21 +5305,48 @@ var InjectionWarehouseModule = (function() {
         }
         const list = PaintingInputModule.listPendingReturns();
         const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
-        if (!list.length && !isAdmin) {
+        const misrouted = _findMisroutedReturns();
+        if (!list.length && !misrouted.length && !isAdmin) {
             card.style.display = 'none';
             body.innerHTML = '';
             return;
         }
         card.style.display = '';
         if (badge) {
-            badge.textContent = list.length ? (list.length + '건') : '';
-            badge.style.display = list.length ? '' : 'none';
+            const badgeCount = list.length + misrouted.length;
+            badge.textContent = badgeCount ? (badgeCount + '건') : '';
+            badge.style.display = badgeCount ? '' : 'none';
         }
+        // 목적지가 잘못 판정돼 사출창고로 안 들어온 확정 반납 — 조용히 지나가면 안 되는 건이라
+        // 대기 목록 위에 따로 띄우고, 관리자가 한 번에 옮길 수 있게 한다.
+        const misroutedHtml = misrouted.map(function (r) {
+            const lots = (Array.isArray(r.lots) && r.lots.length)
+                ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
+                : (r.lotNo || '-');
+            return `<tr style="background:rgba(220,38,38,.06);">
+                <td style="white-space:nowrap;font-size:0.82rem;">${_escapeHtml(String(r.date || '-').slice(0, 16))}</td>
+                <td style="white-space:nowrap;"><strong>${_escapeHtml(r.carModel || '-')}</strong></td>
+                <td style="white-space:nowrap;">${_escapeHtml(r.partName || '-')}
+                    <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(220,38,38,.12);color:#dc2626;">창고 미입고</span></td>
+                <td style="white-space:nowrap;">${_escapeHtml(r.color || '-')}</td>
+                <td>${_escapeHtml(lots)}</td>
+                <td style="text-align:right;font-weight:800;white-space:nowrap;">${UIUtils.formatNumber(r.quantity)}</td>
+                <td colspan="2" style="font-size:0.8rem;color:#dc2626;">
+                    반납 확정됐지만 사출 창고 재고에 반영되지 않았습니다(재사용 자재로 잘못 입고됨).</td>
+                <td style="white-space:nowrap;">
+                    ${isAdmin
+                        ? `<button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.repairMisroutedReturn('${r.id}')">사출창고로 이동</button>`
+                        : '<span style="font-size:0.78rem;color:var(--text-muted);">관리자 처리 필요</span>'}
+                </td>
+            </tr>`;
+        }).join('');
+
         if (!list.length) {
-            body.innerHTML = '<tr><td colspan="9" style="padding:18px;text-align:center;color:var(--text-muted);font-size:0.85rem;">대기 중인 반납 입고가 없습니다.</td></tr>';
+            body.innerHTML = misroutedHtml
+                || '<tr><td colspan="9" style="padding:18px;text-align:center;color:var(--text-muted);font-size:0.85rem;">대기 중인 반납 입고가 없습니다.</td></tr>';
             return;
         }
-        body.innerHTML = list.map(function (r) {
+        body.innerHTML = misroutedHtml + list.map(function (r) {
             const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
                 ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + UIUtils.formatNumber(l.qty) + ')'; }).join(', ')
                 : (r.lotNo || '-');
@@ -5252,10 +5414,11 @@ var InjectionWarehouseModule = (function() {
             catch (e) { console.warn('[InjectionWarehouseModule] 반납 컬러 역추적 실패:', e); }
         }
         const colorMissing = !prefillColor;
-        const isRework = _isReworkSiteReturn(r);
+        const destInfo = _resolveSiteReturnDest(r);
+        const isRework = destInfo.dest === 'rework';
         const destText = isRework
-            ? '처리 즉시 이 소재가 <strong>재사용 자재 재고</strong>로 반영됩니다. (IL 등은 사출 창고 재고가 아니라 재사용 자재가 원래 출처입니다)'
-            : '처리 즉시 이 사출 소재가 창고 재고(입고)로 반영됩니다.';
+            ? '처리 즉시 이 소재가 <strong>재사용 자재 재고</strong>로 반영됩니다.'
+            : '처리 즉시 이 사출 소재가 <strong>사출 창고 재고</strong>(입고)로 반영됩니다.';
 
         UIUtils.showModal('도장현장 반납 입고 처리', `
             <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;margin-bottom:14px;line-height:1.6;">
@@ -5274,6 +5437,18 @@ var InjectionWarehouseModule = (function() {
                     ${knownColors.map(function (c) { return `<option value="${_escapeHtml(c)}">`; }).join('')}
                 </datalist>
                 ${colorMissing ? '<div style="font-size:0.74rem;color:var(--accent-red);margin-top:3px;">이 반납 건에는 컬러 정보가 없습니다. 실물을 보고 정확한 컬러를 입력해야 같은 품목으로 입고됩니다.</div>' : ''}
+            </div>
+            <div class="form-group" style="margin-bottom:12px;">
+                <label class="form-label">입고처 ${destInfo.evidence ? '' : '<span style="color:var(--accent-red);">* 확인 필요</span>'}</label>
+                <select class="form-input" id="injSiteReturnDestSelect">
+                    <option value="injection" ${isRework ? '' : 'selected'}>사출 창고 재고</option>
+                    <option value="rework" ${isRework ? 'selected' : ''}>재사용 자재 재고</option>
+                </select>
+                <div style="font-size:0.74rem;margin-top:3px;color:${destInfo.evidence ? 'var(--text-secondary)' : 'var(--accent-red)'};">
+                    ${destInfo.evidence
+                        ? '판정 근거: ' + _escapeHtml(destInfo.reason)
+                        : '입고 경로 근거가 없어 추정한 값입니다(' + _escapeHtml(destInfo.reason) + '). 이 자재가 어디서 나왔는지 확인하고 고르세요.'}
+                </div>
             </div>
             <div style="font-size:0.82rem;color:var(--text-secondary);background:rgba(124,45,18,.07);border:1px solid rgba(124,45,18,.25);border-radius:6px;padding:9px 12px;">
                 실물을 확인한 뒤 입고 처리하세요. ${destText}
@@ -5332,7 +5507,13 @@ var InjectionWarehouseModule = (function() {
             // INJECTION_INVENTORY로 입고시키면 사출 창고에 엉뚱한 품목이 쌓이고, 정작 도장현장
             // 출고로 줄어든 재사용 자재 재고는 영영 복구되지 않는다(사용자 보고: "반납 시
             // 수량이 증가되는 문제"). 리워크 대상은 재사용 자재 재고로 되돌린다.
-            const isRework = _isReworkSiteReturn(r);
+            // 물류담당자가 모달에서 고른 입고처를 최우선으로 따른다. 자동 판정이 틀렸을 때
+            // 사람이 바로잡을 수 있어야 같은 사고가 조용히 반복되지 않는다.
+            const destSel = document.getElementById('injSiteReturnDestSelect');
+            const pickedDest = destSel ? String(destSel.value || '') : '';
+            const isRework = (pickedDest === 'rework' || pickedDest === 'injection')
+                ? pickedDest === 'rework'
+                : _isReworkSiteReturn(r);
 
             // 재고 반영보다 먼저 상태를 「확정」으로 바꿔 잠근다 — confirmSiteReturn 내부에서
             // returnStatus가 'pending'이 아니면 즉시 반환하므로, 뒤이은 동시 호출(재클릭 등)은
@@ -5351,7 +5532,8 @@ var InjectionWarehouseModule = (function() {
                         lots: (r.lots || []).map(function (l) { return { lotNo: l.lotNo, qty: Number(l.qty) || 0 }; }),
                         quantity: Number(r.quantity) || 0,
                         note: '도장현장 반납 입고',
-                        receivedBy: actor.receivedBy
+                        receivedBy: actor.receivedBy,
+                        refReturnId: r.id
                     });
                 } else {
                     await _addInventoryRecord({
@@ -12460,6 +12642,7 @@ var InjectionWarehouseModule = (function() {
         openConfirmSiteReturnModal,
         confirmSiteReturn,
         cancelSiteReturn,
+        repairMisroutedReturn,
         openOutgoingListupItemModal,
         _onOutItemTypeChange,
         saveOutgoingListupItem,
