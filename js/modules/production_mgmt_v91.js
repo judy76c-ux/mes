@@ -4740,7 +4740,7 @@ var ProdStandardsModule = (function() {
             const paintProcess = inferPaintProcess(t, prod);
             const key = car + '||' + paintProcess + '||' + partName + '||' + resolvedColor;
             if (!groupMap.has(key)) groupMap.set(key, { car, color: resolvedColor, partName, paintProcess, productId: t.productId, entries: [] });
-            groupMap.get(key).entries.push({ under, top, productId: t.productId, partName, paintProcess, updatedAt: t.updatedAt || '' });
+            groupMap.get(key).entries.push({ under, top, productId: prod?.id || t.productId || '', partName, paintProcess, updatedAt: t.updatedAt || '' });
         });
 
         // 같은 spec을 가진 품명들을 그룹화 + 최다 빈도 spec을 권장값으로
@@ -4749,10 +4749,29 @@ var ProdStandardsModule = (function() {
             entries.forEach(e => {
                 const raw = e[keyField].raw || '';
                 const display = e[keyField].display || (raw || '-');
-                if (!map.has(raw)) map.set(raw, { raw, display, parts: [] });
+                if (!map.has(raw)) map.set(raw, { raw, display, parts: [], partRefs: [] });
                 map.get(raw).parts.push(e.partName || '(품명 없음)');
+                map.get(raw).partRefs.push({
+                    productId: e.productId || '',
+                    carModel: g.car,
+                    partName: e.partName || '',
+                    color: g.color,
+                    paintProcess: g.paintProcess || ''
+                });
             });
-            const arr = [...map.values()].map(g => ({ ...g, parts: [...new Set(g.parts)].sort((a, b) => a.localeCompare(b, 'ko')) }));
+            const arr = [...map.values()].map(g => {
+                const refs = [];
+                const seen = new Set();
+                g.partRefs.forEach(ref => {
+                    const key = `${ref.productId}||${ref.partName}`;
+                    if (!seen.has(key)) { seen.add(key); refs.push(ref); }
+                });
+                return {
+                    ...g,
+                    parts: [...new Set(g.parts)].sort((a, b) => a.localeCompare(b, 'ko')),
+                    partRefs: refs.sort((a, b) => a.partName.localeCompare(b.partName, 'ko'))
+                };
+            });
             arr.sort((a, b) => b.parts.length - a.parts.length); // 다수 우선
             return arr;
         };
@@ -4809,14 +4828,14 @@ var ProdStandardsModule = (function() {
             return val ? `<td style="${s}">${_esc(val)}</td>` : `<td style="${s}color:#cbd5e1;">/ </td>`;
         };
 
-        const renderSpecGroups = (groups, conflictThis) => {
+        const renderSpecGroups = (groups, conflictThis, layer) => {
             if (!groups.length) return '<span style="color:#94a3b8;">(데이터 없음)</span>';
             const total = groups.reduce((s, g) => s + g.parts.length, 0);
             return groups.map((g, idx) => {
                 const isRecommended = conflictThis && idx === 0;
                 const labelText = g.display || '-';
                 const partsText = g.parts.length
-                    ? g.parts.map(p => `<span style="display:inline-block;background:#fff;padding:1px 7px;margin:1px 2px 1px 0;border-radius:10px;border:1px solid #fecaca;font-size:.72rem;color:#7f1d1d;">${_esc(p)}</span>`).join('')
+                    ? g.partRefs.map(ref => `<button type="button" onclick="ProdStandardsModule.openFilmConflictDetail('${_js(ref.productId)}','${_js(ref.carModel)}','${_js(ref.partName)}','${_js(ref.color)}','${_js(ref.paintProcess)}','${_js(layer)}','${_js(labelText)}')" style="display:inline-block;background:#fff;padding:1px 7px;margin:1px 2px 1px 0;border-radius:10px;border:1px solid #fecaca;font-size:.72rem;color:#7f1d1d;cursor:pointer;">${_esc(ref.partName || '(품명 없음)')}</button>`).join('')
                     : '<span style="color:#94a3b8;font-size:.72rem;">(품명 정보 없음)</span>';
                 const tag = isRecommended
                     ? `<span style="display:inline-block;font-size:.66rem;font-weight:800;color:#065f46;background:#d1fae5;border:1px solid #6ee7b7;border-radius:8px;padding:1px 6px;margin-left:4px;">권장(${g.parts.length}/${total})</span>`
@@ -4855,11 +4874,11 @@ var ProdStandardsModule = (function() {
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                             <div>
                                 <div style="font-size:.72rem;font-weight:800;color:#475569;margin-bottom:3px;">하도 (μm)</div>
-                                ${renderSpecGroups(c.underGroups, c.underConflict)}
+                                ${renderSpecGroups(c.underGroups, c.underConflict, '하도')}
                             </div>
                             <div>
                                 <div style="font-size:.72rem;font-weight:800;color:#475569;margin-bottom:3px;">상도 (μm)</div>
-                                ${renderSpecGroups(c.topGroups, c.topConflict)}
+                                ${renderSpecGroups(c.topGroups, c.topConflict, '상도')}
                             </div>
                         </div>
                         ${(c.underConflict || c.topConflict) ? `
@@ -12400,6 +12419,50 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         window.addEventListener('load', () => setTimeout(_migrateRemoveLocalTdsRecords, 500));
     }
 
+    // 도막두께 불일치 목록의 품명을 클릭하면 상세를 먼저 별도 창으로 보여주고,
+    // 해당 품목의 초중종물 기준 편집 화면으로 바로 이동할 수 있게 한다.
+    function openFilmConflictDetail(productId, carModel, partName, color, paintProcess, layer, spec) {
+        const win = window.open('', '_blank', 'width=720,height=560,resizable=yes,scrollbars=yes');
+        if (!win) {
+            UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용하세요.', 'warning');
+            return;
+        }
+        const safe = value => _esc(String(value || '-'));
+        win.document.open();
+        win.document.write(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><title>도막두께 기준 확인</title>
+            <style>
+                body{font-family:Malgun Gothic,Arial,sans-serif;margin:0;padding:24px;background:#f8fafc;color:#1e293b}
+                .card{max-width:640px;margin:0 auto;background:#fff;border:1px solid #cbd5e1;border-radius:12px;padding:22px;box-shadow:0 8px 24px rgba(15,23,42,.08)}
+                h2{margin:0 0 18px;font-size:20px} .grid{display:grid;grid-template-columns:130px 1fr;gap:10px;border-top:1px solid #e2e8f0;padding-top:14px}
+                .label{color:#64748b;font-size:13px}.value{font-weight:700;word-break:break-word}
+                .spec{margin-top:18px;padding:14px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px}
+                .actions{display:flex;gap:8px;justify-content:flex-end;margin-top:22px}
+                button{border:0;border-radius:7px;padding:10px 15px;font-weight:700;cursor:pointer;font-size:13px}
+                #edit{background:#2563eb;color:#fff} #close{background:#e2e8f0;color:#334155}
+            </style></head><body><main class="card">
+            <h2>도막두께 기준 확인</h2>
+            <div class="grid">
+                <div class="label">차종 / 컬러</div><div class="value">${safe(carModel)} / ${safe(color)}</div>
+                <div class="label">품명</div><div class="value">${safe(partName)}</div>
+                <div class="label">도장라인</div><div class="value">${safe(paintProcess)}</div>
+                <div class="label">항목</div><div class="value">${safe(layer)}</div>
+            </div>
+            <div class="spec"><div class="label">현재 기준값</div><div class="value" style="margin-top:5px;font-size:18px;">${safe(spec)} μm</div></div>
+            <div class="actions"><button id="close" type="button">닫기</button><button id="edit" type="button">초중종물 기준 수정 화면 열기</button></div>
+            </main></body></html>`);
+        win.document.close();
+        win.document.getElementById('close').onclick = () => win.close();
+        win.document.getElementById('edit').onclick = () => {
+            if (win.opener && win.opener.ProdQualityModule) {
+                win.opener.ProdQualityModule.openSpecPage(productId, 'edit', paintProcess || '');
+                win.close();
+            } else {
+                win.alert('원래 MES 화면을 찾을 수 없습니다. 이 창을 닫고 MES에서 다시 시도하세요.');
+            }
+        };
+        win.focus();
+    }
+
     return {
         render,
         onCarChange,
@@ -12575,6 +12638,7 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         importPfmeaFile,
         openPfmeaTemplateDetail,
         deletePfmeaTemplate,
+        openFilmConflictDetail,
     };
 })();
 
