@@ -867,6 +867,7 @@ var SalesDeliveryPlanModule = (function() {
     let _gridDays = [];
     let _dragPlan = null;
     let _dragSuppressClickUntil = 0;
+    let _dateHeaderDrag = null;
 
     function _esc(value) {
         return String(value ?? '').replace(/[&<>"']/g, m => ({
@@ -971,7 +972,9 @@ var SalesDeliveryPlanModule = (function() {
         const date = new Date(`${day}T00:00:00`);
         const week = date.getDay();
         const isHoliday = DELIVERY_FIXED_HOLIDAYS.has(day.slice(5)) || _extraHolidaySet().has(day);
-        const className = (week === 0 || isHoliday) ? 'sdp-red-col' : (week === 6 ? 'sdp-sat-col' : '');
+        const isToday = day === UIUtils.today();
+        const baseClass = (week === 0 || isHoliday) ? 'sdp-red-col' : (week === 6 ? 'sdp-sat-col' : '');
+        const className = `${baseClass}${isToday ? ' sdp-today-col' : ''}`.trim();
         return {
             dateLabel: day.slice(5).replace('-', '/'),
             monthLabel: `${Number(day.slice(5, 7))}월`,
@@ -1292,6 +1295,14 @@ var SalesDeliveryPlanModule = (function() {
                         <label class="form-label">종료일</label>
                         <input type="date" class="form-input" id="sdpEnd" value="${end}">
                     </div>
+                    <div class="form-group sdp-date-nav-group" style="align-self:flex-end;">
+                        <label class="form-label">기간 이동</label>
+                        <div class="sdp-date-nav">
+                            <button type="button" class="btn btn-outline btn-sm" onclick="SalesDeliveryPlanModule.shiftMainDateRange(-7)" title="기간을 7일 이전으로 이동">◀ 7일</button>
+                            <button type="button" class="btn btn-outline btn-sm" onclick="SalesDeliveryPlanModule.jumpMainDateToday()" title="오늘 날짜로 이동">오늘</button>
+                            <button type="button" class="btn btn-outline btn-sm" onclick="SalesDeliveryPlanModule.shiftMainDateRange(7)" title="기간을 7일 이후로 이동">7일 ▶</button>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label class="form-label">납품처</label>
                         <select class="form-select" id="sdpCustomerFilter" onchange="SalesDeliveryPlanModule.onMainCustomerChange()">
@@ -1315,6 +1326,13 @@ var SalesDeliveryPlanModule = (function() {
                             계획 없는 품목 숨기기
                         </label>
                     </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <label class="form-label">표시 밀도</label>
+                        <select class="form-select" id="sdpDensity" onchange="SalesDeliveryPlanModule.setTableDensity(this.value)" style="width:100px;">
+                            <option value="standard">표준</option>
+                            <option value="compact">압축</option>
+                        </select>
+                    </div>
                     <div class="form-group" style="align-self:flex-end;margin-left:auto;display:flex;gap:8px;">
                         <button class="btn btn-primary" onclick="SalesDeliveryPlanModule.openAddModal()">
                             <span class="material-symbols-outlined">grid_on</span> 차종별 등록
@@ -1329,7 +1347,7 @@ var SalesDeliveryPlanModule = (function() {
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">event_note</span> 영업 계획/부족 현황</h4>
                         <span style="font-size:0.78rem;color:var(--text-muted);">
-                            녹색: 계획 대비 납품 완료 · 노랑: 미납 · 빨강: 부족
+                            날짜 초록: 완제품 재고 납품 가능 구간 · 노랑: 후공정 대기 · 파랑: 도장 필요 · 빨강: 사출 소재 부족
                         </span>
                     </div>
                     <div class="card-body sdp-table-card-body">
@@ -1365,6 +1383,37 @@ var SalesDeliveryPlanModule = (function() {
         _lastRows = rows;
         _lastDays = days;
         _renderTable(_visibleRows(rows), days);
+        setTableDensity(localStorage.getItem('sdp_table_density') || 'standard');
+    }
+
+    function shiftMainDateRange(offset) {
+        const startEl = document.getElementById('sdpStart');
+        const endEl = document.getElementById('sdpEnd');
+        if (!startEl || !endEl) return;
+        startEl.value = _addDays(startEl.value || UIUtils.today(), offset);
+        endEl.value = _addDays(endEl.value || startEl.value, offset);
+        search();
+    }
+
+    function jumpMainDateToday() {
+        const startEl = document.getElementById('sdpStart');
+        const endEl = document.getElementById('sdpEnd');
+        if (!startEl || !endEl) return;
+        const start = startEl.value || UIUtils.today();
+        const end = endEl.value || _addDays(start, 30);
+        const span = Math.max(0, Math.round((new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86400000));
+        startEl.value = UIUtils.today();
+        endEl.value = _addDays(startEl.value, span);
+        search();
+    }
+
+    function setTableDensity(value) {
+        const density = value === 'compact' ? 'compact' : 'standard';
+        const wrap = document.getElementById('sdpTableWrap');
+        const select = document.getElementById('sdpDensity');
+        if (wrap) wrap.classList.toggle('sdp-density-compact', density === 'compact');
+        if (select && select.value !== density) select.value = density;
+        localStorage.setItem('sdp_table_density', density);
     }
 
     /** 계획·납품 실적이 전혀 없는(=totalPlan, delivered 모두 0) 행 — 숨기기 체크 시 제외 대상 */
@@ -1528,6 +1577,13 @@ var SalesDeliveryPlanModule = (function() {
         });
 
         const rows = Object.values(map);
+        // 계획만 있고 제품이 안 잡힌 행도 productId로 마스터를 찾아 순번을 쓰게 한다 —
+        // 안 그러면 등록 화면에서 정한 순서와 달리 맨 뒤로 밀린다.
+        rows.forEach(row => {
+            if (!row.product && row.productId) {
+                row.product = _products().find(p => p.id === row.productId) || null;
+            }
+        });
         const carOrder = new Map();
         rows.forEach(row => {
             const carKey = _carKey(row.carModel);
@@ -1607,12 +1663,61 @@ var SalesDeliveryPlanModule = (function() {
         `;
     }
 
+    function _shortageQty(row) {
+        return _num(row?.injectionShortage) + _num(row?.paintShortage) + _num(row?.laserShortage);
+    }
+
+    function _statusInfo(row) {
+        if (!row || row.remaining <= 0) return { key: 'complete', label: '완료' };
+        if (row.injectionShortage > 0) return { key: 'injection-short', label: '사출 소재 부족' };
+        if (row.finishedStock >= row.remaining && row.finishedStock > 0) return { key: 'available', label: '출고 가능' };
+        if (row.laserStandby > 0 || row.shippingStandby > 0) return { key: 'postprocess', label: '후공정 대기' };
+        if (_isPaintEnd(row)) return { key: 'paint-needed', label: '도장 필요' };
+        return { key: 'waiting', label: '생산 대기' };
+    }
+
+    function _coverageInfo(row, days) {
+        if (!row?.finishedHasData) return { text: '재고 없음', key: 'none', until: '' };
+        let available = Math.max(0, _num(row.finishedStock));
+        if (available <= 0) return { text: '재고 없음', key: 'none', until: '' };
+
+        let lastCoveredDate = '';
+        let hasPlan = false;
+        for (const day of days) {
+            const required = Math.max(0, _num(row.planByDate?.[day]) - _num(row.deliveryByDate?.[day]));
+            if (required <= 0) continue;
+            hasPlan = true;
+            if (available < required) {
+                return lastCoveredDate
+                    ? { text: `${lastCoveredDate.slice(5).replace('-', '/')}까지`, key: 'partial', until: lastCoveredDate }
+                    : { text: '당일 부족', key: 'short', until: '' };
+            }
+            available -= required;
+            lastCoveredDate = day;
+        }
+        if (!hasPlan) return { text: '계획 없음', key: 'none', until: '' };
+        return { text: `${lastCoveredDate.slice(5).replace('-', '/')}까지`, key: 'full', until: lastCoveredDate };
+    }
+
+    function _finishedStockCell(row, days) {
+        if (!row.finishedHasData) return '<td class="sdp-finished-stock"><div>-</div><div class="sdp-coverage sdp-coverage-none">재고 없음</div></td>';
+        const coverage = _coverageInfo(row, days);
+        const title = `현재 완제품 재고 ${_fmt(row.finishedStock)}개 기준 납품 가능일`;
+        return `<td class="sdp-finished-stock" title="${title}">
+            <div class="sdp-finished-qty">${_fmt(row.finishedStock)}</div>
+            <div class="sdp-coverage sdp-coverage-${coverage.key}">${coverage.text}</div>
+        </td>`;
+    }
+
     function _dayCell(row, day, isMonthStart = false) {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
         const info = _dayColumnInfo(day);
         const colW = `${_dayColumnWidth(day)}px`;
         const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
+        const coveredUntil = row.finishedCoverage?.until || '';
+        const isStockCovered = !!coveredUntil && day >= UIUtils.today() && day <= coveredUntil;
+        const coverageClass = isStockCovered ? 'sdp-stock-covered' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
                 draggable="${plan > 0 ? 'true' : 'false'}"
@@ -1621,8 +1726,8 @@ var SalesDeliveryPlanModule = (function() {
                 ondragleave="SalesDeliveryPlanModule.leavePlanDrop(event)"
                 ondrop="SalesDeliveryPlanModule.dropPlan(event,'${_js(row.key)}','${day}')"
                 ondragend="SalesDeliveryPlanModule.endPlanDrag(event)"
-                title="클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동"
-                class="${info.className} sdp-plan-day-cell ${plan > 0 ? 'sdp-plan-draggable' : ''}"
+                title="${isStockCovered ? '현재 완제품 재고로 납품 가능한 구간' : '클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동'}"
+                class="${info.className} sdp-plan-day-cell ${coverageClass} ${plan > 0 ? 'sdp-plan-draggable' : ''}"
                 style="min-width:${colW};max-width:${colW};text-align:center;font-size:10px;cursor:pointer;padding:3px 1px;${borderStyle}">
                 ${plan ? `<div style="font-weight:400;">${_fmt(plan)}</div>` : ''}
                 ${delivered ? `<div style="color:var(--accent-green);font-weight:400;">납 ${_fmt(delivered)}</div>` : ''}
@@ -1712,9 +1817,9 @@ var SalesDeliveryPlanModule = (function() {
             const month = `${Number(day.slice(5, 7))}월`;
             const last = groups[groups.length - 1];
             if (last && last.month === month) last.count += 1;
-            else groups.push({ month, count: 1 });
+            else groups.push({ month, count: 1, startDate: day });
         });
-        return groups.map(g => `<th colspan="${g.count}" style="text-align:center;">${g.month}</th>`).join('');
+        return groups.map(g => `<th colspan="${g.count}" class="sdp-month-header" onmousedown="SalesDeliveryPlanModule.startDateHeaderScroll(event)" style="text-align:center;cursor:grab;">${g.month}</th>`).join('');
     }
 
     function _renderTable(rows, days) {
@@ -1724,6 +1829,7 @@ var SalesDeliveryPlanModule = (function() {
             return;
         }
         const dayColumnsWidth = days.reduce((sum, day) => sum + _dayColumnWidth(day), 0);
+        rows.forEach(row => { row.finishedCoverage = _coverageInfo(row, days); });
         const colgroup = `
             <colgroup>
                 <col style="width:48px;">
@@ -1751,13 +1857,17 @@ var SalesDeliveryPlanModule = (function() {
                         <th>컬러</th>
                         <th>포장</th>
                         <th>계획<br><span style="font-size:9px;font-weight:600;">(납품/미납)</span></th>
-                        <th>완제품<br>재고</th>
+                        <th>완제품<br>재고·가능</th>
                         ${days.map((d, i) => {
                             const info = _dayColumnInfo(d);
                             const colW = `${_dayColumnWidth(d)}px`;
                             const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
                             const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
-                            return `<th class="${info.className}" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}"><div>${Number(d.slice(8))}</div><div style="font-size:9px;font-weight:600;">${info.weekday}</div></th>`;
+                            return `<th data-sdp-date="${d}" class="${info.className}" onmousedown="SalesDeliveryPlanModule.startDateHeaderScroll(event)" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}">
+                                <button type="button" class="sdp-date-jump" onclick="SalesDeliveryPlanModule.scrollToDate(event,'${d}')" aria-label="${d} 날짜로 이동" title="이 날짜로 가로 이동">
+                                    <div>${Number(d.slice(8))}</div><div class="sdp-date-weekday">${info.weekday}</div>
+                                </button>
+                            </th>`;
                         }).join('')}
                     </tr>
                 </thead>
@@ -1765,10 +1875,14 @@ var SalesDeliveryPlanModule = (function() {
                     ${rows.map((row, index) => {
                         const prev = rows[index - 1];
                         const startsCarGroup = index > 0 && _carKey(prev?.carModel) !== _carKey(row.carModel);
+                        const status = _statusInfo(row);
                         return `
-                        <tr class="${startsCarGroup ? 'sdp-car-group-start' : ''}">
+                        <tr class="${startsCarGroup ? 'sdp-car-group-start ' : ''}sdp-state-${status.key}">
                             <td>${_esc(row.carModel || '-')}</td>
-                            <td style="font-weight:800;">${_esc(row.partName || '-')}</td>
+                            <td style="font-weight:800;">
+                                ${_esc(row.partName || '-')}
+                                ${status.key === 'available' ? '' : `<span class="sdp-status-badge sdp-status-${status.key}" title="${_esc(status.label)}">${_esc(status.label)}</span>`}
+                            </td>
                             <td>${_esc(row.color || '-')}</td>
                             <td>${_esc(row.packUnit || '-')}</td>
                             <td class="sdp-plan-summary">
@@ -1776,16 +1890,72 @@ var SalesDeliveryPlanModule = (function() {
                                 <div class="sdp-plan-sub">
                                     <span class="sdp-plan-delivered">${_fmt(row.delivered)}</span>
                                     <span style="color:var(--text-muted);"> / </span>
-                                    <span class="sdp-plan-remaining" style="color:${row.remaining > 0 ? 'var(--accent-orange)' : 'var(--accent-green)'};">${_fmt(row.remaining)}</span>
+                                    <span class="sdp-plan-remaining ${row.remaining > 0 ? 'sdp-unpaid' : 'sdp-paid'}">${_fmt(row.remaining)}</span>
                                 </div>
+                                ${row.hasShortage ? `<div class="sdp-plan-shortage">부족 ${_fmt(_shortageQty(row))}</div>` : ''}
                             </td>
-                            <td style="font-weight:700;">${row.finishedHasData ? _fmt(row.finishedStock) : '-'}</td>
+                            ${_finishedStockCell(row, days)}
                             ${days.map((d, i) => _dayCell(row, d, i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7))).join('')}
                         </tr>
                     `; }).join('')}
                 </tbody>
             </table>
         `;
+    }
+
+    // 날짜/월 헤더를 왼쪽 버튼으로 누른 채 움직이면 표의 가로 스크롤을 직접 조작한다.
+    function startDateHeaderScroll(event) {
+        if (!event || event.button !== 0) return;
+        const wrap = document.getElementById('sdpTableWrap');
+        if (!wrap || wrap.scrollWidth <= wrap.clientWidth) return;
+
+        _dateHeaderDrag = {
+            wrap,
+            startX: event.clientX,
+            startScrollLeft: wrap.scrollLeft,
+            moved: false
+        };
+        document.body.classList.add('sdp-date-header-dragging');
+
+        const move = e => {
+            if (!_dateHeaderDrag) return;
+            const distance = e.clientX - _dateHeaderDrag.startX;
+            if (!distance) return;
+            if (Math.abs(distance) > 3) _dateHeaderDrag.moved = true;
+            _dateHeaderDrag.wrap.scrollLeft = _dateHeaderDrag.startScrollLeft - distance;
+            if (_dateHeaderDrag.moved) e.preventDefault();
+        };
+        const end = () => {
+            if (!_dateHeaderDrag) return;
+            if (_dateHeaderDrag.moved) _dragSuppressClickUntil = Date.now() + 350;
+            _dateHeaderDrag = null;
+            document.body.classList.remove('sdp-date-header-dragging');
+            document.removeEventListener('mousemove', move);
+            document.removeEventListener('mouseup', end);
+        };
+        document.addEventListener('mousemove', move);
+        document.addEventListener('mouseup', end);
+    }
+
+    // 날짜 헤더를 누르면 고정 품목 영역 바로 오른쪽에 해당 날짜가 오도록 이동한다.
+    // 날짜 열이 긴 경우에도 브라우저 기본 scrollIntoView가 세로 위치를 바꾸지 않도록
+    // 표 wrapper의 가로 스크롤만 직접 조정한다.
+    function scrollToDate(event, date) {
+        event?.preventDefault();
+        event?.stopPropagation();
+        if (Date.now() < _dragSuppressClickUntil) return;
+        const wrap = document.getElementById('sdpTableWrap');
+        const head = wrap?.querySelector(`th[data-sdp-date="${date}"]`);
+        if (!wrap || !head) return;
+
+        const fixedColumnsWidth = 450;
+        const targetLeft = Math.max(0, head.offsetLeft - fixedColumnsWidth + 4);
+        wrap.scrollTo({ left: targetLeft, behavior: 'smooth' });
+
+        wrap.querySelectorAll('.sdp-date-jump-active').forEach(el => el.classList.remove('sdp-date-jump-active'));
+        head.classList.add('sdp-date-jump-active');
+        window.clearTimeout(wrap._sdpDateJumpTimer);
+        wrap._sdpDateJumpTimer = window.setTimeout(() => head.classList.remove('sdp-date-jump-active'), 900);
     }
 
     function _formHtml(data = {}) {
@@ -1894,7 +2064,7 @@ var SalesDeliveryPlanModule = (function() {
                 엑셀에서 셀(행/열 여러 개도 가능)을 복사한 뒤 시작할 칸을 클릭하고 붙여넣기(Ctrl+V)하면, 그 칸부터 행·열 그대로 채워집니다.
                 맨 왼쪽 위 칸(순번 칸 포함)에 붙여넣으면 첫 행·첫 날짜부터 채워집니다.<br>
                 품명 왼쪽의 <strong>⠿</strong> 손잡이를 끌면 품명 순서를 바꿀 수 있고, 놓는 즉시 순번이 저장됩니다.
-                <strong>순서 저장</strong>은 순번 칸에 숫자를 직접 적었을 때 씁니다.
+                순번 칸에 숫자를 적고 <strong>Enter</strong>를 누르면 그 행이 바로 그 위치로 옮겨지고 저장됩니다.
             </div>
             <div class="filter-bar" style="flex-wrap:wrap;gap:6px;margin-bottom:8px;padding:8px;font-size:11px;">
                 <div class="form-group">
@@ -1938,7 +2108,7 @@ var SalesDeliveryPlanModule = (function() {
             'font-size:12px',
             'line-height:19px',
             'padding:0 2px',
-            qty > 0 ? 'background:rgba(59,130,246,0.08);color:var(--accent-blue)' : 'background:transparent;color:var(--text-primary)'
+            'background:transparent;color:var(--text-primary)'
         ].join(';');
     }
 
@@ -1964,6 +2134,11 @@ var SalesDeliveryPlanModule = (function() {
             for (const d of dirty) {
                 try { await Storage.update(DB.STORES.PRODUCTS, d.id, { deliverySortOrder: d.order }); }
                 catch (e) { console.warn('[SalesDeliveryPlan] 순번 저장 실패:', e); }
+            }
+            // 영업 계획 표도 같은 순번(deliverySortOrder)으로 정렬하므로, 저장 직후 뒤에 깔린
+            // 표를 다시 그려 등록 화면과 같은 순서로 맞춘다(모달을 그냥 닫아도 반영되게).
+            if (document.getElementById('sdpTableWrap')) {
+                try { await search(); } catch (e) { console.warn('[SalesDeliveryPlan] 영업 계획 표 갱신 실패:', e); }
             }
             return dirty.length;
         })();
@@ -2031,6 +2206,19 @@ var SalesDeliveryPlanModule = (function() {
 
         const dragTr = tbody.querySelector('.sdp-row-dragging');
         if (!dragTr || dragTr === tr) { endGridRowDrag(event); return; }
+
+        // 저장된 순번은 실수로 바뀌면 안 된다 — 놓기 전에 반드시 물어본다.
+        const all = Array.from(tbody.children);
+        const from = all.indexOf(dragTr);
+        let to = all.indexOf(tr) + (below ? 1 : 0);
+        if (from < to) to -= 1;
+        if (from === to) { endGridRowDrag(event); return; }
+        const name = [dragTr.children[2]?.textContent, dragTr.children[3]?.textContent, dragTr.children[4]?.textContent]
+            .map(s => String(s || '').trim()).filter(s => s && s !== '-').join(' ');
+        if (!confirm(`「${name}」의 순번을 ${from + 1}번 → ${to + 1}번으로 변경할까요?`)) {
+            endGridRowDrag(event);
+            return;
+        }
 
         tbody.insertBefore(dragTr, below ? tr.nextSibling : tr);
 
@@ -2154,7 +2342,8 @@ var SalesDeliveryPlanModule = (function() {
                 </thead>
                 <tbody>
                     ${_gridRows.map((row, index) => `
-                        <tr ondragover="SalesDeliveryPlanModule.overGridRowDrop(event)"
+                        <tr class="${index > 0 && _carKey(_gridRows[index - 1]?.carModel) !== _carKey(row.carModel) ? 'sdp-car-group-start' : ''}"
+                            ondragover="SalesDeliveryPlanModule.overGridRowDrop(event)"
                             ondrop="SalesDeliveryPlanModule.dropGridRow(event)">
                             <td class="sdp-fixed-col" style="padding:0 1px;">
                                 <div style="display:flex;align-items:center;gap:1px;">
@@ -2168,6 +2357,8 @@ var SalesDeliveryPlanModule = (function() {
                                     <input type="number" class="sdp-order-cell" data-row="${index}"
                                         value="${row.product && row.product.deliverySortOrder != null ? _esc(row.product.deliverySortOrder) : ''}"
                                         placeholder="-" onclick="this.select()" onfocus="this.select()"
+                                        onkeydown="if(event.key==='Enter'){event.preventDefault();this.blur();}"
+                                        onchange="SalesDeliveryPlanModule.moveGridRowToOrder(this)"
                                         onpaste="SalesDeliveryPlanModule.onGridCellPaste(event,this)"
                                         style="width:100%;height:19px;border:0;text-align:center;font-size:12px;background:transparent;">
                                 </div>
@@ -2362,6 +2553,67 @@ var SalesDeliveryPlanModule = (function() {
         renderGridEditorRows();
     }
 
+    /**
+     * 순번 칸에 숫자를 적고 Enter(또는 칸을 벗어나면) 그 행을 바로 그 위치로 옮긴다.
+     * 정렬이 아니라 "끼워넣기"다 — 39번 행에 1을 적으면 맨 위로 가고 기존 1..38은 한 칸씩 밀린다.
+     * 드래그와 똑같이 `<tr>`만 옮겨 입력 중인 수량은 보존한다.
+     */
+    async function moveGridRowToOrder(input) {
+        const tr = input && input.closest('tr');
+        const tbody = tr && tr.parentElement;
+        if (!tr || !tbody) return;
+        const trs = Array.from(tbody.children);
+        const cur = trs.indexOf(tr);
+        const raw = String(input.value).trim();
+        if (!_gridOrderEditable) {
+            input.value = String(cur + 1);
+            UIUtils.toast('순서 변경은 납품처를 「전체」로 두고 하세요 — 일부만 보고 옮기면 나머지 순번이 어긋납니다.', 'warning');
+            return;
+        }
+        const n = Math.round(Number(raw));
+        if (raw === '' || isNaN(n)) { input.value = String(cur + 1); return; }
+        const target = Math.min(Math.max(n, 1), trs.length) - 1;
+        if (target === cur) { input.value = String(cur + 1); return; }
+
+        // 저장된 순번은 실수로 바뀌면 안 된다 — 옮기기 전에 반드시 물어본다.
+        const name = [tr.children[2]?.textContent, tr.children[3]?.textContent, tr.children[4]?.textContent]
+            .map(s => String(s || '').trim()).filter(s => s && s !== '-').join(' ');
+        if (!confirm(`「${name}」의 순번을 ${cur + 1}번 → ${target + 1}번으로 변경할까요?`)) {
+            input.value = String(cur + 1);
+            return;
+        }
+
+        const rows = trs.map(el => {
+            const cell = el.querySelector('.sdp-grid-cell, .sdp-order-cell');
+            return cell ? _gridRows[Number(cell.dataset.row)] : null;
+        });
+        if (rows.some(r => !r) || rows.length !== _gridRows.length) {
+            console.warn('[SalesDeliveryPlan] 행 매핑을 찾지 못해 순번 이동을 중단합니다.');
+            input.value = String(cur + 1);
+            return;
+        }
+
+        trs.splice(cur, 1);
+        trs.splice(target, 0, tr);
+        const [movedRow] = rows.splice(cur, 1);
+        rows.splice(target, 0, movedRow);
+        trs.forEach(el => tbody.appendChild(el));
+
+        _gridRows = rows;
+        trs.forEach((el, i) => {
+            el.querySelectorAll('.sdp-grid-cell, .sdp-order-cell')
+                .forEach(cell => { cell.dataset.row = String(i); });
+        });
+        _syncGridOrderInputs(tbody);
+
+        tr.scrollIntoView({ block: 'nearest' });
+        tr.classList.add('sdp-row-drop-above');
+        setTimeout(() => tr.classList.remove('sdp-row-drop-above'), 900);
+
+        const saved = await _assignGridOrderNumbers();
+        if (saved) UIUtils.toast(`${target + 1}번으로 옮기고 순번을 저장했습니다.`, 'success');
+    }
+
     async function saveGridOrder() {
         const wrap = document.getElementById('sdpGridEditorBody');
         const tbody = wrap && wrap.querySelector('tbody');
@@ -2397,6 +2649,12 @@ var SalesDeliveryPlanModule = (function() {
 
         // 같은 숫자를 적었으면 지금 화면 순서를 유지한다(안정 정렬).
         items.sort((a, b) => (a.order - b.order) || (a.cur - b.cur));
+        const moved = items.filter((it, i) => it.cur !== i).length;
+        if (!moved) { _syncGridOrderInputs(tbody); UIUtils.toast('변경된 순번이 없습니다.', 'info'); return; }
+        if (!confirm(`${moved}개 품목의 순번이 바뀝니다. 변경할까요?`)) {
+            _syncGridOrderInputs(tbody);
+            return;
+        }
         items.forEach(it => tbody.appendChild(it.tr));
 
         // 배열을 새 순서로 세우고 data-row를 다시 적는다 — 이걸 빼먹으면 수량이 엉뚱한
@@ -3563,6 +3821,9 @@ var SalesDeliveryPlanModule = (function() {
     return {
         render,
         search,
+        shiftMainDateRange,
+        jumpMainDateToday,
+        setTableDensity,
         openAddModal,
         openGridModal,
         openSingleModal,
@@ -3573,11 +3834,14 @@ var SalesDeliveryPlanModule = (function() {
         clearGridSelection,
         onGridCellPaste,
         saveGridOrder,
+        moveGridRowToOrder,
         toggleHideNoPlan,
         saveGridPlans,
         openCellModal,
         saveCellPlan,
         handleDayCellClick,
+        scrollToDate,
+        startDateHeaderScroll,
         startGridRowDrag,
         overGridRowDrop,
         dropGridRow,

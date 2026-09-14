@@ -34,7 +34,10 @@ const DashboardModule = (function() {
             STORE.SHIPPING_STANDBY,
             STORE.PRODUCT_INVENTORY,
             STORE.PRODUCT_OUTGOING,
-            STORE.PROD_QUALITY_CHECK
+            STORE.PROD_QUALITY_CHECK,
+            STORE.JIG_MASTER,
+            STORE.JIG_LOG,
+            STORE.JIG_ORDERING
         ].filter(Boolean));
 
         _cacheWarmUnsub = Storage.onCacheWarm(function(storeName, meta) {
@@ -168,6 +171,9 @@ const DashboardModule = (function() {
             <!-- 도료 입고 대기 (물류담당자 전용) -->
             <div id="dashPaintPending"></div>
 
+            <!-- 도장 지그 교체 임박 (수명 90% 이상) -->
+            <div id="dashJigLifeAlerts"></div>
+
             <!-- 사출 입고 대기 / 실적 미입력 / 도료 사용 미등록 / 사출 LOT 형식 오류 (경보 섹션) -->
             <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div>
 
@@ -187,6 +193,7 @@ const DashboardModule = (function() {
         renderShippingStandby();
         renderPaintPending();
         renderAlertRow().catch(e => console.warn('[Dashboard] 경보 렌더 실패:', e));
+        _scheduleIdleWork(renderJigLifeAlerts);  // 지그 사용횟수 집계가 무거워 유휴 시간에
         _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
         renderImprovementTiles();
         renderBoardSection();
@@ -309,6 +316,57 @@ const DashboardModule = (function() {
                 </tbody>
             </table>
             ${pending.length > 15 ? `<div style="padding:5px 12px;font-size:.72rem;color:var(--text-muted);border-top:1px solid var(--border-color);">외 ${pending.length - 15}건 더 있음</div>` : ''}
+        </div>`;
+    }
+
+    /* ══════════════════════════════════════════════════════════
+       도장 지그 교체 임박 (수명 90% 이상) — 대상이 있을 때만 표시
+    ══════════════════════════════════════════════════════════ */
+    function renderJigLifeAlerts() {
+        const el = document.getElementById('dashJigLifeAlerts');
+        if (!el) return;
+        let list = [];
+        try {
+            if (typeof JigModule !== 'undefined' && typeof JigModule.getLifeActionJigs === 'function') {
+                list = JigModule.getLifeActionJigs();
+            }
+        } catch (e) {
+            console.warn('[Dashboard] 지그 수명 조회 실패:', e);
+        }
+        if (!list.length) { el.innerHTML = ''; return; }
+        const color = '#b91c1c';
+        const notOrdered = list.filter(r => !r.orderDate).length;
+        el.innerHTML = `
+        <div style="border:1px solid var(--border-color);border-top:3px solid ${color};border-radius:8px;overflow:hidden;background:var(--bg-primary);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;background:${color}0d;">
+                <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:${color};letter-spacing:.04em;">
+                    <span class="material-symbols-outlined" style="font-size:14px;">warning</span>
+                    도장 지그 교체 임박 (수명 90% 이상)
+                    <span style="background:${color};color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${list.length}건</span>
+                    ${notOrdered ? `<span style="font-weight:600;">· 미발주 ${notOrdered}건</span>` : ''}
+                </div>
+                <button onclick="Router.navigate('jig-management')" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:${color};font-weight:600;padding:2px 6px;">지그 수명관리 →</button>
+            </div>
+            <div style="max-height:200px;overflow-y:auto;">
+            <table style="width:100%;border-collapse:collapse;font-size:0.78rem;">
+                <tbody>
+                    ${list.map(r => {
+                        const pct = Math.round(r.pct);
+                        const pctColor = pct >= 100 ? '#dc2626' : '#ea580c';
+                        return `<tr onmouseover="this.style.background='var(--bg-secondary)'" onmouseout="this.style.background=''">
+                            <td style="padding:4px 10px;white-space:nowrap;font-weight:700;color:var(--accent-blue);">${_esc(r.carModel || '-')}</td>
+                            <td style="padding:4px 8px;white-space:nowrap;font-weight:600;">${_esc(r.partName || '-')}</td>
+                            <td style="padding:4px 8px;white-space:nowrap;font-size:0.72rem;color:#0891b2;font-weight:600;">${_esc(r.line)}</td>
+                            <td style="padding:4px 8px;white-space:nowrap;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(r.usedCount)} / ${UIUtils.formatNumber(r.manage)}회</td>
+                            <td style="padding:4px 8px;white-space:nowrap;text-align:right;font-weight:800;color:${pctColor};">${pct}%</td>
+                            <td style="padding:4px 10px;white-space:nowrap;width:100%;">${r.orderDate
+                                ? `<span style="padding:1px 6px;background:var(--accent-blue);color:#fff;border-radius:4px;font-size:0.68rem;font-weight:600;">발주 ${_esc(r.orderDate)}</span>`
+                                : `<span style="padding:1px 6px;border:1px solid ${color};color:${color};border-radius:4px;font-size:0.68rem;font-weight:700;">미발주</span>`}</td>
+                        </tr>`;
+                    }).join('')}
+                </tbody>
+            </table>
+            </div>
         </div>`;
     }
 

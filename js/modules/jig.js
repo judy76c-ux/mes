@@ -15,7 +15,7 @@ var JigModule = (function () {
     const A_LINE_CYCLE = 1092;
     const B_LINE_CYCLE = 175;
     const LINE_ORDER_RATE = 1.01; // 101%
-    const PRODUCTION_NEED_RATE = 0.05; // 5%
+    const DEFAULT_PRODUCTION_MARGIN_PCT = 5; // 생산 필요수량 여유분 기본값(%) — 지그별 입력 가능
     const THICKNESS_JIG_COUNT = 3;
     const THICKNESS_STAGE_COUNT = 3;
     const THICKNESS_POINT_PHOTO_COUNT = 3;
@@ -1690,6 +1690,32 @@ var JigModule = (function () {
         });
     }
 
+    /** 대시보드용 — 수명관리 화면의 '조치 필요 (90% 사용)'과 같은 기준(공용 지그 묶음, A/S 품목 제외) */
+    function getLifeActionJigs() {
+        const itemTypeMap = _productItemTypeMap();
+        const pool = _collapseCoUseJigs((_enrichedJigs() || []).filter(function (j) {
+            return !_isAsItemType(_jigItemType(j, itemTypeMap));
+        }));
+        const orderingByJigId = {};
+        (Storage.getAll(DB.STORES.JIG_ORDERING) || []).forEach(function (o) {
+            if (o.jigId) orderingByJigId[o.jigId] = o;
+        });
+        return pool.filter(_needsLifeAction).map(function (j) {
+            const ids = Array.isArray(j._coUseIds) ? j._coUseIds : [j.id];
+            const ordering = ids.map(function (id) { return orderingByJigId[id]; }).find(Boolean);
+            return {
+                id: j.id,
+                carModel: _jigCarKey(j) || '',
+                partName: j.partName || '',
+                line: j.line || '',
+                usedCount: Number(j.usedCount) || 0,
+                manage: _derivedJigLife(j).manage || Number(j.maxCount) || 0,
+                pct: _lifePct(j),
+                orderDate: ordering ? (ordering.orderDate || '-') : ''
+            };
+        }).sort(function (a, b) { return b.pct - a.pct; });
+    }
+
     function _laserJigNotifyButtonHtml() {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.incomingInspNotifyAdminButtonHtml !== 'function') {
             return '';
@@ -2479,7 +2505,7 @@ var JigModule = (function () {
             }
             return `<div style="display:flex;flex-wrap:wrap;gap:6px;">
                 ${selected.map((p, i) => `
-                    <span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:0.78rem;font-weight:${i === 0 ? 700 : 500};
+                    <span class="jigMasterPartView" data-part="${_esc(p)}" style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:999px;font-size:0.78rem;font-weight:${i === 0 ? 700 : 500};
                         background:${i === 0 ? 'rgba(37,99,235,0.12)' : 'var(--bg-secondary)'};color:${i === 0 ? 'var(--accent-blue)' : 'var(--text-primary)'};border:1px solid ${i === 0 ? 'rgba(37,99,235,0.35)' : 'var(--border-color)'};">
                         ${i === 0 ? '대표 · ' : ''}${_esc(p)}
                     </span>`).join('')}
@@ -2517,8 +2543,11 @@ var JigModule = (function () {
     }
 
     function _collectMasterPartNames() {
-        const checked = Array.from(document.querySelectorAll('.jigMasterPartChk:checked'))
-            .map(el => (el.value || '').trim())
+        // 보기(읽기전용) 모드는 체크박스 대신 품명 칩으로 그려지므로 칩에서 읽는다
+        const checked = (document.querySelector('.jigMasterPartChk')
+            ? Array.from(document.querySelectorAll('.jigMasterPartChk:checked')).map(el => el.value)
+            : Array.from(document.querySelectorAll('.jigMasterPartView')).map(el => el.getAttribute('data-part')))
+            .map(v => (v || '').trim())
             .filter(Boolean);
         return [...new Set(checked)];
     }
@@ -2637,10 +2666,21 @@ var JigModule = (function () {
         });
     }
 
-    function _masterProductionNeedQty(cvt, appliedLine) {
+    function _normalizeMarginPct(pct) {
+        if (pct === '' || pct === null || pct === undefined) return DEFAULT_PRODUCTION_MARGIN_PCT;
+        const n = Number(pct);
+        return Number.isFinite(n) && n >= 0 ? n : DEFAULT_PRODUCTION_MARGIN_PCT;
+    }
+
+    function _masterProductionNeedQty(cvt, appliedLine, marginPct) {
         const n = Number(cvt) || 0;
         if (n <= 0) return 0;
-        return Math.ceil(_lineCycleForAppliedLine(appliedLine) * n * PRODUCTION_NEED_RATE);
+        const rate = 1 + _normalizeMarginPct(marginPct) / 100;
+        return Math.ceil(Math.round(_lineCycleForAppliedLine(appliedLine) * n * rate * 1e6) / 1e6);
+    }
+
+    function _getMarginPctFromForm() {
+        return _normalizeMarginPct(document.getElementById('jigMasterProductionMarginPct')?.value);
     }
 
     function _masterCvtCell(jig) {
@@ -2651,7 +2691,7 @@ var JigModule = (function () {
 
     function _masterProductionNeedCell(jig) {
         return _formatLineValueList(_masterCvtInfos(jig).map(function (info) {
-            const needQty = _masterProductionNeedQty(info.cvt, info.line);
+            const needQty = _masterProductionNeedQty(info.cvt, info.line, jig.productionMarginPct);
             return {
                 line: info.line,
                 html: needQty
@@ -3348,11 +3388,11 @@ var JigModule = (function () {
         if (integrated) {
             const manualCvt = Number(integratedCvt) || 0;
             if (!manualCvt) {
-                return { orderQty: 0, needQty: 0, productionNeedQty: _masterProductionNeedQty(masterCvt, appliedLine), cvt: 0, masterCvt: masterCvt, hint: appliedLine + ' 일체형 CVT 입력 필요' };
+                return { orderQty: 0, needQty: 0, productionNeedQty: _masterProductionNeedQty(masterCvt, appliedLine, _getMarginPctFromForm()), cvt: 0, masterCvt: masterCvt, hint: appliedLine + ' 일체형 CVT 입력 필요' };
             }
             const needQty = spindle * manualCvt;
             const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
-            const productionNeedQty = _masterProductionNeedQty(masterCvt || manualCvt, appliedLine);
+            const productionNeedQty = _masterProductionNeedQty(masterCvt || manualCvt, appliedLine, _getMarginPctFromForm());
             const cvtLabel = masterCvt > 0 && masterCvt !== manualCvt
                 ? ('CVT ' + masterCvt + '→' + manualCvt + '(일체형)')
                 : ('CVT ' + manualCvt + '(일체형)');
@@ -3368,7 +3408,7 @@ var JigModule = (function () {
         const calcCvt = masterCvt;
         const needQty = spindle * calcCvt;
         const orderQty = Math.max(1, Math.ceil(needQty * LINE_ORDER_RATE));
-        const productionNeedQty = _masterProductionNeedQty(calcCvt, appliedLine);
+        const productionNeedQty = _masterProductionNeedQty(calcCvt, appliedLine, _getMarginPctFromForm());
         return {
             orderQty: orderQty,
             needQty: needQty,
@@ -3688,17 +3728,23 @@ var JigModule = (function () {
                             </label>
                         `).join('')}
                     </div>
-                    <div style="display:grid;grid-template-columns:120px 160px;gap:8px;margin-top:6px;align-items:stretch;">
+                    <div style="display:grid;grid-template-columns:120px 110px 160px;gap:8px;margin-top:6px;align-items:stretch;">
                         <div style="border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;background:var(--bg-secondary);">
                             <div style="font-size:0.68rem;color:var(--text-muted);font-weight:700;margin-bottom:2px;">CVT</div>
                             <div id="jigMasterCvtDisplay" style="font-size:0.86rem;text-align:right;font-weight:700;">-</div>
+                        </div>
+                        <div style="border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;background:var(--bg-secondary);">
+                            <div style="font-size:0.68rem;color:var(--text-muted);font-weight:700;margin-bottom:2px;white-space:nowrap;">여유분 (%)</div>
+                            <input type="number" id="jigMasterProductionMarginPct" value="${_normalizeMarginPct(d.productionMarginPct)}" min="0" step="0.1"${roAttr}
+                                oninput="JigModule.recalcMasterOrderQty()"
+                                style="width:100%;border:none;background:transparent;font-size:0.86rem;text-align:right;font-weight:700;padding:0;outline:none;">
                         </div>
                         <div style="border:1px solid var(--border-color);border-radius:8px;padding:7px 9px;background:var(--bg-secondary);">
                             <div style="font-size:0.68rem;color:var(--text-muted);font-weight:700;margin-bottom:2px;">생산 필요수량</div>
                             <div id="jigMasterProductionNeedQty" style="font-size:0.86rem;text-align:right;font-weight:800;color:var(--accent-blue);">-</div>
                         </div>
                     </div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">제품 기초정보 CVT 기준 · A라인 1,092 × CVT × 5% / B라인 175 × CVT × 5%</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">제품 기초정보 CVT 기준 · A라인 1,092 × CVT × (100% + 여유분) / B라인 175 × CVT × (100% + 여유분)</div>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:4px;">
@@ -3851,6 +3897,7 @@ var JigModule = (function () {
             orderQty: parseInt(document.getElementById('jigMasterOrderQty')?.value || 0) || 0,
             integratedJig: !!document.getElementById('jigMasterIntegratedJig')?.checked,
             integratedJigCvt: _getIntegratedJigCvt() || null,
+            productionMarginPct: _getMarginPctFromForm(),
             appliedLines,
             material: document.getElementById('jigMasterMaterial')?.value.trim() || '',
             supplier: document.getElementById('jigMasterSupplier')?.value.trim() || '',
@@ -4732,6 +4779,7 @@ var JigModule = (function () {
         recalcAllJigMasterLife,
         fixUnmatchedJigPartNames,
         autoRegisterActionOrders,
+        getLifeActionJigs,
         toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,

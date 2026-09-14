@@ -114,6 +114,7 @@ const AuthModule = (function () {
         { id:'product-warehouse',         label:'제품 창고',          group:'출하/제품' },
         { id:'product-outgoing',          label:'제품 출고',          group:'출하/제품' },
         { id:'sales-delivery-plan',       label:'영업 계획',          group:'영업' },
+        { id:'sales-planning-materials',  label:'생산계획 자료',       group:'영업' },
         { id:'sales-today-shipment',      label:'납품 출하(금일)',    group:'영업' },
         { id:'sales-delivery',            label:'출고 등록',          group:'영업' },
         { id:'sales-analytics',           label:'영업관리(매출분석)', group:'영업' },
@@ -172,7 +173,7 @@ const AuthModule = (function () {
 
     /* ── 페이지 그룹 (권한 관리 단위) ──────────────────────────── */
     const PAGE_GROUPS = [
-        { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'] },
+        { key:'sales_menu',       label:'\uc601\uc5c5 \uad00\ub9ac',     pages:['sales-delivery-plan','sales-planning-materials','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'] },
         { key:'board',            label:'\uac8c\uc2dc\ud310',            pages:['board'] },
         { key:'incoming',         label:'\uc218\uc785\uac80\uc0ac',      pages:['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo','incoming-delete-log'] },
         { key:'material_wh',      label:'\uc790\uc7ac \ucc3d\uace0',     pages:['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'] },
@@ -203,8 +204,9 @@ const AuthModule = (function () {
     /* ── 내부 스토리지 ───────────────────────────────────────── */
     const MENU_PERMISSION_SCOPES = {
         'board': ['board'],
-        'sales-delivery-plan': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
-        'sales-today-shipment': ['sales-delivery-plan','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
+        'sales-delivery-plan': ['sales-delivery-plan','sales-planning-materials','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
+        'sales-planning-materials': ['sales-delivery-plan','sales-planning-materials','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
+        'sales-today-shipment': ['sales-delivery-plan','sales-planning-materials','sales-today-shipment','sales-delivery','sales-analytics','sales-outsourcing'],
         'incoming-overview': ['incoming-overview','injection-incoming','paint-incoming-inspection','inj-incoming-std','paint-incoming-std','inj-insp-std-photo','incoming-delete-log'],
         'warehouse-overview': ['warehouse-overview','injection-warehouse','paint-inventory','paint-demand-plan','raw-material-inventory','injection-layout'],
         'product-warehouse': ['product-warehouse','product-outgoing','injection-layout'],
@@ -376,7 +378,7 @@ const AuthModule = (function () {
                 'dashboard',
                 'production-plan',
                 'shipping-standby','product-warehouse',
-                'sales-delivery','sales-outsourcing',
+                'sales-delivery','sales-planning-materials','sales-outsourcing',
                 'incoming-overview','incoming-delete-log','warehouse-overview',
             ]),
 
@@ -1729,22 +1731,29 @@ const AuthModule = (function () {
         return Math.min(60, Math.max(5, Math.round(m)));
     }
 
-    function _normalizeIncomingInspInterval(raw) {
+    // 당일 건 알림 제외 — 기본 체크는 '미등록' 류(당일은 아직 등록할 시간이 남음)만.
+    // 금일 현장 입고처럼 당일 건 자체를 알리는 알림에 기본으로 켜면 알림이 아예 안 간다.
+    const EXCLUDE_TODAY_DEFAULT_KEYS = ['paint_mix_a', 'paint_mix_b'];
+
+    function _normalizeIncomingInspInterval(raw, kind) {
         const src = raw && typeof raw === 'object' ? raw : {};
+        const excludeToday = typeof src.excludeToday === 'boolean'
+            ? src.excludeToday
+            : EXCLUDE_TODAY_DEFAULT_KEYS.indexOf(_incomingInspKind(kind)) >= 0;
         let mode = String(src.mode || '').trim();
         // 기본값은 '알림 발생 시 1회'. 반복 발송은 명시적으로 고른 경우에만 한다 —
         // 기본이 반복이면 설정을 건드린 적 없는 알림까지 텔레그램을 계속 보낸다.
-        if (mode !== 'interval') {
+        if (mode !== 'interval' && mode !== 'daily') {
             mode = 'once';
         }
         const minutes = _clampNotifyMinutes(src.minutes, src.hours);
-        return { mode: mode, minutes: minutes, hours: minutes };
+        return { mode: mode, minutes: minutes, hours: minutes, excludeToday: excludeToday };
     }
 
     function _emptyIncomingInspInterval() {
         const o = {};
         INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
-            o[k] = _normalizeIncomingInspInterval(null);
+            o[k] = _normalizeIncomingInspInterval(null, k);
         });
         return o;
     }
@@ -1753,7 +1762,7 @@ const AuthModule = (function () {
         const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
         const o = _emptyIncomingInspInterval();
         INCOMING_INSP_NOTIFY_KEYS.forEach(function (k) {
-            o[k] = _normalizeIncomingInspInterval(src[k]);
+            o[k] = _normalizeIncomingInspInterval(src[k], k);
         });
         return o;
     }
@@ -1782,14 +1791,14 @@ const AuthModule = (function () {
         const key = _incomingInspKind(kind);
         if (!_incomingInspKindSupportsInterval(key)) return null;
         const src = _incomingInspNotifyInterval && _incomingInspNotifyInterval[key];
-        return _normalizeIncomingInspInterval(src);
+        return _normalizeIncomingInspInterval(src, key);
     }
 
     async function saveIncomingInspNotifyInterval(kind, interval) {
         const key = _incomingInspKind(kind);
         if (!_incomingInspKindSupportsInterval(key)) return null;
         _incomingInspNotifyInterval = _normalizeIncomingInspIntervalMap(_incomingInspNotifyInterval);
-        _incomingInspNotifyInterval[key] = _normalizeIncomingInspInterval(interval);
+        _incomingInspNotifyInterval[key] = _normalizeIncomingInspInterval(interval, key);
         _incomingInspNotifyIntervalLoaded = true;
         if (typeof Storage !== 'undefined' && Storage.setConfigValue) {
             try {
@@ -1803,8 +1812,10 @@ const AuthModule = (function () {
 
     function incomingInspNotifyIntervalLabel(interval) {
         const iv = _normalizeIncomingInspInterval(interval);
-        if (iv.mode === 'once') return '알림 발생 시 1회';
-        return '해소될 때까지 매 ' + iv.minutes + '분';
+        const suffix = iv.excludeToday ? ' (당일 제외)' : '';
+        if (iv.mode === 'once') return '알림 발생 시 1회' + suffix;
+        if (iv.mode === 'daily') return '해소될 때까지 1일 1회' + suffix;
+        return '해소될 때까지 매 ' + iv.minutes + '분' + suffix;
     }
 
     function _parseNotifySentAt(raw) {
@@ -1830,6 +1841,11 @@ const AuthModule = (function () {
         const last = _parseNotifySentAt(lastSentAt);
         if (!last) return true;
         if (iv.mode === 'once') return false;
+        if (iv.mode === 'daily') {
+            // 날짜(로컬)가 바뀌었으면 발송 — 마지막 발송 뒤 24시간이 아니라 '오늘 아직 안 보냈는지' 기준
+            const ymd = function (d) { return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate(); };
+            return ymd(at) !== ymd(last);
+        }
         return (at.getTime() - last.getTime()) >= (iv.minutes * 60000);
     }
 
@@ -1839,11 +1855,13 @@ const AuthModule = (function () {
         const minutesEl = document.getElementById('incoming-insp-interval-minutes-' + safe)
             || document.getElementById('incoming-insp-interval-hours-' + safe);
         let mode = modeEl ? modeEl.value : 'once';
-        if (mode !== 'interval') mode = 'once';
+        if (mode !== 'interval' && mode !== 'daily') mode = 'once';
+        const excludeTodayEl = document.getElementById('incoming-insp-exclude-today-' + safe);
         return _normalizeIncomingInspInterval({
             mode: mode,
-            minutes: minutesEl ? minutesEl.value : 15
-        });
+            minutes: minutesEl ? minutesEl.value : 15,
+            excludeToday: excludeTodayEl ? !!excludeTodayEl.checked : undefined
+        }, safe);
     }
 
     function toggleIncomingInspIntervalHours(kind, enable) {
@@ -1856,7 +1874,7 @@ const AuthModule = (function () {
     function buildIncomingInspNotifyIntervalHtml(kind) {
         const safe = _incomingInspKind(kind);
         if (!_incomingInspKindSupportsInterval(safe)) return '';
-        const iv = getIncomingInspNotifyInterval(safe) || _normalizeIncomingInspInterval(null);
+        const iv = getIncomingInspNotifyInterval(safe) || _normalizeIncomingInspInterval(null, safe);
         const name = 'incoming-insp-interval-mode-' + safe;
         const minutesId = 'incoming-insp-interval-minutes-' + safe;
         const radio = function (mode, label, extra) {
@@ -1874,9 +1892,15 @@ const AuthModule = (function () {
             '<span style="font-size:0.78rem;color:var(--text-muted);">분 (5~60) 간격 발송</span></span>';
         return '<div style="margin-bottom:12px;padding:10px 12px;border:1px solid rgba(220,38,38,0.25);border-radius:8px;background:#fff;">' +
             '<div style="font-size:0.8rem;font-weight:700;color:#dc2626;margin-bottom:4px;">알림 주기</div>' +
-            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복할 때는 텔레그램만 보냅니다. MES가 열려 있으면 약 1분마다 주기를 검사합니다.</div>' +
+            '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:6px;line-height:1.45;">첫 알림은 쪽지입니다. 해소될 때까지 반복(1일 1회·분 간격)할 때는 텔레그램만 보냅니다. MES가 열려 있으면 약 1분마다 주기를 검사합니다.</div>' +
             radio('once', '알림 발생 시 1회 <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400;">(기본)</span>') +
+            radio('daily', '해소될 때까지 1일 1회 <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400;">(날짜가 바뀌면 다시 발송)</span>') +
             radio('interval', '해소될 때까지', minutesExtra) +
+            '<label style="display:flex;align-items:center;gap:8px;padding:8px 0 2px;margin-top:4px;border-top:1px dashed rgba(220,38,38,0.25);cursor:pointer;font-size:0.82rem;">' +
+                '<input type="checkbox" id="incoming-insp-exclude-today-' + _esc(safe) + '"' + (iv.excludeToday ? ' checked' : '') +
+                ' style="width:15px;height:15px;accent-color:#dc2626;">' +
+                '<span>당일 건은 알림 제외 <span style="font-size:0.72rem;color:var(--text-muted);font-weight:400;">(날짜가 오늘인 건은 다음 날부터 알림)</span></span>' +
+            '</label>' +
             '</div>';
     }
 
@@ -2071,11 +2095,19 @@ const AuthModule = (function () {
     function sendKindNotify(kind, list, opts) {
         opts = opts || {};
         const key = _incomingInspKind(kind);
-        const rows = Array.isArray(list) ? list.filter(Boolean) : [];
+        const interval = getIncomingInspNotifyInterval(key) || _normalizeIncomingInspInterval(null, key);
+        let rows = Array.isArray(list) ? list.filter(Boolean) : [];
+        if (interval && interval.excludeToday) {
+            // 날짜(date)가 오늘(로컬)인 건은 생략 — 날짜 없는 건은 판단 불가라 그대로 보낸다
+            const now = new Date();
+            const todayYmd = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0') + '-' + String(now.getDate()).padStart(2, '0');
+            rows = rows.filter(function (r) {
+                return String((r && r.date) || '').slice(0, 10) !== todayYmd;
+            });
+        }
         if (!rows.length || !key) return;
         const recipients = getIncomingInspNotifyRecipientIds(key);
         if (!recipients.length) return;
-        const interval = getIncomingInspNotifyInterval(key) || _normalizeIncomingInspInterval(null);
         const mode = interval && interval.mode ? interval.mode : 'interval';
         const idOf = typeof opts.idOf === 'function'
             ? opts.idOf

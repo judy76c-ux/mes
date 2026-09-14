@@ -11348,7 +11348,57 @@ const PaintingWorkModule = (function() {
                     };
                 });
             });
+            // 도료 사용 미등록 — 등록 직후 1회 알림 외에, 주기(1일 1회 등)·당일 제외 설정이 먹도록 주기 수집
+            const pmKind = (typeof AuthModule.paintMixNotifyKindForLine === 'function')
+                ? AuthModule.paintMixNotifyKindForLine(line)
+                : '';
+            if (pmKind) {
+                AuthModule.registerNotifyCollector(pmKind, function () {
+                    return {
+                        list: _collectPaintMixUnregistered(line),
+                        opts: {
+                            logLabel: '도료 사용 미등록',
+                            title: '도료 사용 미등록 (' + line + ')',
+                            intro: '도장 작업 실적이 등록됐지만 도료사용등록이 없는 건입니다. 배합작업 → 도료사용등록에서 확인해 주세요.',
+                            formatLine: function (w) {
+                                return '- ' + String(w.date || '').slice(0, 10) +
+                                    ' · ' + (w.carModel || '-') + ' / ' + (w.partName || '-') +
+                                    (w.color ? ' / ' + w.color : '') +
+                                    ' · ' + UIUtils.formatNumber(w.productionQty || 0) + ' EA';
+                            }
+                        }
+                    };
+                });
+            }
         });
+    }
+
+    // 도료사용이력에서 '제외'한 작업 — 설정값은 비동기라 마지막으로 읽은 값을 쓰고 매번 갱신
+    const PAINT_MIX_NOTIFY_LOOKBACK_DAYS = 7; // 첫 실행 때 과거 미등록 건이 한꺼번에 발송되지 않도록
+    let _paintMixHiddenWorkIds = new Set();
+    function _refreshPaintMixHiddenWorks() {
+        if (typeof Storage === 'undefined' || typeof Storage.getConfigValue !== 'function') return;
+        Promise.resolve(Storage.getConfigValue('paint_mix_hidden_works_v1')).then(function (list) {
+            _paintMixHiddenWorkIds = new Set((Array.isArray(list) ? list : []).map(String));
+        }).catch(function () {});
+    }
+
+    function _collectPaintMixUnregistered(line) {
+        _refreshPaintMixHiddenWorks();
+        const from = new Date();
+        from.setDate(from.getDate() - PAINT_MIX_NOTIFY_LOOKBACK_DAYS);
+        const fromYmd = from.getFullYear() + '-' + String(from.getMonth() + 1).padStart(2, '0') + '-' + String(from.getDate()).padStart(2, '0');
+        const mixedWorkIds = new Set((Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
+            .filter(function (d) { return d && d._docKind === 'paint_mix' && d.workId; })
+            .map(function (d) { return String(d.workId); }));
+        const kind = AuthModule.paintMixNotifyKindForLine(line);
+        return (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(function (w) {
+            if (!w || !w.id || !w.date) return false;
+            if (String(w.date).slice(0, 10) < fromYmd) return false;
+            if (AuthModule.paintMixNotifyKindForLine(w.line) !== kind) return false;
+            if (mixedWorkIds.has(String(w.id))) return false;
+            return !_paintMixHiddenWorkIds.has(String(w.id));
+        }).sort(function (a, b) { return String(a.date).localeCompare(String(b.date)); });
     }
     _registerPaintNotifyCollectors();
 
@@ -16722,6 +16772,7 @@ const PaintingInspectionModule = (function() {
         // Phase 3: 통계 대시보드
         showStatisticsDashboard,
         _renderStatisticsDashboard,
+        _excludeDuplicateInspections,
         _calculateStatistics,
         _renderStatisticsCharts,
         // Phase 2: 검사 완료 실적

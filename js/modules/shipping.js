@@ -956,21 +956,29 @@ const ShippingStandbyModule = (function() {
     // 이미지 정규화 (string 또는 {src,h,label,span})
     // span: 0=자동(홀수 마지막은 한 줄 전체), 1=반칸, 2=한 줄 전체
     function _sstdNormImg(v) {
-        if (typeof v === 'string') return { src: v, h: 100, label: '', span: 0 };
+        if (typeof v === 'string') return { src: v, h: 100, label: '', span: 0, rowSpan: 1 };
         const span = Number(v && v.span);
         return {
             src: (v && v.src) || '',
             h: (v && v.h) || 100,
             label: (v && v.label) || '',
-            span: (span === 1 || span === 2) ? span : 0
+            span: (span === 1 || span === 2) ? span : 0,
+            rowSpan: Number(v && v.rowSpan) === 2 ? 2 : 1
         };
     }
-    function _sstdImgColSpan(o, i, total) {
+    function _sstdImgColSpan(o, i, total, imgs) {
         if (!o) return 1;
         if (o.span === 2) return 2;
         if (o.span === 1) return 1;
-        if (total > 1 && total % 2 === 1 && i === total - 1) return 2;
+        // 세로 2칸 사진이 있으면 옆 열을 위아래로 채우는 배치 — 홀수 마지막 자동 넓힘을 하지 않는다
+        const hasRowSpan = Array.isArray(imgs) && imgs.some(function (m) { return _sstdNormImg(m).rowSpan === 2; });
+        if (!hasRowSpan && total > 1 && total % 2 === 1 && i === total - 1) return 2;
         return 1;
+    }
+    /** 세로 2칸(왼쪽 큰 사진 + 오른쪽 열 위/아래 배치) — 한 줄 전체로 넓힌 사진에는 적용 안 함 */
+    function _sstdImgRowSpan(o, i, total, imgs) {
+        if (!o || o.rowSpan !== 2) return 1;
+        return _sstdImgColSpan(o, i, total, imgs) === 2 ? 1 : 2;
     }
 
     // 저장된 데이터를 문서형 포맷으로 정규화 (구 단순폼 데이터 하위호환)
@@ -1293,13 +1301,14 @@ const ShippingStandbyModule = (function() {
         return images.map((img, i) => {
             const o = _sstdNormImg(img);
             const last = i === images.length - 1;
-            const colSpan = _sstdImgColSpan(o, i, images.length);
+            const colSpan = _sstdImgColSpan(o, i, images.length, images);
             const wide = colSpan === 2;
+            const tall = _sstdImgRowSpan(o, i, images.length, images) === 2;
             return `
             <div class="sstd-img-card" data-idx="${i}"
                 ondragover="ShippingStandbyModule._sstdDragOver(event)"
                 ondrop="ShippingStandbyModule._sstdDragDrop(event,${i})"
-                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;${wide ? 'grid-column:1/-1;' : ''}">
+                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
                 <div class="sstd-img-dragbar" draggable="true" title="드래그하여 위치 변경"
                     ondragstart="ShippingStandbyModule._sstdDragStart(event,${i})"
                     ondragend="ShippingStandbyModule._sstdDragEnd(event)"
@@ -1313,6 +1322,9 @@ const ShippingStandbyModule = (function() {
                     <button type="button" title="${wide ? '반칸으로 줄이기' : '한 줄 전체로 넓히기'}"
                         onclick="event.stopPropagation();ShippingStandbyModule._sstdToggleImgSpan(${i})"
                         style="flex:0 0 auto;border:1px solid #cbd5e1;background:${wide ? '#dbeafe' : '#fff'};border-radius:3px;height:16px;font-size:9px;line-height:1;cursor:pointer;padding:0 4px;color:#1d4ed8;font-weight:700;">${wide ? '좁힘' : '넓힘'}</button>
+                    ${wide ? '' : `<button type="button" title="${tall ? '세로 1칸으로 줄이기' : '세로 2칸 차지 — 옆 열에 사진 2장을 위/아래로 배치'}"
+                        onclick="event.stopPropagation();ShippingStandbyModule._sstdToggleImgRowSpan(${i})"
+                        style="flex:0 0 auto;border:1px solid #cbd5e1;background:${tall ? '#dbeafe' : '#fff'};border-radius:3px;height:16px;font-size:9px;line-height:1;cursor:pointer;padding:0 4px;color:#1d4ed8;font-weight:700;">${tall ? '세로↑' : '세로'}</button>`}
                     <button type="button" title="한 칸 앞으로 (오른쪽 위로)"
                         onclick="event.stopPropagation();ShippingStandbyModule._sstdMoveImage(${i},-1)"
                         ${i === 0 ? 'disabled' : ''}
@@ -1860,8 +1872,9 @@ const ShippingStandbyModule = (function() {
 
         const imgs = (data.images || []).map(_sstdNormImg);
         const imgHtml = imgs.length ? imgs.map(function(o, i) {
-            const wide = _sstdImgColSpan(o, i, imgs.length) === 2;
-            return `<div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;${wide ? 'grid-column:1/-1;' : ''}">
+            const wide = _sstdImgColSpan(o, i, imgs.length, imgs) === 2;
+            const tall = _sstdImgRowSpan(o, i, imgs.length, imgs) === 2;
+            return `<div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
                 ${o.label ? `<div style="padding:1px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>` : ''}
                 <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
             </div>`;
@@ -2044,8 +2057,9 @@ const ShippingStandbyModule = (function() {
 
         const pImgs = (std.images || []).map(_sstdNormImg);
         const imgHtml = pImgs.map(function(o, i) {
-            const wide = _sstdImgColSpan(o, i, pImgs.length) === 2;
-            return `<div style="border:1px solid #ccc;padding:2px;${wide ? 'grid-column:1/-1;' : ''}">
+            const wide = _sstdImgColSpan(o, i, pImgs.length, pImgs) === 2;
+            const tall = _sstdImgRowSpan(o, i, pImgs.length, pImgs) === 2;
+            return `<div style="border:1px solid #ccc;padding:2px;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
                 ${o.label ? `<div style="font-size:9px;font-weight:700;text-align:center;padding:2px 0;background:#e8edf2;">${_esc(o.label)}</div>` : ''}
                 <img src="${o.src}" style="height:${px2mm(o.h)}mm;max-width:100%;"></div>`;
         }).join('');
@@ -2263,8 +2277,18 @@ const ShippingStandbyModule = (function() {
         _sstdImages = _sstdImages.map(_sstdNormImg);
         const o = _sstdImages[idx];
         if (!o) return;
-        const cur = _sstdImgColSpan(o, idx, _sstdImages.length);
+        const cur = _sstdImgColSpan(o, idx, _sstdImages.length, _sstdImages);
         o.span = cur === 2 ? 1 : 2;
+        const g = document.getElementById('sstdImgGrid');
+        if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
+    }
+    function _sstdToggleImgRowSpan(idx) {
+        _sstdImages = _sstdImages.map(_sstdNormImg);
+        const o = _sstdImages[idx];
+        if (!o) return;
+        o.rowSpan = o.rowSpan === 2 ? 1 : 2;
+        // 세로 2칸을 켜면 자동 넓힘(홀수 마지막)이 풀리므로, 넓힘 상태를 명시값으로 고정해 둔 사진만 유지된다
+        if (o.rowSpan === 2 && o.span === 2) o.span = 1;
         const g = document.getElementById('sstdImgGrid');
         if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
     }
@@ -2859,6 +2883,7 @@ const ShippingStandbyModule = (function() {
         _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize,
         _sstdMoveImage,
         _sstdToggleImgSpan,
+        _sstdToggleImgRowSpan,
         _sstdAddCheckRow, _sstdInsertCheckRowAfter, _sstdRenumberCheckRows, _sstdRefreshCheckLayout,
         _sstdChangeCheckGroup, _sstdToggleMergePrev, _sstdRemoveCheckRow,
         _sstdAddRevRow, _sstdInsertRevRowAfter, _sstdOnCfInput,

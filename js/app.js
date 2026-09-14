@@ -81,7 +81,7 @@ const App = (function() {
                 ['prod-standards', 'prod-conditions', 'paint-mix', 'prod-sub-materials',
                  'prod-quality', 'quality-performance', 'limit-samples', 'prod-spc',
                  'spc-color', 'spc-film', 'spc-gloss', 'prod-equipment'],
-                'js/modules/production_mgmt_v91.js?v=289',
+                'js/modules/production_mgmt_v91.js?v=293',
                 function() {
                     Router.registerModule('prod-standards',
                         (typeof ProdStandardsModule !== 'undefined') ? ProdStandardsModule
@@ -341,6 +341,7 @@ const App = (function() {
         Router.registerModule('product-warehouse', ProductWarehouseModule);
         Router.registerModule('sales-delivery', SalesDeliveryModule);
         Router.registerModule('sales-delivery-plan', SalesDeliveryPlanModule);
+        Router.registerModule('sales-planning-materials', SalesPlanningMaterialsModule);
         Router.registerModule('sales-today-shipment', SalesTodayShipmentModule);
         Router.registerModule('sales-analytics', SalesAnalyticsModule);
         Router.registerModule('sales-outsourcing', SalesOutsourcingModule);

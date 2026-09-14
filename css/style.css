@@ -1521,6 +1521,9 @@ input[type="time"] {
 
 .sdp-plan-main {
     line-height: 1.1;
+    color: var(--text-primary);
+    font-size: 11px;
+    font-weight: 500;
 }
 
 .sdp-plan-sub {
@@ -1535,11 +1538,54 @@ input[type="time"] {
 
 .sdp-plan-delivered {
     color: var(--accent-green);
-    font-weight: 400;
+    font-weight: 600;
 }
 
 .sdp-plan-remaining {
-    font-weight: 400;
+    font-weight: 600;
+}
+
+.sdp-plan-remaining.sdp-unpaid {
+    color: var(--accent-orange);
+}
+
+.sdp-plan-remaining.sdp-paid {
+    color: var(--accent-green);
+}
+
+.sdp-plan-shortage {
+    margin-top: 2px;
+    color: var(--accent-red);
+    font-size: 9px;
+    font-weight: 800;
+    line-height: 1.1;
+}
+
+.sdp-date-nav {
+    display: flex;
+    gap: 3px;
+    white-space: nowrap;
+}
+
+.sdp-date-nav .btn {
+    min-width: 52px;
+    padding: 7px 6px;
+}
+
+.sdp-table-scroll.sdp-density-compact .sdp-status-table th,
+.sdp-table-scroll.sdp-density-compact .sdp-status-table td {
+    padding: 2px 3px !important;
+    font-size: 10px !important;
+}
+
+.sdp-table-scroll.sdp-density-compact .sdp-status-table .sdp-plan-sub,
+.sdp-table-scroll.sdp-density-compact .sdp-status-table .sdp-plan-shortage {
+    font-size: 8px;
+}
+
+.sdp-status-table .sdp-date-jump > div:first-child {
+    font-size: 12px;
+    font-weight: 700;
 }
 
 .sdp-stock-need-cell {
@@ -1643,6 +1689,82 @@ input[type="time"] {
 
 .sdp-grid-entry-table tr.sdp-row-drop-below td {
     box-shadow: inset 0 -2px 0 0 var(--accent-blue);
+}
+
+/* 행을 따라 시선이 이동하도록 하되, 오늘 강조보다 약하게 표시 */
+.sdp-status-table tbody tr:hover td,
+.sdp-grid-entry-table tbody tr:hover td {
+    background: rgba(59, 130, 246, 0.055) !important;
+}
+
+/* 영업계획 품목별 공정/재고 상태 음영 */
+.sdp-status-table tbody tr.sdp-state-available td:nth-child(-n + 6) {
+    background: rgba(16, 185, 129, 0.18) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-postprocess td:nth-child(-n + 6) {
+    background: rgba(250, 204, 21, 0.24) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-paint-needed td:nth-child(-n + 6) {
+    background: rgba(59, 130, 246, 0.17) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-injection-short td:nth-child(-n + 6) {
+    background: rgba(239, 68, 68, 0.18) !important;
+}
+
+.sdp-status-badge {
+    display: inline-block;
+    margin-left: 4px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 800;
+    line-height: 1.35;
+    vertical-align: 1px;
+    white-space: nowrap;
+}
+
+.sdp-status-available { color: #047857; background: rgba(16, 185, 129, 0.16); }
+.sdp-status-postprocess { color: #a16207; background: rgba(250, 204, 21, 0.22); }
+.sdp-status-paint-needed { color: #1d4ed8; background: rgba(59, 130, 246, 0.16); }
+.sdp-status-injection-short { color: #b91c1c; background: rgba(239, 68, 68, 0.16); }
+.sdp-status-complete { color: var(--text-muted); background: rgba(100, 116, 139, 0.12); }
+.sdp-status-waiting { color: #64748b; background: rgba(100, 116, 139, 0.12); }
+
+.sdp-finished-stock {
+    font-weight: 700;
+    text-align: center !important;
+}
+
+.sdp-finished-qty {
+    line-height: 1.15;
+}
+
+.sdp-coverage {
+    margin-top: 2px;
+    font-size: 8px;
+    font-weight: 800;
+    line-height: 1.1;
+    white-space: nowrap;
+}
+
+.sdp-coverage-full { color: #047857; }
+.sdp-coverage-partial { color: #a16207; }
+.sdp-coverage-short { color: #b91c1c; }
+.sdp-coverage-none { color: var(--text-muted); font-weight: 600; }
+
+/* 현재 완제품 재고가 날짜별 납품계획을 커버하는 구간 */
+.sdp-status-table td.sdp-stock-covered {
+    background: #a8df70 !important;
+}
+
+
+/* 차종이 바뀌는 지점은 얇은 구분선으로 그룹을 표시 */
+.sdp-grid-entry-table tbody tr.sdp-car-group-start td {
+    border-top: 2px solid #94a3b8;
+    box-shadow: inset 0 2px 0 #94a3b8;
 }
 
 .content-area:has(.sdp-page) {
@@ -1812,6 +1934,67 @@ input[type="time"] {
     box-shadow: 4px 0 8px rgba(15, 23, 42, 0.08);
 }
 
+/* 날짜 열 사이를 구분하는 옅은 점선 — 등록 그리드와 현황 표 공통 */
+.sdp-grid-entry-table th:nth-child(n + 7),
+.sdp-grid-entry-table td:nth-child(n + 7),
+.sdp-status-table thead tr:nth-child(2) th:nth-child(n + 7),
+.sdp-status-table tbody td:nth-child(n + 7) {
+    border-right: 1px dotted rgba(100, 116, 139, 0.32) !important;
+}
+
+.sdp-status-table thead tr:first-child th:not(:first-child) {
+    border-right: 1px dotted rgba(100, 116, 139, 0.28) !important;
+}
+
+/* 날짜 헤더를 클릭하면 해당 날짜 열로 가로 이동 */
+.sdp-status-table .sdp-date-jump {
+    display: block;
+    width: 100%;
+    min-width: inherit;
+    margin: -4px -1px;
+    padding: 4px 1px;
+    border: 0;
+    border-radius: 4px;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    line-height: 1.2;
+    text-align: center;
+    cursor: pointer;
+}
+
+.sdp-status-table .sdp-month-header,
+.sdp-status-table th[data-sdp-date] {
+    cursor: grab;
+}
+
+.sdp-status-table .sdp-date-jump {
+    cursor: grab;
+}
+
+.sdp-date-header-dragging,
+.sdp-date-header-dragging * {
+    cursor: grabbing !important;
+    user-select: none !important;
+}
+
+.sdp-status-table .sdp-date-jump:hover,
+.sdp-status-table .sdp-date-jump:focus-visible {
+    outline: 2px solid var(--accent-blue);
+    outline-offset: -2px;
+    background: rgba(59, 130, 246, 0.12);
+}
+
+.sdp-status-table th.sdp-date-jump-active .sdp-date-jump {
+    background: rgba(59, 130, 246, 0.2);
+    box-shadow: inset 0 -2px 0 var(--accent-blue);
+}
+
+.sdp-status-table .sdp-date-weekday {
+    font-size: 9px;
+    font-weight: 600;
+}
+
 @media (max-width: 1400px) {
     .sdp-page {
         --sdp-compact-font: 9px;
@@ -1893,6 +2076,25 @@ input[type="time"] {
     margin-top: 1px;
     font-size: 10px;
     font-weight: 500;
+}
+
+/* 오늘 날짜 열만 강조 — 납품 계획 수량 칸에는 별도 음영을 넣지 않는다. */
+.sdp-status-table th.sdp-today-col,
+.sdp-status-table td.sdp-today-col,
+.sdp-grid-entry-table th.sdp-today-col,
+.sdp-grid-entry-table td.sdp-today-col {
+    background: rgba(59, 130, 246, 0.11) !important;
+    box-shadow: inset 1px 0 0 rgba(37, 99, 235, 0.38), inset -1px 0 0 rgba(37, 99, 235, 0.38);
+}
+
+.sdp-status-table th.sdp-today-col {
+    color: #1d4ed8;
+    font-weight: 800;
+}
+
+/* 오늘 열의 테두리는 유지하되 재고 커버 색을 우선한다. */
+.sdp-status-table td.sdp-today-col.sdp-stock-covered {
+    background: #a8df70 !important;
 }
 
 .sdp-grid-entry-table .sdp-weekday-label {
