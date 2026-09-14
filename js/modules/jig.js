@@ -13,6 +13,7 @@ var JigModule = (function () {
     const LIFE_STANDARD_KEY = 'painting_jig_life_standard_v1';
     const LIFE_STANDARD_IMAGE_KEY = 'painting_jig_life_standard_image_v1';
     const A_LINE_CYCLE = 1092;
+    const A_HANGER_CYCLE = 364; // 도장-A 행거: 1,092 스핀들을 1/3(칸 띄움)만 사용
     const B_LINE_CYCLE = 175;
     const LINE_ORDER_RATE = 1.01; // 101%
     const DEFAULT_PRODUCTION_MARGIN_PCT = 5; // 생산 필요수량 여유분 기본값(%) — 지그별 입력 가능
@@ -788,7 +789,7 @@ var JigModule = (function () {
         if (!job.line) return true;
         if ((jig.line || '') === job.line) return true;
         const applied = Array.isArray(jig.appliedLines) ? jig.appliedLines : [];
-        return applied.some(function (line) { return _normalizeLine(line) === job.line; });
+        return applied.some(function (line) { return _normalizeLine(_baseProcessLine(line)) === job.line; });
     }
 
     function _isPaintingLineValue(lineVal) {
@@ -2629,16 +2630,43 @@ var JigModule = (function () {
         return lines[0] || 'A라인';
     }
 
-    const APPLIED_LINE_OPTIONS = ['도장-A', '도장-B'];
+    const APPLIED_LINE_OPTIONS = ['도장-A 봉', '도장-A 행거', '도장-B'];
+
+    /** 옛 대장의 '도장-A'는 전체 스핀들(1,092)을 쓰던 값이므로 '도장-A 봉'으로 본다 */
+    function _normalizeAppliedLine(line) {
+        const s = String(line || '').trim();
+        if (!s) return '';
+        if (s.includes('B')) return '도장-B';
+        if (s.includes('행거')) return '도장-A 행거';
+        if (s.includes('A')) return '도장-A 봉';
+        return s;
+    }
+
+    function _normalizeAppliedLines(lines) {
+        const out = [];
+        (Array.isArray(lines) ? lines : []).forEach(function (l) {
+            const n = _normalizeAppliedLine(l);
+            if (n && out.indexOf(n) < 0) out.push(n);
+        });
+        return out;
+    }
+
+    /** 제품 기초정보 공정명·작업 라인과 맞출 때 쓰는 기본 라인 (봉/행거 → 도장-A) */
+    function _baseProcessLine(line) {
+        return String(line || '').includes('B') ? '도장-B' : '도장-A';
+    }
 
     function _appliedLineBadges(appliedLines) {
-        const lines = Array.isArray(appliedLines) ? appliedLines.filter(Boolean) : [];
+        const lines = _normalizeAppliedLines(appliedLines);
         if (!lines.length) return '<span style="color:var(--text-muted);">-</span>';
         return lines.map(l => `<span style="background:var(--accent-blue);color:#fff;padding:1px 6px;border-radius:4px;font-size:0.7rem;margin-right:4px;white-space:nowrap;">${_esc(l)}</span>`).join('');
     }
 
     function _lineCycleForAppliedLine(appliedLine) {
-        return String(appliedLine || '').includes('B') ? B_LINE_CYCLE : A_LINE_CYCLE;
+        const line = _normalizeAppliedLine(appliedLine);
+        if (line === '도장-B') return B_LINE_CYCLE;
+        if (line === '도장-A 행거') return A_HANGER_CYCLE;
+        return A_LINE_CYCLE;
     }
 
     function _formatLineValueList(items, className) {
@@ -2653,7 +2681,7 @@ var JigModule = (function () {
     }
 
     function _masterCvtInfos(jig) {
-        const lines = Array.isArray(jig && jig.appliedLines) ? jig.appliedLines.filter(Boolean) : [];
+        const lines = _normalizeAppliedLines(jig && jig.appliedLines);
         const names = _jigPartNames(jig);
         const car = jig && jig.carModel;
         return lines.map(function (line) {
@@ -3344,8 +3372,9 @@ var JigModule = (function () {
         });
         if (!prod) return 0;
         if (appliedLine) {
+            const baseLine = _baseProcessLine(appliedLine);
             for (let i = 1; i <= 4; i++) {
-                if ((prod['process' + i] || '') === appliedLine) {
+                if ((prod['process' + i] || '') === baseLine) {
                     const v = Number(prod['cvt' + i]) || 0;
                     if (v) return v;
                 }
@@ -3421,8 +3450,8 @@ var JigModule = (function () {
 
     function _getAppliedPaintLines() {
         return Array.from(document.querySelectorAll('.jigMasterAppliedLine:checked'))
-            .map(function (el) { return el.value; })
-            .filter(function (line) { return line === '도장-A' || line === '도장-B'; });
+            .map(function (el) { return _normalizeAppliedLine(el.value); })
+            .filter(function (line) { return APPLIED_LINE_OPTIONS.indexOf(line) >= 0; });
     }
 
     function _setMasterNeedDisplays(items) {
@@ -3478,18 +3507,13 @@ var JigModule = (function () {
         const integrated = _isIntegratedJigChecked();
         const integratedCvt = _getIntegratedJigCvt();
         _syncIntegratedJigCvtField();
-        if (autoLines.includes('도장-A')) {
-            const calcA = _calcLineOrderQty(carModel, partName, '도장-A', A_LINE_CYCLE, integrated, integratedCvt);
-            if (calcA.orderQty > 0) totalOrder += calcA.orderQty;
-            displayRows.push({ line: '도장-A', cvt: calcA.masterCvt, productionNeedQty: calcA.productionNeedQty });
-            hints.push('도장-A: ' + calcA.hint);
-        }
-        if (autoLines.includes('도장-B')) {
-            const calcB = _calcLineOrderQty(carModel, partName, '도장-B', B_LINE_CYCLE, integrated, integratedCvt);
-            if (calcB.orderQty > 0) totalOrder += calcB.orderQty;
-            displayRows.push({ line: '도장-B', cvt: calcB.masterCvt, productionNeedQty: calcB.productionNeedQty });
-            hints.push('도장-B: ' + calcB.hint);
-        }
+        APPLIED_LINE_OPTIONS.forEach(function (line) {
+            if (autoLines.indexOf(line) < 0) return;
+            const calc = _calcLineOrderQty(carModel, partName, line, _lineCycleForAppliedLine(line), integrated, integratedCvt);
+            if (calc.orderQty > 0) totalOrder += calc.orderQty;
+            displayRows.push({ line: line, cvt: calc.masterCvt, productionNeedQty: calc.productionNeedQty });
+            hints.push(line + ': ' + calc.hint);
+        });
         _setMasterNeedDisplays(displayRows);
         qtyEl.value = totalOrder > 0 ? totalOrder : '';
         qtyEl.readOnly = true;
@@ -3702,7 +3726,7 @@ var JigModule = (function () {
                     <label class="form-label">발주 수량 (EA)</label>
                     <input type="number" class="form-input" id="jigMasterOrderQty" value="${d.orderQty || ''}" min="0" placeholder="도장-A 자동"${roAttr}>
                     <div id="jigMasterOrderQtyHint" style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">
-                        도장-A: 1,092 × CVT · 도장-B: 175 × CVT → 필요 수량 × 101% = 발주 수량
+                        도장-A 봉: 1,092 × CVT · 도장-A 행거: 364 × CVT · 도장-B: 175 × CVT → 필요 수량 × 101% = 발주 수량
                     </div>
                     <label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:0.8rem;cursor:${readOnly ? 'default' : 'pointer'};">
                         <input type="checkbox" id="jigMasterIntegratedJig" ${d.integratedJig ? 'checked' : ''}${roAttr}
@@ -3722,7 +3746,7 @@ var JigModule = (function () {
                     <div style="display:flex;gap:14px;align-items:center;height:38px;">
                         ${APPLIED_LINE_OPTIONS.map(line => `
                             <label style="display:flex;align-items:center;gap:5px;font-size:0.85rem;cursor:${readOnly ? 'default' : 'pointer'};">
-                                <input type="checkbox" class="jigMasterAppliedLine" value="${_esc(line)}" ${(Array.isArray(d.appliedLines) && d.appliedLines.includes(line)) ? 'checked' : ''}${roAttr}
+                                <input type="radio" name="jigMasterAppliedLine" class="jigMasterAppliedLine" value="${_esc(line)}" ${_normalizeAppliedLines(d.appliedLines).includes(line) ? 'checked' : ''}${roAttr}
                                     onchange="JigModule.recalcMasterOrderQty()">
                                 ${_esc(line)}
                             </label>
@@ -3744,7 +3768,7 @@ var JigModule = (function () {
                             <div id="jigMasterProductionNeedQty" style="font-size:0.86rem;text-align:right;font-weight:800;color:var(--accent-blue);">-</div>
                         </div>
                     </div>
-                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">제품 기초정보 CVT 기준 · A라인 1,092 × CVT × (100% + 여유분) / B라인 175 × CVT × (100% + 여유분)</div>
+                    <div style="font-size:0.72rem;color:var(--text-muted);margin-top:4px;">제품 기초정보 CVT 기준 · A 봉 1,092 / A 행거 364 / B 175 × CVT × (100% + 여유분)</div>
                 </div>
             </div>
             <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-top:4px;">
