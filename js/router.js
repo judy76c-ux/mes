@@ -683,6 +683,7 @@ const Router = (function() {
     function setupSidebarToggle() {
         const hideBtn = document.getElementById('sidebarToggle');
         const showBtn = document.getElementById('sidebarShowBtn');
+        const monitorBtn = document.getElementById('statusMonitorBtn');
         const setHidden = (hidden) => {
             document.body.classList.toggle('sidebar-hidden', hidden);
             try { sessionStorage.setItem(SIDEBAR_STATE_KEY, hidden ? '1' : '0'); } catch(e) {}
@@ -707,6 +708,22 @@ const Router = (function() {
         if (showBtn) {
             showBtn.addEventListener('click', function() {
                 setHidden(false);
+                document.body.classList.remove('monitor-mode');
+            });
+        }
+        if (monitorBtn) {
+            monitorBtn.addEventListener('click', function() {
+                const active = document.body.classList.toggle('monitor-mode');
+                if (active) {
+                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('dashboard');
+                    setHidden(true);
+                    monitorBtn.classList.add('active');
+                    monitorBtn.title = '일반 화면으로 돌아가기';
+                } else {
+                    setHidden(false);
+                    monitorBtn.classList.remove('active');
+                    monitorBtn.title = '현황 모니터 보기';
+                }
             });
         }
     }

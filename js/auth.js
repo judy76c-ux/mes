@@ -1003,7 +1003,9 @@ const AuthModule = (function () {
     function sendInternalMessage(payload) {
         const current = getCurrentUser();
         if (!current) {
-            UIUtils.toast('로그인 후 쪽지를 보낼 수 있습니다.', 'warning');
+            if (payload?.senderName !== '시스템') {
+                UIUtils.toast('로그인 후 쪽지를 보낼 수 있습니다.', 'warning');
+            }
             return false;
         }
         const targetType = String(payload?.targetType || 'user');
@@ -2267,7 +2269,10 @@ const AuthModule = (function () {
     function sendInternalMessage(payload) {
         const current = getCurrentUser();
         if (!current) {
-            UIUtils.toast('로그인 후 메시지를 보낼 수 있습니다.', 'warning');
+            // 시스템 자동 알림은 비로그인 시 조용히 건너뜀 (화면 열 때마다 경고 반복 방지)
+            if (payload?.senderName !== '시스템') {
+                UIUtils.toast('로그인 후 메시지를 보낼 수 있습니다.', 'warning');
+            }
             return false;
         }
         const targetType = String(payload?.targetType || 'user');

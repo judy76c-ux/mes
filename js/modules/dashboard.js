@@ -155,7 +155,25 @@ const DashboardModule = (function() {
     ══════════════════════════════════════════════════════════ */
     function render(container) {
         container.innerHTML = `
-        <div class="fade-in-up" style="display:flex;flex-direction:column;gap:10px;">
+        <div class="dash-monitor-page fade-in-up">
+            <section class="dash-monitor-hero">
+                <div>
+                    <div class="dash-eyebrow"><span class="material-symbols-outlined">monitor_heart</span> LIVE PRODUCTION BOARD</div>
+                    <h1>생산 현황 모니터</h1>
+                    <p>오늘의 생산·설비·입고·출하 흐름을 한눈에 확인합니다.</p>
+                </div>
+                <div class="dash-hero-date"><span class="material-symbols-outlined">today</span><strong>${UIUtils.today()}</strong><small>실시간 현황</small></div>
+            </section>
+            <div id="dashExecutiveSummary" class="dash-executive-summary"></div>
+            <section class="dash-monitor-section">
+                <div class="dash-section-heading"><div><span class="dash-section-kicker">01 / PRODUCTION</span><h2>생산 현황</h2></div><span class="dash-section-note">도장 A·B 계획 대비 진행</span></div>
+                <div id="dashLineProgress" class="dash-line-progress"></div>
+            </section>
+            <section class="dash-monitor-grid">
+                <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">02 / INCOMING</span><h2>수입검사 입고 현황</h2></div><span class="dash-section-note">금일 입고</span></div><div id="dashIncomingSummary"></div></div>
+                <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">03 / SHIPPING</span><h2>금일 출하 일정</h2></div><span class="dash-section-note">영업 계획</span></div><div id="dashShippingSummary"></div></div>
+            </section>
+            <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">04 / ATTENTION</span><h2>설비 점검 · 미등록 알림</h2></div><span class="dash-section-note">즉시 확인 필요</span></div><div id="dashAttentionSummary"></div></section>
             <!-- 생산 현황 타일 (6-col 1행) -->
             <div id="dashProdTiles"></div>
 
@@ -187,6 +205,11 @@ const DashboardModule = (function() {
             <div id="dashImprovementTiles"></div>
         </div>`;
 
+        renderExecutiveSummary();
+        renderLineProgress();
+        renderIncomingSummary();
+        renderShippingSummary();
+        renderAttentionSummary();
         renderProductionTiles();
         renderManagerAlerts();
         renderQualityStdWarnings();
@@ -199,6 +222,65 @@ const DashboardModule = (function() {
         renderBoardSection();
         _bindCacheWarmRefreshOnce();
         _loadSummary();
+    }
+
+    function _todayWorkSummary(line) {
+        const today = UIUtils.today();
+        const plans = (Storage.getAll(STORE.PRODUCTION_PLANS) || []).filter(p => p.date === today && (line ? String(p.line || '').replace(/\s/g, '') === line.replace(/\s/g, '') : true));
+        const works = Storage.getAll(STORE.PAINTING_WORK) || [];
+        const workRows = works.filter(w => w.date === today && (line ? String(w.line || '').replace(/\s/g, '') === line.replace(/\s/g, '') : true));
+        const planQty = plans.reduce((s, p) => s + (Number(p.planQty) || 0), 0);
+        const actualQty = workRows.reduce((s, w) => s + (Number(w.productionQty) || Number(w.inputQty) || 0), 0);
+        const linkedIds = new Set(workRows.filter(w => w.planId).map(w => String(w.planId)));
+        return { planQty, actualQty, rate: planQty ? Math.min(100, Math.round(actualQty / planQty * 100)) : 0, planCount: plans.length, workCount: workRows.length, linkedIds };
+    }
+
+    function renderExecutiveSummary() {
+        const el = document.getElementById('dashExecutiveSummary'); if (!el) return;
+        const today = UIUtils.today();
+        const plans = (Storage.getAll(STORE.PRODUCTION_PLANS) || []).filter(p => p.date === today);
+        const works = (Storage.getAll(STORE.PAINTING_WORK) || []).filter(w => w.date === today);
+        const incoming = (Storage.getAll(STORE.INJECTION_INSPECTIONS) || []).filter(r => String(r.date || '').slice(0, 10) === today);
+        const shipments = (Storage.getAll(STORE.SALES_DELIVERY_PLAN) || []).filter(r => String(r.date || '').slice(0, 10) === today);
+        const cards = [
+            ['assignment', plans.reduce((s, p) => s + (Number(p.planQty) || 0), 0), '오늘 생산 계획', '#4f8cff', 'EA'],
+            ['play_circle', works.reduce((s, w) => s + (Number(w.productionQty) || Number(w.inputQty) || 0), 0), '도장 실적', '#16b981', 'EA'],
+            ['fact_check', incoming.reduce((s, r) => s + (Number(r.incomingQty) || 0), 0), '수입검사 입고', '#f59e0b', 'EA'],
+            ['local_shipping', shipments.reduce((s, r) => s + (Number(r.planQty) || 0), 0), '출하 예정', '#a855f7', 'EA']
+        ];
+        el.innerHTML = cards.map(c => `<div class="dash-kpi-card" style="--kpi-color:${c[3]}"><span class="material-symbols-outlined">${c[0]}</span><div><strong>${UIUtils.formatNumber(c[1])}</strong><small>${c[2]} · ${c[4]}</small></div></div>`).join('');
+    }
+
+    function renderLineProgress() {
+        const el = document.getElementById('dashLineProgress'); if (!el) return;
+        const rows = ['도장-A', '도장-B'].map(line => { const s = _todayWorkSummary(line); return `<div class="dash-line-card"><div class="dash-line-title"><span class="dash-line-dot ${line === '도장-A' ? 'a' : 'b'}"></span><strong>${line}</strong><b>${s.rate}%</b></div><div class="dash-progress-track"><i style="width:${s.rate}%"></i></div><div class="dash-line-metrics"><span>계획 <b>${UIUtils.formatNumber(s.planQty)}</b> EA</span><span>진행 <b>${UIUtils.formatNumber(s.actualQty)}</b> EA</span><span>${s.planCount}건 계획 · ${s.workCount}건 작업</span></div></div>`; });
+        el.innerHTML = rows.join('');
+    }
+
+    function renderIncomingSummary() {
+        const el = document.getElementById('dashIncomingSummary'); if (!el) return;
+        const today = UIUtils.today();
+        const rows = (Storage.getAll(STORE.INJECTION_INSPECTIONS) || []).filter(r => String(r.date || '').slice(0, 10) === today).sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''))).slice(0, 5);
+        el.innerHTML = rows.length ? `<div class="dash-list">${rows.map(r => `<div class="dash-list-row"><span><b>${_esc(r.partName || '품명 미등록')}</b><small>${_esc(r.lotNo || 'LOT 미등록')}</small></span><strong>${UIUtils.formatNumber(r.incomingQty || 0)} <em>EA</em></strong></div>`).join('')}</div><button class="dash-link-btn" onclick="Router.navigate('incoming-overview')">수입검사 전체 보기 →</button>` : `<div class="dash-empty"><span class="material-symbols-outlined">inbox</span><b>금일 입고 내역 없음</b><small>수입검사 등록 시 여기에 표시됩니다.</small></div>`;
+    }
+
+    function renderShippingSummary() {
+        const el = document.getElementById('dashShippingSummary'); if (!el) return;
+        const today = UIUtils.today();
+        const rows = (Storage.getAll(STORE.SALES_DELIVERY_PLAN) || []).filter(r => String(r.date || '').slice(0, 10) === today).slice(0, 5);
+        el.innerHTML = rows.length ? `<div class="dash-list">${rows.map(r => `<div class="dash-list-row"><span><b>${_esc(r.partName || '품명 미등록')}</b><small>${_esc(r.customer || r.company || '영업 출하계획')}</small></span><strong>${UIUtils.formatNumber(r.planQty || 0)} <em>EA</em></strong></div>`).join('')}</div><button class="dash-link-btn" onclick="Router.navigate('sales-delivery-plan')">영업 일정 전체 보기 →</button>` : `<div class="dash-empty"><span class="material-symbols-outlined">event_available</span><b>금일 출하 일정 없음</b><small>영업 출하계획이 등록되면 표시됩니다.</small></div>`;
+    }
+
+    function renderAttentionSummary() {
+        const el = document.getElementById('dashAttentionSummary'); if (!el) return;
+        const today = UIUtils.today();
+        const plans = (Storage.getAll(STORE.PRODUCTION_PLANS) || []).filter(p => p.date === today);
+        const works = (Storage.getAll(STORE.PAINTING_WORK) || []).filter(w => w.date === today);
+        const unregisteredPlan = plans.filter(p => !p.line || !p.planQty).length;
+        const unlinkedWork = works.filter(w => !w.planId).length;
+        const jigAlerts = (typeof JigModule !== 'undefined' && JigModule.getLifeActionJigs) ? JigModule.getLifeActionJigs().length : 0;
+        const items = [['warning_amber', jigAlerts, '지그 교체 알림', 'painting-jig'], ['link_off', unlinkedWork, '계획 미연동 작업', 'painting-process'], ['edit_note', unregisteredPlan, '생산계획 미등록', 'production-plan']];
+        el.innerHTML = items.map(i => `<button class="dash-alert-card ${i[1] ? 'has-alert' : 'is-clear'}" onclick="Router.navigate('${i[3]}')"><span class="material-symbols-outlined">${i[0]}</span><span><b>${i[1] ? i[1] + '건' : '정상'}</b><small>${i[2]}</small></span><span class="material-symbols-outlined arrow">chevron_right</span></button>`).join('');
     }
 
     function _scheduleIdleWork(fn, timeoutMs) {
