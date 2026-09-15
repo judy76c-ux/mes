@@ -71,6 +71,7 @@ const Router = (function() {
 
     const PAGE_TITLES = {
         'dashboard': '대시보드',
+        'status-monitor': '현황 모니터',
         'production-plan': '생산 계획 지시서',
         'equipment-oee': '설비종합효율(OEE)',
         'injection-incoming': '사출 입고',
@@ -483,6 +484,19 @@ const Router = (function() {
 
     function _doNavigate(pageName) {
         currentPage = pageName;
+        if (pageName !== 'status-monitor') {
+            document.body.classList.remove('monitor-mode');
+        }
+        const monitorBtn = document.getElementById('statusMonitorBtn');
+        if (monitorBtn) {
+            const monitorPage = pageName === 'status-monitor';
+            monitorBtn.classList.toggle('active', monitorPage);
+            monitorBtn.title = monitorPage ? '대시보드로 돌아가기' : '현황 모니터 보기';
+            const monitorLabel = monitorBtn.querySelector('.status-monitor-label');
+            const monitorIcon = monitorBtn.querySelector('.material-symbols-outlined');
+            if (monitorLabel) monitorLabel.textContent = monitorPage ? '대시보드' : '현황 모니터';
+            if (monitorIcon) monitorIcon.textContent = monitorPage ? 'dashboard' : 'tv';
+        }
         try { sessionStorage.setItem(PAGE_STATE_KEY, pageName); } catch (e) {}
 
         const navHighlight = _sidebarHighlightPage(pageName);
@@ -684,6 +698,17 @@ const Router = (function() {
         const hideBtn = document.getElementById('sidebarToggle');
         const showBtn = document.getElementById('sidebarShowBtn');
         const monitorBtn = document.getElementById('statusMonitorBtn');
+        const setBrowserFullscreen = (active) => {
+            try {
+                if (active) {
+                    if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+                        document.documentElement.requestFullscreen().catch(() => {});
+                    }
+                } else if (document.fullscreenElement && document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                }
+            } catch (e) {}
+        };
         const setHidden = (hidden) => {
             document.body.classList.toggle('sidebar-hidden', hidden);
             try { sessionStorage.setItem(SIDEBAR_STATE_KEY, hidden ? '1' : '0'); } catch(e) {}
@@ -715,17 +740,35 @@ const Router = (function() {
             monitorBtn.addEventListener('click', function() {
                 const active = document.body.classList.toggle('monitor-mode');
                 if (active) {
-                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('dashboard');
+                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('status-monitor');
                     setHidden(true);
+                    setBrowserFullscreen(true);
                     monitorBtn.classList.add('active');
-                    monitorBtn.title = '일반 화면으로 돌아가기';
+                    monitorBtn.title = '대시보드로 돌아가기';
                 } else {
+                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('dashboard');
                     setHidden(false);
+                    setBrowserFullscreen(false);
                     monitorBtn.classList.remove('active');
                     monitorBtn.title = '현황 모니터 보기';
                 }
             });
         }
+        document.addEventListener('fullscreenchange', function() {
+            const isFullscreen = !!document.fullscreenElement;
+            if (!isFullscreen && document.body.classList.contains('monitor-mode')) {
+                document.body.classList.remove('monitor-mode');
+                setHidden(false);
+                if (monitorBtn) {
+                    monitorBtn.classList.remove('active');
+                    monitorBtn.title = '현황 모니터 보기';
+                    const monitorLabel = monitorBtn.querySelector('.status-monitor-label');
+                    const monitorIcon = monitorBtn.querySelector('.material-symbols-outlined');
+                    if (monitorLabel) monitorLabel.textContent = '현황 모니터';
+                    if (monitorIcon) monitorIcon.textContent = 'tv';
+                }
+            }
+        });
     }
 
     function updateDateTime() {

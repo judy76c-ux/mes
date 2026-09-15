@@ -268,6 +268,7 @@ const App = (function() {
     // 모든 모듈을 라우터에 등록
     function registerModules() {
         Router.registerModule('dashboard', DashboardModule);
+        Router.registerModule('status-monitor', StatusMonitorModule);
         Router.registerModule('board', BoardModule);
         Router.registerModule('production-plan', ProductionPlanModule);
         Router.registerModule('equipment-oee', EquipmentOeeModule);

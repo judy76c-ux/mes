@@ -590,7 +590,7 @@ const AuthModule = (function () {
 
     /* 역할 × 페이지 접근 허용 여부 */
     function isPageAccessGranted(roleKey, pageId) {
-        if (pageId === 'dashboard') return true;
+        if (pageId === 'dashboard' || pageId === 'status-monitor') return true;
         // 구 도장작업 페이지 → A/B 중 하나라도 있으면 허용
         if (pageId === 'painting-work') {
             return isPageAccessGranted(roleKey, 'painting-work-a') || isPageAccessGranted(roleKey, 'painting-work-b');
@@ -705,6 +705,22 @@ const AuthModule = (function () {
     function _getMessages() {
         _primeLocalAuthCache();
         return Array.isArray(_messagesCache) ? _messagesCache : [];
+    }
+    function getAllMessages() {
+        return _getMessages().slice();
+    }
+    async function refreshMessages() {
+        try {
+            if (typeof Storage !== 'undefined' && Storage.refresh && DB.STORES.CONFIG) {
+                await Storage.refresh(DB.STORES.CONFIG);
+            }
+            const rows = await Storage.getConfigValue(AUTH_MESSAGES_CONFIG_KEY).catch(() => null);
+            if (Array.isArray(rows)) {
+                _messagesCache = rows;
+                await _writePersistedJson(MESSAGES_KEY, rows);
+            }
+        } catch (e) {}
+        return getAllMessages();
     }
     function _saveMessages(rows) {
         _messagesCache = Array.isArray(rows) ? rows : [];
@@ -2496,6 +2512,8 @@ const AuthModule = (function () {
         checkSettingsAuth,
         requireAdminAuth,
         getUnreadInboxCount,
+        getAllMessages,
+        refreshMessages,
         sendInternalMessage,
         sendTelegramNotify,
         sendKindNotify,

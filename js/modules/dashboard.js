@@ -15,7 +15,8 @@ const DashboardModule = (function() {
         if (typeof ApiClient === 'undefined' || typeof ApiClient.getDashboardSummary !== 'function') return;
         try {
             _summary = await ApiClient.getDashboardSummary(UIUtils.today());
-            renderProductionTiles();
+            renderExecutiveSummary();
+            renderLineProgress();
         } catch (e) {
             console.warn('[Dashboard] summary load failed:', e);
         }
@@ -42,7 +43,7 @@ const DashboardModule = (function() {
 
         _cacheWarmUnsub = Storage.onCacheWarm(function(storeName, meta) {
             // 현재 화면이 대시보드일 때만 (컨테이너 존재로 판단)
-            if (!document.getElementById('dashProdTiles')) return;
+            if (!document.getElementById('dashLineProgress') && !document.getElementById('dashMonitorTiles')) return;
             if (storeName !== '*' && !watch.has(storeName)) return;
 
             // 과도한 리렌더 방지: 1회만, 약간 지연
@@ -125,7 +126,7 @@ const DashboardModule = (function() {
         const leftBdr = '4px';
 
         return `
-        <div onclick="${onClick}"
+        <div class="dash-tile" onclick="${onClick}"
              style="padding:${pad};border-radius:${radius};
                     border:1px solid ${pal.border};border-left:${leftBdr} solid ${C};
                     background:${pal.bg};cursor:pointer;
@@ -153,7 +154,36 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        메인 렌더
     ══════════════════════════════════════════════════════════ */
+    function renderStandardDashboard(container) {
+        container.innerHTML = `
+        <div class="dash-standard-page fade-in-up">
+            <div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div>
+            <div id="dashManagerAlerts"></div>
+            <div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div>
+            <div id="dashPaintPending"></div>
+            <div id="dashJigLifeAlerts"></div>
+            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div>
+            <div id="dashMonitorTiles"></div>
+            <div id="dashImprovementTiles"></div>
+        </div>`;
+        renderIncomingSummary();
+        renderManagerAlerts();
+        renderQualityStdWarnings();
+        renderShippingStandby();
+        renderPaintPending();
+        renderAlertRow().catch(e => console.warn('[Dashboard] 경보 렌더 실패:', e));
+        _scheduleIdleWork(renderJigLifeAlerts);
+        _scheduleIdleWork(renderMonitorTiles);
+        renderImprovementTiles();
+        _bindCacheWarmRefreshOnce();
+        _loadSummary();
+    }
+
     function render(container) {
+        if (!document.body.classList.contains('monitor-mode')) {
+            renderStandardDashboard(container);
+            return;
+        }
         container.innerHTML = `
         <div class="dash-monitor-page fade-in-up">
             <section class="dash-monitor-hero">
@@ -173,10 +203,9 @@ const DashboardModule = (function() {
                 <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">02 / INCOMING</span><h2>수입검사 입고 현황</h2></div><span class="dash-section-note">금일 입고</span></div><div id="dashIncomingSummary"></div></div>
                 <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">03 / SHIPPING</span><h2>금일 출하 일정</h2></div><span class="dash-section-note">영업 계획</span></div><div id="dashShippingSummary"></div></div>
             </section>
-            <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">04 / ATTENTION</span><h2>설비 점검 · 미등록 알림</h2></div><span class="dash-section-note">즉시 확인 필요</span></div><div id="dashAttentionSummary"></div></section>
-            <!-- 생산 현황 타일 (6-col 1행) -->
-            <div id="dashProdTiles"></div>
-
+            <section class="dash-monitor-section dash-warehouse-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">04 / MATERIAL WAREHOUSE</span><h2>자재 창고 입출고 · 현황</h2></div><span class="dash-section-note">사출 · 도료</span></div><div id="dashWarehouseSummary" class="dash-warehouse-grid"></div></section>
+            <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">05 / ATTENTION</span><h2>설비 점검 · 미등록 알림</h2></div><span class="dash-section-note">즉시 확인 필요</span></div><div id="dashAttentionSummary"></div></section>
+            <section class="dash-monitor-section dash-notification-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">06 / NOTIFICATIONS</span><h2>알림 발송 현황</h2></div><span class="dash-section-note">대상 · 사유 · 발송시각</span></div><div id="dashNotificationSummary"></div></section>
             <!-- 관리자 보고 누락 -->
             <div id="dashManagerAlerts"></div>
 
@@ -198,9 +227,6 @@ const DashboardModule = (function() {
             <!-- 점검/관리 타일 -->
             <div id="dashMonitorTiles"></div>
 
-            <!-- 운영 게시판 -->
-            <div id="dashBoardSection"></div>
-
             <!-- 하단: 개선활동 -->
             <div id="dashImprovementTiles"></div>
         </div>`;
@@ -209,8 +235,9 @@ const DashboardModule = (function() {
         renderLineProgress();
         renderIncomingSummary();
         renderShippingSummary();
+        renderWarehouseSummary();
         renderAttentionSummary();
-        renderProductionTiles();
+        renderNotificationSummary();
         renderManagerAlerts();
         renderQualityStdWarnings();
         renderShippingStandby();
@@ -219,7 +246,6 @@ const DashboardModule = (function() {
         _scheduleIdleWork(renderJigLifeAlerts);  // 지그 사용횟수 집계가 무거워 유휴 시간에
         _scheduleIdleWork(renderMonitorTiles);   // async + config fetch
         renderImprovementTiles();
-        renderBoardSection();
         _bindCacheWarmRefreshOnce();
         _loadSummary();
     }
@@ -248,27 +274,85 @@ const DashboardModule = (function() {
             ['fact_check', incoming.reduce((s, r) => s + (Number(r.incomingQty) || 0), 0), '수입검사 입고', '#f59e0b', 'EA'],
             ['local_shipping', shipments.reduce((s, r) => s + (Number(r.planQty) || 0), 0), '출하 예정', '#a855f7', 'EA']
         ];
-        el.innerHTML = cards.map(c => `<div class="dash-kpi-card" style="--kpi-color:${c[3]}"><span class="material-symbols-outlined">${c[0]}</span><div><strong>${UIUtils.formatNumber(c[1])}</strong><small>${c[2]} · ${c[4]}</small></div></div>`).join('');
+        const visibleCards = document.body.classList.contains('monitor-mode') ? cards.filter(c => Number(c[1]) > 0) : cards;
+        if (document.body.classList.contains('monitor-mode') && !visibleCards.length) { el.style.display = 'none'; return; }
+        el.style.display = '';
+        el.innerHTML = visibleCards.map(c => `<div class="dash-kpi-card" style="--kpi-color:${c[3]}"><span class="material-symbols-outlined">${c[0]}</span><div><strong>${UIUtils.formatNumber(c[1])}</strong><small>${c[2]} · ${c[4]}</small></div></div>`).join('');
     }
 
     function renderLineProgress() {
         const el = document.getElementById('dashLineProgress'); if (!el) return;
-        const rows = ['도장-A', '도장-B'].map(line => { const s = _todayWorkSummary(line); return `<div class="dash-line-card"><div class="dash-line-title"><span class="dash-line-dot ${line === '도장-A' ? 'a' : 'b'}"></span><strong>${line}</strong><b>${s.rate}%</b></div><div class="dash-progress-track"><i style="width:${s.rate}%"></i></div><div class="dash-line-metrics"><span>계획 <b>${UIUtils.formatNumber(s.planQty)}</b> EA</span><span>진행 <b>${UIUtils.formatNumber(s.actualQty)}</b> EA</span><span>${s.planCount}건 계획 · ${s.workCount}건 작업</span></div></div>`; });
-        el.innerHTML = rows.join('');
+        const today = UIUtils.today();
+        const plans = Storage.getAll(STORE.PRODUCTION_PLANS) || [];
+        const works = Storage.getAll(STORE.PAINTING_WORK) || [];
+        const monitorOnly = document.body.classList.contains('monitor-mode');
+        const rows = ['도장-A', '도장-B'].map(line => {
+            const s = _todayWorkSummary(line);
+            const lineKey = line.replace(/\s/g, '');
+            const linePlans = plans.filter(p => p.date === today && String(p.line || '').replace(/\s/g, '') === lineKey);
+            if (monitorOnly && !linePlans.length && !s.workCount) return '';
+            const items = linePlans.slice(0, 4).map(p => {
+                const actual = works.filter(w => w.date === today && String(w.planId || '') === String(p.id)).reduce((sum, w) => sum + (Number(w.productionQty) || Number(w.inputQty) || 0), 0);
+                const planQty = Number(p.planQty) || 0;
+                const rate = planQty ? Math.min(100, Math.round(actual / planQty * 100)) : 0;
+                const detail = [p.carModel, p.color].filter(Boolean).join(' · ');
+                return `<div class="dash-production-item"><span><b>${_esc(p.partName || '품목 미등록')}</b><small>${_esc(detail || '상세정보 없음')}</small></span><span class="dash-item-qty">${UIUtils.formatNumber(actual)} / ${UIUtils.formatNumber(planQty)} <em>EA</em></span><i><b style="width:${rate}%"></b></i></div>`;
+            }).join('');
+            const more = linePlans.length > 4 ? `<div class="dash-item-more">외 ${linePlans.length - 4}개 품목 더 있음</div>` : '';
+            return `<div class="dash-line-card"><div class="dash-line-title"><span class="dash-line-dot ${line === '도장-A' ? 'a' : 'b'}"></span><strong>${line}</strong><b>${s.rate}%</b></div><div class="dash-progress-track"><i style="width:${s.rate}%"></i></div><div class="dash-line-metrics"><span>계획 <b>${UIUtils.formatNumber(s.planQty)}</b> EA</span><span>진행 <b>${UIUtils.formatNumber(s.actualQty)}</b> EA</span><span>${s.planCount}건 계획 · ${s.workCount}건 작업</span></div><div class="dash-production-items">${items || '<div class="dash-item-empty">금일 생산 품목이 없습니다.</div>'}${more}</div></div>`;
+        });
+        const unregistered = plans.filter(p => p.date === today && !p.line);
+        if (unregistered.length) rows.push(`<div class="dash-unregistered-production"><span class="material-symbols-outlined">warning</span><b>라인 미등록 생산계획 ${unregistered.length}건</b><small>${unregistered.slice(0, 2).map(p => _esc(p.partName || '품목 미등록')).join(' · ')}</small></div>`);
+        const visibleRows = rows.filter(Boolean);
+        const section = el.closest('.dash-monitor-section');
+        if (monitorOnly && !visibleRows.length) { if (section) section.style.display = 'none'; return; }
+        if (section) section.style.display = '';
+        el.innerHTML = visibleRows.join('');
     }
 
     function renderIncomingSummary() {
         const el = document.getElementById('dashIncomingSummary'); if (!el) return;
         const today = UIUtils.today();
-        const rows = (Storage.getAll(STORE.INJECTION_INSPECTIONS) || []).filter(r => String(r.date || '').slice(0, 10) === today).sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''))).slice(0, 5);
-        el.innerHTML = rows.length ? `<div class="dash-list">${rows.map(r => `<div class="dash-list-row"><span><b>${_esc(r.partName || '품명 미등록')}</b><small>${_esc(r.lotNo || 'LOT 미등록')}</small></span><strong>${UIUtils.formatNumber(r.incomingQty || 0)} <em>EA</em></strong></div>`).join('')}</div><button class="dash-link-btn" onclick="Router.navigate('incoming-overview')">수입검사 전체 보기 →</button>` : `<div class="dash-empty"><span class="material-symbols-outlined">inbox</span><b>금일 입고 내역 없음</b><small>수입검사 등록 시 여기에 표시됩니다.</small></div>`;
+        const injectionRows = (Storage.getAll(STORE.INJECTION_INSPECTIONS) || []).filter(r => String(r.date || '').slice(0, 10) === today).map(r => ({ ...r, inspectionType: '사출' }));
+        const paintRows = (Storage.getAll(STORE.PAINT_INCOMING_INSPECTIONS) || []).filter(r => String(r.date || '').slice(0, 10) === today).map(r => ({ ...r, partName: r.partName || r.paintName, inspectionType: '도료' }));
+        const rows = injectionRows.concat(paintRows).sort((a, b) => String(b.id || '').localeCompare(String(a.id || ''))).slice(0, 8);
+        const panel = el.closest('.dash-monitor-panel');
+        if (document.body.classList.contains('monitor-mode') && !rows.length) { if (panel) panel.style.display = 'none'; return; }
+        if (panel) panel.style.display = '';
+        el.innerHTML = rows.length ? `<div class="dash-list">${rows.map(r => `<div class="dash-list-row"><span><b>${_esc(r.partName || '품명 미등록')}</b><small>${_esc(r.inspectionType || '검사')} · ${_esc(r.lotNo || 'LOT 미등록')}</small></span><strong>${UIUtils.formatNumber(r.incomingQty || 0)} <em>EA</em></strong></div>`).join('')}</div><button class="dash-link-btn" onclick="Router.navigate('incoming-overview')">수입검사 전체 보기 →</button>` : `<div class="dash-empty"><span class="material-symbols-outlined">inbox</span><b>금일 입고 내역 없음</b><small>수입검사 등록 시 여기에 표시됩니다.</small></div>`;
     }
 
     function renderShippingSummary() {
         const el = document.getElementById('dashShippingSummary'); if (!el) return;
         const today = UIUtils.today();
         const rows = (Storage.getAll(STORE.SALES_DELIVERY_PLAN) || []).filter(r => String(r.date || '').slice(0, 10) === today).slice(0, 5);
+        const panel = el.closest('.dash-monitor-panel');
+        if (document.body.classList.contains('monitor-mode') && !rows.length) { if (panel) panel.style.display = 'none'; return; }
+        if (panel) panel.style.display = '';
         el.innerHTML = rows.length ? `<div class="dash-list">${rows.map(r => `<div class="dash-list-row"><span><b>${_esc(r.partName || '품명 미등록')}</b><small>${_esc(r.customer || r.company || '영업 출하계획')}</small></span><strong>${UIUtils.formatNumber(r.planQty || 0)} <em>EA</em></strong></div>`).join('')}</div><button class="dash-link-btn" onclick="Router.navigate('sales-delivery-plan')">영업 일정 전체 보기 →</button>` : `<div class="dash-empty"><span class="material-symbols-outlined">event_available</span><b>금일 출하 일정 없음</b><small>영업 출하계획이 등록되면 표시됩니다.</small></div>`;
+    }
+
+    function renderWarehouseSummary() {
+        const el = document.getElementById('dashWarehouseSummary'); if (!el) return;
+        const today = UIUtils.today();
+        const configs = [
+            { store: STORE.INJECTION_INVENTORY, name:'사출 자재', unit:'EA', color:'#8b5cf6', icon:'warehouse', page:'warehouse-overview' },
+            { store: STORE.PAINT_INVENTORY, name:'도료 자재', unit:'KG', color:'#0891b2', icon:'format_paint', page:'paint-inventory' }
+        ];
+        const cards = configs.map(cfg => {
+            const records = cfg.store ? (Storage.getAll(cfg.store) || []) : [];
+            const todayRows = records.filter(r => String(r.date || '').slice(0, 10) === today);
+            const inbound = todayRows.filter(r => r.type === '입고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+            const outbound = todayRows.filter(r => r.type === '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+            const stock = typeof InvCalc !== 'undefined' && InvCalc.totalStock ? InvCalc.totalStock(records) : records.reduce((s, r) => s + (r.type === '출고' ? -1 : 1) * (Number(r.quantity) || 0), 0);
+            const moves = todayRows.filter(r => r.type === '입고' || r.type === '출고').slice(-3).reverse();
+            if (!records.length) return '';
+            return `<div class="dash-warehouse-card" style="--warehouse-color:${cfg.color}"><div class="dash-warehouse-title"><span class="material-symbols-outlined">${cfg.icon}</span><b>${cfg.name}</b><button onclick="Router.navigate('${cfg.page}')">상세 →</button></div><div class="dash-warehouse-metrics"><span><b>${UIUtils.formatNumber(stock)}</b><small>현재고 ${cfg.unit}</small></span><span><b>${UIUtils.formatNumber(inbound)}</b><small>금일 입고</small></span><span><b>${UIUtils.formatNumber(outbound)}</b><small>금일 출고</small></span></div><div class="dash-warehouse-moves">${moves.length ? moves.map(r => `<span class="${r.type === '출고' ? 'out' : 'in'}"><i>${r.type === '출고' ? '출' : '입'}</i>${_esc(r.partName || r.materialName || r.paintName || '품목 미등록')} <b>${UIUtils.formatNumber(r.quantity || 0)} ${cfg.unit}</b></span>`).join('') : '<small>금일 입출고 기록 없음</small>'}</div></div>`;
+        }).filter(Boolean);
+        const section = el.closest('.dash-warehouse-section');
+        if (document.body.classList.contains('monitor-mode') && !cards.length) { if (section) section.style.display = 'none'; return; }
+        if (section) section.style.display = '';
+        el.innerHTML = cards.join('');
     }
 
     function renderAttentionSummary() {
@@ -279,8 +363,35 @@ const DashboardModule = (function() {
         const unregisteredPlan = plans.filter(p => !p.line || !p.planQty).length;
         const unlinkedWork = works.filter(w => !w.planId).length;
         const jigAlerts = (typeof JigModule !== 'undefined' && JigModule.getLifeActionJigs) ? JigModule.getLifeActionJigs().length : 0;
-        const items = [['warning_amber', jigAlerts, '지그 교체 알림', 'painting-jig'], ['link_off', unlinkedWork, '계획 미연동 작업', 'painting-process'], ['edit_note', unregisteredPlan, '생산계획 미등록', 'production-plan']];
-        el.innerHTML = items.map(i => `<button class="dash-alert-card ${i[1] ? 'has-alert' : 'is-clear'}" onclick="Router.navigate('${i[3]}')"><span class="material-symbols-outlined">${i[0]}</span><span><b>${i[1] ? i[1] + '건' : '정상'}</b><small>${i[2]}</small></span><span class="material-symbols-outlined arrow">chevron_right</span></button>`).join('');
+        const fpStore = DB.STORES.EQUIP_FPROOF_LOG;
+        const fpDone = fpStore ? new Set((Storage.getAll(fpStore) || []).filter(r => r.date === today).map(r => r.itemKey)).size : 0;
+        const fpMissing = Math.max(0, FPROOF_ITEMS.length - fpDone);
+        const items = [['warning_amber', jigAlerts, '지그 교체 알림', 'painting-jig'], ['fact_check', fpMissing, '설비 일일점검 미완료', 'prod-equipment'], ['link_off', unlinkedWork, '계획 미연동 작업', 'painting-process'], ['edit_note', unregisteredPlan, '생산계획 미등록', 'production-plan']];
+        const visibleItems = document.body.classList.contains('monitor-mode') ? items.filter(i => i[1] > 0) : items;
+        const section = el.closest('.dash-attention-section');
+        if (document.body.classList.contains('monitor-mode') && !visibleItems.length) { if (section) section.style.display = 'none'; return; }
+        if (section) section.style.display = '';
+        el.innerHTML = visibleItems.map(i => `<button class="dash-alert-card ${i[1] ? 'has-alert' : 'is-clear'}" onclick="Router.navigate('${i[3]}')"><span class="material-symbols-outlined">${i[0]}</span><span><b>${i[1] ? i[1] + '건' : '정상'}</b><small>${i[2]}</small></span><span class="material-symbols-outlined arrow">chevron_right</span></button>`).join('');
+    }
+
+    function renderNotificationSummary() {
+        const el = document.getElementById('dashNotificationSummary');
+        if (!el || typeof AuthModule === 'undefined' || typeof AuthModule.getAllMessages !== 'function') return;
+        const messages = AuthModule.getAllMessages()
+            .filter(m => m && m.sentAt)
+            .sort((a, b) => String(b.sentAt).localeCompare(String(a.sentAt)));
+        const section = el.closest('.dash-notification-section');
+        if (document.body.classList.contains('monitor-mode') && !messages.length) { if (section) section.style.display = 'none'; return; }
+        if (section) section.style.display = '';
+        const rows = messages.map(m => {
+            const recipients = Array.isArray(m.recipients) && m.recipients.length
+                ? m.recipients.map(r => r.type === 'all' ? '전체 사용자' : (r.label || r.id || '')).filter(Boolean).join(', ')
+                : '수신자 미상';
+            const when = new Date(m.sentAt);
+            const time = Number.isNaN(when.getTime()) ? String(m.sentAt).slice(0, 16) : when.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+            return `<div class="dash-notification-row"><span class="dash-notification-status ${m.priority === 'high' ? 'high' : ''}"><span class="material-symbols-outlined">${m.priority === 'high' ? 'priority_high' : 'notifications'}</span></span><span class="dash-notification-main"><b>${_esc(m.title || '알림')}</b><small>${_esc(m.body || '')}</small></span><span class="dash-notification-to"><b>수신: ${_esc(recipients)}</b><small>발송: ${_esc(m.senderName || '시스템')} · ${_esc(m.category || '일반')}</small></span><time>${_esc(time)}</time></div>`;
+        }).join('');
+        el.innerHTML = `<div class="dash-notification-list">${rows}</div>`;
     }
 
     function _scheduleIdleWork(fn, timeoutMs) {
@@ -1138,6 +1249,8 @@ const DashboardModule = (function() {
 
         const storeName = DB.STORES.PROD_IMPROVEMENT_ACTIVITIES;
         const rows = storeName ? (Storage.getAll(storeName) || []) : [];
+        if (document.body.classList.contains('monitor-mode') && !rows.length) { el.style.display = 'none'; return; }
+        el.style.display = '';
         const month = UIUtils.today().slice(0, 7);
         const monthRows = rows.filter(r => String(r.date || r.createdAt || '').slice(0, 7) === month);
 
