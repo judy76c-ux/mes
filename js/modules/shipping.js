@@ -111,11 +111,16 @@ const ShippingStandbyModule = (function() {
 
                 <!-- ① 검사 대기 섹션 -->
                 <div class="card" style="margin-bottom:20px;">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
                             <span class="material-symbols-outlined" style="color:var(--accent-orange);">pending_actions</span>
                             검사 대기
                         </h4>
+                        <button class="btn btn-sm btn-outline" onclick="ShippingStandbyModule.auditLaser()"
+                            style="margin-left:auto;padding:4px 10px;font-size:0.8rem;">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">rule</span>
+                            레이져 대조
+                        </button>
                     </div>
                     <div class="card-body" style="padding:0;min-width:0;">
                         ${_SS_WAIT_TABLE_STYLE}
@@ -130,6 +135,7 @@ const ShippingStandbyModule = (function() {
                                         <th class="col-color">컬러</th>
                                         <th class="col-lot">도장 LOT</th>
                                         <th class="col-lot">사출 LOT</th>
+                                        <th class="col-lot">레이져 LOT</th>
                                         <th class="col-num">수량</th>
                                         <th class="col-box">박스수</th>
                                         <th class="col-cust">납품처</th>
@@ -256,7 +262,7 @@ const ShippingStandbyModule = (function() {
         if (!waitingBody) return;
 
         if (!waiting.length) {
-            waitingBody.innerHTML = `<tr><td colspan="12" style="text-align:center;padding:32px;color:var(--text-muted);">
+            waitingBody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:32px;color:var(--text-muted);">
                 <span class="material-symbols-outlined" style="font-size:2rem;display:block;margin-bottom:8px;opacity:0.3;">check_circle</span>
                 현재 검사 대기 품목이 없습니다.</td></tr>`;
             return;
@@ -285,6 +291,7 @@ const ShippingStandbyModule = (function() {
                 <td class="col-color">${_esc(d.color || '-')}</td>
                 <td class="col-lot">${_esc(d.paintingDate || '-')}</td>
                 <td class="col-lot">${_esc(d.lotNo || '-')}</td>
+                <td class="col-lot">${_esc(d.laserLot || d.laserWorkDate || '-')}</td>
                 <td class="col-num" style="font-weight:600;">${UIUtils.formatNumber(d.goodQty || d.inspectionQty || 0)}</td>
                 <td class="col-box" style="font-weight:700;color:var(--accent-blue);">${d.boxCount > 0 ? UIUtils.formatNumber(d.boxCount) + ' BOX' : '-'}</td>
                 <td class="col-cust" style="font-size:0.85rem;">${_esc(d.customer || '-')}</td>
@@ -587,11 +594,11 @@ const ShippingStandbyModule = (function() {
     function exportHistory() {
         const data = _historyRows && _historyRows.length ? _historyRows : [];
         if (!data.length) { UIUtils.toast('데이터가 없습니다.', 'warning'); return; }
-        const headers = ['검사일', '납품처', '차종', '제품명', '컬러', '도장LOT', '사출LOT',
+        const headers = ['검사일', '납품처', '차종', '제품명', '컬러', '도장LOT', '사출LOT', '레이져LOT',
             'LOT수량', '샘플수', '불량수', '판정', '검사자', '비고'];
         const rows = data.map(d => [
             d.date, d.customer||'', d.carModel||'', d.partName||'', d.color||'',
-            d.paintingDate||'', d.lotNo||'',
+            d.paintingDate||'', d.lotNo||'', d.laserLot||d.laserWorkDate||'',
             d.lotSize||0, d.sampleQty||0, d.defectQty||0,
             d.result||'', d.inspector||'', d.note||''
         ]);
@@ -2864,8 +2871,391 @@ const ShippingStandbyModule = (function() {
         return AuthModule.canWritePage('shipping-standby');
     }
 
+    /* ══════════════════════════════════════════════════════════
+       레이져 외관검사 ↔ 출하검사 대조 (누락 / 중복 점검)
+       레이져 검사(포장수량>0) → 출하검사 대기 → 출하검사 체인을 검증한다.
+    ══════════════════════════════════════════════════════════ */
+    const _AUDIT_DAYS = 120;
+
+    function _auditIsWip(carModel, partName) {
+        return typeof LaserWipModule !== 'undefined'
+            && typeof LaserWipModule.isAfterLaserDrainProduct === 'function'
+            && LaserWipModule.isAfterLaserDrainProduct(carModel || '', partName || '');
+    }
+
+    function _auditDayDiff(a, b) {
+        const da = Date.parse(String(a || '').slice(0, 10));
+        const db = Date.parse(String(b || '').slice(0, 10));
+        if (isNaN(da) || isNaN(db)) return 999;
+        return Math.abs(da - db) / 86400000;
+    }
+
+    // 대기 기록이 지워졌어도 출하검사 이력에 같은 건이 남아 있는지 확인한다.
+    // 차종·품명 일치 + 검사수량 일치 + 검사일 ±10일(출하검사는 며칠 뒤 진행될 수 있음).
+    function _findShippedInspection(pool, insp, packQty) {
+        const car = String(insp.carModel || '').trim();
+        const part = String(insp.partName || '').trim();
+        let best = null, bestDiff = 999;
+        pool.forEach(function(c) {
+            if (c.used) return;
+            const si = c.si;
+            if (String(si.carModel || '').trim() !== car) return;
+            if (String(si.partName || '').trim() !== part) return;
+            if (Number(si.lotSize || 0) !== Number(packQty)) return;
+            const diff = Math.min(
+                _auditDayDiff(si.date, insp.date),
+                _auditDayDiff(si.laserLot, insp.date)
+            );
+            if (diff > 10) return;
+            if (diff < bestDiff) { best = c; bestDiff = diff; }
+        });
+        return best;
+    }
+
+    // 링크가 끊긴 대기 기록 중 이 레이져 검사와 같은 건으로 볼 수 있는 항목을 찾는다.
+    // 차종·품명 일치 + 수량 일치 + 등록일 ±3일 이내를 동일 건으로 본다.
+    function _findUnlinkedStandby(pool, insp, packQty) {
+        const car = String(insp.carModel || '').trim();
+        const part = String(insp.partName || '').trim();
+        const color = String(insp.color || '').trim();
+        let best = null, bestDiff = 999;
+        pool.forEach(function(c) {
+            if (c.used) return;
+            const sb = c.sb;
+            if (String(sb.carModel || '').trim() !== car) return;
+            if (String(sb.partName || '').trim() !== part) return;
+            const sbColor = String(sb.color || '').trim();
+            if (color && sbColor && color !== sbColor) return;
+            if (Number(sb.goodQty || sb.inspectionQty || 0) !== Number(packQty)) return;
+            const diff = _auditDayDiff(sb.date, insp.date);
+            if (diff > 3) return;
+            if (diff < bestDiff) { best = c; bestDiff = diff; }
+        });
+        return best;
+    }
+
+    function _laserAuditData() {
+        const insps = (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).slice();
+        const sbAll = Storage.getAll(SB_STORE) || [];
+        const siAll = Storage.getAll(SI_STORE) || [];
+        const from = new Date(Date.now() - _AUDIT_DAYS * 86400000).toISOString().slice(0, 10);
+
+        const sbByInsp = {};
+        sbAll.forEach(function(sb) {
+            const key = String(sb.laserInspectionId || '');
+            if (!key) return;
+            (sbByInsp[key] = sbByInsp[key] || []).push(sb);
+        });
+        const siByStandby = {};
+        siAll.forEach(function(si) {
+            const key = String(si.standbyId || '');
+            if (!key) return;
+            (siByStandby[key] = siByStandby[key] || []).push(si);
+        });
+
+        const issues = [];
+        const stats = { total: 0, ok: 0, waiting: 0, missing: 0, dup: 0, skipped: 0, orphan: 0, link: 0, shipped: 0 };
+
+        // 대기 레코드가 삭제된 뒤에도 남아 있는 출하검사 이력 풀
+        const shippedPool = siAll
+            .filter(function(si) {
+                if (si.laserInspectionId) {
+                    return !Storage.getById(DB.STORES.LASER_INSPECTIONS, si.laserInspectionId);
+                }
+                return !si.standbyId || !Storage.getById(SB_STORE, si.standbyId);
+            })
+            .map(function(si) { return { si: si, used: false }; });
+
+        // laserInspectionId 링크가 없는(또는 끊긴) 레이져 출처 대기 기록 풀 — 날짜 무관하게 전체를 본다.
+        const unlinkedPool = sbAll
+            .filter(function(sb) {
+                if (String(sb.source || '') !== 'laser_inspection') return false;
+                if (!sb.laserInspectionId) return true;
+                return !Storage.getById(DB.STORES.LASER_INSPECTIONS, sb.laserInspectionId);
+            })
+            .map(function(sb) { return { sb: sb, used: false }; });
+
+        insps.filter(function(i) { return String(i.date || '') >= from; })
+             .sort(function(a, b) { return String(b.date || '').localeCompare(String(a.date || '')); })
+             .forEach(function(insp) {
+            stats.total++;
+            const packQty = Number(insp.packQty) || 0;
+            const base = {
+                inspId: insp.id, date: insp.date || '', carModel: insp.carModel || '',
+                partName: insp.partName || '', color: insp.color || '', packQty: packQty
+            };
+            if (packQty <= 0) { stats.skipped++; return; }
+            if (_auditIsWip(insp.carModel, insp.partName)) { stats.skipped++; return; }
+
+            const sbs = sbByInsp[String(insp.id)] || [];
+            if (!sbs.length) {
+                // laserInspectionId 링크만 끊긴 과거 데이터일 수 있으므로 실제 대기/출하검사 기록을 먼저 찾는다.
+                const cand = _findUnlinkedStandby(unlinkedPool, insp, packQty);
+                if (cand) {
+                    cand.used = true;
+                    stats.link++;
+                    issues.push(Object.assign({
+                        kind: 'link', desc: '대기 기록 연결 끊김(복구 가능)', standbyId: cand.sb.id
+                    }, base));
+                    return;
+                }
+                const shipped = _findShippedInspection(shippedPool, insp, packQty);
+                if (shipped) {
+                    shipped.used = true;
+                    stats.shipped++;
+                    issues.push(Object.assign({
+                        kind: 'shipped', desc: '출하검사 완료(대기 기록만 삭제됨)',
+                        inspectionId: shipped.si.id
+                    }, base));
+                    return;
+                }
+                stats.missing++;
+                issues.push(Object.assign({ kind: 'missing', desc: '출하검사 대기 미등록' }, base));
+                return;
+            }
+            if (sbs.length > 1) {
+                stats.dup++;
+                issues.push(Object.assign({
+                    kind: 'dup',
+                    desc: '출하검사 대기 ' + sbs.length + '건 중복',
+                    dupIds: sbs.slice(1).map(function(r) { return r.id; })
+                }, base));
+            }
+            const done = sbs.some(function(sb) {
+                return (siByStandby[String(sb.id)] || []).length > 0 || sb.status === '완료';
+            });
+            if (done) stats.ok++; else stats.waiting++;
+        });
+
+        // 레이져 실적이 연결되지 않은 대기 건(역방향 점검) — 연결 복구로 짝이 지어진 건은 제외
+        unlinkedPool.forEach(function(c) {
+            if (c.used) return;
+            const sb = c.sb;
+            if (String(sb.date || '') < from) return;
+            stats.orphan++;
+            issues.push({
+                kind: 'orphan', desc: '연결된 레이져 외관검사 없음',
+                standbyId: sb.id, date: sb.date || '', carModel: sb.carModel || '',
+                partName: sb.partName || '', color: sb.color || '', packQty: Number(sb.goodQty || 0)
+            });
+        });
+
+        return { issues: issues, stats: stats, from: from };
+    }
+
+    function auditLaser() {
+        const result = _laserAuditData();
+        const issues = result.issues, stats = result.stats, from = result.from;
+        const chip = function(label, value, color) {
+            return '<div style="flex:1 1 110px;border:1px solid var(--border-color);border-left:3px solid ' + color + ';'
+                + 'border-radius:8px;padding:8px 10px;background:var(--bg-primary);">'
+                + '<div style="font-size:1.05rem;font-weight:900;color:' + color + ';">' + value + '</div>'
+                + '<div style="font-size:0.7rem;color:var(--text-muted);">' + label + '</div></div>';
+        };
+        const rows = issues.map(function(it) {
+            const tone = it.kind === 'missing' ? '#b91c1c'
+                : (it.kind === 'dup' ? '#b45309'
+                : (it.kind === 'shipped' ? '#0d9488'
+                : (it.kind === 'link' ? '#0891b2' : '#7c3aed')));
+            let act;
+            if (it.kind === 'missing') {
+                act = '<button class="btn btn-sm btn-primary" style="padding:3px 9px;font-size:0.76rem;"'
+                    + ' onclick="ShippingStandbyModule.auditRegister(\'' + it.inspId + '\')">대기 등록</button>';
+            } else if (it.kind === 'dup') {
+                act = '<button class="btn btn-sm btn-danger" style="padding:3px 9px;font-size:0.76rem;"'
+                    + ' onclick="ShippingStandbyModule.auditRemoveDup(\'' + (it.dupIds || []).join(',') + '\')">중복 삭제</button>';
+            } else if (it.kind === 'shipped') {
+                act = '<button class="btn btn-sm btn-primary" style="padding:3px 9px;font-size:0.76rem;"'
+                    + ' onclick="ShippingStandbyModule.auditLinkShipped(\'' + it.inspId + '\',\'' + it.inspectionId + '\')">이력 연결</button>';
+            } else if (it.kind === 'link') {
+                act = '<button class="btn btn-sm btn-primary" style="padding:3px 9px;font-size:0.76rem;"'
+                    + ' onclick="ShippingStandbyModule.auditLink(\'' + it.inspId + '\',\'' + it.standbyId + '\')">연결 복구</button>';
+            } else {
+                act = '<span style="color:var(--text-muted);font-size:0.76rem;">확인 필요</span>';
+            }
+            return '<tr>'
+                + '<td style="white-space:nowrap;">' + _esc(it.date || '-') + '</td>'
+                + '<td><span style="font-weight:800;color:' + tone + ';font-size:0.76rem;">' + _esc(it.desc) + '</span></td>'
+                + '<td>' + _esc(it.carModel || '-') + '</td>'
+                + '<td><strong>' + _esc(it.partName || '-') + '</strong></td>'
+                + '<td>' + _esc(it.color || '-') + '</td>'
+                + '<td style="text-align:right;font-weight:700;">' + UIUtils.formatNumber(it.packQty || 0) + '</td>'
+                + '<td style="text-align:center;">' + act + '</td>'
+                + '</tr>';
+        }).join('');
+
+        const body = '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">'
+            + chip('레이져 외관검사', stats.total, '#334155')
+            + chip('출하검사 완료', stats.ok, '#16a34a')
+            + chip('검사 대기중', stats.waiting, '#2563eb')
+            + chip('연결 복구 대상', stats.link, '#0891b2')
+            + chip('출하 완료(대기 삭제)', stats.shipped, '#0d9488')
+            + chip('대기 누락', stats.missing, '#b91c1c')
+            + chip('대기 중복', stats.dup, '#b45309')
+            + chip('레이져 실적 없음', stats.orphan, '#7c3aed')
+            + chip('대상 제외', stats.skipped, '#94a3b8')
+            + '</div>'
+            + '<div style="font-size:0.74rem;color:var(--text-muted);margin-bottom:10px;line-height:1.55;">'
+            + '기준일 ' + _esc(from) + ' 이후 · 포장수량이 0인 검사(잔량만 발생)와 레이져 후 도장 공정 제품(재공품 유지)은 '
+            + '설계상 출하검사로 넘어오지 않으므로 <b>대상 제외</b>로 집계됩니다.<br>'
+            + '<b>연결 복구</b>는 대기/출하검사 기록은 이미 있는데 레이져 검사와의 연결 정보만 끊긴 건으로, '
+            + '새로 등록하면 이중 출하가 되므로 연결만 이어 붙입니다. '
+            + '<b>출하 완료(대기 삭제)</b>는 출하검사까지 끝났지만 대기 기록이 지워진 건으로, 역시 재등록 대상이 아닙니다.</div>'
+            + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">'
+            + (stats.link > 0
+                ? '<button class="btn btn-sm btn-primary" style="padding:5px 12px;font-size:0.78rem;"'
+                  + ' onclick="ShippingStandbyModule.auditLinkAll()">연결 복구 ' + stats.link + '건 일괄 처리</button>'
+                : '')
+            + (stats.shipped > 0
+                ? '<button class="btn btn-sm btn-primary" style="padding:5px 12px;font-size:0.78rem;"'
+                  + ' onclick="ShippingStandbyModule.auditLinkShippedAll()">출하 완료 이력 연결 ' + stats.shipped + '건</button>'
+                : '')
+            + (stats.missing > 0
+                ? '<button class="btn btn-sm btn-danger" style="padding:5px 12px;font-size:0.78rem;"'
+                  + ' onclick="ShippingStandbyModule.auditRegisterAll()">누락 ' + stats.missing + '건 일괄 대기 등록</button>'
+                : '')
+            + '</div>'
+            + (issues.length
+                ? '<div class="data-table-wrapper" style="max-height:52vh;overflow:auto;"><table class="data-table">'
+                  + '<thead><tr><th>검사일</th><th>구분</th><th>차종</th><th>품명</th><th>컬러</th>'
+                  + '<th style="text-align:right;">포장수량</th><th style="text-align:center;">조치</th></tr></thead>'
+                  + '<tbody>' + rows + '</tbody></table></div>'
+                : '<div style="padding:24px;text-align:center;color:var(--text-muted);">불일치 항목이 없습니다.</div>');
+
+        UIUtils.showModal('레이져 ↔ 출하검사 대조', body);
+    }
+
+    async function auditRegister(inspId) {
+        const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, inspId);
+        if (!insp) { UIUtils.toast('레이져 검사 기록을 찾을 수 없습니다.', 'error'); return; }
+        if (typeof ShippingInspectionModule === 'undefined'
+            || !ShippingInspectionModule.buildStandbyPayloadFromLaser) {
+            UIUtils.toast('대기 등록 기능을 사용할 수 없습니다.', 'error'); return;
+        }
+        const dup = (Storage.getAll(SB_STORE) || [])
+            .some(function(r) { return String(r.laserInspectionId || '') === String(inspId); });
+        if (dup) { UIUtils.toast('이미 대기에 등록되어 있습니다.', 'warning'); auditLaser(); return; }
+        await Storage.add(SB_STORE, ShippingInspectionModule.buildStandbyPayloadFromLaser(insp, {}));
+        UIUtils.toast('출하검사 대기에 등록했습니다.', 'success');
+        loadData();
+        auditLaser();
+    }
+
+    async function auditLink(inspId, standbyId) {
+        const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, inspId);
+        const sb = Storage.getById(SB_STORE, standbyId);
+        if (!insp || !sb) { UIUtils.toast('대상 기록을 찾을 수 없습니다.', 'error'); return; }
+        await Storage.update(SB_STORE, standbyId, {
+            laserInspectionId: insp.id,
+            laserWorkId: insp.workLogId || sb.laserWorkId || '',
+            laserLot: sb.laserLot || sb.laserWorkDate || insp.date || '',
+            laserWorkDate: sb.laserWorkDate || insp.date || ''
+        });
+        UIUtils.toast('레이져 검사와 연결했습니다.', 'success');
+        loadData();
+        auditLaser();
+    }
+
+    function auditLinkAll() {
+        const targets = _laserAuditData().issues.filter(function(i) { return i.kind === 'link'; });
+        if (!targets.length) { UIUtils.toast('연결 복구 대상이 없습니다.', 'warning'); return; }
+        UIUtils.confirm('연결 복구 ' + targets.length + '건을 일괄 처리하시겠습니까? (새 대기 등록 없이 연결 정보만 채웁니다)',
+            async function() {
+                let done = 0;
+                for (const t of targets) {
+                    const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, t.inspId);
+                    const sb = Storage.getById(SB_STORE, t.standbyId);
+                    if (!insp || !sb) continue;
+                    await Storage.update(SB_STORE, t.standbyId, {
+                        laserInspectionId: insp.id,
+                        laserWorkId: insp.workLogId || sb.laserWorkId || '',
+                        laserLot: sb.laserLot || sb.laserWorkDate || insp.date || '',
+                        laserWorkDate: sb.laserWorkDate || insp.date || ''
+                    });
+                    done++;
+                }
+                UIUtils.toast(done + '건 연결 복구 완료', 'success');
+                loadData();
+                auditLaser();
+            });
+    }
+
+    function auditRegisterAll() {
+        const targets = _laserAuditData().issues.filter(function(i) { return i.kind === 'missing'; });
+        if (!targets.length) { UIUtils.toast('누락 건이 없습니다.', 'warning'); return; }
+        if (typeof ShippingInspectionModule === 'undefined'
+            || !ShippingInspectionModule.buildStandbyPayloadFromLaser) {
+            UIUtils.toast('대기 등록 기능을 사용할 수 없습니다.', 'error'); return;
+        }
+        UIUtils.confirm('누락 ' + targets.length + '건을 출하검사 대기로 일괄 등록하시겠습니까? '
+            + '이미 출하 처리된 건이 섞여 있으면 이중 등록이 되므로 먼저 연결 복구를 처리하세요.',
+            async function() {
+                let done = 0;
+                for (const t of targets) {
+                    const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, t.inspId);
+                    if (!insp) continue;
+                    const dup = (Storage.getAll(SB_STORE) || [])
+                        .some(function(r) { return String(r.laserInspectionId || '') === String(insp.id); });
+                    if (dup) continue;
+                    await Storage.add(SB_STORE, ShippingInspectionModule.buildStandbyPayloadFromLaser(insp, {}));
+                    done++;
+                }
+                UIUtils.toast(done + '건 출하검사 대기 등록 완료', 'success');
+                loadData();
+                auditLaser();
+            });
+    }
+
+    async function auditLinkShipped(inspId, inspectionId) {
+        const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, inspId);
+        const si = Storage.getById(SI_STORE, inspectionId);
+        if (!insp || !si) { UIUtils.toast('대상 기록을 찾을 수 없습니다.', 'error'); return; }
+        await Storage.update(SI_STORE, inspectionId, {
+            laserInspectionId: insp.id,
+            laserLot: si.laserLot || insp.date || ''
+        });
+        UIUtils.toast('출하검사 이력과 연결했습니다.', 'success');
+        auditLaser();
+    }
+
+    function auditLinkShippedAll() {
+        const targets = _laserAuditData().issues.filter(function(i) { return i.kind === 'shipped'; });
+        if (!targets.length) { UIUtils.toast('연결할 이력이 없습니다.', 'warning'); return; }
+        UIUtils.confirm('출하검사 완료 이력 ' + targets.length + '건을 레이져 검사와 연결하시겠습니까? (수량·이력 변경 없음)',
+            async function() {
+                let done = 0;
+                for (const t of targets) {
+                    const insp = Storage.getById(DB.STORES.LASER_INSPECTIONS, t.inspId);
+                    const si = Storage.getById(SI_STORE, t.inspectionId);
+                    if (!insp || !si) continue;
+                    await Storage.update(SI_STORE, t.inspectionId, {
+                        laserInspectionId: insp.id,
+                        laserLot: si.laserLot || insp.date || ''
+                    });
+                    done++;
+                }
+                UIUtils.toast(done + '건 이력 연결 완료', 'success');
+                loadHistory();
+                auditLaser();
+            });
+    }
+
+    function auditRemoveDup(ids) {
+        const list = String(ids || '').split(',').filter(Boolean);
+        if (!list.length) return;
+        UIUtils.confirm('중복 대기 ' + list.length + '건을 삭제하시겠습니까?', async function() {
+            for (const id of list) await Storage.remove(SB_STORE, id);
+            UIUtils.toast('중복 대기를 삭제했습니다.', 'success');
+            loadData();
+            auditLaser();
+        });
+    }
+
     return {
         render, loadData, loadHistory,
+        auditLaser, auditRegister, auditRemoveDup, auditLink, auditLinkAll, auditRegisterAll,
+        auditLinkShipped, auditLinkShippedAll,
+        getLaserAuditSummary: function() { return _laserAuditData().stats; },
         onHistoryCarChange,
         _showDetail, canEditHistory,
         removeStandby, removeHistory, exportHistory,
@@ -3038,20 +3428,40 @@ const ShippingInspectionModule = (function() {
         return _siItemsBodyHtml([it || {}]);
     }
 
-    /** 검사자 선택 목록 — 품질(품질관리자/품질검사자) · 자주검사자 역할 사용자만 (요청: "품질 및 자주검사자만 해당") */
+    /** 검사자 선택 목록 — 품질 검사자를 먼저 배치하고, 자주검사자는 그 아래에 둔다. */
     function _qualityInspectorOptions(selectedName) {
         if (typeof AuthModule === 'undefined' || !AuthModule.getUsers) return '';
         const roles = (AuthModule.getRoles ? AuthModule.getRoles() : []) || [];
-        const allowedKeys = new Set(
-            roles.filter(r => r && /품질|자주검사/.test(r.label || '')).map(r => r.key)
+        const qualityKeys = new Set(
+            roles.filter(r => r && /품질/.test(r.label || '')).map(r => r.key)
         );
-        const users = (AuthModule.getUsers() || []).filter(u => {
-            if (!u || u.active === false) return false;
+        const selfKeys = new Set(
+            roles.filter(r => r && /자주검사/.test(r.label || '')).map(r => r.key)
+        );
+
+        const quality = [], self = [];
+        (AuthModule.getUsers() || []).forEach(u => {
+            if (!u || u.active === false) return;
+            const name = u.displayName || u.username;
+            if (!name) return;
             const keys = [u.role, ...(Array.isArray(u.roles) ? u.roles : [])].filter(Boolean);
-            return keys.some(k => allowedKeys.has(k));
+            if (keys.some(k => qualityKeys.has(k))) quality.push(name);
+            else if (keys.some(k => selfKeys.has(k))) self.push(name);
         });
-        const names = [...new Set(users.map(u => u.displayName || u.username).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-        return names.map(n => `<option value="${_esc(n)}" ${n === selectedName ? 'selected' : ''}>${_esc(n)}</option>`).join('');
+
+        const uniqSort = list => [...new Set(list)].sort((a, b) => a.localeCompare(b, 'ko'));
+        const qNames = uniqSort(quality);
+        const sNames = uniqSort(self).filter(n => qNames.indexOf(n) === -1);
+
+        const opt = n => `<option value="${_esc(n)}" ${n === selectedName ? 'selected' : ''}>${_esc(n)}</option>`;
+        let html = '';
+        if (qNames.length) {
+            html += `<optgroup label="품질 검사자">${qNames.map(opt).join('')}</optgroup>`;
+        }
+        if (sNames.length) {
+            html += `<optgroup label="자주검사자">${sNames.map(opt).join('')}</optgroup>`;
+        }
+        return html;
     }
 
     function _buildForm(sb, checkItems, stdHint) {
@@ -3322,6 +3732,7 @@ const ShippingInspectionModule = (function() {
             result,
             items,
             standbyId,
+            laserInspectionId: (standbyId ? (Storage.getById(SB_STORE, standbyId) || {}).laserInspectionId : '') || '',
             note             : document.getElementById('siNote')?.value?.trim() || ''
         };
 
@@ -4258,7 +4669,9 @@ const ShippingInspectionModule = (function() {
         remove,
         exportData,
         openHistoryView, openHistoryEdit, saveHistoryEdit, deleteHistory,
-        addHistoryItemRow, removeHistoryItemRow
+        addHistoryItemRow, removeHistoryItemRow,
+        // 레이져 ↔ 출하검사 대조(감사)에서 재사용
+        buildStandbyPayloadFromLaser: _standbyPayloadFromLaser
     };
 })();
 

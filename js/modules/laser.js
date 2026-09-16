@@ -5045,6 +5045,90 @@ var LaserInspectionModule = (function() {
         }
     }
 
+    // 레이져 외관검사 수정 시, 해당 검사로 생성된 출하검사 대기 레코드를 갱신한다.
+    // - 대기(미검사) 상태만 갱신하고, 이미 출하검사가 끝난 건은 경고만 띄운다.
+    // - 대기가 없는데 포장수량이 새로 생긴 경우에만 신규 등록한다(중복 방지).
+    async function _syncStandbyFromInspection(inspId, data) {
+        if (!inspId) return;
+        const workRef = data.workLogId ? Storage.getById(DB.STORES.LASER_WORK_LOG, data.workLogId) : null;
+        const lot = _lotInfo(workRef || data);
+        const packQty = Number(data.packQty) || 0;
+        const packUnit = Number(data.packUnit)
+            || (workRef && Number(workRef.packUnit))
+            || _findProductPackUnit(data.carModel, data.partName, data.color) || 0;
+        const isWip = typeof LaserWipModule !== 'undefined' &&
+            LaserWipModule.isAfterLaserDrainProduct(data.carModel || '', data.partName || '');
+
+        const linked = (Storage.getAll(DB.STORES.SHIPPING_STANDBY) || [])
+            .filter(r => String(r.laserInspectionId || '') === String(inspId));
+
+        if (!linked.length) {
+            if (packQty > 0 && !isWip) {
+                const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+                const prod = products.find(p => p.carModel === data.carModel && p.partName === data.partName && p.color === data.color)
+                    || products.find(p => p.carModel === data.carModel && p.partName === data.partName);
+                await Storage.add(DB.STORES.SHIPPING_STANDBY, {
+                    date: data.date || UIUtils.today(),
+                    source: 'laser_inspection',
+                    laserInspectionId: inspId,
+                    laserWorkId: data.workLogId || '',
+                    carModel: data.carModel || '',
+                    partName: data.partName || '',
+                    color: data.color || '',
+                    paintingDate: lot.paintDates.join(', '),
+                    paintLot: lot.paintDates.join(', '),
+                    lotNo: lot.injectionLots.join(', '),
+                    injectionLot: lot.injectionLots.join(', '),
+                    laserLot: lot.laserDate || data.date || '',
+                    laserWorkDate: lot.laserDate || '',
+                    inspectionQty: packQty,
+                    goodQty: packQty,
+                    packUnit: packUnit,
+                    boxCount: Number(data.packBoxCount) || 0,
+                    laserResidualQty: Number(data.residualQty) || 0,
+                    customer: prod ? (prod.customer || '') : '',
+                    status: '대기'
+                });
+                UIUtils.toast('포장수량이 생겨 출하검사 대기에 등록했습니다.', 'success');
+            }
+            return;
+        }
+
+        const done = linked.filter(r => r.status === '완료');
+        const waiting = linked.filter(r => r.status !== '완료');
+
+        if (packQty <= 0 || isWip) {
+            for (const r of waiting) await Storage.remove(DB.STORES.SHIPPING_STANDBY, r.id);
+            if (waiting.length) UIUtils.toast('포장수량이 0이 되어 출하검사 대기에서 제외했습니다.', 'warning');
+            if (done.length) UIUtils.toast('이미 출하검사가 완료된 건이라 대기 정보는 그대로 둡니다.', 'warning');
+            return;
+        }
+
+        for (const r of waiting) {
+            await Storage.update(DB.STORES.SHIPPING_STANDBY, r.id, {
+                date: data.date || r.date,
+                carModel: data.carModel || r.carModel,
+                partName: data.partName || r.partName,
+                color: data.color || r.color,
+                paintingDate: lot.paintDates.join(', '),
+                paintLot: lot.paintDates.join(', '),
+                lotNo: lot.injectionLots.join(', '),
+                injectionLot: lot.injectionLots.join(', '),
+                laserLot: lot.laserDate || data.date || r.laserLot || '',
+                laserWorkDate: lot.laserDate || r.laserWorkDate || '',
+                inspectionQty: packQty,
+                goodQty: packQty,
+                packUnit: packUnit,
+                boxCount: Number(data.packBoxCount) || r.boxCount || 0,
+                laserResidualQty: Number(data.residualQty) || 0
+            });
+        }
+        if (waiting.length) UIUtils.toast('출하검사 대기 수량/LOT을 수정 내용으로 갱신했습니다.', 'success');
+        if (done.length && !waiting.length) {
+            UIUtils.toast('이미 출하검사가 완료된 건이라 대기 수량은 변경하지 않았습니다.', 'warning');
+        }
+    }
+
     async function _commitInspectionImpl(existingId, data, isPartial) {
         // 외관검사 합계(양품+불량) ↔ 레이저 작업일지 작업수량 연동 + 부분검사 진행상태 반영
         let syncResult = null;
@@ -5070,6 +5154,13 @@ var LaserInspectionModule = (function() {
                 data.residualStockAtReg = _prevRec.residualStockAtReg;
             }
             await Storage.update(STORE, existingId, data);
+            // 수정분을 이미 올라간 출하검사 대기에도 반영(중복 등록 없이 수량/LOT만 갱신)
+            try {
+                await _syncStandbyFromInspection(existingId, data);
+            } catch (e) {
+                console.error('[LaserInspection] standby sync failed:', e);
+                UIUtils.toast('검사는 수정됐지만 출하검사 대기 반영에 실패했습니다.', 'error');
+            }
             UIUtils.toast(
                 partialMsg || (syncResult && syncResult.qtyChanged
                     ? `수정되었습니다. 작업일지 수량 ${UIUtils.formatNumber(syncResult.oldQty)} → ${UIUtils.formatNumber(syncResult.newQty)} EA 반영`
@@ -5107,7 +5198,25 @@ var LaserInspectionModule = (function() {
             const _isWipProduct = typeof LaserWipModule !== 'undefined' &&
                 LaserWipModule.isAfterLaserDrainProduct(data.carModel || '', data.partName || '');
 
-            if (_packQty > 0 && !_isWipProduct) {
+            // 동일 레이져 검사/작업 건이 이미 출하검사 대기에 올라가 있으면 재등록하지 않는다.
+            const _sbAll = Storage.getAll(DB.STORES.SHIPPING_STANDBY) || [];
+            const _sbDate = data.date || UIUtils.today();
+            const _dupSb = _sbAll.find(r => {
+                if (String(r.source || '') !== 'laser_inspection') return false;
+                if (inspId && r.laserInspectionId) return String(r.laserInspectionId) === String(inspId);
+                if (data.workLogId && r.laserWorkId && String(r.laserWorkId) === String(data.workLogId)) {
+                    return Number(r.goodQty || 0) === Number(_packQty);
+                }
+                return String(r.date || '') === String(_sbDate)
+                    && String(r.partName || '') === String(data.partName || '')
+                    && String(r.color || '') === String(data.color || '')
+                    && String(r.lotNo || '') === String(_lotNo || '')
+                    && Number(r.goodQty || 0) === Number(_packQty);
+            });
+
+            if (_packQty > 0 && !_isWipProduct && _dupSb) {
+                UIUtils.toast('이미 출하검사 대기에 등록된 건입니다. 중복 등록을 건너뜁니다.', 'warning');
+            } else if (_packQty > 0 && !_isWipProduct) {
                 await Storage.add(DB.STORES.SHIPPING_STANDBY, {
                     date         : data.date || UIUtils.today(),
                     source       : 'laser_inspection',

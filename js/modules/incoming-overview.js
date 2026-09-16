@@ -981,6 +981,8 @@ var IncomingOverviewModule = (function () {
         showPaintFail, showPaintCert, showPaintExpiring, showPaintExpired,
         goWarehouseIncomingHistory,
         openViolationCutoverModal, saveViolationCutover, clearViolationCutover,
+        // 대시보드 표시용 — 수입검사 없는 직접 입고(프로세스 위반) 목록
+        getProcessViolations: _collectProcessViolations,
         _previewViolationCutover,
     };
 })();

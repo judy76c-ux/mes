@@ -154,19 +154,213 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        메인 렌더
     ══════════════════════════════════════════════════════════ */
+    /* ══════════════════════════════════════════════════════════
+       대시보드 블럭 자유 배치 엔진
+       - 12칸 그리드 위에서 블럭을 끌어 위치 이동(가까운 슬롯에 자석 스냅)
+       - 오른쪽 아래 모서리를 끌어 가로 폭(1/12 단위)과 높이(20px 단위) 조절
+       - 배치/크기는 브라우저에 저장되어 다음 접속에도 유지
+    ══════════════════════════════════════════════════════════ */
+    const LAYOUT_KEY = 'mes_dashboard_layout_v2';
+    const LAYOUT_COLS = 12;
+    const MIN_SPAN = 3;
+    const MIN_HEIGHT = 140;
+    let _dragBlock = null;
+    let _dropMarker = null;
+    let _resizeCtx = null;
+
+    function _readLayout() {
+        try {
+            const parsed = JSON.parse(localStorage.getItem(LAYOUT_KEY) || 'null');
+            return (parsed && parsed.blocks) ? parsed : null;
+        } catch (e) { return null; }
+    }
+
+    function _saveLayout() {
+        const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
+        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block')).map(function(el) {
+            return {
+                key: el.dataset.block,
+                w: Number(el.dataset.w) || 6,
+                h: Number(el.dataset.h) || 0
+            };
+        });
+        try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ blocks: blocks })); } catch (e) {}
+    }
+
+    function _applyBlockStyle(el) {
+        const w = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(el.dataset.w) || 6));
+        el.dataset.w = w;
+        el.style.gridColumn = 'span ' + w;
+        const h = Number(el.dataset.h) || 0;
+        const body = el.querySelector(':scope > .dash-block-body');
+        if (body) {
+            body.style.height = h > 0 ? h + 'px' : '';
+            body.style.overflowY = h > 0 ? 'auto' : '';
+        }
+        const label = el.querySelector('.dash-block-size');
+        if (label) label.textContent = w + '/' + LAYOUT_COLS + (h > 0 ? ' · ' + h + 'px' : '');
+    }
+
+    function _applySavedLayout() {
+        const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
+        const layout = _readLayout();
+        if (layout) {
+            layout.blocks.forEach(function(row) {
+                const el = grid.querySelector('.dash-block[data-block="' + row.key + '"]');
+                if (!el) return;
+                if (row.w) el.dataset.w = row.w;
+                if (row.h) el.dataset.h = row.h;
+                grid.appendChild(el);   // 저장된 순서대로 재배치
+            });
+        }
+        Array.from(grid.querySelectorAll(':scope > .dash-block')).forEach(_applyBlockStyle);
+    }
+
+    function resetLayout() {
+        try { localStorage.removeItem(LAYOUT_KEY); } catch (e) {}
+        const container = document.getElementById('contentArea');
+        if (container) renderStandardDashboard(container);
+        UIUtils.toast('블럭 배치를 기본값으로 되돌렸습니다.', 'success');
+    }
+
+    function _ensureMarker() {
+        if (!_dropMarker) {
+            _dropMarker = document.createElement('div');
+            _dropMarker.className = 'dash-drop-marker';
+        }
+        return _dropMarker;
+    }
+
+    // 커서에 가장 가까운 블럭 경계를 찾아 자리표시를 붙인다 = 자석 스냅
+    function _snapMarker(grid, x, y) {
+        const marker = _ensureMarker();
+        marker.style.gridColumn = 'span ' + (Number(_dragBlock.dataset.w) || 6);
+        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'))
+            .filter(function(el) { return el !== _dragBlock; });
+        let before = null, best = Infinity;
+        blocks.forEach(function(el) {
+            const r = el.getBoundingClientRect();
+            const cy = r.top + r.height / 2;
+            [[r.left, cy, el], [r.right, cy, el.nextElementSibling]].forEach(function(pt) {
+                const d = Math.hypot(x - pt[0], y - pt[1]);
+                if (d < best) { best = d; before = pt[2]; }
+            });
+        });
+        if (before === marker) return;
+        if (before) grid.insertBefore(marker, before); else grid.appendChild(marker);
+    }
+
+    function _initLayoutDnD() {
+        const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
+
+        grid.addEventListener('dragstart', function(e) {
+            if (_resizeCtx) { e.preventDefault(); return; }
+            const block = e.target.closest('.dash-block');
+            if (!block) return;
+            _dragBlock = block;
+            block.classList.add('is-dragging');
+            document.body.classList.add('dash-layout-dragging');
+            try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', block.dataset.block); } catch (err) {}
+        });
+        grid.addEventListener('dragover', function(e) {
+            if (!_dragBlock) return;
+            e.preventDefault();
+            try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
+            _snapMarker(grid, e.clientX, e.clientY);
+        });
+        grid.addEventListener('drop', function(e) {
+            if (!_dragBlock) return;
+            e.preventDefault();
+            const marker = _ensureMarker();
+            if (marker.parentNode) marker.parentNode.insertBefore(_dragBlock, marker);
+            _endDrag();
+            _saveLayout();
+        });
+        grid.addEventListener('dragend', _endDrag);
+
+        // ── 크기 조절 (오른쪽 아래 모서리) ──
+        grid.addEventListener('pointerdown', function(e) {
+            const handle = e.target.closest('.dash-block-resize');
+            if (!handle) return;
+            const block = handle.closest('.dash-block');
+            const body = block.querySelector(':scope > .dash-block-body');
+            const colW = (grid.clientWidth - 11 * 12) / LAYOUT_COLS; // gap 12px 기준 1칸 폭
+            _resizeCtx = {
+                block: block,
+                startX: e.clientX, startY: e.clientY,
+                startW: Number(block.dataset.w) || 6,
+                startH: Number(block.dataset.h) || (body ? body.getBoundingClientRect().height : 200),
+                colW: colW
+            };
+            block.classList.add('is-resizing');
+            document.body.classList.add('dash-layout-resizing');
+            handle.setPointerCapture(e.pointerId);
+            e.preventDefault();
+        });
+        grid.addEventListener('pointermove', function(e) {
+            if (!_resizeCtx) return;
+            const c = _resizeCtx;
+            const spanDelta = Math.round((e.clientX - c.startX) / (c.colW + 12));
+            c.block.dataset.w = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, c.startW + spanDelta));
+            const h = Math.round((c.startH + (e.clientY - c.startY)) / 20) * 20;
+            c.block.dataset.h = Math.max(MIN_HEIGHT, h);
+            _applyBlockStyle(c.block);
+        });
+        ['pointerup', 'pointercancel'].forEach(function(evt) {
+            grid.addEventListener(evt, function() {
+                if (!_resizeCtx) return;
+                _resizeCtx.block.classList.remove('is-resizing');
+                document.body.classList.remove('dash-layout-resizing');
+                _resizeCtx = null;
+                _saveLayout();
+            });
+        });
+        // 모서리 더블클릭 = 높이 자동(내용에 맞춤)
+        grid.addEventListener('dblclick', function(e) {
+            const handle = e.target.closest('.dash-block-resize');
+            if (!handle) return;
+            const block = handle.closest('.dash-block');
+            block.dataset.h = 0;
+            _applyBlockStyle(block);
+            _saveLayout();
+        });
+    }
+
+    function _endDrag() {
+        if (_dragBlock) _dragBlock.classList.remove('is-dragging');
+        _dragBlock = null;
+        document.body.classList.remove('dash-layout-dragging');
+        if (_dropMarker && _dropMarker.parentNode) _dropMarker.parentNode.removeChild(_dropMarker);
+    }
+
     function renderStandardDashboard(container) {
         container.innerHTML = `
         <div class="dash-standard-page fade-in-up">
-            <div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div>
-            <div id="dashManagerAlerts"></div>
-            <div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div>
-            <div id="dashPaintPending"></div>
-            <div id="dashJigLifeAlerts"></div>
-            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div>
-            <div id="dashMonitorTiles"></div>
-            <div id="dashImprovementTiles"></div>
+            <div class="dash-free-grid" id="dashLayoutGrid">
+                <div class="dash-block" data-block="incoming" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>수입검사 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="monitorTiles" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>점검 / 관리 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashMonitorTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="fifoViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>선입선출(FIFO) 위반 — 사출 · 도료<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashFifoViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="processViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>프로세스 위반 — 직접 입고(미검사)<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProcessViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="managerAlerts" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>관리자 보고 누락<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashManagerAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="improvement" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>개선활동 / 우수 사원<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashImprovementTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="qualityStandby" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>초중종물 · 출하검사 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="paintPending" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도료 입고 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashPaintPending"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="jigLife" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도장 지그 교체 임박<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashJigLifeAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="alertRow" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>경보<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+            </div>
+            <div class="dash-layout-tools">
+                <span class="dash-layout-tip">블럭 이름을 끌어 위치 이동 · 오른쪽 아래 모서리를 끌어 크기 조절</span>
+                <button class="dash-layout-reset" onclick="DashboardModule.resetLayout()">
+                    <span class="material-symbols-outlined">restart_alt</span>블럭 배치 초기화
+                </button>
+            </div>
         </div>`;
+        _applySavedLayout();
+        _initLayoutDnD();
         renderIncomingSummary();
+        _scheduleIdleWork(renderProcessViolation);
+        _scheduleIdleWork(renderFifoViolation);
+        _scheduleIdleWork(_notifyLaserShipGapOnce);
         renderManagerAlerts();
         renderQualityStdWarnings();
         renderShippingStandby();
@@ -179,56 +373,689 @@ const DashboardModule = (function() {
         _loadSummary();
     }
 
+    /* ══════════════════════════════════════════════════════════
+       현황 모니터(TV) 슬라이드 — 내용이 있는 화면만 자동으로 순환
+    ══════════════════════════════════════════════════════════ */
+    const TV_SLIDE_SEC = 12;          // 화면당 노출 시간(초)
+    let _tvTimer = null, _tvClock = null, _tvIndex = 0, _tvSlides = [], _tvElapsed = 0;
+
+    function _tvHasContent(slide) {
+        if (slide.dataset.keep === '1') return true;
+        // 숨겨지지 않은 자식 중 실제 글자가 있으면 표시 대상
+        return Array.from(slide.querySelectorAll('.dash-monitor-panel, .dash-monitor-section, .dash-executive-summary, #dashAlertRow, #dashImprovementTiles'))
+            .some(function(el) {
+                if (!el || el.style.display === 'none') return false;
+                if (!el.offsetParent && el.style.display !== '') return false;
+                return (el.textContent || '').trim().length > 0;
+            });
+    }
+
+    function _tvShow(index) {
+        if (!_tvSlides.length) return;
+        _tvIndex = (index + _tvSlides.length) % _tvSlides.length;
+        _tvSlides.forEach(function(sl, i) { sl.classList.toggle('is-active', i === _tvIndex); });
+        const name = document.getElementById('dashTvSlideName');
+        if (name) name.textContent = _tvSlides[_tvIndex].dataset.slide || '';
+        const dots = document.getElementById('dashTvDots');
+        if (dots) {
+            Array.from(dots.children).forEach(function(d, i) { d.classList.toggle('is-on', i === _tvIndex); });
+        }
+        _tvElapsed = 0;
+    }
+
+    /* ── TV 차트 (Chart.js) ─────────────────────────────── */
+    const _tvCharts = {};
+    const TV_FONT = 20;   // TV 차트 기본 글자 크기
+
+    function _tvRecentDays(n) {
+        const out = [];
+        for (let i = n - 1; i >= 0; i--) {
+            const d = new Date(Date.now() - i * 86400000);
+            out.push(d.toISOString().slice(0, 10));
+        }
+        return out;
+    }
+
+    function _tvDraw(id, config) {
+        if (typeof Chart === 'undefined') return;
+        const el = document.getElementById(id); if (!el) return;
+        if (_tvCharts[id]) { _tvCharts[id].destroy(); delete _tvCharts[id]; }
+        Chart.defaults.font.size = TV_FONT;
+        Chart.defaults.font.weight = '700';
+        Chart.defaults.color = '#475569';
+        _tvCharts[id] = new Chart(el, config);
+    }
+
+    function _renderTvCharts() {
+        const days = _tvRecentDays(7);
+        const labels = days.map(d => d.slice(5).replace('-', '/'));
+        const works = Storage.getAll(STORE.PAINTING_WORK) || [];
+        const plans = Storage.getAll(STORE.PRODUCTION_PLANS) || [];
+        const qtyOf = w => Number(w.productionQty) || Number(w.inputQty) || 0;
+
+        // 1) 최근 7일 도장 생산 추이 (라인 A/B)
+        const seriesA = days.map(d => works.filter(w => w.date === d && String(w.line || '').replace(/\s/g, '') === '도장-A').reduce((s2, w) => s2 + qtyOf(w), 0));
+        const seriesB = days.map(d => works.filter(w => w.date === d && String(w.line || '').replace(/\s/g, '') === '도장-B').reduce((s2, w) => s2 + qtyOf(w), 0));
+        _tvDraw('dashTvTrend', {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    { label: '도장-A', data: seriesA, borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.12)', borderWidth: 4, tension: .35, fill: true, pointRadius: 5 },
+                    { label: '도장-B', data: seriesB, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.12)', borderWidth: 4, tension: .35, fill: true, pointRadius: 5 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { labels: { boxWidth: 18, font: { size: TV_FONT + 2 } } } },
+                scales: { y: { beginAtZero: true, ticks: { font: { size: TV_FONT } } }, x: { ticks: { font: { size: TV_FONT } } } }
+            }
+        });
+
+        // 2) 금일 라인별 계획 대비 실적
+        const today = UIUtils.today();
+        const lineStats = ['도장-A', '도장-B'].map(line => _todayWorkSummary(line));
+        _tvDraw('dashTvLine', {
+            type: 'bar',
+            data: {
+                labels: ['도장-A', '도장-B'],
+                datasets: [
+                    { label: '계획', data: lineStats.map(s2 => s2.planQty), backgroundColor: '#cbd5e1', borderRadius: 8 },
+                    { label: '실적', data: lineStats.map(s2 => s2.actualQty), backgroundColor: '#16b981', borderRadius: 8 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: {
+                    legend: { labels: { boxWidth: 18, font: { size: TV_FONT + 2 } } },
+                    tooltip: { enabled: false }
+                },
+                scales: { y: { beginAtZero: true, ticks: { font: { size: TV_FONT } } }, x: { ticks: { font: { size: TV_FONT + 4 } } } }
+            }
+        });
+
+        // 3) 최근 7일 수입검사 입고량
+        const insp = Storage.getAll(STORE.INJECTION_INSPECTIONS) || [];
+        const incomingSeries = days.map(d => insp
+            .filter(r => String(r.date || '').slice(0, 10) === d)
+            .reduce((s2, r) => s2 + (Number(r.incomingQty) || 0), 0));
+        _tvDraw('dashTvIncoming', {
+            type: 'bar',
+            data: { labels: labels, datasets: [{ label: '입고 EA', data: incomingSeries, backgroundColor: '#8b5cf6', borderRadius: 8 }] },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { display: false } },
+                scales: { y: { beginAtZero: true, ticks: { font: { size: TV_FONT } } }, x: { ticks: { font: { size: TV_FONT } } } }
+            }
+        });
+
+        // 4) 금일 출하 예정 상위 품목
+        const ship = (Storage.getAll(STORE.SALES_DELIVERY_PLAN) || [])
+            .filter(r => String(r.date || '').slice(0, 10) === today);
+        const byPart = {};
+        ship.forEach(r => {
+            const key = r.partName || '품명 미등록';
+            byPart[key] = (byPart[key] || 0) + (Number(r.planQty) || 0);
+        });
+        const top = Object.keys(byPart).map(k => [k, byPart[k]]).sort((a, b) => b[1] - a[1]).slice(0, 6);
+        _tvDraw('dashTvShipping', {
+            type: 'bar',
+            data: {
+                labels: top.map(t => t[0]),
+                datasets: [{ label: '출하 예정 EA', data: top.map(t => t[1]), backgroundColor: '#a855f7', borderRadius: 8 }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { display: false } },
+                scales: { x: { beginAtZero: true, ticks: { font: { size: TV_FONT } } }, y: { ticks: { font: { size: TV_FONT } } } }
+            }
+        });
+    }
+
+    function toggleFullscreen() {
+        if (typeof Router !== 'undefined' && Router.toggleMonitorFullscreen) {
+            Router.toggleMonitorFullscreen();
+        } else if (!document.fullscreenElement && document.documentElement.requestFullscreen) {
+            document.documentElement.requestFullscreen().catch(function() {});
+        } else if (document.fullscreenElement && document.exitFullscreen) {
+            document.exitFullscreen().catch(function() {});
+        }
+        setTimeout(_syncFullscreenBtn, 200);
+    }
+
+    function _syncFullscreenBtn() {
+        const btn = document.getElementById('dashTvFsBtn'); if (!btn) return;
+        const on = !!document.fullscreenElement;
+        btn.querySelector('.material-symbols-outlined').textContent = on ? 'fullscreen_exit' : 'fullscreen';
+        btn.querySelector('span:last-child').textContent = on ? '전체 화면 종료' : '전체 화면';
+    }
+
+    /* ── TV 전용 표: 금일 수입검사 / 금일 창고 입출고 ─────────── */
+    function _tvTable(headers, rows, emptyText) {
+        if (!rows.length) {
+            return '<div class="dash-tv-empty"><span class="material-symbols-outlined">inbox</span>' + emptyText + '</div>';
+        }
+        return '<table class="dash-tv-table"><thead><tr>'
+            + headers.map(function(h) { return '<th' + (h[1] ? ' style="text-align:' + h[1] + '"' : '') + '>' + h[0] + '</th>'; }).join('')
+            + '</tr></thead><tbody>'
+            + rows.map(function(r) { return '<tr>' + r.join('') + '</tr>'; }).join('')
+            + '</tbody></table>';
+    }
+
+    function _renderTvIncomingTable() {
+        const el = document.getElementById('dashTvIncomingTable'); if (!el) return;
+        const today = UIUtils.today();
+        const rows = (Storage.getAll(STORE.INJECTION_INSPECTIONS) || [])
+            .filter(r => String(r.date || '').slice(0, 10) === today)
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+            .slice(0, 10)
+            .map(r => {
+                const time = String(r.date || '').slice(11, 16) || '-';
+                const verdict = String(r.verdict || '').trim();
+                const pass = verdict === '합격';
+                const badge = verdict
+                    ? '<span class="dash-tv-badge ' + (pass ? 'ok' : 'ng') + '">' + _esc(verdict) + '</span>'
+                    : '<span class="dash-tv-badge wait">검사중</span>';
+                return [
+                    '<td class="t-time">' + _esc(time) + '</td>',
+                    '<td class="t-name"><b>' + _esc(r.partName || '품명 미등록') + '</b></td>',
+                    '<td>' + _esc(r.carModel || '-') + '</td>',
+                    '<td class="t-num">' + UIUtils.formatNumber(r.incomingQty || 0) + ' <em>EA</em></td>',
+                    '<td class="t-center">' + badge + '</td>'
+                ];
+            });
+        el.innerHTML = _tvTable(
+            [['입고시간'], ['품목'], ['차종'], ['수량', 'right'], ['판정', 'center']],
+            rows, '금일 수입검사 내역이 없습니다.');
+    }
+
+    function _tvMoveRows(store, unit, nameKeys, withType) {
+        const today = UIUtils.today();
+        return (store ? (Storage.getAll(store) || []) : [])
+            .filter(r => String(r.date || '').slice(0, 10) === today)
+            .filter(r => r.type === '입고' || r.type === '출고')
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+            .slice(0, 10)
+            .map(r => {
+                const name = nameKeys.map(k => r[k]).find(Boolean) || '품목 미등록';
+                const time = String(r.time || String(r.date || '').slice(11, 16) || '').slice(0, 5) || '-';
+                const cells = [];
+                if (withType) cells.push('<td>' + _esc(r.carModel || '-') + '</td>');
+                cells.push('<td class="t-name"><b>' + _esc(name) + '</b></td>');
+                cells.push('<td class="t-num">' + UIUtils.formatNumber(r.quantity || 0) + ' <em>' + unit + '</em></td>');
+                cells.push('<td class="t-center"><span class="dash-tv-badge ' + (r.type === '출고' ? 'out' : 'in') + '">'
+                    + _esc(r.type) + '</span></td>');
+                if (!withType) cells.push('<td class="t-time">' + _esc(time) + '</td>');
+                return cells;
+            });
+    }
+
+    function _renderTvWarehouseTables() {
+        const inj = document.getElementById('dashTvInjMoves');
+        if (inj) {
+            inj.innerHTML = _tvTable(
+                [['차종'], ['자재명'], ['수량', 'right'], ['구분', 'center']],
+                _tvMoveRows(STORE.INJECTION_INVENTORY, 'EA', ['partName', 'materialName'], true),
+                '금일 사출 입출고 기록이 없습니다.');
+        }
+        const paint = document.getElementById('dashTvPaintMoves');
+        if (paint) {
+            paint.innerHTML = _tvTable(
+                [['도료명'], ['수량', 'right'], ['구분', 'center'], ['입고시간']],
+                _tvMoveRows(STORE.PAINT_INVENTORY, 'KG', ['paintName', 'materialName', 'partName'], false),
+                '금일 도료 입출고 기록이 없습니다.');
+        }
+    }
+
+    /* ── 지그 수명 차트 + 교체 임박 목록 ─────────────────────── */
+    function _tvJigData() {
+        if (typeof JigModule === 'undefined') return [];
+        if (JigModule.getAllJigLife) return JigModule.getAllJigLife() || [];
+        return (JigModule.getLifeActionJigs ? JigModule.getLifeActionJigs() : []) || [];
+    }
+
+    function _tvJigColor(pct) {
+        if (pct >= 90) return '#dc2626';
+        if (pct >= 70) return '#f59e0b';
+        return '#16a34a';
+    }
+
+    // 금일 도장-A/B 계획·작업에 올라온 품목(차종+품명) 집합
+    function _tvTodayItems() {
+        const today = UIUtils.today();
+        const keys = new Map();
+        const push = function(car, part) {
+            const c = String(car || '').trim(), p = String(part || '').trim();
+            if (!p) return;
+            keys.set(c + '|' + p, { carModel: c, partName: p });
+        };
+        (Storage.getAll(STORE.PRODUCTION_PLANS) || [])
+            .filter(r => r.date === today && /도장-?[AB]/.test(String(r.line || '')))
+            .forEach(r => push(r.carModel, r.partName));
+        (Storage.getAll(STORE.PAINTING_WORK) || [])
+            .filter(r => r.date === today && /도장-?[AB]/.test(String(r.line || '')))
+            .forEach(r => push(r.carModel, r.partName));
+        return Array.from(keys.values());
+    }
+
+    function _renderTvJigCharts() {
+        const jigs = _tvJigData();
+        const items = _tvTodayItems();
+
+        // 금일 생산 품목과 짝이 맞는 지그만 추출 (차종+품명 일치, 없으면 품명 일치)
+        const matched = [];
+        items.forEach(function(it) {
+            const hit = jigs.filter(j =>
+                String(j.partName || '').trim() === it.partName &&
+                (!it.carModel || !j.carModel || String(j.carModel).trim() === it.carModel));
+            (hit.length ? hit : jigs.filter(j => String(j.partName || '').trim() === it.partName))
+                .forEach(j => { if (matched.indexOf(j) === -1) matched.push(j); });
+        });
+        const rows = (matched.length ? matched : jigs).slice(0, 10)
+            .sort((a, b) => (b.pct || 0) - (a.pct || 0));
+
+        _tvDraw('dashTvJigLife', {
+            type: 'bar',
+            data: {
+                labels: rows.map(j => [
+                    ((j.carModel ? j.carModel + ' ' : '') + (j.partName || '-')),
+                    UIUtils.formatNumber(j.usedCount || 0) + ' / ' + UIUtils.formatNumber(j.manage || 0) + '회'
+                ]),
+                datasets: [{
+                    label: '사용률 %',
+                    data: rows.map(j => Math.round(j.pct || 0)),
+                    backgroundColor: rows.map(j => _tvJigColor(j.pct || 0)),
+                    borderRadius: 8
+                }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: {
+                    legend: { display: false },
+                    title: {
+                        display: !matched.length,
+                        text: '금일 도장 생산 품목이 없어 전체 지그를 표시합니다',
+                        color: '#94a3b8', font: { size: TV_FONT }
+                    }
+                },
+                scales: {
+                    x: { beginAtZero: true, max: 100, ticks: { font: { size: TV_FONT }, callback: v => v + '%' } },
+                    y: { ticks: { font: { size: TV_FONT - 1 } } }
+                }
+            }
+        });
+    }
+
+    function _renderTvJigList() {
+        ['dashTvJigList', 'dashTvJigAction'].forEach(_renderTvJigListInto);
+    }
+
+    function _renderTvJigListInto(elId) {
+        const el = document.getElementById(elId); if (!el) return;
+        const action = (typeof JigModule !== 'undefined' && JigModule.getLifeActionJigs)
+            ? (JigModule.getLifeActionJigs() || []) : [];
+        const rows = action.slice(0, 8).map(j => {
+            const pct = Math.round(j.pct || 0);
+            const color = _tvJigColor(pct);
+            return [
+                '<td>' + _esc(j.carModel || '-') + '</td>',
+                '<td class="t-name"><b>' + _esc(j.partName || '-') + '</b></td>',
+                '<td>' + _esc(j.line || '-') + '</td>',
+                '<td class="t-num">' + UIUtils.formatNumber(j.usedCount || 0) + ' <em>/ ' + UIUtils.formatNumber(j.manage || 0) + '</em></td>',
+                '<td class="t-bar"><i style="width:' + Math.min(100, pct) + '%;background:' + color + '"></i>'
+                    + '<b style="color:' + color + '">' + pct + '%</b></td>',
+                '<td class="t-center">' + (j.orderDate && j.orderDate !== '-'
+                    ? '<span class="dash-tv-badge in">발주 ' + _esc(j.orderDate) + '</span>'
+                    : '<span class="dash-tv-badge ng">미발주</span>') + '</td>'
+            ];
+        });
+        el.innerHTML = _tvTable(
+            [['차종'], ['제품명'], ['라인'], ['사용/수명', 'right'], ['수명 진행률'], ['발주', 'center']],
+            rows, '교체 임박 지그가 없습니다.');
+    }
+
+    /* ── 품질 실적 (PROD_QUALITY_PERFORMANCE) ─────────────────── */
+    function _qualityRows(year) {
+        const store = DB.STORES.PROD_QUALITY_PERFORMANCE;
+        if (!store) return [];
+        return (Storage.getAll(store) || [])
+            .filter(r => r && !r._docKind && Number(r.year) === Number(year));
+    }
+
+    function _qualitySum(rows, category) {
+        const list = category ? rows.filter(r => r.category === category) : rows;
+        const input = list.reduce((s2, r) => s2 + (Number(r.inputQty) || 0), 0);
+        const defect = list.reduce((s2, r) => s2 + (Number(r.defectQty) || 0)
+            + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0), 0);
+        return { input: input, defect: defect, ppm: input > 0 ? Math.round(defect / input * 1000000) : 0 };
+    }
+
+    function _renderTvQuality() {
+        const year = new Date().getFullYear();
+        const rows = _qualityRows(year);
+        const yearNote = document.getElementById('dashTvQualityYear');
+        if (yearNote) yearNote.textContent = year + '년 누계';
+
+        // KPI 카드 (공정 / 고객 / 외주)
+        const kpi = document.getElementById('dashTvQualityKpi');
+        if (kpi) {
+            const cats = [
+                ['precision_manufacturing', 'process', '공정불량', '#ef4444'],
+                ['support_agent', 'customer', '고객불량', '#f59e0b'],
+                ['inventory_2', 'outsourcing', '외주불량', '#0891b2']
+            ];
+            kpi.innerHTML = cats.map(function(c) {
+                const s2 = _qualitySum(rows, c[1]);
+                const rate = s2.input > 0 ? (s2.defect / s2.input * 100).toFixed(2) : '0.00';
+                return '<div class="dash-kpi-card" style="--kpi-color:' + c[3] + '">'
+                    + '<span class="material-symbols-outlined">' + c[0] + '</span>'
+                    + '<div><strong>' + UIUtils.formatNumber(s2.ppm) + '</strong>'
+                    + '<small>' + c[2] + ' PPM · 불량률 ' + rate + '%</small></div></div>';
+            }).join('');
+        }
+
+        // 1) 월별 공정불량 PPM 추이
+        const months = Array.from({ length: 12 }, (_, i) => i + 1);
+        const ppmSeries = months.map(function(m) {
+            return _qualitySum(rows.filter(r => Number(r.month) === m), 'process').ppm;
+        });
+        const lastMonth = new Date().getMonth() + 1;
+        _tvDraw('dashTvQualityPpm', {
+            type: 'line',
+            data: {
+                labels: months.map(m => m + '월'),
+                datasets: [{
+                    label: '공정불량 PPM',
+                    data: ppmSeries.map((v, i) => (i + 1) <= lastMonth ? v : null),
+                    borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.12)',
+                    borderWidth: 4, tension: .3, fill: true, pointRadius: 5, spanGaps: false
+                }]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { labels: { boxWidth: 18, font: { size: TV_FONT + 2 } } } },
+                scales: {
+                    y: { beginAtZero: true, ticks: { font: { size: TV_FONT } } },
+                    x: { ticks: { font: { size: TV_FONT } } }
+                }
+            }
+        });
+
+        // 3) 라인별 실적 — 불량수(막대) + 불량률%(선), 이중 축
+        const byLine = {};
+        rows.forEach(function(r) {
+            const key = String(r.line || r.process || '').trim() || '라인 미등록';
+            const b = byLine[key] || (byLine[key] = { input: 0, defect: 0 });
+            b.input += Number(r.inputQty) || 0;
+            b.defect += (Number(r.defectQty) || 0) + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0);
+        });
+        const lineRows = Object.keys(byLine)
+            .map(k => ({ name: k, input: byLine[k].input, defect: byLine[k].defect,
+                         rate: byLine[k].input > 0 ? (byLine[k].defect / byLine[k].input * 100) : 0 }))
+            .sort((a, b) => b.defect - a.defect)
+            .slice(0, 6);
+        _tvDraw('dashTvQualityLine', {
+            data: {
+                labels: lineRows.map(r => r.name),
+                datasets: [
+                    { type: 'bar', label: '불량수', data: lineRows.map(r => r.defect),
+                      backgroundColor: 'rgba(248,113,113,.75)', borderRadius: 8, yAxisID: 'y', order: 2 },
+                    { type: 'line', label: '불량률(%)', data: lineRows.map(r => Number(r.rate.toFixed(2))),
+                      borderColor: '#2563eb', backgroundColor: '#2563eb', borderWidth: 4,
+                      pointRadius: 6, tension: .2, yAxisID: 'y1', order: 1 }
+                ]
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { labels: { boxWidth: 18, font: { size: TV_FONT + 2 } } } },
+                scales: {
+                    y: { beginAtZero: true, position: 'left', title: { display: true, text: '불량수', font: { size: TV_FONT } },
+                         ticks: { font: { size: TV_FONT } } },
+                    y1: { beginAtZero: true, position: 'right', grid: { drawOnChartArea: false },
+                          title: { display: true, text: '불량률(%)', font: { size: TV_FONT } },
+                          ticks: { font: { size: TV_FONT }, callback: v => v + '%' } },
+                    x: { ticks: { font: { size: TV_FONT } } }
+                }
+            }
+        });
+
+        // 2) 불량 유형별 상위 8
+        const byType = {};
+        rows.forEach(function(r) {
+            const key = String(r.defectType || '').trim() || '유형 미등록';
+            byType[key] = (byType[key] || 0) + (Number(r.defectQty) || 0);
+        });
+        const top = Object.keys(byType).map(k => [k, byType[k]])
+            .filter(t => t[1] > 0).sort((a, b) => b[1] - a[1]).slice(0, 8);
+        _tvDraw('dashTvDefectType', {
+            type: 'bar',
+            data: {
+                labels: top.map(t => t[0]),
+                datasets: [{ label: '불량수', data: top.map(t => t[1]), backgroundColor: '#fbbf24', borderRadius: 8 }]
+            },
+            options: {
+                indexAxis: 'y',
+                responsive: true, maintainAspectRatio: false, animation: { duration: 600 },
+                plugins: { legend: { display: false } },
+                scales: {
+                    x: { beginAtZero: true, ticks: { font: { size: TV_FONT } } },
+                    y: { ticks: { font: { size: TV_FONT } } }
+                }
+            }
+        });
+    }
+
+    function _initTvSlides() {
+        const stage = document.getElementById('dashTvStage'); if (!stage) return;
+        try { _renderTvCharts(); } catch (e) { console.warn('[Dashboard] TV 차트 실패:', e); }
+        try { _renderTvIncomingTable(); _renderTvWarehouseTables(); } catch (e) { console.warn('[Dashboard] TV 표 실패:', e); }
+        try { _renderTvJigCharts(); _renderTvJigList(); } catch (e) { console.warn('[Dashboard] TV 지그 실패:', e); }
+        try { _renderTvQuality(); } catch (e) { console.warn('[Dashboard] TV 품질 실적 실패:', e); }
+        try { _renderTvFifo(); } catch (e) { console.warn('[Dashboard] TV FIFO 실패:', e); }
+        _syncFullscreenBtn();
+        document.addEventListener('fullscreenchange', _syncFullscreenBtn);
+        const all = Array.from(stage.querySelectorAll('.dash-tv-slide'));
+        all.forEach(function(sl) { sl.classList.toggle('is-empty', !_tvHasContent(sl)); });
+        _tvSlides = all.filter(function(sl) { return !sl.classList.contains('is-empty'); });
+        if (!_tvSlides.length) _tvSlides = all.slice(0, 1);
+
+        const dots = document.getElementById('dashTvDots');
+        if (dots) {
+            dots.innerHTML = _tvSlides.map(function(sl) {
+                return '<span class="dash-tv-dot" title="' + (sl.dataset.slide || '') + '"></span>';
+            }).join('');
+            Array.from(dots.children).forEach(function(d, i) {
+                d.addEventListener('click', function() { _tvShow(i); });
+            });
+        }
+        _tvShow(0);
+
+        if (_tvTimer) clearInterval(_tvTimer);
+        _tvTimer = setInterval(function() {
+            if (!document.body.classList.contains('monitor-mode')) { clearInterval(_tvTimer); _tvTimer = null; return; }
+            if (document.body.classList.contains('dash-tv-paused')) return;
+            _tvElapsed += 0.2;
+            const bar = document.getElementById('dashTvProgress');
+            if (bar) bar.style.width = Math.min(100, (_tvElapsed / TV_SLIDE_SEC) * 100) + '%';
+            if (_tvElapsed >= TV_SLIDE_SEC) _tvShow(_tvIndex + 1);
+        }, 200);
+
+        if (_tvClock) clearInterval(_tvClock);
+        const paintClock = function() {
+            const el = document.getElementById('dashTvClock');
+            if (el) el.textContent = new Date().toTimeString().slice(0, 5);
+        };
+        paintClock();
+        _tvClock = setInterval(paintClock, 10000);
+
+        // 조작: 클릭 = 일시정지 / 방향키·PageUp·PageDown = 페이지 이동
+        stage.onclick = function() { document.body.classList.toggle('dash-tv-paused'); };
+        _bindTvKeysOnce();
+    }
+
+    let _tvKeysBound = false;
+    function _bindTvKeysOnce() {
+        if (_tvKeysBound) return;
+        _tvKeysBound = true;
+        document.addEventListener('keydown', function(e) {
+            // 현황 모니터 화면이 떠 있을 때만, 입력 중에는 동작하지 않음
+            if (!document.getElementById('dashTvStage')) return;
+            const tag = (e.target && e.target.tagName) || '';
+            if (/^(INPUT|TEXTAREA|SELECT)$/.test(tag) || (e.target && e.target.isContentEditable)) return;
+            switch (e.key) {
+                case 'ArrowRight':
+                case 'ArrowDown':
+                case 'PageDown':
+                    e.preventDefault(); _tvShow(_tvIndex + 1); break;
+                case 'ArrowLeft':
+                case 'ArrowUp':
+                case 'PageUp':
+                    e.preventDefault(); _tvShow(_tvIndex - 1); break;
+                case 'Home':
+                    e.preventDefault(); _tvShow(0); break;
+                case 'End':
+                    e.preventDefault(); _tvShow(_tvSlides.length - 1); break;
+                case ' ':
+                    e.preventDefault(); document.body.classList.toggle('dash-tv-paused'); break;
+                default: break;
+            }
+        }, true);
+    }
+
     function render(container) {
         if (!document.body.classList.contains('monitor-mode')) {
             renderStandardDashboard(container);
             return;
         }
         container.innerHTML = `
-        <div class="dash-monitor-page fade-in-up">
-            <section class="dash-monitor-hero">
-                <div>
-                    <div class="dash-eyebrow"><span class="material-symbols-outlined">monitor_heart</span> LIVE PRODUCTION BOARD</div>
-                    <h1>생산 현황 모니터</h1>
-                    <p>오늘의 생산·설비·입고·출하 흐름을 한눈에 확인합니다.</p>
-                </div>
-                <div class="dash-hero-date"><span class="material-symbols-outlined">today</span><strong>${UIUtils.today()}</strong><small>실시간 현황</small></div>
-            </section>
-            <div id="dashExecutiveSummary" class="dash-executive-summary"></div>
-            <section class="dash-monitor-section">
-                <div class="dash-section-heading"><div><span class="dash-section-kicker">01 / PRODUCTION</span><h2>생산 현황</h2></div><span class="dash-section-note">도장 A·B 계획 대비 진행</span></div>
-                <div id="dashLineProgress" class="dash-line-progress"></div>
-            </section>
-            <section class="dash-monitor-grid">
-                <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">02 / INCOMING</span><h2>수입검사 입고 현황</h2></div><span class="dash-section-note">금일 입고</span></div><div id="dashIncomingSummary"></div></div>
-                <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">03 / SHIPPING</span><h2>금일 출하 일정</h2></div><span class="dash-section-note">영업 계획</span></div><div id="dashShippingSummary"></div></div>
-            </section>
-            <section class="dash-monitor-section dash-warehouse-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">04 / MATERIAL WAREHOUSE</span><h2>자재 창고 입출고 · 현황</h2></div><span class="dash-section-note">사출 · 도료</span></div><div id="dashWarehouseSummary" class="dash-warehouse-grid"></div></section>
-            <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">05 / ATTENTION</span><h2>설비 점검 · 미등록 알림</h2></div><span class="dash-section-note">즉시 확인 필요</span></div><div id="dashAttentionSummary"></div></section>
-            <section class="dash-monitor-section dash-notification-section"><div class="dash-section-heading"><div><span class="dash-section-kicker">06 / NOTIFICATIONS</span><h2>알림 발송 현황</h2></div><span class="dash-section-note">대상 · 사유 · 발송시각</span></div><div id="dashNotificationSummary"></div></section>
-            <!-- 관리자 보고 누락 -->
-            <div id="dashManagerAlerts"></div>
+        <div class="dash-monitor-page dash-tv fade-in-up">
+            <header class="dash-tv-bar">
+                <div class="dash-tv-title"><span class="material-symbols-outlined">monitor_heart</span>생산 현황 모니터</div>
+                <div class="dash-tv-slide-name" id="dashTvSlideName">—</div>
+                <div class="dash-tv-date"><strong>${UIUtils.today()}</strong><span id="dashTvClock"></span></div>
+                <button class="dash-tv-fs" id="dashTvFsBtn" type="button" onclick="DashboardModule.toggleFullscreen()">
+                    <span class="material-symbols-outlined">fullscreen</span><span>전체 화면</span>
+                </button>
+            </header>
 
-            <!-- 초중종물 미발행 / 출하검사 대기 타일 -->
-            <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;">
-                <div id="dashQualityStdWarnings"></div>
-                <div id="dashShippingStandby"></div>
+            <div class="dash-tv-stage" id="dashTvStage">
+                <section class="dash-tv-slide" data-slide="출하 · 생산">
+                    <div id="dashExecutiveSummary" class="dash-executive-summary"></div>
+                    <div class="dash-monitor-grid dash-pair-grid">
+                        <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">01 / SHIPPING</span><h2>금일 출하 계획</h2></div></div><div id="dashShippingSummary"></div></div>
+                        <section class="dash-monitor-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">02 / PRODUCTION</span><h2>금일 생산 현황</h2></div></div><div id="dashLineProgress" class="dash-line-progress"></div></section>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="주간 생산 추이" data-keep="1">
+                    <div class="dash-tv-chart-wrap">
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 1 / TREND</span><h2>최근 7일 도장 생산 추이</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvTrend"></canvas></div>
+                        </div>
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 2 / LINE</span><h2>금일 라인별 계획 대비 실적</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvLine"></canvas></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="입고 · 출하 TOP" data-keep="1">
+                    <div class="dash-tv-chart-wrap">
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 3 / INCOMING</span><h2>최근 7일 수입검사 입고량</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvIncoming"></canvas></div>
+                        </div>
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 4 / SHIPPING</span><h2>금일 출하 예정 상위 품목</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvShipping"></canvas></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="품질 실적" data-keep="1">
+                    <div id="dashTvQualityKpi" class="dash-executive-summary"></div>
+                    <div class="dash-tv-chart-wrap">
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 1 / PPM</span><h2>월별 공정불량 PPM</h2></div><span class="dash-section-note" id="dashTvQualityYear"></span></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvQualityPpm"></canvas></div>
+                        </div>
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 2 / DEFECT</span><h2>불량 유형별 실적 (상위 8)</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvDefectType"></canvas></div>
+                        </div>
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 3 / LINE</span><h2>라인별 실적 (불량수 · 불량률)</h2></div></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvQualityLine"></canvas></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="지그 수명 현황" data-keep="1">
+                    <div class="dash-tv-chart-wrap">
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 5 / TODAY JIG</span><h2>금일 생산 품목 지그 수명</h2></div><span class="dash-section-note">도장-A · 도장-B</span></div>
+                            <div class="dash-tv-canvas"><canvas id="dashTvJigLife"></canvas></div>
+                        </div>
+                        <div class="dash-monitor-section dash-tv-chart">
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">06 / JIG ACTION</span><h2>교체 임박 지그 (사용률 90%+)</h2></div></div>
+                            <div id="dashTvJigAction" class="dash-tv-table-wrap"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="금일 수입검사">
+                    <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">03 / INCOMING</span><h2>금일 수입검사 현황</h2></div></div><div id="dashTvIncomingTable" class="dash-tv-table-wrap"></div></div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="금일 창고 입출고">
+                    <div class="dash-monitor-grid dash-pair-grid">
+                        <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">04A / INJECTION</span><h2>사출 자재 입출고</h2></div></div><div id="dashTvInjMoves" class="dash-tv-table-wrap"></div></div>
+                        <div class="dash-monitor-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">04B / PAINT</span><h2>도료 입고</h2></div></div><div id="dashTvPaintMoves" class="dash-tv-table-wrap"></div></div>
+                    </div>
+                </section>
+
+                <div class="dash-tv-hidden2">
+                    <div id="dashJigLifeAlerts"></div>
+                    <div id="dashIncomingSummary"></div>
+                    <div id="dashWarehouseSummary" class="dash-warehouse-grid"></div>
+                </div>
+
+                <section class="dash-tv-slide" data-slide="경보 · 미입력">
+                    <div class="dash-monitor-grid dash-pair-grid">
+                        <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
+                        <section class="dash-monitor-section dash-jig-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">06 / JIG</span><h2>도장 JIG 교체 임박</h2></div></div><div id="dashTvJigList" class="dash-tv-table-wrap"></div></section>
+                        <section class="dash-monitor-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">08 / FIFO</span><h2>선입선출 위반 (사출 · 도료)</h2></div></div><div id="dashTvFifo" class="dash-tv-table-wrap"></div></section>
+                    </div>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="점검 · 관리">
+                    <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">05 / INSPECTION</span><h2>점검 / 관리 현황</h2></div></div><div id="dashAttentionSummary"></div><div id="dashMonitorTiles"></div></section>
+                </section>
+
+                <section class="dash-tv-slide dash-tv-notify" data-slide="알림 발송 현황">
+                    <section class="dash-monitor-section dash-notification-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">07 / NOTIFICATIONS</span><h2>알림 발송 현황</h2></div><span class="dash-section-note">대상 · 사유 · 발송시각</span></div><div id="dashNotificationSummary"></div></section>
+                </section>
+
+                <section class="dash-tv-slide" data-slide="개선활동 · 우수사원">
+                    <div id="dashImprovementTiles"></div>
+                </section>
+
+                <div class="dash-tv-hidden">
+                    <div id="dashManagerAlerts"></div>
+                    <div id="dashQualityStdWarnings"></div>
+                    <div id="dashShippingStandby"></div>
+                    <div id="dashPaintPending"></div>
+                </div>
             </div>
 
-            <!-- 도료 입고 대기 (물류담당자 전용) -->
-            <div id="dashPaintPending"></div>
-
-            <!-- 도장 지그 교체 임박 (수명 90% 이상) -->
-            <div id="dashJigLifeAlerts"></div>
-
-            <!-- 사출 입고 대기 / 실적 미입력 / 도료 사용 미등록 / 사출 LOT 형식 오류 (경보 섹션) -->
-            <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div>
-
-            <!-- 점검/관리 타일 -->
-            <div id="dashMonitorTiles"></div>
-
-            <!-- 하단: 개선활동 -->
-            <div id="dashImprovementTiles"></div>
+            <footer class="dash-tv-foot">
+                <div class="dash-tv-dots" id="dashTvDots"></div>
+                <div class="dash-tv-progress"><i id="dashTvProgress"></i></div>
+                <span class="dash-tv-hint">← → 페이지 이동 · Space 일시정지</span>
+            </footer>
         </div>`;
 
         renderExecutiveSummary();
@@ -237,6 +1064,7 @@ const DashboardModule = (function() {
         renderShippingSummary();
         renderWarehouseSummary();
         renderAttentionSummary();
+        _scheduleIdleWork(_notifyLaserShipGapOnce);
         renderNotificationSummary();
         renderManagerAlerts();
         renderQualityStdWarnings();
@@ -248,6 +1076,7 @@ const DashboardModule = (function() {
         renderImprovementTiles();
         _bindCacheWarmRefreshOnce();
         _loadSummary();
+        setTimeout(_initTvSlides, 400);   // 비동기 렌더(지그·점검 타일)까지 반영 후 빈 슬라이드 판정
     }
 
     function _todayWorkSummary(line) {
@@ -310,6 +1139,140 @@ const DashboardModule = (function() {
         el.innerHTML = visibleRows.join('');
     }
 
+    /* 수입검사 없이 창고로 직접 입고된 건(프로세스 위반) — 수입검사 현황 화면과 같은 기준 */
+    /* 창고 선입선출(FIFO) 위반 — 구 LOT 재고가 남아 있는데 신 LOT를 먼저 소진한 건 */
+    function _fifoRows() {
+        try {
+            if (typeof WarehouseOverviewModule !== 'undefined' && WarehouseOverviewModule.getFifoViolations) {
+                const r = WarehouseOverviewModule.getFifoViolations() || {};
+                const inj = (r.injection || []).map(x => ({
+                    kind: '사출', unit: 'EA',
+                    name: x.partName || '-', sub: [x.carModel, x.color].filter(Boolean).join(' · '),
+                    qty: x.qty || 0, oldLots: x.oldLots || [], consumedLots: x.consumedLots || []
+                }));
+                const paint = (r.paint || []).map(x => ({
+                    kind: '도료', unit: 'KG',
+                    name: x.matName || '-', sub: x.supplier || '',
+                    qty: x.qty || 0, oldLots: x.oldLots || [], consumedLots: x.consumedLots || []
+                }));
+                return inj.concat(paint);
+            }
+        } catch (e) {
+            console.warn('[Dashboard] FIFO 위반 조회 실패:', e);
+        }
+        return [];
+    }
+
+    function _fifoSummaryCell(row) {
+        const oldLot = (row.oldLots[0] || {}).lot || '-';
+        const newLot = (row.consumedLots[0] || {}).lot || '-';
+        return '<span class="fifo-old">' + _esc(oldLot) + '</span> 잔량 <b>→</b> '
+             + '<span class="fifo-new">' + _esc(newLot) + '</span> 선소진';
+    }
+
+    function renderFifoViolation() {
+        const el = document.getElementById('dashFifoViolation'); if (!el) return;
+        const rows = _fifoRows();
+        const block = el.closest('.dash-block');
+        if (!rows.length) {
+            el.innerHTML = '';
+            if (block) block.style.display = 'none';
+            return;
+        }
+        if (block) block.style.display = '';
+        const injCount = rows.filter(r => r.kind === '사출').length;
+        const paintCount = rows.length - injCount;
+        const preview = rows.slice(0, 5);
+        el.innerHTML = `
+        <div class="dash-violation-card fifo">
+            <div class="dash-violation-head">
+                <span class="material-symbols-outlined">swap_vert</span>
+                <div>
+                    <b>선입선출(FIFO) 위반</b>
+                    <small>구 LOT 재고가 남아 있는데 신 LOT를 먼저 소진한 항목입니다.</small>
+                </div>
+                <span class="dash-violation-count">사출 ${injCount}건 · 도료 ${paintCount}건</span>
+                <button onclick="Router.navigate('warehouse-overview')">자재 창고 현황 →</button>
+            </div>
+            <table class="dash-violation-table">
+                <thead><tr><th>구분</th><th>품목</th><th>상세</th><th style="text-align:right;">재고</th><th>요약</th></tr></thead>
+                <tbody>
+                    ${preview.map(r => `<tr>
+                        <td><span class="fifo-kind ${r.kind === '도료' ? 'paint' : 'inj'}">${r.kind}</span></td>
+                        <td><b>${_esc(r.name)}</b></td>
+                        <td>${_esc(r.sub || '-')}</td>
+                        <td class="qty">${UIUtils.formatNumber(r.qty)} ${r.unit}</td>
+                        <td class="lot">${_fifoSummaryCell(r)}</td>
+                    </tr>`).join('')}
+                    ${rows.length > preview.length
+                        ? `<tr><td colspan="5" class="more">외 ${rows.length - preview.length}건</td></tr>` : ''}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
+    /* 현황 모니터(TV)용 FIFO 위반 표 */
+    function _renderTvFifo() {
+        const el = document.getElementById('dashTvFifo'); if (!el) return;
+        const rows = _fifoRows().slice(0, 8).map(r => [
+            '<td class="t-center"><span class="dash-tv-badge ' + (r.kind === '도료' ? 'out' : 'in') + '">' + r.kind + '</span></td>',
+            '<td class="t-name"><b>' + _esc(r.name) + '</b></td>',
+            '<td>' + _esc(r.sub || '-') + '</td>',
+            '<td class="t-num">' + UIUtils.formatNumber(r.qty) + ' <em>' + r.unit + '</em></td>',
+            '<td class="t-lot">' + _fifoSummaryCell(r) + '</td>'
+        ]);
+        el.innerHTML = _tvTable(
+            [['구분', 'center'], ['품목'], ['상세'], ['재고', 'right'], ['위반 요약']],
+            rows, '선입선출 위반이 없습니다.');
+    }
+
+    function renderProcessViolation() {
+        const el = document.getElementById('dashProcessViolation'); if (!el) return;
+        let rows = [];
+        try {
+            if (typeof IncomingOverviewModule !== 'undefined' && IncomingOverviewModule.getProcessViolations) {
+                rows = IncomingOverviewModule.getProcessViolations() || [];
+            }
+        } catch (e) {
+            console.warn('[Dashboard] 프로세스 위반 조회 실패:', e);
+        }
+        const block = el.closest('.dash-block');
+        if (!rows.length) {
+            el.innerHTML = '';
+            if (block) block.style.display = 'none';
+            return;
+        }
+        if (block) block.style.display = '';
+        const totalQty = rows.reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+        const preview = rows.slice(0, 5);
+        el.innerHTML = `
+        <div class="dash-violation-card">
+            <div class="dash-violation-head">
+                <span class="material-symbols-outlined">gavel</span>
+                <div>
+                    <b>프로세스 위반 — 수입검사 없는 직접 입고</b>
+                    <small>수입검사 없이 창고로 입고된 건입니다. 즉시 수입검사 등록이 필요합니다.</small>
+                </div>
+                <span class="dash-violation-count">${rows.length}건 · ${UIUtils.formatNumber(totalQty)} EA</span>
+                <button onclick="Router.navigate('incoming-overview')">수입검사 현황 →</button>
+            </div>
+            <table class="dash-violation-table">
+                <thead><tr><th>입고일</th><th>차종</th><th>품명</th><th>LOT</th><th style="text-align:right;">수량</th></tr></thead>
+                <tbody>
+                    ${preview.map(r => `<tr>
+                        <td>${_esc(String(r.date || '-').split(' ')[0])}</td>
+                        <td>${_esc(r.carModel || '-')}</td>
+                        <td><b>${_esc(r.partName || '-')}</b></td>
+                        <td class="lot">${_esc(r.lotNo || '-')}</td>
+                        <td class="qty">${UIUtils.formatNumber(r.quantity || 0)}</td>
+                    </tr>`).join('')}
+                    ${rows.length > preview.length
+                        ? `<tr><td colspan="5" class="more">외 ${rows.length - preview.length}건</td></tr>` : ''}
+                </tbody>
+            </table>
+        </div>`;
+    }
+
     function renderIncomingSummary() {
         const el = document.getElementById('dashIncomingSummary'); if (!el) return;
         const today = UIUtils.today();
@@ -355,6 +1318,42 @@ const DashboardModule = (function() {
         el.innerHTML = cards.join('');
     }
 
+    /* 레이져 외관검사 → 출하검사 대기 누락 건수 (매일 자동 점검)
+       버튼을 누르지 않아도 대시보드/현황 모니터 진입 시 집계되고,
+       누락이 있으면 하루 1회 알림을 띄운다. */
+    let _laserGapCache = { key: '', count: 0 };
+
+    function _laserShipGapCount() {
+        if (typeof ShippingStandbyModule === 'undefined'
+            || !ShippingStandbyModule.getLaserAuditSummary) return 0;
+        const sbLen = (Storage.getAll(STORE.SHIPPING_STANDBY) || []).length;
+        const inspLen = DB.STORES.LASER_INSPECTIONS
+            ? (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).length : 0;
+        const key = UIUtils.today() + '|' + sbLen + '|' + inspLen;
+        if (_laserGapCache.key === key) return _laserGapCache.count;
+        let count = 0;
+        try {
+            const st = ShippingStandbyModule.getLaserAuditSummary() || {};
+            count = (Number(st.missing) || 0) + (Number(st.dup) || 0) + (Number(st.link) || 0);
+        } catch (e) {
+            console.warn('[Dashboard] 레이져 대조 점검 실패:', e);
+        }
+        _laserGapCache = { key: key, count: count };
+        return count;
+    }
+
+    // 하루 1회 알림 (당일 첫 진입 시에만)
+    function _notifyLaserShipGapOnce() {
+        const count = _laserShipGapCount();
+        if (!count) return;
+        const key = 'mes_laser_ship_gap_notified';
+        try {
+            if (localStorage.getItem(key) === UIUtils.today()) return;
+            localStorage.setItem(key, UIUtils.today());
+        } catch (e) {}
+        UIUtils.toast('레이져 외관검사 ↔ 출하검사 불일치 ' + count + '건이 있습니다. 출하검사(외관) > 레이져 대조에서 확인하세요.', 'warning');
+    }
+
     function renderAttentionSummary() {
         const el = document.getElementById('dashAttentionSummary'); if (!el) return;
         const today = UIUtils.today();
@@ -366,7 +1365,9 @@ const DashboardModule = (function() {
         const fpStore = DB.STORES.EQUIP_FPROOF_LOG;
         const fpDone = fpStore ? new Set((Storage.getAll(fpStore) || []).filter(r => r.date === today).map(r => r.itemKey)).size : 0;
         const fpMissing = Math.max(0, FPROOF_ITEMS.length - fpDone);
-        const items = [['warning_amber', jigAlerts, '지그 교체 알림', 'painting-jig'], ['fact_check', fpMissing, '설비 일일점검 미완료', 'prod-equipment'], ['link_off', unlinkedWork, '계획 미연동 작업', 'painting-process'], ['edit_note', unregisteredPlan, '생산계획 미등록', 'production-plan']];
+        const laserGap = _laserShipGapCount();
+        const items = [['rule', laserGap, '레이져→출하검사 누락', 'shipping-standby'],
+            ['warning_amber', jigAlerts, '지그 교체 알림', 'painting-jig'], ['fact_check', fpMissing, '설비 일일점검 미완료', 'prod-equipment'], ['link_off', unlinkedWork, '계획 미연동 작업', 'painting-process'], ['edit_note', unregisteredPlan, '생산계획 미등록', 'production-plan']];
         const visibleItems = document.body.classList.contains('monitor-mode') ? items.filter(i => i[1] > 0) : items;
         const section = el.closest('.dash-attention-section');
         if (document.body.classList.contains('monitor-mode') && !visibleItems.length) { if (section) section.style.display = 'none'; return; }
@@ -383,15 +1384,20 @@ const DashboardModule = (function() {
         const section = el.closest('.dash-notification-section');
         if (document.body.classList.contains('monitor-mode') && !messages.length) { if (section) section.style.display = 'none'; return; }
         if (section) section.style.display = '';
+        const isTv = !!document.querySelector('.dash-tv-notify');
         const rows = messages.map(m => {
             const recipients = Array.isArray(m.recipients) && m.recipients.length
                 ? m.recipients.map(r => r.type === 'all' ? '전체 사용자' : (r.label || r.id || '')).filter(Boolean).join(', ')
                 : '수신자 미상';
             const when = new Date(m.sentAt);
             const time = Number.isNaN(when.getTime()) ? String(m.sentAt).slice(0, 16) : when.toLocaleString('ko-KR', { month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit' });
+            // 현황 모니터(TV)에서는 수신자 대신 알림 내용을 크게 보여준다.
+            if (isTv) {
+                return `<div class="dash-notification-row tv"><span class="dash-notification-status ${m.priority === 'high' ? 'high' : ''}"><span class="material-symbols-outlined">${m.priority === 'high' ? 'priority_high' : 'notifications'}</span></span><span class="dash-notification-main"><b>${_esc(m.title || '알림')}</b><small>${_esc(m.body || '')}</small></span><time>${_esc(time)}</time></div>`;
+            }
             return `<div class="dash-notification-row"><span class="dash-notification-status ${m.priority === 'high' ? 'high' : ''}"><span class="material-symbols-outlined">${m.priority === 'high' ? 'priority_high' : 'notifications'}</span></span><span class="dash-notification-main"><b>${_esc(m.title || '알림')}</b><small>${_esc(m.body || '')}</small></span><span class="dash-notification-to"><b>수신: ${_esc(recipients)}</b><small>발송: ${_esc(m.senderName || '시스템')} · ${_esc(m.category || '일반')}</small></span><time>${_esc(time)}</time></div>`;
         }).join('');
-        el.innerHTML = `<div class="dash-notification-list">${rows}</div>`;
+        el.innerHTML = `<div class="dash-notification-list${isTv ? ' is-tv' : ''}">${rows}</div>`;
     }
 
     function _scheduleIdleWork(fn, timeoutMs) {
@@ -526,7 +1532,9 @@ const DashboardModule = (function() {
         } catch (e) {
             console.warn('[Dashboard] 지그 수명 조회 실패:', e);
         }
-        if (!list.length) { el.innerHTML = ''; return; }
+        const jigSection = el.closest('.dash-jig-section');
+        if (!list.length) { el.innerHTML = ''; if (jigSection && document.body.classList.contains('monitor-mode')) jigSection.style.display = 'none'; return; }
+        if (jigSection) jigSection.style.display = '';
         const color = '#b91c1c';
         const notOrdered = list.filter(r => !r.orderDate).length;
         el.innerHTML = `
@@ -1243,6 +2251,44 @@ const DashboardModule = (function() {
     /* ══════════════════════════════════════════════════════════
        3정5S 예정일 계산 (대시보드용 간소화)
     ══════════════════════════════════════════════════════════ */
+    /* 이름으로 등록 사진 찾기 — 작업자/검사자 마스터, 사용자 계정 순으로 조회 */
+    function _personPhoto(name) {
+        const key = String(name || '').replace(/\s+/g, '');
+        if (!key) return '';
+        const pick = function(rec) {
+            if (!rec) return '';
+            return rec.photo || rec.photoUrl || rec.avatar || rec.image || '';
+        };
+        const stores = [DB.STORES.OPERATORS, DB.STORES.INSPECTORS].filter(Boolean);
+        for (const st of stores) {
+            const hit = (Storage.getAll(st) || []).find(r =>
+                String(r.name || '').replace(/\s+/g, '') === key);
+            const photo = pick(hit);
+            if (photo) return photo;
+        }
+        try {
+            if (typeof AuthModule !== 'undefined' && AuthModule.getUsers) {
+                const u = (AuthModule.getUsers() || []).find(x =>
+                    String(x.displayName || x.username || '').replace(/\s+/g, '') === key);
+                const photo = pick(u);
+                if (photo) return photo;
+            }
+        } catch (e) {}
+        return '';
+    }
+
+    function _personAvatarHtml(name, size) {
+        const px = size || 54;
+        const photo = _personPhoto(name);
+        const initial = _esc(String(name || '-').trim().slice(0, 1) || '-');
+        if (photo) {
+            return '<img class="dash-star-photo" src="' + _esc(photo) + '" alt="' + _esc(name || '') + '"'
+                + ' style="width:' + px + 'px;height:' + px + 'px;" onerror="this.style.display=\'none\'">';
+        }
+        return '<span class="dash-star-photo is-initial" style="width:' + px + 'px;height:' + px + 'px;'
+            + 'font-size:' + Math.round(px * 0.45) + 'px;">' + initial + '</span>';
+    }
+
     function renderImprovementTiles() {
         const el = document.getElementById('dashImprovementTiles');
         if (!el) return;
@@ -1287,7 +2333,8 @@ const DashboardModule = (function() {
             <div onclick="Router.navigate('improvement-activity')"
                  style="border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:9px;background:#eff6ff;
                         padding:8px 10px;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px;">
-                <div>
+                ${_personAvatarHtml(top?.name || '', 54)}
+                <div style="flex:1;min-width:0;">
                     <div style="font-size:.6rem;color:#1d4ed8;font-weight:800;">이달의 우수 사원 후보</div>
                     <div style="font-size:1.15rem;font-weight:900;color:#0f172a;line-height:1.1;margin-top:2px;">${_esc(top?.name || '-')}</div>
                     <div style="display:flex;gap:8px;font-size:.62rem;color:#475569;font-weight:700;margin-top:3px;">
@@ -1714,6 +2761,8 @@ const DashboardModule = (function() {
 
     return {
         render,
+        resetLayout,
+        toggleFullscreen,
         refresh,
         refreshQualityWarnings,
         openIlluminationCheck,

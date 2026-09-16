@@ -1692,6 +1692,25 @@ var JigModule = (function () {
     }
 
     /** 대시보드용 — 수명관리 화면의 '조치 필요 (90% 사용)'과 같은 기준(공용 지그 묶음, A/S 품목 제외) */
+    /* 전체 지그 수명 현황 (대시보드/현황 모니터 차트용) — 조치 필요 여부와 무관하게 모두 반환 */
+    function getAllJigLife() {
+        const itemTypeMap = _productItemTypeMap();
+        const pool = _collapseCoUseJigs((_enrichedJigs() || []).filter(function (j) {
+            return !_isAsItemType(_jigItemType(j, itemTypeMap));
+        }));
+        return pool.map(function (j) {
+            return {
+                id: j.id,
+                carModel: _jigCarKey(j) || '',
+                partName: j.partName || '',
+                line: j.line || '',
+                usedCount: Number(j.usedCount) || 0,
+                manage: _derivedJigLife(j).manage || Number(j.maxCount) || 0,
+                pct: _lifePct(j)
+            };
+        }).sort(function (a, b) { return b.pct - a.pct; });
+    }
+
     function getLifeActionJigs() {
         const itemTypeMap = _productItemTypeMap();
         const pool = _collapseCoUseJigs((_enrichedJigs() || []).filter(function (j) {
@@ -4804,6 +4823,7 @@ var JigModule = (function () {
         fixUnmatchedJigPartNames,
         autoRegisterActionOrders,
         getLifeActionJigs,
+        getAllJigLife,
         toggleShowAsItems,
         onLogCarChange,
         resetLogFilter,

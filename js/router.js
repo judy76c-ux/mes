@@ -490,6 +490,8 @@ const Router = (function() {
         const monitorBtn = document.getElementById('statusMonitorBtn');
         if (monitorBtn) {
             const monitorPage = pageName === 'status-monitor';
+            // 현황 모니터 버튼은 대시보드(및 모니터 화면 자체)에서만 노출
+            monitorBtn.style.display = (monitorPage || pageName === 'dashboard') ? '' : 'none';
             monitorBtn.classList.toggle('active', monitorPage);
             monitorBtn.title = monitorPage ? '대시보드로 돌아가기' : '현황 모니터 보기';
             const monitorLabel = monitorBtn.querySelector('.status-monitor-label');
@@ -737,26 +739,32 @@ const Router = (function() {
             });
         }
         if (monitorBtn) {
+            // 버튼은 페이지 이동(링크)만 담당한다. 전체 화면은 현황 모니터 페이지 안의 버튼에서 실행.
             monitorBtn.addEventListener('click', function() {
-                const active = document.body.classList.toggle('monitor-mode');
-                if (active) {
-                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('status-monitor');
-                    setHidden(true);
-                    setBrowserFullscreen(true);
-                    monitorBtn.classList.add('active');
-                    monitorBtn.title = '대시보드로 돌아가기';
-                } else {
-                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('dashboard');
-                    setHidden(false);
+                const onMonitor = document.body.classList.contains('monitor-mode');
+                if (onMonitor) {
+                    document.body.classList.remove('monitor-mode');
                     setBrowserFullscreen(false);
-                    monitorBtn.classList.remove('active');
-                    monitorBtn.title = '현황 모니터 보기';
+                    setHidden(false);
+                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('dashboard');
+                } else {
+                    document.body.classList.add('monitor-mode');
+                    setHidden(true);
+                    if (typeof Router !== 'undefined' && Router.navigate) Router.navigate('status-monitor');
                 }
             });
         }
+        // 현황 모니터 페이지 안의 '전체 화면' 버튼에서 호출
+        Router.toggleMonitorFullscreen = function() {
+            const on = !!document.fullscreenElement;
+            setBrowserFullscreen(!on);
+        };
         document.addEventListener('fullscreenchange', function() {
             const isFullscreen = !!document.fullscreenElement;
             if (!isFullscreen && document.body.classList.contains('monitor-mode')) {
+                // 전체 화면만 빠져나오고 현황 모니터 페이지는 그대로 유지한다.
+                if (typeof Router !== 'undefined' && Router.getCurrentPage
+                    && Router.getCurrentPage() === 'status-monitor') return;
                 document.body.classList.remove('monitor-mode');
                 setHidden(false);
                 if (monitorBtn) {

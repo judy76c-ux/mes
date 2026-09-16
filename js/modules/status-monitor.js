@@ -21,7 +21,9 @@ const StatusMonitorModule = (function() {
                 DB.STORES.JIG_LOG,
                 DB.STORES.EQUIP_FPROOF_LOG,
                 DB.STORES.EQUIP_ILLUMINATION_LOG,
-                DB.STORES.PROD_IMPROVEMENT_ACTIVITIES
+                DB.STORES.PROD_IMPROVEMENT_ACTIVITIES,
+                DB.STORES.PROD_QUALITY_PERFORMANCE,
+                DB.STORES.LASER_INSPECTIONS
             ].filter(Boolean);
             await Promise.allSettled(stores.map(store => Storage.refresh(store)));
             if (typeof AuthModule !== 'undefined' && AuthModule.refreshMessages) {
@@ -49,7 +51,7 @@ const StatusMonitorModule = (function() {
             if (typeof Router !== 'undefined' && Router.getCurrentPage && Router.getCurrentPage() === 'status-monitor') {
                 refreshLive();
             }
-        }, 15000);
+        }, 300000);
         setTimeout(refreshLive, 250);
     }
 

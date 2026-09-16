@@ -154,12 +154,31 @@ var WarehouseOverviewModule = (function () {
         var criticalCount = issues.filter(function(i){ return i.sev === 'critical'; }).length;
         var warningCount  = issues.filter(function(i){ return i.sev === 'warning';  }).length;
 
-        var issueHtml = issues.length
-            ? issues.map(function(iss){ return _issueCard(iss.sev, iss.icon, iss.label, iss.desc, iss.fn); }).join('')
-            : '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.84rem;">' +
+        var _okBox = function(text) {
+            return '<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:0.82rem;">' +
                 '<span class="material-symbols-outlined" style="font-size:20px;color:#10b981;vertical-align:middle;margin-right:4px;">check_circle</span>' +
-                '문제 없음 — 모든 자재 창고 정상' +
-              '</div>';
+                text + '</div>';
+        };
+        var _issueListHtml = function(sev, emptyText) {
+            var list = issues.filter(function(i){ return i.sev === sev; });
+            return list.length
+                ? list.map(function(iss){ return _issueCard(iss.sev, iss.icon, iss.label, iss.desc, iss.fn); }).join('')
+                : _okBox(emptyText);
+        };
+        var criticalHtml = _issueListHtml('critical', '긴급 이슈 없음');
+        var warningHtml  = _issueListHtml('warning',  '주의 이슈 없음');
+        var _issuePanel = function(title, icon, color, count, bodyHtml) {
+            return '<div class="card" style="height:100%;">' +
+                '<div class="card-header">' +
+                    '<h4 style="margin:0;display:flex;align-items:center;gap:6px;font-size:0.92rem;">' +
+                        '<span class="material-symbols-outlined" style="font-size:18px;color:' + color + ';">' + icon + '</span>' +
+                        title +
+                        (count ? '<span style="background:' + color + ';color:#fff;border-radius:999px;font-size:0.68rem;font-weight:800;padding:2px 7px;margin-left:4px;">' + count + '</span>' : '') +
+                    '</h4>' +
+                '</div>' +
+                '<div class="card-body" style="display:flex;flex-direction:column;gap:7px;">' + bodyHtml + '</div>' +
+            '</div>';
+        };
 
         container.innerHTML =
             '<div class="fade-in-up">' +
@@ -179,11 +198,11 @@ var WarehouseOverviewModule = (function () {
                         '주의 이슈', warningCount + '건', '모니터링 필요') +
                 '</div>' +
 
-                // ── 2컬럼 메인 ──────────────────────────────────────────
-                '<div style="display:grid;grid-template-columns:1fr 340px;gap:16px;">' +
+                // ── 메인: KPI와 같은 4열 격자 (이슈는 해당 KPI 카드 바로 아래) ──
+                '<div class="wh-overview-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;align-items:start;">' +
 
-                    // 좌측: 창고 현황
-                    '<div style="display:flex;flex-direction:column;gap:14px;">' +
+                    // 1~2열: 창고 현황
+                    '<div style="grid-column:span 2;display:flex;flex-direction:column;gap:14px;min-width:0;">' +
 
                         // 사출 창고
                         '<div class="card">' +
@@ -226,20 +245,14 @@ var WarehouseOverviewModule = (function () {
                         '</div>' +
                     '</div>' +
 
-                    // 우측: 문제점·이슈
-                    '<div>' +
-                        '<div class="card">' +
-                            '<div class="card-header">' +
-                                '<h4 style="margin:0;display:flex;align-items:center;gap:6px;">' +
-                                    '<span class="material-symbols-outlined" style="font-size:18px;color:#ef4444;">warning</span>' +
-                                    '문제점 · 이슈' +
-                                    (issues.length ? '<span style="background:#ef4444;color:#fff;border-radius:999px;font-size:0.68rem;font-weight:800;padding:2px 7px;margin-left:4px;">' + issues.length + '</span>' : '') +
-                                '</h4>' +
-                            '</div>' +
-                            '<div class="card-body" style="display:flex;flex-direction:column;gap:7px;">' +
-                                issueHtml +
-                            '</div>' +
-                        '</div>' +
+                    // 3열: 긴급 이슈 (FIFO 위반 · 유효기간 만료 · 장기재고)
+                    '<div style="min-width:0;">' +
+                        _issuePanel('긴급 이슈', 'warning', '#ef4444', criticalCount, criticalHtml) +
+                    '</div>' +
+
+                    // 4열: 주의 이슈 (재고 없음 · 다층 LOT 등)
+                    '<div style="min-width:0;">' +
+                        _issuePanel('주의 이슈', 'report_problem', '#f59e0b', warningCount, warningHtml) +
                     '</div>' +
                 '</div>' +
             '</div>';
@@ -740,5 +753,12 @@ var WarehouseOverviewModule = (function () {
         init, render,
         showInjZero, showInjLong, showInjFifo, showInjMultiLot,
         showPaintExpired, showPaintExpiring, showPaintLong, showPaintFifo,
+        // 대시보드/현황 모니터 표시용 — 창고 FIFO(선입선출) 위반
+        getFifoViolations: function() {
+            let inj = [], paint = [];
+            try { inj = (_calcInjStats() || {}).fifoItems || []; } catch (e) {}
+            try { paint = (_calcPaintStats() || {}).fifoItems || []; } catch (e) {}
+            return { injection: inj, paint: paint, total: inj.length + paint.length };
+        },
     };
 })();

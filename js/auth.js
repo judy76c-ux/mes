@@ -952,10 +952,30 @@ const AuthModule = (function () {
                         <h1 style="margin:0 0 6px;font-size:20px;color:#0f172a;">${_esc(pageLabel)}</h1>
                         <div style="font-size:12px;color:#64748b;margin-bottom:14px;">페이지 ID: ${_esc(pageId)}</div>
                         <div style="display:grid;gap:10px;">${rowsHtml}</div>
+                        <div id="mesPermAutoClose" style="margin-top:14px;font-size:11px;color:#94a3b8;text-align:center;">
+                            10초 후 자동으로 닫힙니다.
+                        </div>
                     </div>
                 </div>
             </div>
         `;
+
+        // 10초 후 자동 닫기 (마우스를 올리면 취소 — 내용을 읽는 중이면 닫지 않는다)
+        let remain = 10;
+        const notice = popup.document.getElementById('mesPermAutoClose');
+        const timer = popup.setInterval(function() {
+            remain -= 1;
+            if (remain <= 0) {
+                popup.clearInterval(timer);
+                try { popup.close(); } catch (e) {}
+                return;
+            }
+            if (notice) notice.textContent = remain + '초 후 자동으로 닫힙니다.';
+        }, 1000);
+        popup.document.body.addEventListener('mouseenter', function() {
+            popup.clearInterval(timer);
+            if (notice) notice.textContent = '자동 닫기가 취소되었습니다.';
+        }, { once: true });
     }
     function _newMessageId() {
         return `msg_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
