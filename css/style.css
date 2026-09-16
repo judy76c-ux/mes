@@ -5054,3 +5054,10 @@ body.monitor-mode .dash-notification-list.is-tv { max-height:none !important;hei
 .dash-tv-slide > .dash-monitor-section > .dash-tv-table-wrap { overflow-x:auto; }
 .dash-tv-slide .dash-tv-table { height:auto; }
 .dash-tv-slide .dash-tv-table tbody tr { height:auto; }
+
+
+/* 생산계획 자료 — 발주 대비 수급 현황 표 */
+.spm-supply-table th { white-space:nowrap;vertical-align:middle; }
+.spm-supply-table thead tr:first-child th { border-bottom:1px solid #e2e8f0; }
+.spm-supply-table tbody tr:hover { background:#f8fafc; }
+.spm-supply-table tfoot td { background:#f1f5f9; }

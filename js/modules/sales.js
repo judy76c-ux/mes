@@ -3957,10 +3957,21 @@ var SalesPlanningMaterialsModule = (function() {
         return mat ? (mat.name || mat.materialName || id) : id;
     }
 
+    let _paintMapCache = null;
     function _paintSpecText(row) {
+        if (row && row._paintSpecCache != null) return row._paintSpecCache;
+        const text = _paintSpecTextRaw(row);
+        if (row) row._paintSpecCache = text;
+        return text;
+    }
+
+    function _paintSpecTextRaw(row) {
         const product = _productOf(row);
-        const paintMap = {};
-        (Storage.getAll(DB.STORES.PAINT_MATERIALS) || []).forEach(m => { if (m.id) paintMap[m.id] = m; });
+        if (!_paintMapCache) {
+            _paintMapCache = {};
+            (Storage.getAll(DB.STORES.PAINT_MATERIALS) || []).forEach(m => { if (m.id) _paintMapCache[m.id] = m; });
+        }
+        const paintMap = _paintMapCache;
         const paints = Array.isArray(product?.paintMaterials) ? product.paintMaterials : [];
         if (!paints.length) return '-';
         return paints.map(p => {
@@ -4016,33 +4027,157 @@ var SalesPlanningMaterialsModule = (function() {
             </div>`;
     }
 
-    function _renderRows() {
-        const injRows = _rows.filter(r => r.remaining > 0 && (r.injectionHasData || r.injectionShortage > 0));
-        const paintRows = _rows.filter(r => r.remaining > 0 && (r.paintShortage > 0 || _paintSpecText(r) !== '-'));
-        const laserRows = _rows.filter(r => r.remaining > 0 && (r.laserShortage > 0 || r.laserStandby > 0));
+    /* ══════════════════════════════════════════════════════════
+       발주 대비 수급 현황 — 한 표로 보는 요약
+       발주 / 납품 / 미납 / 재공품(완제품·레이져 대기·포장 잔량·레이져 후 재공) /
+       도장 부족분 / 레이져 부족품 / 사출 재고 / 사출 부족분
+    ══════════════════════════════════════════════════════════ */
+    // 레이져 재공 계산은 전체 이력을 훑는 무거운 연산이라 조회 1회당 한 번만 계산해 둔다.
+    let _wipSnapshot = null;
+    function _takeWipSnapshot() {
+        _wipSnapshot = { wip: null, residual: null };
+        if (typeof LaserWipModule === 'undefined') return;
+        try { if (LaserWipModule._calcWip) _wipSnapshot.wip = LaserWipModule._calcWip(); } catch (e) {}
+        try { if (LaserWipModule._calcLaserResidualWip) _wipSnapshot.residual = LaserWipModule._calcLaserResidualWip(); } catch (e) {}
+    }
 
-        return _summaryCards(_rows) +
-            _table('사출 자재 필요', 'precision_manufacturing',
-                ['차종', '품명', '컬러', '미납', '연결 사출자재', '사출 현재/필요'],
-                injRows,
-                row => {
-                    const mats = _linkedInjectionMaterials(row).map(_materialName).join('<br>') || '-';
-                    return `<tr>${_baseCols(row)}<td>${mats}</td><td style="text-align:right;">${_stockNeed(row.injectionStock, row.injectionShortage)}</td></tr>`;
-                },
-                '기간 내 사출 자재 산출 대상이 없습니다.'
-            ) +
-            _table('도장/도료 자재 필요', 'format_color_fill',
-                ['차종', '품명', '컬러', '미납', '제품 도료 기준', '도장 현재/필요'],
-                paintRows,
-                row => `<tr>${_baseCols(row)}<td>${_paintSpecText(row)}</td><td style="text-align:right;">${_stockNeed(row.finishedStock + row.shippingStandby, row.paintShortage)}</td></tr>`,
-                '기간 내 도장/도료 산출 대상이 없습니다.'
-            ) +
-            _table('레이져 공정 필요', 'flare',
-                ['차종', '품명', '컬러', '미납', '레이져 대기', '완제품+대기/필요'],
-                laserRows,
-                row => `<tr>${_baseCols(row)}<td style="text-align:right;">${_fmt(row.laserStandby)}</td><td style="text-align:right;">${_stockNeed(row.finishedStock + row.shippingStandby + row.laserStandby, row.laserShortage)}</td></tr>`,
-                '기간 내 레이져 산출 대상이 없습니다.'
-            );
+    function _laserResidualQty(row) {
+        try {
+            if (typeof LaserWipModule !== 'undefined' && LaserWipModule.getResidualQty) {
+                return _num(LaserWipModule.getResidualQty(row.carModel, row.partName, row.color,
+                    _wipSnapshot && _wipSnapshot.residual));
+            }
+        } catch (e) {}
+        return 0;
+    }
+
+    function _afterLaserWipQty(row) {
+        try {
+            if (typeof LaserWipModule !== 'undefined' && LaserWipModule.getWipStock) {
+                return _num(LaserWipModule.getWipStock(row.carModel, row.partName, row.color,
+                    _wipSnapshot && _wipSnapshot.wip));
+            }
+        } catch (e) {}
+        return 0;
+    }
+
+    function _supplyRow(row) {
+        const order = _num(row.totalPlan);
+        const delivered = _num(row.delivered);
+        const remaining = _num(row.remaining);
+        const finished = _num(row.finishedStock) + _num(row.shippingStandby);
+        const laserStandby = _num(row.laserStandby);
+        const residual = _laserResidualQty(row);
+        const afterLaser = _afterLaserWipQty(row);
+        const wipTotal = finished + laserStandby + residual + afterLaser;
+        const paintShort = remaining - wipTotal;              // 도장 부족분
+        const laserBalance = finished - remaining;            // 레이져 부족품 (창고재고 - 미납)
+        const injStock = _num(row.injectionStock);
+        const injShort = paintShort - injStock;               // 사출 부족분
+        return { order, delivered, remaining, finished, laserStandby, residual, afterLaser,
+                 wipTotal, paintShort, laserBalance, injStock, injShort };
+    }
+
+    // 부족(양수)은 빨강, 여유는 회색/초록
+    function _shortCell(value, invert) {
+        const short = invert ? value < 0 : value > 0;
+        const text = short
+            ? (invert ? '-' + _fmt(Math.abs(value)) : _fmt(value))
+            : (invert ? '+' + _fmt(Math.abs(value)) : _fmt(Math.max(0, value)));
+        const color = short ? 'var(--accent-red)' : 'var(--accent-green)';
+        return `<td style="text-align:right;font-weight:800;color:${color};">${text}</td>`;
+    }
+
+    function _supplyTable(rows) {
+        const list = rows.filter(r => _num(r.totalPlan) > 0 || _num(r.remaining) > 0);
+        _takeWipSnapshot();
+        const calcs = list.map(_supplyRow);
+        _wipSnapshot = null;
+        const tot = calcs.reduce((acc, c) => {
+            Object.keys(c).forEach(k => { acc[k] = (acc[k] || 0) + c[k]; });
+            return acc;
+        }, {});
+        const body = list.length ? list.map((row, idx) => {
+            const c = calcs[idx];
+            return `<tr>
+                <td style="white-space:nowrap;">${_esc(row.carModel || '-')}</td>
+                <td style="font-weight:800;min-width:180px;">${_esc(row.partName || '-')}</td>
+                <td style="white-space:nowrap;">${_esc(row.color || '-')}</td>
+                <td style="text-align:right;font-weight:700;">${_fmt(c.order)}</td>
+                <td style="text-align:right;color:var(--accent-green);font-weight:700;">${_fmt(c.delivered)}</td>
+                <td style="text-align:right;font-weight:800;color:${c.remaining > 0 ? 'var(--accent-orange,#ea580c)' : 'var(--text-muted)'};">${_fmt(c.remaining)}</td>
+                <td style="text-align:right;">${_fmt(c.finished)}</td>
+                <td style="text-align:right;">${_fmt(c.laserStandby)}</td>
+                <td style="text-align:right;">${_fmt(c.residual)}</td>
+                <td style="text-align:right;">${_fmt(c.afterLaser)}</td>
+                <td style="text-align:right;font-weight:800;background:#f8fafc;">${_fmt(c.wipTotal)}</td>
+                ${_shortCell(c.paintShort)}
+                ${_shortCell(c.laserBalance, true)}
+                <td style="text-align:right;">${_fmt(c.injStock)}</td>
+                ${_shortCell(c.injShort)}
+            </tr>`;
+        }).join('') : `<tr><td colspan="15" style="text-align:center;padding:24px;color:var(--text-muted);">기간 내 발주(영업 계획) 품목이 없습니다.</td></tr>`;
+
+        const footer = list.length ? `<tfoot><tr style="background:#f1f5f9;font-weight:900;">
+            <td colspan="3" style="text-align:right;">합계</td>
+            <td style="text-align:right;">${_fmt(tot.order)}</td>
+            <td style="text-align:right;">${_fmt(tot.delivered)}</td>
+            <td style="text-align:right;">${_fmt(tot.remaining)}</td>
+            <td style="text-align:right;">${_fmt(tot.finished)}</td>
+            <td style="text-align:right;">${_fmt(tot.laserStandby)}</td>
+            <td style="text-align:right;">${_fmt(tot.residual)}</td>
+            <td style="text-align:right;">${_fmt(tot.afterLaser)}</td>
+            <td style="text-align:right;">${_fmt(tot.wipTotal)}</td>
+            <td style="text-align:right;color:var(--accent-red);">${_fmt(Math.max(0, tot.paintShort))}</td>
+            <td style="text-align:right;">${_fmt(tot.laserBalance)}</td>
+            <td style="text-align:right;">${_fmt(tot.injStock)}</td>
+            <td style="text-align:right;color:var(--accent-red);">${_fmt(Math.max(0, tot.injShort))}</td>
+        </tr></tfoot>` : '';
+
+        return `
+            <div class="card" style="margin-bottom:14px;">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <h4><span class="material-symbols-outlined">table_view</span> 발주 대비 수급 현황</h4>
+                    <span style="font-size:0.72rem;color:var(--text-muted);">
+                        재공품 = 완제품 + 레이져 대기품 + 포장 잔량 + 레이져 후 재공품 ·
+                        도장 부족분 = 미납 − 재공품 · 레이져 = 창고재고 − 미납 · 사출 부족분 = 도장 부족분 − 사출재고
+                    </span>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow-x:auto;overflow-y:visible;">
+                        <table class="data-table spm-supply-table" style="width:max-content;min-width:100%;font-size:0.78rem;">
+                            <thead>
+                                <tr>
+                                    <th rowspan="2">차종</th>
+                                    <th rowspan="2">품명</th>
+                                    <th rowspan="2">컬러</th>
+                                    <th rowspan="2" style="text-align:right;">발주수량</th>
+                                    <th rowspan="2" style="text-align:right;">납품수량</th>
+                                    <th rowspan="2" style="text-align:right;">미납수량</th>
+                                    <th colspan="5" style="text-align:center;background:#f8fafc;">재공품</th>
+                                    <th rowspan="2" style="text-align:right;">도장 부족분</th>
+                                    <th rowspan="2" style="text-align:right;">레이져 부족품</th>
+                                    <th rowspan="2" style="text-align:right;">사출 재고</th>
+                                    <th rowspan="2" style="text-align:right;">사출 부족분</th>
+                                </tr>
+                                <tr>
+                                    <th style="text-align:right;background:#f8fafc;">완제품 재고</th>
+                                    <th style="text-align:right;background:#f8fafc;">레이져 대기품</th>
+                                    <th style="text-align:right;background:#f8fafc;">포장 잔량</th>
+                                    <th style="text-align:right;background:#f8fafc;">레이져 후 재공품</th>
+                                    <th style="text-align:right;background:#f1f5f9;">합계</th>
+                                </tr>
+                            </thead>
+                            <tbody>${body}</tbody>
+                            ${footer}
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    function _renderRows() {
+        return _supplyTable(_rows);
     }
 
     async function search() {
@@ -4050,6 +4185,7 @@ var SalesPlanningMaterialsModule = (function() {
         const end = document.getElementById('spmEnd')?.value || _addDays(start, 30);
         const body = document.getElementById('spmBody');
         if (body) body.innerHTML = `<div style="padding:24px;color:var(--text-muted);">계산 중...</div>`;
+        _paintMapCache = null;   // 조회마다 도료 마스터 최신값 사용
         _rows = await SalesDeliveryPlanModule.getPlanningMaterialRows(start, end);
         if (body) body.innerHTML = _renderRows();
     }

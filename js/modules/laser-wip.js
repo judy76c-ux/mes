@@ -6790,9 +6790,10 @@ function _num(value) {
      * 차종+품명+컬러 기준 레이져 후 재공 재고 조회
      * production-plan.js 도장-B 모달에서 호출용
      */
-    function getWipStock(carModel, partName, color) {
+    function getWipStock(carModel, partName, color, precalcRows) {
         // color가 있으면 해당 컬러만, 없으면 차종+품명 합산
-        return _calcWip()
+        // precalcRows: 여러 품목을 한 번에 조회할 때 _calcWip() 결과를 재사용 (반복 재계산 방지)
+        return (Array.isArray(precalcRows) ? precalcRows : _calcWip())
             .filter(r => {
                 const cmOk = !carModel || r.carModel === carModel;
                 const pnOk = !partName || r.partName === partName;
@@ -7215,8 +7216,8 @@ function _num(value) {
         return !!_buildAfterLaserDrainMap()[`${carModel||''}||${partName||''}`];
     }
 
-    function getResidualQty(carModel, partName, color) {
-        const rows = _calcLaserResidualWip();
+    function getResidualQty(carModel, partName, color, precalcRows) {
+        const rows = Array.isArray(precalcRows) ? precalcRows : _calcLaserResidualWip();
         const car = String(carModel || '').trim();
         const part = String(partName || '').trim();
         const clr = String(color || '').trim();
