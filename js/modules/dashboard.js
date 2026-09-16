@@ -36,6 +36,7 @@ const DashboardModule = (function() {
             STORE.PRODUCT_INVENTORY,
             STORE.PRODUCT_OUTGOING,
             STORE.PROD_QUALITY_CHECK,
+            STORE.PROD_QUALITY_PERFORMANCE,
             STORE.JIG_MASTER,
             STORE.JIG_LOG,
             STORE.JIG_ORDERING
@@ -733,10 +734,13 @@ const DashboardModule = (function() {
     }
 
     function _renderTvQuality() {
-        const year = new Date().getFullYear();
+        const now = new Date();
+        const year = now.getFullYear();
+        const month = now.getMonth() + 1;
         const rows = _qualityRows(year);
+        const monthRows = rows.filter(r => Number(r.month) === month);
         const yearNote = document.getElementById('dashTvQualityYear');
-        if (yearNote) yearNote.textContent = year + '년 누계';
+        if (yearNote) yearNote.textContent = year + '년 · ' + month + '월 기준';
 
         // KPI 카드 (공정 / 고객 / 외주)
         const kpi = document.getElementById('dashTvQualityKpi');
@@ -746,13 +750,15 @@ const DashboardModule = (function() {
                 ['support_agent', 'customer', '고객불량', '#f59e0b'],
                 ['inventory_2', 'outsourcing', '외주불량', '#0891b2']
             ];
+            const base = monthRows.length ? monthRows : rows;
+            const baseLabel = monthRows.length ? (month + '월') : (year + '년 누계');
             kpi.innerHTML = cats.map(function(c) {
-                const s2 = _qualitySum(rows, c[1]);
+                const s2 = _qualitySum(base, c[1]);
                 const rate = s2.input > 0 ? (s2.defect / s2.input * 100).toFixed(2) : '0.00';
                 return '<div class="dash-kpi-card" style="--kpi-color:' + c[3] + '">'
                     + '<span class="material-symbols-outlined">' + c[0] + '</span>'
                     + '<div><strong>' + UIUtils.formatNumber(s2.ppm) + '</strong>'
-                    + '<small>' + c[2] + ' PPM · 불량률 ' + rate + '%</small></div></div>';
+                    + '<small>' + baseLabel + ' ' + c[2] + ' PPM · 불량률 ' + rate + '%</small></div></div>';
             }).join('');
         }
 
@@ -785,7 +791,7 @@ const DashboardModule = (function() {
 
         // 3) 라인별 실적 — 불량수(막대) + 불량률%(선), 이중 축
         const byLine = {};
-        rows.forEach(function(r) {
+        (monthRows.length ? monthRows : rows).forEach(function(r) {
             const key = String(r.line || r.process || '').trim() || '라인 미등록';
             const b = byLine[key] || (byLine[key] = { input: 0, defect: 0 });
             b.input += Number(r.inputQty) || 0;
@@ -823,7 +829,7 @@ const DashboardModule = (function() {
 
         // 2) 불량 유형별 상위 8
         const byType = {};
-        rows.forEach(function(r) {
+        (monthRows.length ? monthRows : rows).forEach(function(r) {
             const key = String(r.defectType || '').trim() || '유형 미등록';
             byType[key] = (byType[key] || 0) + (Number(r.defectQty) || 0);
         });
@@ -949,32 +955,6 @@ const DashboardModule = (function() {
                     </div>
                 </section>
 
-                <section class="dash-tv-slide" data-slide="주간 생산 추이" data-keep="1">
-                    <div class="dash-tv-chart-wrap">
-                        <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 1 / TREND</span><h2>최근 7일 도장 생산 추이</h2></div></div>
-                            <div class="dash-tv-canvas"><canvas id="dashTvTrend"></canvas></div>
-                        </div>
-                        <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 2 / LINE</span><h2>금일 라인별 계획 대비 실적</h2></div></div>
-                            <div class="dash-tv-canvas"><canvas id="dashTvLine"></canvas></div>
-                        </div>
-                    </div>
-                </section>
-
-                <section class="dash-tv-slide" data-slide="입고 · 출하 TOP" data-keep="1">
-                    <div class="dash-tv-chart-wrap">
-                        <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 3 / INCOMING</span><h2>최근 7일 수입검사 입고량</h2></div></div>
-                            <div class="dash-tv-canvas"><canvas id="dashTvIncoming"></canvas></div>
-                        </div>
-                        <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">CHART 4 / SHIPPING</span><h2>금일 출하 예정 상위 품목</h2></div></div>
-                            <div class="dash-tv-canvas"><canvas id="dashTvShipping"></canvas></div>
-                        </div>
-                    </div>
-                </section>
-
                 <section class="dash-tv-slide" data-slide="품질 실적" data-keep="1">
                     <div id="dashTvQualityKpi" class="dash-executive-summary"></div>
                     <div class="dash-tv-chart-wrap">
@@ -983,11 +963,11 @@ const DashboardModule = (function() {
                             <div class="dash-tv-canvas"><canvas id="dashTvQualityPpm"></canvas></div>
                         </div>
                         <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 2 / DEFECT</span><h2>불량 유형별 실적 (상위 8)</h2></div></div>
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 2 / DEFECT</span><h2>이번달 불량 유형별 실적 (상위 8)</h2></div></div>
                             <div class="dash-tv-canvas"><canvas id="dashTvDefectType"></canvas></div>
                         </div>
                         <div class="dash-monitor-section dash-tv-chart">
-                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 3 / LINE</span><h2>라인별 실적 (불량수 · 불량률)</h2></div></div>
+                            <div class="dash-section-heading compact"><div><span class="dash-section-kicker">QUALITY 3 / LINE</span><h2>이번달 라인별 실적 (불량수 · 불량률)</h2></div></div>
                             <div class="dash-tv-canvas"><canvas id="dashTvQualityLine"></canvas></div>
                         </div>
                     </div>
@@ -1018,21 +998,19 @@ const DashboardModule = (function() {
                 </section>
 
                 <div class="dash-tv-hidden2">
+                    <div id="dashAttentionSummary"></div>
+                    <div id="dashMonitorTiles"></div>
                     <div id="dashJigLifeAlerts"></div>
                     <div id="dashIncomingSummary"></div>
                     <div id="dashWarehouseSummary" class="dash-warehouse-grid"></div>
                 </div>
 
                 <section class="dash-tv-slide" data-slide="경보 · 미입력">
-                    <div class="dash-monitor-grid dash-pair-grid">
-                        <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
-                        <section class="dash-monitor-section dash-jig-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">06 / JIG</span><h2>도장 JIG 교체 임박</h2></div></div><div id="dashTvJigList" class="dash-tv-table-wrap"></div></section>
-                        <section class="dash-monitor-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">08 / FIFO</span><h2>선입선출 위반 (사출 · 도료)</h2></div></div><div id="dashTvFifo" class="dash-tv-table-wrap"></div></section>
-                    </div>
+                    <div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;"></div>
                 </section>
 
-                <section class="dash-tv-slide" data-slide="점검 · 관리">
-                    <section class="dash-monitor-section dash-attention-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">05 / INSPECTION</span><h2>점검 / 관리 현황</h2></div></div><div id="dashAttentionSummary"></div><div id="dashMonitorTiles"></div></section>
+                <section class="dash-tv-slide" data-slide="선입선출 위반">
+                    <section class="dash-monitor-section"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">08 / FIFO</span><h2>선입선출 위반 (사출 · 도료)</h2></div><span class="dash-section-note">구 LOT 잔량 · 신 LOT 선소진</span></div><div id="dashTvFifo" class="dash-tv-table-wrap"></div></section>
                 </section>
 
                 <section class="dash-tv-slide dash-tv-notify" data-slide="알림 발송 현황">

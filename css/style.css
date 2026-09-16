@@ -5048,3 +5048,9 @@ body.monitor-mode .dash-notification-list.is-tv { max-height:none !important;hei
 .dash-notification-row.tv small { font-size:clamp(.85rem,1.1vw,1.25rem);color:#475569;white-space:normal;
     display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;line-height:1.5;margin-top:3px; }
 .dash-notification-row.tv time { font-size:clamp(.8rem,1vw,1.15rem);padding-top:4px; }
+
+
+/* 단독 표 화면 — 행 높이를 내용에 맞추고 가로 잘림 방지 */
+.dash-tv-slide > .dash-monitor-section > .dash-tv-table-wrap { overflow-x:auto; }
+.dash-tv-slide .dash-tv-table { height:auto; }
+.dash-tv-slide .dash-tv-table tbody tr { height:auto; }
