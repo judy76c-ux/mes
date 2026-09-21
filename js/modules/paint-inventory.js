@@ -4034,6 +4034,58 @@ const PaintInventoryModule = (function() {
         return `<span data-pts-field="${key}" contenteditable="false" style="${extraStyle}">${data[key] || ''}</span>`;
     }
 
+    function _revisionUsers(data, key) {
+        let users = [];
+        try {
+            users = typeof AuthModule !== 'undefined' && AuthModule.getUsers
+                ? (AuthModule.getUsers() || []).filter(u => u && u.active !== false)
+                : [];
+        } catch (e) {}
+        const selected = String(data[key] || '').trim();
+        if (selected && !users.some(u => String(u.displayName || u.username || '').trim() === selected)) {
+            users.unshift({ displayName: selected, username: selected });
+        }
+        return users;
+    }
+
+    function _revisionStampHtml(name, user) {
+        const label = String(name || '').trim();
+        if (user && user.seal) {
+            return `<img src="${_esc(user.seal)}" alt="${_esc(label)} 날인" style="width:34px;height:34px;object-fit:contain;display:block;margin:0 auto;">`;
+        }
+        return `<span style="display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border:2px solid #dc2626;border-radius:50%;color:#dc2626;font-size:9px;font-weight:800;line-height:1.05;text-align:center;transform:rotate(-8deg);">${_esc(label || '날인')}</span>`;
+    }
+
+    function _revisionField(key, data) {
+        const selected = String(data[key] || '').trim();
+        const users = _revisionUsers(data, key);
+        const selectedUser = users.find(u => String(u.displayName || u.username || '').trim() === selected);
+        const options = `<option value="">선택</option>` + users.map(u => {
+            const name = String(u.displayName || u.username || '').trim();
+            return `<option value="${_esc(name)}"${name === selected ? ' selected' : ''}>${_esc(name)}</option>`;
+        }).join('');
+        return `<div style="display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;min-height:34px;">
+            <select class="pts-revision-select" data-pts-field="${key}" disabled onchange="PaintInventoryModule.onRevisionUserChange(this)" style="width:100%;border:0;background:transparent;text-align:center;font:inherit;padding:0;color:#111827;">
+                ${options}
+            </select>
+            <span data-pts-stamp="${key}" style="display:block;height:34px;">${_revisionStampHtml(selected, selectedUser)}</span>
+        </div>`;
+    }
+
+    function onRevisionUserChange(select) {
+        if (!select) return;
+        const name = String(select.value || '').trim();
+        const doc = document.getElementById('paintTempStandardDoc');
+        const stamp = doc && doc.querySelector(`[data-pts-stamp="${select.dataset.ptsField}"]`);
+        let user = null;
+        try {
+            user = typeof AuthModule !== 'undefined' && AuthModule.getUsers
+                ? (AuthModule.getUsers() || []).find(u => String(u.displayName || u.username || '').trim() === name)
+                : null;
+        } catch (e) {}
+        if (stamp) stamp.innerHTML = _revisionStampHtml(name, user);
+    }
+
     function _photoData(data, key) {
         const value = data.images && data.images[key];
         if (!value) return null;
@@ -4364,21 +4416,7 @@ const PaintInventoryModule = (function() {
                 #paintTempStandardDoc .pts-object.pts-selected .pts-object-resize {
                     display: block;
                 }
-                #paintTempApprovalBox {
-                    margin: 0 0 10px;
-                }
-                #paintTempApprovalBox .approval-widget {
-                    margin: 0;
-                }
             </style>
-            <div id="paintTempApprovalBox">
-                ${window.ApprovalUtils ? ApprovalUtils.render(data.approvals, {
-                    prefix: 'paintTempApproval',
-                    editable: true,
-                    signHandler: 'PaintInventoryModule.signTemperatureStandardApproval',
-                    clearHandler: 'PaintInventoryModule.clearTemperatureStandardApproval'
-                }) : ''}
-            </div>
             <div style="border:2px solid #1d4ed8;background:#fff;color:#111827;font-family:Inter,'Malgun Gothic',sans-serif;">
                 <div id="paintTempStandardDoc" data-deleted-boxes="${deletedBoxes}" data-deleted-objects="${deletedObjects}" style="background:#fff;">
                 <div style="display:grid;grid-template-columns:220px 1fr 450px;border-bottom:1px solid #111827;">
@@ -4392,21 +4430,21 @@ const PaintInventoryModule = (function() {
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo3', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate3', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason3', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter3', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer3', data)}</div>
-                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionWriter3', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionReviewer3', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionApprover3', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo2', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate2', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason2', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter2', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer2', data)}</div>
-                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionWriter2', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionReviewer2', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionApprover2', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionNo', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionDate', data)}</div>
                             <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReason', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionWriter', data)}</div>
-                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionReviewer', data)}</div>
-                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_editableField('revisionApprover', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionWriter', data)}</div>
+                            <div style="border-right:1px solid #111827;border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionReviewer', data)}</div>
+                            <div style="border-bottom:1px solid #111827;padding:3px 4px;">${_revisionField('revisionApprover', data)}</div>
                             <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">NO</div>
                             <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">작성일자</div>
                             <div style="border-right:1px solid #111827;padding:3px 4px;font-weight:800;">개정사유</div>
@@ -4587,7 +4625,11 @@ const PaintInventoryModule = (function() {
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
         doc.querySelectorAll('[data-pts-field]').forEach(el => {
-            el.contentEditable = enabled ? 'true' : 'false';
+            if (el.matches('select')) {
+                el.disabled = !enabled;
+            } else {
+                el.contentEditable = enabled ? 'true' : 'false';
+            }
         });
         doc.querySelectorAll('[data-pts-image]').forEach(el => {
             el.classList.toggle('pts-editing', !!enabled);
@@ -4719,7 +4761,9 @@ const PaintInventoryModule = (function() {
             : (window._paintTempStandardApprovals || data.approvals || {});
         window._paintTempStandardApprovals = data.approvals;
         doc.querySelectorAll('[data-pts-field]').forEach(el => {
-            data[el.dataset.ptsField] = el.innerHTML.trim();
+            data[el.dataset.ptsField] = el.matches('select')
+                ? String(el.value || '').trim()
+                : el.innerHTML.trim();
         });
         data.images = {};
         doc.querySelectorAll('[data-pts-image]').forEach(el => {
@@ -5362,11 +5406,6 @@ const PaintInventoryModule = (function() {
     function printTemperatureStandard() {
         const doc = document.getElementById('paintTempStandardDoc');
         if (!doc) return;
-        if (window.ApprovalUtils) {
-            window._paintTempStandardApprovals = ApprovalUtils.collect('paintTempApproval', window._paintTempStandardApprovals || {});
-            _renderTemperatureStandardApprovals();
-        }
-        const approvalBox = document.getElementById('paintTempApprovalBox');
         const win = window.open('', '_blank');
         if (!win) {
             UIUtils.toast('인쇄 창을 열 수 없습니다. 팝업 차단 설정을 확인하세요.', 'warning');
@@ -5379,9 +5418,11 @@ const PaintInventoryModule = (function() {
                 @page { size: A4 landscape; margin: 8mm; }
                 body { margin:0; font-family: Inter, 'Malgun Gothic', sans-serif; }
                 [contenteditable] { outline: none !important; background: transparent !important; }
+                .pts-revision-select { appearance:none !important; -webkit-appearance:none !important; border:0 !important; background:transparent !important; color:#111 !important; opacity:1 !important; pointer-events:none !important; }
+                .pts-revision-select::-ms-expand { display:none; }
                 .pts-photo-slot::after { display:none !important; }
                 .pts-selected { box-shadow:none !important; }
-            </style></head><body>${approvalBox ? approvalBox.outerHTML : ''}${doc.outerHTML}</body></html>
+            </style></head><body>${doc.outerHTML}</body></html>
         `);
         win.document.close();
         win.focus();
@@ -5466,6 +5507,7 @@ const PaintInventoryModule = (function() {
         signTemperatureStandardApproval,
         clearTemperatureStandardApproval,
         setTemperatureStandardEdit,
+        onRevisionUserChange,
         saveTemperatureStandard,
         resetTemperatureStandard,
         pasteTemperatureStandardImage,
