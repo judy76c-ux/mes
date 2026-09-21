@@ -5106,3 +5106,6 @@ body.monitor-mode .dash-notification-list.is-tv { max-height:none !important;hei
 .spm-supply-table thead tr:first-child th { border-bottom:1px solid #e2e8f0; }
 .spm-supply-table tbody tr:hover { background:#f8fafc; }
 .spm-supply-table tfoot td { background:#f1f5f9; }
+
+/* 부트스트랩 로딩 아이콘 회전 (app.js 새로고침 복원 중 표시) */
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }

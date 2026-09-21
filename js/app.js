@@ -103,8 +103,26 @@ const App = (function() {
             );
             // 인증 전에는 대시보드만 직접 표시한다. 정식 라우터는 인증 완료 후 시작해
             // 권한에 따른 메뉴 표시가 잠시 잘못 보이는 것을 막는다.
-            if (typeof DashboardModule !== 'undefined' && DashboardModule.render) {
-                DashboardModule.render(document.getElementById('contentArea'));
+            // 단, 다른 페이지에서 새로고침(F5)한 경우엔 대시보드를 먼저 그리면
+            // 대시보드 → 원래 페이지로 화면이 한 번 튀므로(대시보드 데이터도 쓸데없이 계산),
+            // 복원할 페이지가 대시보드일 때만 미리 그리고 그 외엔 로딩 표시만 둔다.
+            const _restorePage = (() => {
+                try {
+                    const q = new URLSearchParams(window.location.search || '');
+                    if (q.get('page') || q.get('open')) return q.get('page') || '__intent__';
+                    return sessionStorage.getItem('mes_last_page') || 'dashboard';
+                } catch (e) { return 'dashboard'; }
+            })();
+            const _contentArea = document.getElementById('contentArea');
+            if (_restorePage === 'dashboard') {
+                if (typeof DashboardModule !== 'undefined' && DashboardModule.render) {
+                    DashboardModule.render(_contentArea);
+                }
+            } else if (_contentArea) {
+                _contentArea.innerHTML =
+                    '<div style="display:flex;align-items:center;justify-content:center;gap:8px;padding:80px 0;color:var(--text-muted);">' +
+                    '<span class="material-symbols-outlined" style="animation:spin 1s linear infinite;">progress_activity</span>' +
+                    '페이지 불러오는 중...</div>';
             }
 
             // 화면은 이미 표시한 상태에서 초기 데이터만 완료시킨 뒤

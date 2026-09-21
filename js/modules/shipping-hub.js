@@ -744,6 +744,59 @@ var ShippingCertificateModule = (function () {
         await Storage.setConfigValue(MANUAL_KEY, _manualRows);
     }
 
+    function _products() {
+        return Storage.getAll(DB.STORES.PRODUCTS) || [];
+    }
+
+    function _normKey(v) {
+        return _norm(v).toLowerCase().replace(/\s+/g, '');
+    }
+
+    function _findProductForPlan(plan) {
+        const products = _products();
+        if (plan.productId) {
+            const byId = products.find(p => p.id === plan.productId);
+            if (byId) return byId;
+        }
+        return products.find(p =>
+            _normKey(p.partName) === _normKey(plan.partName) &&
+            (!plan.carModel || _normKey(p.carModel) === _normKey(plan.carModel)) &&
+            (!plan.color || !p.color || _normKey(p.color) === _normKey(plan.color))
+        ) || products.find(p =>
+            _normKey(p.partName) === _normKey(plan.partName) &&
+            (!plan.carModel || _normKey(p.carModel) === _normKey(plan.carModel))
+        ) || null;
+    }
+
+    function _planRowsFor(date) {
+        const plans = (Storage.getAll(DB.STORES.SALES_DELIVERY_PLAN) || [])
+            .filter(p => String(p.date || '').slice(0, 10) === date);
+        const map = {};
+        plans.forEach(plan => {
+            const qty = Number(plan.planQty) || 0;
+            if (qty <= 0) return;
+            const product = _findProductForPlan(plan);
+            const customer = (product && (product.customer || product.deliveryCustomer || product.client)) || plan.customer || '';
+            const carModel = (product && product.carModel) || plan.carModel || '';
+            const partName = (product && product.partName) || plan.partName || '';
+            const color = plan.color || (product && product.color) || '';
+            const key = [_normKey(customer), _normKey(carModel), _normKey(partName), _normKey(color)].join('||');
+            if (!map[key]) map[key] = { customer, carModel, partName, color, qty: 0 };
+            map[key].qty += qty;
+        });
+        return Object.values(map).map((row, index) => ({
+            id: `plan:${date}:${index}:${_normKey(row.carModel)}:${_normKey(row.partName)}`,
+            date,
+            customer: row.customer,
+            carModel: row.carModel,
+            partName: row.partName,
+            color: row.color,
+            qty: row.qty,
+            _source: 'plan',
+            _planOnly: true
+        }));
+    }
+
     async function _loadShipments(date) {
         const sales = (await Storage.getConfigValue(SHIPMENT_KEY).catch(() => ([]))) || [];
         const salesRows = (Array.isArray(sales) ? sales : [])
@@ -753,7 +806,13 @@ var ShippingCertificateModule = (function () {
         const manualRows = _manualRows
             .filter(r => (r.date || '') === date)
             .map(r => Object.assign({}, r, { _source: 'manual' }));
-        return salesRows.concat(manualRows)
+        const existing = salesRows.concat(manualRows);
+        const planRows = _planRowsFor(date).filter(plan => !existing.some(row =>
+            _normKey(row.carModel) === _normKey(plan.carModel) &&
+            _normKey(row.partName) === _normKey(plan.partName) &&
+            (!_norm(plan.color) || !_norm(row.color) || _normKey(row.color) === _normKey(plan.color))
+        ));
+        return existing.concat(planRows)
             .sort((a, b) => (a.customer || '').localeCompare(b.customer || '', 'ko')
                 || (a.carModel || '').localeCompare(b.carModel || '', 'ko')
                 || (a.partName || '').localeCompare(b.partName || '', 'ko'));
@@ -880,6 +939,33 @@ var ShippingCertificateModule = (function () {
             <div class="card" style="margin-top:20px;">
                 <div class="card-header">
                     <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="color:var(--accent-orange);">event_upcoming</span>
+                        익일 출하 예정
+                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">납품 출하(금일) 영업계획 기준</span>
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper" style="overflow:auto;">
+                        <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                            <thead>
+                                <tr>
+                                    <th style="white-space:nowrap;">출하 예정일</th>
+                                    <th style="white-space:nowrap;">납품처</th>
+                                    <th style="white-space:nowrap;">차종</th>
+                                    <th style="white-space:nowrap;">품명</th>
+                                    <th style="white-space:nowrap;">컬러</th>
+                                    <th style="text-align:right;white-space:nowrap;">예정수량</th>
+                                    <th style="text-align:center;white-space:nowrap;">상태</th>
+                                </tr>
+                            </thead>
+                            <tbody id="scNextBody"><tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <div class="card" style="margin-top:20px;">
+                <div class="card-header">
+                    <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="color:var(--accent-green);">history</span>
                         성적서 발행 이력
                     </h4>
@@ -916,7 +1002,28 @@ var ShippingCertificateModule = (function () {
         const date = dateEl && dateEl.value ? dateEl.value : UIUtils.today();
         const rows = await _loadShipments(date);
         const tbody = document.getElementById('scBody');
+        const nextBody = document.getElementById('scNextBody');
         const histBody = document.getElementById('scHistBody');
+
+        const nextDateObj = new Date(date + 'T00:00:00');
+        nextDateObj.setDate(nextDateObj.getDate() + 1);
+        const nextDate = nextDateObj.toISOString().slice(0, 10);
+        const nextRows = _planRowsFor(nextDate);
+
+        if (nextBody) {
+            nextBody.innerHTML = nextRows.length
+                ? nextRows.map(r => `
+                    <tr>
+                        <td style="white-space:nowrap;">${_esc(nextDate)}</td>
+                        <td style="white-space:nowrap;">${_esc(r.customer || '-')}</td>
+                        <td style="white-space:nowrap;">${_esc(r.carModel || '-')}</td>
+                        <td style="white-space:nowrap;"><strong>${_esc(r.partName || '-')}</strong></td>
+                        <td style="white-space:nowrap;">${_esc(r.color || '-')}</td>
+                        <td style="text-align:right;font-weight:600;white-space:nowrap;">${UIUtils.formatNumber(Number(r.qty) || 0)}</td>
+                        <td style="text-align:center;white-space:nowrap;"><span class="badge badge-secondary">출하 예정</span></td>
+                    </tr>`).join('')
+                : `<tr><td colspan="7" style="text-align:center;padding:28px;color:var(--text-muted);">${_esc(nextDate)} 출하 예정 품목이 없습니다.</td></tr>`;
+        }
 
         if (tbody) {
             if (!rows.length) {
@@ -925,13 +1032,18 @@ var ShippingCertificateModule = (function () {
                 tbody.innerHTML = rows.map(r => {
                     const st = _buildRowStatus(r);
                     const isManual = r._source === 'manual' || r.source === 'manual';
+                    const isPlanOnly = r._source === 'plan' || r._planOnly;
                     const srcBadge = isManual
                         ? `<span class="badge" style="background:rgba(245,158,11,0.15);color:var(--accent-orange);">수기</span>`
+                        : isPlanOnly
+                        ? `<span class="badge badge-secondary">출하계획</span>`
                         : `<span class="badge badge-secondary">연동</span>`;
                     const certLabel = st.cert ? '발행완료' : '미발행';
                     const certBadge = st.cert ? 'badge-success' : 'badge-secondary';
                     let action = '';
-                    if (st.eligible) {
+                    if (isPlanOnly) {
+                        action = `<span style="font-size:0.78rem;color:var(--text-muted);">출하 완료 후 작성</span>`;
+                    } else if (st.eligible) {
                         if (st.cert) {
                             action = `
                                 <button class="btn btn-sm btn-outline" onclick="ShippingCertificateModule.viewCert('${r.id}')">보기</button>
