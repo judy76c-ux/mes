@@ -51,7 +51,7 @@ var SalesProcessUI = (function () {
         { id: 'sales-delivery-plan', label: '영업 계획', desc: '납품 스케쥴·계획·미납 현황', icon: 'event_note', accent: 'var(--accent-blue)' },
         { id: 'sales-planning-materials', label: '생산계획 자료', desc: '사출·도장·레이져 필요량 산출', icon: 'factory', accent: '#0ea5e9' },
         { id: 'sales-today-shipment', label: '납품 출하(금일)', desc: '금일 출하 계획품 관리', icon: 'outbox', accent: '#f97316' },
-        { id: 'sales-delivery', label: '출고 등록', desc: '출고 리스트·납품처별 실적', icon: 'local_shipping', accent: '#8b5cf6' },
+        { id: 'sales-delivery', label: '출고 이력', desc: '납품처별 출고 이력 조회', icon: 'history', accent: '#8b5cf6' },
         { id: 'sales-analytics', label: '영업관리', desc: '연간·월간·주간 매출 분석', icon: 'analytics', accent: '#10b981' },
         { id: 'sales-outsourcing', label: '외주처 관리', desc: '외주처 등록 · 외주처 출고 목록', icon: 'handshake', accent: '#0d9488' }
     ];
@@ -83,7 +83,7 @@ var SalesProcessUI = (function () {
 })();
 
 /**
- * 1) 출고 등록 (구 납품관리) — 출고 리스트 + 납품처별 리스트업
+ * 1) 출고 이력 — 납품처별 출고 이력 조회
  */
 var SalesDeliveryModule = (function() {
     const STORE = DB.STORES.SALES_DELIVERY;
@@ -199,17 +199,17 @@ var SalesDeliveryModule = (function() {
                             <span class="material-symbols-outlined">search</span> 조회
                         </button>
                     </div>
-                    <div class="form-group" style="align-self:flex-end; margin-left:auto;">
-                        <button class="btn btn-primary" onclick="SalesDeliveryModule.openAddModal()">
-                            <span class="material-symbols-outlined">add</span> 출고 등록
+                    ${_canEditDelivery() ? `<div class="form-group" style="align-self:flex-end; margin-left:auto;">
+                        <button class="btn btn-outline" onclick="SalesDeliveryModule.openAddModal()">
+                            <span class="material-symbols-outlined">playlist_add</span> 누락출고분 입력
                         </button>
-                    </div>
+                    </div>` : ''}
                 </div>
                 <div class="stat-cards" id="sdTableStats"></div>
 
                 <div class="card" style="margin-bottom:16px;">
                     <div class="card-header">
-                        <h4><span class="material-symbols-outlined">storefront</span> 납품처별 리스트업</h4>
+                        <h4><span class="material-symbols-outlined">storefront</span> 납품처별 출고 이력</h4>
                         <span style="font-size:0.78rem;color:var(--text-muted);">조회 기간 내 납품처별 출고 집계</span>
                     </div>
                     <div class="card-body" style="padding:0;">
@@ -232,7 +232,7 @@ var SalesDeliveryModule = (function() {
 
                 <div class="card">
                     <div class="card-header">
-                        <h4><span class="material-symbols-outlined">list_alt</span> 출고 리스트</h4>
+                        <h4><span class="material-symbols-outlined">list_alt</span> 출고 이력 목록</h4>
                     </div>
                     <div class="card-body" style="padding:0;">
                         <div class="data-table-wrapper">
@@ -550,7 +550,7 @@ var SalesDeliveryModule = (function() {
     }
 
     function openAddModal() {
-        UIUtils.showModal('납품 출고', fillForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="SalesDeliveryModule.saveNew()">출고</button>`, 'lg');
+        UIUtils.showModal('누락출고분 입력', fillForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="SalesDeliveryModule.saveNew()">입력</button>`, 'lg');
     }
 
     function _buildFifoAllocations(data, ignoreDeliveryId = '') {
@@ -629,7 +629,7 @@ var SalesDeliveryModule = (function() {
             throw err;
         }
         UIUtils.closeModal();
-        UIUtils.toast('제품 출고가 등록되었습니다.', 'success');
+        UIUtils.toast('누락 출고분이 등록되었습니다.', 'success');
         search();
     }
 
@@ -1343,6 +1343,8 @@ var SalesDeliveryPlanModule = (function() {
                     </div>
                 </div>
 
+                <div id="sdpOrphanBanner"></div>
+
                 <div class="card">
                     <div class="card-header">
                         <h4><span class="material-symbols-outlined">event_note</span> 영업 계획/부족 현황</h4>
@@ -1360,6 +1362,8 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     async function search() {
+        // 표 렌더링 중 오류가 나도 정리 배너는 보이도록 먼저 그린다.
+        try { _renderOrphanBanner(); } catch (e) { console.warn('[SalesDeliveryPlan] 정리 배너 표시 실패:', e); }
         await SalesParseLog.load(); // orderIndex(정렬 순서 보조)는 계속 쓰므로 로드는 유지
         const start = document.getElementById('sdpStart')?.value || UIUtils.today();
         const end = document.getElementById('sdpEnd')?.value || _addDays(start, 30);
@@ -1384,6 +1388,123 @@ var SalesDeliveryPlanModule = (function() {
         _lastDays = days;
         _renderTable(_visibleRows(rows), days);
         setTableDensity(localStorage.getItem('sdp_table_density') || 'standard');
+        _renderOrphanBanner();
+    }
+
+    /* ── 제품 기초정보에 없는 납품계획 정리 ──────────────────────────────
+     * 과거 엑셀 파서가 엑셀의 차종 칸을 그대로 넣던 시절의 잔재(차종 "PA", "417",
+     * "7\"" 등)가 남아 있다. 제품 마스터에 없는 품목의 계획은 쓰레기 데이터이므로
+     * 영업 계획 화면에서 바로 확인·삭제한다.
+     * 판정: productId가 제품 마스터에 있으면 정상. 없으면 차종+품명(공백·대소문자 무시)이
+     * 모두 일치하는 제품이 있어야 정상. 둘 다 아니면 삭제 대상.
+     */
+    function _orphanPlanGroups() {
+        const products = _products();
+        const idSet = new Set(products.map(p => p.id).filter(Boolean));
+        const itemSet = new Set(products.map(p => _carKey(p.carModel) + '||' + _carKey(p.partName)));
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(pl => {
+            if (pl.productId && idSet.has(pl.productId)) return;
+            if (itemSet.has(_carKey(pl.carModel) + '||' + _carKey(pl.partName))) return;
+            const key = (pl.carModel || '') + '||' + (pl.partName || '');
+            if (!map[key]) map[key] = { key, carModel: pl.carModel || '', partName: pl.partName || '', plans: [], qty: 0 };
+            map[key].plans.push(pl);
+            map[key].qty += _num(pl.planQty);
+        });
+        return Object.values(map).sort((a, b) =>
+            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+            (a.partName || '').localeCompare(b.partName || '', 'ko'));
+    }
+
+    function _renderOrphanBanner() {
+        const el = document.getElementById('sdpOrphanBanner');
+        if (!el) return;
+        const groups = _orphanPlanGroups();
+        if (!groups.length) { el.innerHTML = ''; return; }
+        const count = groups.reduce((acc, g) => acc + g.plans.length, 0);
+        el.innerHTML = `
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;
+                        margin-bottom:12px;padding:10px 14px;border-radius:8px;
+                        background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.25);">
+                <span style="font-size:0.85rem;color:var(--text-primary);">
+                    <span class="material-symbols-outlined" style="font-size:17px;vertical-align:-3px;color:var(--accent-red);">warning</span>
+                    제품 기초정보에 없는 납품계획 <strong style="color:var(--accent-red);">${groups.length}품목 · ${_fmt(count)}건</strong>
+                    <span style="color:var(--text-muted);font-size:0.78rem;">(과거 엑셀 파싱 잔재)</span>
+                </span>
+                <button class="btn btn-sm btn-outline" onclick="SalesDeliveryPlanModule.openOrphanPlanModal()">
+                    <span class="material-symbols-outlined" style="font-size:16px;">cleaning_services</span> 확인·정리
+                </button>
+            </div>`;
+    }
+
+    function openOrphanPlanModal() {
+        const groups = _orphanPlanGroups();
+        if (!groups.length) { UIUtils.toast('정리할 납품계획이 없습니다.', 'info'); _renderOrphanBanner(); return; }
+        const count = groups.reduce((acc, g) => acc + g.plans.length, 0);
+        const rows = groups.map(g => `
+            <tr>
+                <td style="color:var(--accent-red);font-weight:700;white-space:nowrap;">${_esc(g.carModel || '-')}</td>
+                <td>${_esc(g.partName || '-')}</td>
+                <td style="text-align:right;white-space:nowrap;">${_fmt(g.plans.length)}</td>
+                <td style="text-align:right;white-space:nowrap;">${_fmt(g.qty)}</td>
+                <td style="text-align:center;">
+                    <button class="btn btn-sm btn-danger" onclick="SalesDeliveryPlanModule.deleteOrphanPlanGroup('${_js(encodeURIComponent(g.key))}')">삭제</button>
+                </td>
+            </tr>`).join('');
+        UIUtils.showModal('제품 기초정보에 없는 납품계획', `
+            <div style="padding:10px 14px;background:rgba(220,38,38,0.06);border:1px solid rgba(220,38,38,0.2);border-radius:8px;margin-bottom:12px;font-size:0.84rem;line-height:1.55;">
+                제품 마스터(차종+품명)에 없는 계획입니다. 과거 엑셀 파싱 때 차종명이 잘못 들어간 데이터로, 삭제해도 정상 계획에는 영향이 없습니다.
+            </div>
+            <div class="data-table-wrapper" style="max-height:420px;overflow-y:auto;">
+                <table class="data-table">
+                    <thead><tr><th>차종</th><th>품명</th><th style="text-align:right;">계획 건수</th><th style="text-align:right;">수량(EA)</th><th style="text-align:center;width:80px;">작업</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-danger" onclick="SalesDeliveryPlanModule.deleteOrphanPlans()">전체 삭제 (${groups.length}품목 · ${_fmt(count)}건)</button>
+        `, 'lg');
+    }
+
+    async function _removeOrphanPlans(groups) {
+        let removed = 0, failed = 0;
+        for (const g of groups) {
+            for (const pl of g.plans) {
+                try {
+                    await Storage.remove(STORE, pl.id);
+                    removed++;
+                } catch (e) {
+                    failed++;
+                    console.error('[SalesDeliveryPlan] 고아 계획 삭제 실패:', pl.id, e);
+                }
+            }
+        }
+        UIUtils.toast(
+            `납품계획 정리 완료: ${_fmt(removed)}건 삭제${failed ? ` · ${failed}건 실패(권한 확인)` : ''}`,
+            failed ? 'warning' : (removed > 0 ? 'success' : 'info'));
+        await search();
+        if (_orphanPlanGroups().length) openOrphanPlanModal();
+    }
+
+    function deleteOrphanPlans() {
+        const groups = _orphanPlanGroups();
+        if (!groups.length) { UIUtils.toast('삭제할 납품계획이 없습니다.', 'info'); return; }
+        const count = groups.reduce((acc, g) => acc + g.plans.length, 0);
+        UIUtils.confirm(
+            `제품 기초정보에 없는 납품계획 ${groups.length}품목 · ${count}건을 모두 삭제합니다. 되돌릴 수 없습니다.`,
+            () => _removeOrphanPlans(groups)
+        );
+    }
+
+    function deleteOrphanPlanGroup(encodedKey) {
+        const key = decodeURIComponent(encodedKey || '');
+        const g = _orphanPlanGroups().find(x => x.key === key);
+        if (!g) { UIUtils.toast('해당 계획을 찾지 못했습니다.', 'warning'); return; }
+        UIUtils.confirm(
+            `"${g.carModel} / ${g.partName}" 납품계획 ${g.plans.length}건(${_fmt(g.qty)} EA)을 삭제합니다.`,
+            () => _removeOrphanPlans([g])
+        );
     }
 
     function shiftMainDateRange(offset) {
@@ -3821,6 +3942,9 @@ var SalesDeliveryPlanModule = (function() {
     return {
         render,
         search,
+        openOrphanPlanModal,
+        deleteOrphanPlans,
+        deleteOrphanPlanGroup,
         shiftMainDateRange,
         jumpMainDateToday,
         setTableDensity,
@@ -4860,7 +4984,7 @@ var SalesTodayShipmentModule = (function () {
     /** onclick 인라인 문자열 인자용 이스케이프 (따옴표·역슬래시 깨짐 방지) */
     const _js = s => String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     let _records = [];
-    /** 영업계획 행에서 [출하 등록]을 눌렀을 때 폼에 채울 값 */
+    /** 영업계획 행에서 [출하 완료]를 눌렀을 때 폼에 채울 값 */
     let _prefill = null;
 
     function init() {}
@@ -5076,71 +5200,82 @@ var SalesTodayShipmentModule = (function () {
         <div class="fade-in-up">
             ${SalesProcessUI.renderSection('sales-today-shipment')}
             <div class="card" style="margin-bottom:16px;">
-                <div class="card-body" style="padding:12px 16px;font-size:0.85rem;color:var(--text-secondary);line-height:1.55;">
-                    <strong style="color:var(--text-primary);">영업계획 자동 연동 · 완제품 창고 연동</strong><br>
-                    선택한 출하일자의 <strong>영업 계획</strong>이 <strong>납품처별</strong>로 자동 리스트업됩니다.
-                    각 행의 [출하 등록]으로 <strong>완제품 창고 재고(차종·품명·LOT)</strong>를 선택하면 등록과 동시에 창고에서 자동 출고됩니다.
-                </div>
-            </div>
-            <div class="card">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
                     <h4 style="margin:0;display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="color:var(--accent-orange);">outbox</span>
                         납품 출하(금일)
-                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">완제품 창고 출고 연동</span>
+                        <span style="font-size:0.75rem;font-weight:400;color:var(--text-muted);">영업계획 자동 연동 · 완제품 창고 출고</span>
                     </h4>
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                        <label class="form-label" style="margin:0;">출하일자</label>
+                        <label class="form-label" style="margin:0;white-space:nowrap;">출하일자</label>
                         <input type="date" class="form-input" id="tsFilterDate" value="${UIUtils.today()}" style="width:150px;" onchange="SalesTodayShipmentModule.renderList()">
                         <button class="btn btn-primary btn-sm" onclick="SalesTodayShipmentModule.openForm()">
-                            <span class="material-symbols-outlined" style="font-size:16px;">add</span> 금일 출하 등록
+                            <span class="material-symbols-outlined" style="font-size:16px;">done_all</span> 출하 완료
                         </button>
                     </div>
                 </div>
-                <div class="card-body" style="padding:0;">
-                    <div class="data-table-wrapper">
-                        <table class="data-table">
-                            <thead>
-                                <tr>
-                                    <th>출하일자</th><th>납품처</th><th>차종</th><th>품명</th><th>LOT</th><th>컬러</th>
-                                    <th style="text-align:right;">계획수량</th><th style="text-align:right;">출하수량</th><th style="text-align:right;">잔량</th>
-                                    <th style="text-align:right;">단가</th><th style="text-align:right;">판매금액</th><th>비고</th>
-                                    <th style="text-align:center;width:120px;">작업</th>
-                                </tr>
-                            </thead>
-                            <tbody id="tsBody"><tr><td colspan="13" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
-                        </table>
+                <div class="card-body" style="padding:12px 16px;">
+                    <div id="tsSummary" style="display:flex;gap:10px;flex-wrap:wrap;"></div>
+                    <div style="margin-top:10px;font-size:0.82rem;color:var(--text-secondary);line-height:1.55;">
+                        선택한 출하일자의 <strong>영업 계획</strong>을 <strong>납품처별 카드</strong>로 자동 리스트업합니다.
+                        각 행의 [출하 완료]로 완제품 창고 재고(차종·품명·LOT)를 선택하면 완료 처리와 동시에 창고에서 자동 출고됩니다.
                     </div>
                 </div>
             </div>
+            <div id="tsCards"><div class="card"><div class="card-body" style="padding:28px;text-align:center;color:var(--text-muted);">로딩 중...</div></div></div>
         </div>`;
         renderList();
     }
 
+    /** 납품처 카드마다 다른 색을 주기 위한 팔레트 (이름 해시로 고정 배정 → 재렌더링해도 같은 색) */
+    const _CARD_THEMES = [
+        { accent: '#f97316', soft: 'rgba(249,115,22,0.10)', icon: 'local_shipping' },
+        { accent: '#2563eb', soft: 'rgba(37,99,235,0.10)',  icon: 'store' },
+        { accent: '#059669', soft: 'rgba(5,150,105,0.10)',  icon: 'factory' },
+        { accent: '#7c3aed', soft: 'rgba(124,58,237,0.10)', icon: 'apartment' },
+        { accent: '#db2777', soft: 'rgba(219,39,119,0.10)', icon: 'inventory_2' },
+        { accent: '#0891b2', soft: 'rgba(8,145,178,0.10)',  icon: 'conveyor_belt' },
+        { accent: '#ca8a04', soft: 'rgba(202,138,4,0.10)',  icon: 'warehouse' }
+    ];
+    function _themeFor(customer) {
+        const name = String(customer || '');
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
+        return _CARD_THEMES[hash % _CARD_THEMES.length];
+    }
+
+    const _won = n => UIUtils.formatNumber(Math.round(Number(n) || 0));
+
+    /** 카드 헤더의 요약 뱃지 */
+    function _badge(label, value, color) {
+        return `<span style="display:inline-flex;align-items:baseline;gap:4px;padding:3px 10px;border-radius:999px;
+                    background:var(--bg-primary);border:1px solid var(--border);font-size:0.75rem;white-space:nowrap;">
+                    <span style="color:var(--text-muted);">${label}</span>
+                    <strong style="color:${color};font-size:0.84rem;">${value}</strong>
+                </span>`;
+    }
+
     async function renderList() {
         await _load();
-        const tbody = document.getElementById('tsBody');
-        if (!tbody) return;
+        const wrap = document.getElementById('tsCards');
+        if (!wrap) return;
         const date = _todayField();
         const groups = _buildGroups(date);
+        const summary = document.getElementById('tsSummary');
+
         if (!groups.length) {
-            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 영업계획·출하 실적이 없습니다.<br><span style="font-size:0.82rem;">영업 관리 &gt; 영업 계획에 해당 일자 계획이 등록되면 납품처별로 자동 표시됩니다.</span></td></tr>`;
+            if (summary) summary.innerHTML = '';
+            wrap.innerHTML = `
+                <div class="card"><div class="card-body" style="padding:40px;text-align:center;color:var(--text-muted);">
+                    ${_esc(date)} 영업계획·출하 실적이 없습니다.<br>
+                    <span style="font-size:0.82rem;">영업 관리 &gt; 영업 계획에 해당 일자 계획이 등록되면 납품처별 카드로 자동 표시됩니다.</span>
+                </div></div>`;
             return;
         }
 
-        // 납품처 구분용 빈 행 — 그룹 사이 시각적 여백
-        const spacer = `<tr class="ts-group-gap"><td colspan="13" style="height:14px;padding:0;border:none;background:transparent;"></td></tr>`;
-        const _won = n => UIUtils.formatNumber(Math.round(Number(n) || 0));
-
-        let html = '';
-        let totalPlan = 0;
-        let totalShip = 0;
-        let totalAmount = 0;
-
-        groups.forEach((g, gi) => {
-            // 그룹 사이(첫 그룹 제외)에 빈 행을 넣어 납품처 구분을 명확히 한다.
-            if (gi > 0) html += spacer;
-
+        let totalPlan = 0, totalShip = 0, totalAmount = 0;
+        const cards = groups.map(g => {
+            const theme = _themeFor(g.customer);
             const gPlan = g.items.reduce((acc, it) => acc + (it.plan ? it.plan.planQty : 0), 0);
             const gShip = g.items.reduce((acc, it) => acc + it.records.reduce((a2, r) => a2 + (Number(r.qty) || 0), 0), 0);
             const gAmount = g.items.reduce((acc, it) => {
@@ -5148,41 +5283,23 @@ var SalesTodayShipmentModule = (function () {
                 const price = _unitPriceFor(base.carModel, base.partName, base.color);
                 return acc + it.records.reduce((a2, r) => a2 + (Number(r.qty) || 0), 0) * price;
             }, 0);
-            totalPlan += gPlan;
-            totalShip += gShip;
-            totalAmount += gAmount;
+            const gRemain = Math.max(0, gPlan - gShip);
+            totalPlan += gPlan; totalShip += gShip; totalAmount += gAmount;
 
-            html += `
-            <tr style="background:rgba(249,115,22,0.08);">
-                <td colspan="6" style="font-weight:700;color:var(--text-primary);">
-                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;color:var(--accent-orange);">store</span>
-                    ${_esc(g.customer)}
-                    <span style="font-size:0.75rem;font-weight:500;color:var(--text-muted);margin-left:6px;">${g.items.length}품목</span>
-                </td>
-                <td style="text-align:right;font-weight:700;">${UIUtils.formatNumber(gPlan)}</td>
-                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(gShip)}</td>
-                <td style="text-align:right;font-weight:700;color:${gPlan - gShip > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${UIUtils.formatNumber(Math.max(0, gPlan - gShip))}</td>
-                <td></td>
-                <td style="text-align:right;font-weight:700;color:var(--accent-green,#059669);">${_won(gAmount)}</td>
-                <td colspan="2"></td>
-            </tr>`;
-
-            g.items.forEach(it => {
+            const rows = g.items.map(it => {
                 const base = it.plan || it.records[0];
                 const plan = it.plan ? it.plan.planQty : 0;
                 const shipped = it.records.reduce((acc, r) => acc + (Number(r.qty) || 0), 0);
                 const remain = Math.max(0, plan - shipped);
                 const price = _unitPriceFor(base.carModel, base.partName, base.color);
-                const priceCell = price ? `${_won(price)}` : '<span style="color:var(--text-muted);">-</span>';
                 const carArg = _js(base.carModel || '');
                 const partArg = _js(base.partName || '');
+                let out = '';
 
                 if (!it.records.length) {
-                    // 계획만 있고 아직 출하 등록이 안 된 행 — 영업계획에서 자동으로 올라온 항목
-                    html += `
+                    // 계획만 있고 아직 출하 완료되지 않은 행 — 영업계획에서 자동으로 올라온 항목
+                    return `
                     <tr>
-                        <td>${_esc(date)}</td>
-                        <td style="color:var(--text-muted);">${_esc(g.customer)}</td>
                         <td>${_esc(base.carModel || '-')}</td>
                         <td><strong>${_esc(base.partName || '-')}</strong></td>
                         <td style="color:var(--text-muted);font-size:0.82rem;">미출고</td>
@@ -5190,23 +5307,20 @@ var SalesTodayShipmentModule = (function () {
                         <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(plan)}</td>
                         <td style="text-align:right;color:var(--text-muted);">0</td>
                         <td style="text-align:right;font-weight:600;color:var(--accent-red);">${UIUtils.formatNumber(remain)}</td>
-                        <td style="text-align:right;">${priceCell}</td>
+                        <td style="text-align:right;">${price ? _won(price) : '<span style="color:var(--text-muted);">-</span>'}</td>
                         <td style="text-align:right;color:var(--text-muted);" title="계획 기준 예상 금액">${price ? '(' + _won(plan * price) + ')' : '-'}</td>
                         <td><span style="font-size:0.72rem;color:#d97706;font-weight:600;">영업계획</span></td>
                         <td style="text-align:center;white-space:nowrap;">
-                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">출하 등록</button>
+                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">출하 완료</button>
                         </td>
                     </tr>`;
-                    return;
                 }
 
-                it.records.forEach((r, idx) => {
+                out += it.records.map((r, idx) => {
                     const qty = Number(r.qty) || 0;
                     const rowPrice = _unitPriceFor(r.carModel, r.partName, r.color) || price;
-                    html += `
+                    return `
                     <tr>
-                        <td>${_esc(r.date || date)}</td>
-                        <td style="color:var(--text-muted);">${_esc(r.customer || g.customer)}</td>
                         <td>${_esc(r.carModel || '-')}</td>
                         <td><strong>${_esc(r.partName || '-')}</strong></td>
                         <td style="font-family:monospace;font-size:0.82rem;">${_esc(_lotLabel(r))}</td>
@@ -5222,13 +5336,13 @@ var SalesTodayShipmentModule = (function () {
                             <button class="btn btn-sm btn-danger" onclick="SalesTodayShipmentModule.remove('${r.id}')">삭제</button>
                         </td>
                     </tr>`;
-                });
+                }).join('');
 
                 // 계획 대비 잔량이 남아 있으면 추가 출하 줄을 덧붙인다.
                 if (remain > 0) {
-                    html += `
+                    out += `
                     <tr style="background:var(--bg-secondary);">
-                        <td colspan="8" style="text-align:right;font-size:0.82rem;color:var(--text-muted);">
+                        <td colspan="6" style="text-align:right;font-size:0.82rem;color:var(--text-muted);">
                             ${_esc(base.carModel || '')} / ${_esc(base.partName || '')} 계획 잔량
                         </td>
                         <td style="text-align:right;font-weight:600;color:var(--accent-red);">${UIUtils.formatNumber(remain)}</td>
@@ -5238,20 +5352,64 @@ var SalesTodayShipmentModule = (function () {
                         </td>
                     </tr>`;
                 }
-            });
-        });
+                return out;
+            }).join('');
 
-        html += spacer + `
-            <tr style="background:var(--bg-secondary);font-weight:700;">
-                <td colspan="6" style="text-align:right;">전체 합계</td>
-                <td style="text-align:right;">${UIUtils.formatNumber(totalPlan)}</td>
-                <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(totalShip)}</td>
-                <td style="text-align:right;color:${totalPlan - totalShip > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${UIUtils.formatNumber(Math.max(0, totalPlan - totalShip))}</td>
-                <td></td>
-                <td style="text-align:right;color:var(--accent-green,#059669);">${_won(totalAmount)}</td>
-                <td colspan="2"></td>
-            </tr>`;
-        tbody.innerHTML = html;
+            return `
+            <div class="card" style="margin-bottom:18px;border-top:3px solid ${theme.accent};">
+                <div class="card-header" style="background:${theme.soft};display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+                    <h4 style="margin:0;display:flex;align-items:center;gap:8px;color:${theme.accent};">
+                        <span class="material-symbols-outlined">${theme.icon}</span>
+                        ${_esc(g.customer)}
+                        <span style="font-size:0.75rem;font-weight:500;color:var(--text-muted);">${g.items.length}품목 · ${_esc(date)}</span>
+                    </h4>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;">
+                        ${_badge('계획', UIUtils.formatNumber(gPlan), 'var(--text-primary)')}
+                        ${_badge('출하', UIUtils.formatNumber(gShip), 'var(--accent-blue)')}
+                        ${_badge('잔량', UIUtils.formatNumber(gRemain), gRemain > 0 ? 'var(--accent-red)' : 'var(--text-muted)')}
+                        ${_badge('판매금액', _won(gAmount) + '원', theme.accent)}
+                    </div>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    <div class="data-table-wrapper">
+                        <table class="data-table">
+                            <thead>
+                                <tr>
+                                    <th>차종</th><th>품명</th><th>LOT</th><th>컬러</th>
+                                    <th style="text-align:right;">계획수량</th><th style="text-align:right;">출하수량</th><th style="text-align:right;">잔량</th>
+                                    <th style="text-align:right;">단가</th><th style="text-align:right;">판매금액</th><th>비고</th>
+                                    <th style="text-align:center;width:120px;">작업</th>
+                                </tr>
+                            </thead>
+                            <tbody>${rows}</tbody>
+                            <tfoot>
+                                <tr style="background:var(--bg-secondary);font-weight:700;">
+                                    <td colspan="4" style="text-align:right;">${_esc(g.customer)} 소계</td>
+                                    <td style="text-align:right;">${UIUtils.formatNumber(gPlan)}</td>
+                                    <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(gShip)}</td>
+                                    <td style="text-align:right;color:${gRemain > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${UIUtils.formatNumber(gRemain)}</td>
+                                    <td></td>
+                                    <td style="text-align:right;color:${theme.accent};">${_won(gAmount)}</td>
+                                    <td colspan="2"></td>
+                                </tr>
+                            </tfoot>
+                        </table>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        wrap.innerHTML = cards;
+
+        if (summary) {
+            summary.innerHTML =
+                _badge('납품처', groups.length + '곳', 'var(--text-primary)') +
+                _badge('계획 합계', UIUtils.formatNumber(totalPlan) + ' EA', 'var(--text-primary)') +
+                _badge('출하 합계', UIUtils.formatNumber(totalShip) + ' EA', 'var(--accent-blue)') +
+                _badge('미출하 잔량', UIUtils.formatNumber(Math.max(0, totalPlan - totalShip)) + ' EA',
+                       totalPlan - totalShip > 0 ? 'var(--accent-red)' : 'var(--text-muted)') +
+                _badge('판매금액 합계', _won(totalAmount) + '원', '#059669');
+        }
     }
 
     function _renderLotPanel(car, part, ignoreShipmentId = '') {
@@ -5283,7 +5441,7 @@ var SalesTodayShipmentModule = (function () {
             </div>`).join('')}`;
     }
 
-    /** 영업계획 행 → 출하 등록 폼 (차종·품명·수량 자동 채움, LOT은 선입선출 1순위) */
+    /** 영업계획 행 → 출하 완료 폼 (차종·품명·수량 자동 채움, LOT은 선입선출 1순위) */
     function openFormForPlan(carModel, partName, qty) {
         _prefill = { carModel: carModel || '', partName: partName || '', qty: Number(qty) || 0 };
         openForm('');
@@ -5310,9 +5468,9 @@ var SalesTodayShipmentModule = (function () {
         const partOpts = car ? _opts(_partsFromStock(car, ignoreId), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
         const lotOpts = (car && part) ? _lotOpts(lots, lotKey, '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
 
-        UIUtils.showModal(rec ? '금일 출하 수정' : '금일 출하 등록', `
+        UIUtils.showModal(rec ? '금일 출하 완료 수정' : '금일 출하 완료', `
             <div style="padding:10px 14px;background:rgba(59,130,246,0.06);border:1px solid rgba(59,130,246,0.2);border-radius:8px;margin-bottom:14px;font-size:0.84rem;line-height:1.55;">
-                완제품 창고 재고를 선택하면 <strong>등록과 동시에 창고 출고</strong>됩니다.
+                완제품 창고 재고를 선택하면 <strong>출하 완료 처리와 동시에 창고 출고</strong>됩니다.
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">출하일자 <span style="color:var(--accent-red)">*</span></label>
@@ -5347,7 +5505,7 @@ var SalesTodayShipmentModule = (function () {
             <input type="hidden" id="tsEditId" value="${_esc(id || '')}">
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
-            <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">${rec ? '저장' : '등록·출고'}</button>
+            <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">${rec ? '저장' : '출하 완료'}</button>
         `, 'lg');
         _renderLotPanel(car, part, ignoreId);
     }
@@ -5437,7 +5595,7 @@ var SalesTodayShipmentModule = (function () {
         if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(carModel, partName, lot.color || '');
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출하 등록할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출하 완료할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -5474,7 +5632,7 @@ var SalesTodayShipmentModule = (function () {
             return;
         }
 
-        UIUtils.toast(id ? '금일 출하가 수정·재출고되었습니다.' : '금일 출하 등록 및 창고 출고가 완료되었습니다.', 'success');
+        UIUtils.toast(id ? '금일 출하 완료 내역이 수정·재출고되었습니다.' : '출하 완료 및 창고 출고가 처리되었습니다.', 'success');
         UIUtils.closeModal();
         const filter = document.getElementById('tsFilterDate');
         if (filter && date) filter.value = date;

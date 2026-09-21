@@ -164,7 +164,7 @@ const DashboardModule = (function() {
     const LAYOUT_KEY = 'mes_dashboard_layout_v2';
     const LAYOUT_COLS = 12;
     const MIN_SPAN = 3;
-    const MIN_HEIGHT = 140;
+    const MIN_HEIGHT = 100;
     let _dragBlock = null;
     let _dropMarker = null;
     let _resizeCtx = null;
@@ -213,6 +213,18 @@ const DashboardModule = (function() {
                 if (row.h) el.dataset.h = row.h;
                 grid.appendChild(el);   // 저장된 순서대로 재배치
             });
+            // 새 카드가 추가된 뒤 기존 저장 레이아웃을 사용하는 경우에는
+            // 기본 배치(왼쪽 큰 카드 오른쪽 위·아래)를 한 번만 적용한다.
+            const savedKeys = new Set(layout.blocks.map(row => row.key));
+            const incoming = grid.querySelector('.dash-block[data-block="incoming"]');
+            const production = grid.querySelector('.dash-block[data-block="productionTiles"]');
+            const improvement = grid.querySelector('.dash-block[data-block="improvement"]');
+            if (incoming && production && !savedKeys.has('productionTiles')) {
+                grid.insertBefore(production, incoming.nextElementSibling);
+            }
+            if (production && improvement && !savedKeys.has('improvement')) {
+                grid.insertBefore(improvement, production.nextElementSibling);
+            }
         }
         Array.from(grid.querySelectorAll(':scope > .dash-block')).forEach(_applyBlockStyle);
     }
@@ -303,7 +315,7 @@ const DashboardModule = (function() {
             const c = _resizeCtx;
             const spanDelta = Math.round((e.clientX - c.startX) / (c.colW + 12));
             c.block.dataset.w = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, c.startW + spanDelta));
-            const h = Math.round((c.startH + (e.clientY - c.startY)) / 20) * 20;
+            const h = Math.round((c.startH + (e.clientY - c.startY)) / 8) * 8;
             c.block.dataset.h = Math.max(MIN_HEIGHT, h);
             _applyBlockStyle(c.block);
         });
@@ -334,16 +346,29 @@ const DashboardModule = (function() {
         if (_dropMarker && _dropMarker.parentNode) _dropMarker.parentNode.removeChild(_dropMarker);
     }
 
+    function _removeDuplicateBlocks(grid) {
+        const seen = new Set();
+        Array.from(grid.querySelectorAll(':scope > .dash-block')).forEach(function(el) {
+            const key = el.dataset.block || '';
+            if (!key || !seen.has(key)) {
+                if (key) seen.add(key);
+                return;
+            }
+            el.remove();
+        });
+    }
+
     function renderStandardDashboard(container) {
         container.innerHTML = `
         <div class="dash-standard-page fade-in-up">
             <div class="dash-free-grid" id="dashLayoutGrid">
                 <div class="dash-block" data-block="incoming" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>수입검사 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="productionTiles" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>생산 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProdTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="improvement" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>개선활동 / 우수 사원<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashImprovementTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="monitorTiles" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>점검 / 관리 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashMonitorTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="fifoViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>선입선출(FIFO) 위반 — 사출 · 도료<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashFifoViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="processViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>프로세스 위반 — 직접 입고(미검사)<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProcessViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="managerAlerts" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>관리자 보고 누락<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashManagerAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="improvement" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>개선활동 / 우수 사원<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashImprovementTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="qualityStandby" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>초중종물 · 출하검사 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="paintPending" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도료 입고 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashPaintPending"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
                 <div class="dash-block" data-block="jigLife" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도장 지그 교체 임박<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashJigLifeAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
@@ -356,9 +381,11 @@ const DashboardModule = (function() {
                 </button>
             </div>
         </div>`;
+        _removeDuplicateBlocks(document.getElementById('dashLayoutGrid'));
         _applySavedLayout();
         _initLayoutDnD();
         renderIncomingSummary();
+        renderProductionTiles();
         _scheduleIdleWork(renderProcessViolation);
         _scheduleIdleWork(renderFifoViolation);
         _scheduleIdleWork(_notifyLaserShipGapOnce);

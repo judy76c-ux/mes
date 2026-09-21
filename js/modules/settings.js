@@ -283,6 +283,63 @@ const SettingsModule = (function() {
         if (countSpan) countSpan.textContent = visibleCount;
     }
 
+    /* ── 차종명 공정어 정리 / 고아 납품계획 연결 ─────────────────────────
+     * 차종 칸에 "A8사출"처럼 공정명이 붙어 저장된 사례가 있다. 이러면 영업 계획·
+     * 생산계획 자료에서 실제로 없는 차종이 한 줄 더 생기고, 같은 품목의 계획이
+     * 둘로 쪼개져 수량이 맞지 않게 보인다.
+     */
+    const _PROCESS_WORDS = ['사출', '도장', '레이져', '레이저', '인쇄', '증착'];
+
+    function _hasProcessWordInCar(carModel) {
+        const v = String(carModel || '').trim();
+        if (!v) return false;
+        // 차종 전체가 공정어 하나뿐인 경우(예: "사출")도 잘못된 차종이므로 포함한다.
+        return _PROCESS_WORDS.some(w => v.includes(w));
+    }
+
+    /** 차종명에서 공정어와 그 앞뒤 구분기호를 떼어낸다. ("A8사출" → "A8", "A8-도장" → "A8") */
+    function _stripProcessWord(carModel) {
+        let v = String(carModel || '').trim();
+        _PROCESS_WORDS.forEach(w => { v = v.split(w).join(' '); });
+        return v.replace(/[\s\-_/]+/g, ' ').trim();
+    }
+
+    function _carKeyOf(v) {
+        return String(v || '').trim().toLowerCase().replace(/\s+/g, '');
+    }
+
+    /** [한 번에 고치기] 차종명에서 공정어 제거 */
+    async function fixProcessWordCarModels() {
+        const products = Storage.getAll(PRODUCTS_STORE) || [];
+        const targets = products
+            .filter(p => _hasProcessWordInCar(p.carModel))
+            .map(p => ({ p, next: _stripProcessWord(p.carModel) }))
+            .filter(x => x.next && x.next !== String(x.p.carModel || '').trim());
+        if (!targets.length) {
+            UIUtils.toast('자동으로 고칠 수 있는 차종명이 없습니다. (공정어를 빼면 차종이 비는 건은 수기 확인 필요)', 'info');
+            return;
+        }
+        // UIUtils.confirm은 본문을 이스케이프하므로 HTML 없이 일반 텍스트로 만든다.
+        const preview = targets.slice(0, 5).map(x => `${x.p.carModel} → ${x.next}`).join(', ');
+        UIUtils.confirm(
+            `차종명에서 공정어를 제거합니다. (${targets.length}건)  ` +
+            `${preview}${targets.length > 5 ? ' …' : ''}`,
+            async () => {
+                let fixed = 0;
+                for (const x of targets) {
+                    try {
+                        await Storage.update(PRODUCTS_STORE, x.p.id, { ...x.p, carModel: x.next });
+                        fixed++;
+                    } catch (e) {
+                        console.error('[차종명 정리] 실패:', x.p.id, e);
+                    }
+                }
+                UIUtils.toast(`차종명 정리 완료: ${fixed}건 수정됨`, fixed > 0 ? 'success' : 'warning');
+                if (fixed > 0) SettingsModule.switchTab('products');
+            }
+        );
+    }
+
     // ── 제품 등록 검증 패널 ──────────────────────────────────────────────
     function buildProductValidationPanel() {
         const products  = Storage.getAll(PRODUCTS_STORE) || [];
@@ -418,12 +475,19 @@ const SettingsModule = (function() {
             return (n1 || n2) && !(m.productIds && m.productIds.length > 0);
         });
 
+        // [13] 차종명에 공정어가 섞인 제품 (예: "A8사출" — 차종은 A8, 사출은 공정)
+        //      엑셀 붙여넣기/수기 입력 때 차종 칸에 공정명을 덧붙여 저장한 사례가 있어,
+        //      영업 계획·생산계획 자료에서 실제로 없는 차종이 한 줄 더 생긴다.
+        const processWordCars = products
+            .filter(p => _hasProcessWordInCar(p.carModel))
+            .map(p => ({ product: p, suggested: _stripProcessWord(p.carModel) }));
+
         // ── 요약 집계 ──────────────────────────────────────────────────
         const errors   = missingBasic.length + orphanMfg.length;
         const warnings = noProcess.length + noInjMat.length + noMfgMap.length +
                          noColorMats.length + orphanInv.length + dupNames.length +
                          textOnlyMats.length + noPaintMat.length + incompletePaint.length + invalidPaintRefs.length +
-                         priceMismatch.length;
+                         priceMismatch.length + processWordCars.length;
         const allOk    = errors === 0 && warnings === 0;
 
         const headerColor = allOk ? 'var(--accent-green)'
@@ -692,6 +756,18 @@ const SettingsModule = (function() {
             </div>`;
         };
 
+        const rowProcessWordCar = it => {
+            const p = it.product;
+            return `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid var(--border-color);flex-wrap:wrap;">
+                <span style="flex:1;min-width:0;">차종 "<span style="color:var(--accent-red);font-weight:700;">${p.carModel||'-'}</span>"
+                    / ${p.partName||'-'} / ${p.color||'-'}
+                    ${it.suggested ? `<span style="color:var(--text-muted);font-size:0.75rem;margin-left:4px;">→ "${it.suggested}" 로 고침</span>`
+                                   : `<span style="color:var(--accent-red);font-size:0.75rem;margin-left:4px;">→ 공정어를 빼면 차종이 비어 수기 확인 필요</span>`}</span>
+                <button onclick="UIUtils.closeModal();SettingsModule.editProduct('${p.id}')"
+                    style="padding:2px 8px;font-size:0.72rem;background:var(--accent-blue);color:#fff;border:none;border-radius:4px;cursor:pointer;">수정</button>
+            </div>`;
+        };
+
         return `
         <div class="card" style="margin-bottom:16px;border:1px solid ${headerBdr};background:${headerBg};">
             <div class="card-header" style="padding:10px 16px;cursor:pointer;user-select:none;border-bottom:1px solid ${headerBdr};"
@@ -721,6 +797,14 @@ const SettingsModule = (function() {
                 ${issueRow('warning', '사출자재 텍스트 연결만 있음 (ID 미등록)',        textOnlyMats,     rowTextOnly)}
                 ${issueRow('warning', '사출자재 컬러 미설정 (동명 자재 여러 개)',        noColorMats,      rowNoColor)}
                 ${issueRow('warning', '사출창고 재고 — 자재마스터 불일치',              orphanInv,        rowOrphanInv)}
+                ${issueRow('warning', '차종명에 공정어 섞임 (사출·도장·레이져)',        processWordCars, rowProcessWordCar)}
+                ${processWordCars.length ? `
+                <div style="margin:-2px 0 8px;display:flex;justify-content:flex-end;">
+                    <button onclick="SettingsModule.fixProcessWordCarModels()"
+                        style="padding:3px 12px;font-size:0.78rem;background:#d97706;color:#fff;
+                               border:none;border-radius:4px;cursor:pointer;">
+                        🛠 차종명 공정어 한 번에 제거 (${processWordCars.filter(x => x.suggested).length}건)</button>
+                </div>` : ''}
                 ${issueRow('warning', '동일 차종·품명 (컬러 다름, 품명 분리 검토)',     dupNames,       rowDupName)}
                 <div style="margin-top:8px;display:flex;justify-content:flex-end;">
                     <button onclick="SettingsModule.switchTab('products')"
@@ -13895,6 +13979,7 @@ const SettingsModule = (function() {
         openBulkPaintModal,
         confirmBulkPaintApply,
         migrateInjPriceToUnitPrice,
+        fixProcessWordCarModels,
         _applyProdPriceToMat,
         _onInjectMatPriceHint,
         _syncInjMatPriceFromProduct,

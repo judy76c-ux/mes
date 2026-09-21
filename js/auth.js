@@ -116,7 +116,7 @@ const AuthModule = (function () {
         { id:'sales-delivery-plan',       label:'영업 계획',          group:'영업' },
         { id:'sales-planning-materials',  label:'생산계획 자료',       group:'영업' },
         { id:'sales-today-shipment',      label:'납품 출하(금일)',    group:'영업' },
-        { id:'sales-delivery',            label:'출고 등록',          group:'영업' },
+        { id:'sales-delivery',            label:'출고 이력',          group:'영업' },
         { id:'sales-analytics',           label:'영업관리(매출분석)', group:'영업' },
         { id:'sales-outsourcing',         label:'외주처관리',         group:'영업' },
         { id:'painting-jig',              label:'도장지그',           group:'생산관리' },

@@ -12661,7 +12661,12 @@ var ProdConditionsModule = (function() {
     let _csTemplateDefaults = {};
     let _pcTab = 'cs-form'; // 'cs-form' | 'records' | 'presets'
     let _inlinePartOutsideBound = false;
-    const CS_TPL_LABELS = { 'A-KNOB': 'A라인 KNOB', 'A-COVER': 'A라인 COVER', 'B-LINE': 'B라인' };
+    const CS_TPL_LABELS = { 'A-KNOB': 'A라인', 'A-COVER': 'A라인', 'B-LINE': 'B라인' };
+    const PC_LINE_LABELS = { 'A-LINE': '도장-A', 'B-LINE': '도장-B' };
+
+    function _lineKey(value) {
+        return String(value || '').toUpperCase() === 'B-LINE' ? 'B-LINE' : 'A-LINE';
+    }
 
     function _normalizeCsProduct(product = {}) {
         if (!product || typeof product !== 'object') return null;
@@ -12940,8 +12945,7 @@ var ProdConditionsModule = (function() {
     }
 
     function _lineLabel(d = {}) {
-        const key = _templateKey(d);
-        return (CSHEET_TEMPLATES[key] || {}).label || (d.line === 'B-LINE' ? 'B라인' : 'A라인');
+        return PC_LINE_LABELS[_lineKey(d.line)] || '도장-A';
     }
 
     function search() {
@@ -12951,7 +12955,7 @@ var ProdConditionsModule = (function() {
 
         let data = Storage.getByDateRange(STORE, start, end)
             .filter(d => !d._docKind);
-        if (line) data = data.filter(d => d.line === line || d.csType === line);
+        if (line) data = data.filter(d => _lineKey(d.line) === line);
         data.sort((a, b) => b.date.localeCompare(a.date));
 
         renderTable(data);
@@ -12991,13 +12995,14 @@ var ProdConditionsModule = (function() {
 
     function fillForm(d = {}) {
         const selectedType = _templateKey(d);
+        const selectedLine = _lineKey(d.line || (selectedType === 'B-LINE' ? 'B-LINE' : 'A-LINE'));
         const items = _templateItems(selectedType, d.checkItems || []);
         const sum = _summary(items);
 
         return `
             <div style="max-height: 74vh; overflow-y: auto; padding-right: 10px; font-size:11px;">
                 <input type="hidden" id="pcCsType" value="${_esc(selectedType)}">
-                <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-bottom:6px;">
+                <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:6px;margin-bottom:6px;">
                     <div class="form-group" style="margin:0;">
                         <label class="form-label" style="font-size:10px;margin-bottom:2px;">기록일자 <span style="color:var(--accent-red)">*</span></label>
                         <input type="date" class="form-input" id="pcDate" style="height:30px;font-size:11px;padding:3px 6px;" value="${_esc(d.date || UIUtils.today())}">
@@ -13008,6 +13013,13 @@ var ProdConditionsModule = (function() {
                             <option value="조업전"     ${(d.checkTiming||'조업전')==='조업전'     ? 'selected':''}>조업전</option>
                             <option value="점심식사후" ${(d.checkTiming||'')==='점심식사후' ? 'selected':''}>점심식사후</option>
                             <option value="아이템 변경" ${(d.checkTiming||'')==='아이템 변경' ? 'selected':''}>아이템 변경</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="margin:0;">
+                        <label class="form-label" style="font-size:10px;margin-bottom:2px;">도장 라인 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="pcLine" style="height:30px;font-size:11px;padding:3px 6px;" onchange="ProdConditionsModule.toggleLine(this.value)">
+                            <option value="A-LINE" ${selectedLine === 'A-LINE' ? 'selected' : ''}>도장-A</option>
+                            <option value="B-LINE" ${selectedLine === 'B-LINE' ? 'selected' : ''}>도장-B</option>
                         </select>
                     </div>
                     <div class="form-group" style="margin:0;">
@@ -13469,29 +13481,13 @@ var ProdConditionsModule = (function() {
             return false;
         }
 
-        const matching = _findPresetsByProduct(carModel, partName);
-        if (matching.length === 0) {
-            if (display) {
-                display.textContent = '* 연결된 C/S 양식 없음';
-                display.style.color = 'var(--accent-red)';
-            }
-            return false;
-        }
-
-        const csTypes = [...new Set(matching.map(p => p.csType))];
-        const csType = matching[0].csType;
+        const selectedLine = _lineKey((document.getElementById('pcLine') || {}).value || 'A-LINE');
+        const csType = selectedLine === 'B-LINE' ? 'B-LINE' : 'A-KNOB';
         const changed = csTypeSel.value !== csType;
         if (changed) csTypeSel.value = csType;
         if (display) {
-            display.textContent = `* ${CS_TPL_LABELS[csType] || csType} 양식 적용중${csTypes.length > 1 ? ' (중복 연결)' : ''}`;
-            display.style.color = csTypes.length > 1 ? '#b45309' : '#059669';
-        }
-
-        if (csTypes.length > 1 && typeof UIUtils !== 'undefined') {
-            UIUtils.toast(
-                `${carModel} / ${partName}: C/S 양식이 중복 연결되어 ${CS_TPL_LABELS[csType] || csType}을 자동 적용했습니다. 프리셋 관리에서 중복을 확인하세요.`,
-                'warning'
-            );
+            display.textContent = `* ${PC_LINE_LABELS[selectedLine]} 작업조건 양식 적용중`;
+            display.style.color = '#059669';
         }
         return changed;
     }
@@ -13607,7 +13603,15 @@ var ProdConditionsModule = (function() {
     function toggleLine(type) {
         const content = document.getElementById('pcCheckItemsBody');
         if (!content) return;
-        content.innerHTML = renderLineSpecificFields(type, { checkItems: _templateItems(type, []) });
+        const normalizedType = type === 'A-LINE' ? 'A-KNOB' : type;
+        const csTypeEl = document.getElementById('pcCsType');
+        if (csTypeEl) csTypeEl.value = normalizedType;
+        content.innerHTML = renderLineSpecificFields(normalizedType, { checkItems: _templateItems(normalizedType, []) });
+        const display = document.getElementById('pcCsTypeDisplay');
+        if (display) {
+            display.textContent = `* ${PC_LINE_LABELS[type] || '도장-A'} 작업조건 양식 적용중`;
+            display.style.color = '#059669';
+        }
         updateProgress();
     }
 
@@ -13742,7 +13746,7 @@ var ProdConditionsModule = (function() {
         const convItem = checkItems.find(item => item.item.includes('컨베이어 속도'));
         const data = {
             date: document.getElementById('pcDate').value,
-            line: tpl.line,
+            line: _lineKey((document.getElementById('pcLine') || {}).value || tpl.line),
             csType,
             checkTiming: (document.getElementById('pcCheckTiming') || {}).value || '조업전',
             carModel: document.getElementById('pcCarModel').value.trim(),
@@ -13789,6 +13793,14 @@ var ProdConditionsModule = (function() {
             UIUtils.toast('필수 항목을 입력하세요.', 'warning');
             return;
         }
+        const duplicate = (Storage.getAll(STORE) || []).find(row =>
+            !row._docKind && row.date === data.date && _lineKey(row.line) === data.line &&
+            (row.checkTiming || '조업전') === data.checkTiming
+        );
+        if (duplicate) {
+            UIUtils.toast(`${data.date} ${PC_LINE_LABELS[data.line]} ${data.checkTiming} 작업조건이 이미 등록되어 있습니다. 기존 기록을 수정하세요.`, 'warning');
+            return;
+        }
         try {
             await Storage.add(STORE, data);
             UIUtils.toast('작업조건이 등록되었습니다.', 'success');
@@ -13814,6 +13826,14 @@ var ProdConditionsModule = (function() {
 
     async function saveEdit(id) {
         const data = collectData();
+        const duplicate = (Storage.getAll(STORE) || []).find(row =>
+            !row._docKind && row.id !== id && row.date === data.date && _lineKey(row.line) === data.line &&
+            (row.checkTiming || '조업전') === data.checkTiming
+        );
+        if (duplicate) {
+            UIUtils.toast(`${data.date} ${PC_LINE_LABELS[data.line]} ${data.checkTiming} 작업조건이 이미 등록되어 있습니다.`, 'warning');
+            return;
+        }
         await Storage.update(STORE, id, data);
         UIUtils.closeModal();
         search();
@@ -14056,9 +14076,8 @@ var ProdConditionsModule = (function() {
                 <label class="form-label">라인</label>
                 <select class="form-select" id="pcFilterLine">
                     <option value="">전체 라인</option>
-                    <option value="A-KNOB">A라인 KNOB</option>
-                    <option value="A-COVER">A라인 COVER</option>
-                    <option value="B-LINE">B라인</option>
+                    <option value="A-LINE">도장-A</option>
+                    <option value="B-LINE">도장-B</option>
                 </select>
             </div>
             <div class="form-group" style="align-self:flex-end;">
@@ -34326,4 +34345,3 @@ var WastewaterModule = (function () {
         _onYearChange: () => {}
     };
 })();
-
