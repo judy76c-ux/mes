@@ -5600,6 +5600,17 @@ var SalesTodayShipmentModule = (function () {
             }
         }
 
+        if (typeof ShippingCertificateModule !== 'undefined' && ShippingCertificateModule.hasIssuedForShipment) {
+            const certReady = await ShippingCertificateModule.hasIssuedForShipment({
+                id: id || '', date, customer: g('tsCustomer').trim() || _customerFor(carModel, partName, lot.color),
+                carModel, partName, color: lot.color || ''
+            });
+            if (!certReady) {
+                UIUtils.toast('출하성적서 발행이 완료된 품목만 출하 완료할 수 있습니다.', 'warning');
+                return;
+            }
+        }
+
         await _load();
         const payload = {
             date, carModel, partName,

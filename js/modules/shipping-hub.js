@@ -713,10 +713,12 @@ var ShippingCertificateModule = (function () {
     const MANUAL_KEY = 'shipping_cert_manual_shipments_v1';
     const RELI_KEY = 'shipping_reliability_records_v1';
     const CERT_KEY = 'shipping_certificates_v1';
+    const STANDARD_KEY = 'shipping_certificate_standards_v1';
     const _esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     let _certs = [];
     let _reliRecords = [];
     let _manualRows = [];
+    let _standards = [];
 
     function _norm(v) { return String(v || '').trim(); }
 
@@ -785,7 +787,7 @@ var ShippingCertificateModule = (function () {
             map[key].qty += qty;
         });
         return Object.values(map).map((row, index) => ({
-            id: `plan:${date}:${index}:${_normKey(row.carModel)}:${_normKey(row.partName)}`,
+            id: `plan:${date}:${_normKey(row.customer)}:${_normKey(row.carModel)}:${_normKey(row.partName)}:${_normKey(row.color)}`,
             date,
             customer: row.customer,
             carModel: row.carModel,
@@ -832,6 +834,72 @@ var ShippingCertificateModule = (function () {
         await Storage.setConfigValue(CERT_KEY, _certs);
     }
 
+    async function _loadStandards() {
+        _standards = (await Storage.getConfigValue(STANDARD_KEY).catch(() => ([]))) || [];
+        if (!Array.isArray(_standards)) _standards = [];
+    }
+
+    async function _saveStandards() {
+        await Storage.setConfigValue(STANDARD_KEY, _standards);
+    }
+
+    function _parseCriteria(text) {
+        return String(text || '').split(/\r?\n/).map(line => line.trim()).filter(Boolean).map((line, index) => {
+            const parts = line.split('|').map(v => v.trim());
+            return {
+                no: index + 1,
+                item: parts[0] || '',
+                spec: parts[1] || '',
+                method: parts[2] || ''
+            };
+        }).filter(row => row.item || row.spec || row.method);
+    }
+
+    function _criteriaText(criteria) {
+        return (Array.isArray(criteria) ? criteria : []).map(row => [row.item || '', row.spec || '', row.method || ''].join(' | ')).join('\n');
+    }
+
+    function _findStandard(row) {
+        const customer = _normKey(row.customer);
+        const car = _normKey(row.carModel);
+        const part = _normKey(row.partName);
+        const color = _normKey(row.color);
+        return _standards.filter(s => s && s.active !== false &&
+            _normKey(s.customer) === customer &&
+            (!s.partName || _normKey(s.partName) === part) &&
+            (!s.carModel || _normKey(s.carModel) === car) &&
+            (!s.color || _normKey(s.color) === color))
+            .sort((a, b) => {
+                const score = s => (s.partName ? 4 : 0) + (s.carModel ? 2 : 0) + (s.color ? 1 : 0);
+                return score(b) - score(a) || String(b.effectiveDate || '').localeCompare(String(a.effectiveDate || ''));
+            })[0] || null;
+    }
+
+    async function _matchedCriteria(row, supplierStandard) {
+        let points = [];
+        try {
+            if (typeof ShippingStandbyModule !== 'undefined' && ShippingStandbyModule.getCheckPointsForProduct) {
+                const appearance = await ShippingStandbyModule.getCheckPointsForProduct(row.carModel, row.partName, row.color, 'appearance');
+                const reliability = await ShippingStandbyModule.getCheckPointsForProduct(row.carModel, row.partName, row.color, 'reliability');
+                points = (appearance || []).concat(reliability || []).map((p, index) => ({
+                    no: index + 1,
+                    group: p.group || '',
+                    item: p.item || '',
+                    spec: p.standard || '',
+                    method: p.method || '',
+                    sample: p.sample || '',
+                    management: p.management || ''
+                })).filter(p => p.item || p.spec || p.method);
+            }
+        } catch (e) {
+            console.warn('[ShippingCertificate] 출하검사 기준서 매칭 실패:', e);
+        }
+        if (points.length) return points;
+        return (supplierStandard && Array.isArray(supplierStandard.criteria) ? supplierStandard.criteria : []).map((p, index) => ({
+            ...p, no: index + 1, spec: p.spec || p.standard || ''
+        }));
+    }
+
     function _findDailyPass(car, part, color) {
         const rows = (Storage.getAll(DB.STORES.SHIPPING_INSPECTIONS) || [])
             .filter(d => (d.result || '') === '합격' && _productMatch(d, car, part, color))
@@ -846,16 +914,22 @@ var ShippingCertificateModule = (function () {
         return rows[0] || null;
     }
 
-    function _certForShipment(shipmentId) {
-        return _certs.find(c => c.shipmentId === shipmentId) || null;
+    function _certForShipment(shipmentId, row) {
+        return _certs.find(c => c.shipmentId === shipmentId) || (row && _certs.find(c =>
+            String(c.shipDate || '') === String(row.date || '') &&
+            _normKey(c.customer) === _normKey(row.customer) &&
+            _normKey(c.carModel) === _normKey(row.carModel) &&
+            _normKey(c.partName) === _normKey(row.partName) &&
+            (!_norm(row.color) || !_norm(c.color) || _normKey(c.color) === _normKey(row.color)))) || null;
     }
 
     function _buildRowStatus(row) {
         const daily = _findDailyPass(row.carModel, row.partName, row.color);
         const reli = _findReliPass(row.carModel, row.partName, row.color);
-        const cert = _certForShipment(row.id);
+        const cert = _certForShipment(row.id, row);
+        const standard = _findStandard(row);
         const eligible = !!(daily && reli);
-        return { daily, reli, cert, eligible };
+        return { daily, reli, cert, standard, eligible };
     }
 
     function _products() {
@@ -905,6 +979,9 @@ var ShippingCertificateModule = (function () {
                     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                         <label class="form-label" style="margin:0;">출하일자</label>
                         <input type="date" class="form-input" id="scFilterDate" value="${UIUtils.today()}" style="width:150px;" onchange="ShippingCertificateModule.renderList()">
+                        <button class="btn btn-outline btn-sm" onclick="ShippingCertificateModule.openStandardManager()">
+                            <span class="material-symbols-outlined" style="font-size:16px;">library_add</span> 업체별 기준서 관리
+                        </button>
                         <button class="btn btn-primary btn-sm" onclick="ShippingCertificateModule.openManualAdd()">
                             <span class="material-symbols-outlined" style="font-size:16px;">edit_note</span> 수기 입력
                         </button>
@@ -998,6 +1075,7 @@ var ShippingCertificateModule = (function () {
     async function renderList() {
         await _loadCerts();
         await _loadReli();
+        await _loadStandards();
         const dateEl = document.getElementById('scFilterDate');
         const date = dateEl && dateEl.value ? dateEl.value : UIUtils.today();
         const rows = await _loadShipments(date);
@@ -1041,18 +1119,18 @@ var ShippingCertificateModule = (function () {
                     const certLabel = st.cert ? '발행완료' : '미발행';
                     const certBadge = st.cert ? 'badge-success' : 'badge-secondary';
                     let action = '';
-                    if (isPlanOnly) {
-                        action = `<span style="font-size:0.78rem;color:var(--text-muted);">출하 완료 후 작성</span>`;
+                    if (!st.standard) {
+                        action = `<span style="font-size:0.78rem;color:var(--accent-orange);">업체별 기준서 미등록</span>`;
+                    } else if (!st.standard.fileDataUrl) {
+                        action = `<span style="font-size:0.78rem;color:var(--accent-orange);">업체 양식 파일 미등록</span>`;
+                    } else if (st.cert) {
+                        action = `
+                            <button class="btn btn-sm btn-outline" onclick="ShippingCertificateModule.viewCert('${r.id}')">보기</button>
+                            <button class="btn btn-sm btn-primary" onclick="ShippingCertificateModule.printCert('${st.cert.id}')" style="margin-left:4px;">출력</button>`;
                     } else if (st.eligible) {
-                        if (st.cert) {
-                            action = `
-                                <button class="btn btn-sm btn-outline" onclick="ShippingCertificateModule.viewCert('${r.id}')">보기</button>
-                                <button class="btn btn-sm btn-primary" onclick="ShippingCertificateModule.printCert('${st.cert.id}')" style="margin-left:4px;">출력</button>`;
-                        } else {
-                            action = `<button class="btn btn-sm btn-primary" onclick="ShippingCertificateModule.openIssue('${r.id}')">
-                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">edit_document</span> 성적서 작성
-                            </button>`;
-                        }
+                        action = `<button class="btn btn-sm btn-primary" onclick="ShippingCertificateModule.openIssue('${r.id}')">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-2px;">print</span> 성적서 발행
+                        </button>`;
                     } else {
                         const miss = [];
                         if (!st.daily) miss.push('외관검사');
@@ -1103,6 +1181,119 @@ var ShippingCertificateModule = (function () {
         }
     }
 
+    async function openStandardManager(editId) {
+        await _loadStandards();
+        const edit = editId ? _standards.find(s => s.id === editId) : null;
+        const suggestions = _customerSuggestions().map(v => `<option value="${_esc(v)}">`).join('');
+        const criteriaText = _criteriaText(edit && edit.criteria);
+        const rows = _standards.slice().sort((a, b) =>
+            _norm(a.customer).localeCompare(_norm(b.customer), 'ko') || _norm(a.partName).localeCompare(_norm(b.partName), 'ko'));
+        UIUtils.showModal(edit ? '업체별 출하성적서 기준서 수정' : '업체별 출하성적서 기준서 관리', `
+            <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.83rem;line-height:1.55;">
+                업체별 공통 원본 양식은 파일로 보관하고, 시스템에는 출하 시 매칭할 검사 항목·규격을 별도로 등록합니다. 품명은 공통 적용으로 비워둘 수 있으며, 실제 검사 결과는 인쇄 후 종이에 수기로 작성합니다.
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">납품처 <span style="color:var(--accent-red)">*</span></label>
+                    <input class="form-input" id="scStdCustomer" list="scStdCustomerList" value="${_esc(edit?.customer || '')}" placeholder="업체명"><datalist id="scStdCustomerList">${suggestions}</datalist></div>
+                <div class="form-group"><label class="form-label">차종</label>
+                    <input class="form-input" id="scStdCar" value="${_esc(edit?.carModel || '')}" placeholder="공통 적용 시 비워둠"></div>
+                <div class="form-group"><label class="form-label">품명</label>
+                    <input class="form-input" id="scStdPart" value="${_esc(edit?.partName || '')}" placeholder="공통 적용 시 비워둠"></div>
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">컬러</label>
+                    <input class="form-input" id="scStdColor" value="${_esc(edit?.color || '')}" placeholder="공통 적용 시 비워둠"></div>
+                <div class="form-group"><label class="form-label">개정번호</label>
+                    <input class="form-input" id="scStdRevision" value="${_esc(edit?.revision || 'Rev.0')}" placeholder="예: Rev.1"></div>
+                <div class="form-group"><label class="form-label">적용일</label>
+                    <input type="date" class="form-input" id="scStdEffectiveDate" value="${_esc(edit?.effectiveDate || UIUtils.today())}"></div>
+            </div>
+            <div class="form-group"><label class="form-label">기준서 제목</label>
+                <input class="form-input" id="scStdTitle" value="${_esc(edit?.title || '')}" placeholder="예: 대양프라텍 HIGH B-CALL KNOB 검사 기준서"></div>
+            <div class="form-group"><label class="form-label">업체 양식 파일</label>
+                <input type="file" class="form-input" id="scStdFile" accept=".pdf,.xlsx,.xls,.png,.jpg,.jpeg">
+                <div style="font-size:0.76rem;color:var(--text-muted);margin-top:4px;">${edit?.fileName ? `현재 파일: ${_esc(edit.fileName)} (새 파일을 선택하면 교체)` : 'PDF·Excel·이미지, 최대 5MB'}</div></div>
+            <div class="form-group"><label class="form-label">업체 추가 기준(선택)</label>
+                <textarea class="form-textarea" id="scStdCriteria" rows="4" placeholder="출하검사 기준서에 없는 업체 전용 항목만 입력\n예: 포장상태 | 지정 포장 적용 | 육안">${_esc(criteriaText)}</textarea>
+                <div style="font-size:0.76rem;color:var(--text-muted);margin-top:4px;">성적서 발행 시 기존 출하검사 기준서의 항목·규격을 우선 사용합니다.</div></div>
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-top:12px;">
+                <div style="padding:8px 12px;background:var(--bg-secondary);font-weight:700;font-size:0.82rem;">등록된 기준서 ${rows.length}건</div>
+                <div style="max-height:230px;overflow:auto;">
+                    <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <thead><tr><th style="white-space:nowrap;">납품처</th><th style="white-space:nowrap;">품명</th><th style="white-space:nowrap;">차종</th><th style="white-space:nowrap;">컬러</th><th style="white-space:nowrap;">개정</th><th style="white-space:nowrap;">양식</th><th style="white-space:nowrap;">작업</th></tr></thead>
+                        <tbody>${rows.length ? rows.map(s => `<tr>
+                            <td style="white-space:nowrap;">${_esc(s.customer || '-')}</td><td style="white-space:nowrap;">${_esc(s.partName || '-')}</td><td style="white-space:nowrap;">${_esc(s.carModel || '공통')}</td><td style="white-space:nowrap;">${_esc(s.color || '공통')}</td><td style="white-space:nowrap;">${_esc(s.revision || '-')}</td><td style="white-space:nowrap;">${s.fileDataUrl ? `<button class="btn btn-sm btn-outline" onclick="ShippingCertificateModule.openStandardFile('${_esc(s.id)}')">열기</button>` : '미등록'}</td><td style="white-space:nowrap;"><button class="btn btn-sm btn-outline" onclick="ShippingCertificateModule.openStandardManager('${_esc(s.id)}')">수정</button> <button class="btn btn-sm btn-danger" onclick="ShippingCertificateModule.removeStandard('${_esc(s.id)}')">삭제</button></td>
+                        </tr>`).join('') : '<tr><td colspan="7" style="text-align:center;padding:22px;color:var(--text-muted);">등록된 기준서가 없습니다.</td></tr>'}</tbody>
+                    </table>
+                </div>
+            </div>
+            <input type="hidden" id="scStdId" value="${_esc(edit?.id || '')}">
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" onclick="ShippingCertificateModule.saveStandard()">${edit ? '수정 저장' : '기준서 저장'}</button>
+        `, 'xl');
+    }
+
+    async function saveStandard() {
+        const get = id => (document.getElementById(id) || {}).value || '';
+        const customer = get('scStdCustomer').trim();
+        const partName = get('scStdPart').trim();
+        if (!customer) { UIUtils.toast('납품처를 입력하세요.', 'warning'); return; }
+        const input = document.getElementById('scStdFile');
+        const file = input && input.files && input.files[0];
+        if (file && file.size > 5 * 1024 * 1024) { UIUtils.toast('양식 파일은 5MB 이하만 등록할 수 있습니다.', 'warning'); return; }
+        const id = get('scStdId').trim() || `scstd_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const old = _standards.find(s => s.id === id) || {};
+        let fileDataUrl = old.fileDataUrl || '';
+        let fileName = old.fileName || '';
+        let fileType = old.fileType || '';
+        if (file) {
+            fileDataUrl = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(String(reader.result || ''));
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            fileName = file.name;
+            fileType = file.type || '';
+        }
+        const current = typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser ? AuthModule.getCurrentUser() : null;
+        const next = {
+            ...old, id, customer, carModel: get('scStdCar').trim(), partName, color: get('scStdColor').trim(),
+            title: get('scStdTitle').trim(), revision: get('scStdRevision').trim() || 'Rev.0',
+            effectiveDate: get('scStdEffectiveDate').trim(), criteria: _parseCriteria(get('scStdCriteria')),
+            fileDataUrl, fileName, fileType, active: true,
+            updatedAt: new Date().toISOString(), updatedBy: current ? (current.displayName || current.username || '') : ''
+        };
+        const idx = _standards.findIndex(s => s.id === id);
+        if (idx >= 0) _standards[idx] = next; else _standards.push(next);
+        await _saveStandards();
+        UIUtils.toast('업체별 성적서 기준서가 저장되었습니다.', 'success');
+        openStandardManager();
+        renderList();
+    }
+
+    function openStandardFile(id) {
+        const standard = _standards.find(s => s.id === id);
+        if (!standard || !standard.fileDataUrl) { UIUtils.toast('등록된 양식 파일이 없습니다.', 'info'); return; }
+        const win = window.open('', '_blank');
+        if (!win) { UIUtils.toast('파일을 열 창을 열 수 없습니다. 팝업 차단을 확인하세요.', 'warning'); return; }
+        win.document.write(`<title>${_esc(standard.fileName || '업체 양식')}</title><iframe src="${standard.fileDataUrl}" style="border:0;width:100vw;height:100vh;"></iframe>`);
+        win.document.close();
+    }
+
+    function removeStandard(id) {
+        const standard = _standards.find(s => s.id === id);
+        if (!standard) return;
+        UIUtils.confirm(`'${standard.customer || ''} / ${standard.partName || ''}' 기준서를 삭제하시겠습니까?`, async () => {
+            _standards = _standards.filter(s => s.id !== id);
+            await _saveStandards();
+            UIUtils.toast('기준서가 삭제되었습니다.', 'success');
+            openStandardManager();
+            renderList();
+        });
+    }
+
     async function _getShipment(shipmentId) {
         const sales = (await Storage.getConfigValue(SHIPMENT_KEY).catch(() => ([]))) || [];
         const fromSales = (Array.isArray(sales) ? sales : []).find(r => r.id === shipmentId);
@@ -1110,6 +1301,11 @@ var ShippingCertificateModule = (function () {
         await _loadManual();
         const fromManual = _manualRows.find(r => r.id === shipmentId);
         if (fromManual) return Object.assign({}, fromManual, { _source: 'manual' });
+        if (String(shipmentId || '').startsWith('plan:')) {
+            const date = String(shipmentId).split(':')[1] || '';
+            const fromPlan = _planRowsFor(date).find(r => r.id === shipmentId);
+            if (fromPlan) return fromPlan;
+        }
         return null;
     }
 
@@ -1227,7 +1423,13 @@ var ShippingCertificateModule = (function () {
         const row = await _getShipment(shipmentId);
         if (!row) { UIUtils.toast('출하 계획품을 찾을 수 없습니다.', 'error'); return; }
         await _loadReli();
+        await _loadStandards();
         const st = _buildRowStatus(row);
+        if (!st.standard) {
+            UIUtils.toast('납품처에 맞는 업체별 공통 기준서가 등록되지 않았습니다.', 'warning');
+            return;
+        }
+        if (!st.standard.fileDataUrl) { UIUtils.toast('업체별 성적서 양식 파일을 먼저 등록하세요.', 'warning'); return; }
         if (!st.eligible) {
             UIUtils.toast('외관검사·신뢰성 검사가 모두 합격인 품목만 성적서를 발행할 수 있습니다.', 'warning');
             return;
@@ -1240,38 +1442,48 @@ var ShippingCertificateModule = (function () {
 
         const daily = st.daily;
         const reli = st.reli;
-        UIUtils.showModal('출하검사 성적서 작성', `
+        const criteria = await _matchedCriteria(row, st.standard);
+        if (!criteria.length) { UIUtils.toast('출하검사 기준서에 등록된 검사 항목이 없습니다.', 'warning'); return; }
+        UIUtils.showModal('출하검사 성적서 발행', `
             <div style="padding:10px 14px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:0.84rem;line-height:1.6;">
                 <div><strong>납품처:</strong> ${_esc(row.customer || '-')} &nbsp;|&nbsp; <strong>출하일:</strong> ${_esc(row.date || '-')}</div>
                 <div><strong>품목:</strong> ${_esc(row.carModel || '')} / ${_esc(row.partName || '')} / ${_esc(row.color || '-')}</div>
+                <div><strong>적용 기준서:</strong> ${_esc(st.standard.title || `${row.customer || ''} ${row.partName || ''}`)} &nbsp;·&nbsp; 개정 ${_esc(st.standard.revision || '-')}</div>
                 <div style="margin-top:6px;color:var(--text-muted);">
                     외관검사: ${_esc((daily.date || '').slice(0, 10))} 합격 &nbsp;|&nbsp;
                     신뢰성: ${_esc((reli.date || '').slice(0, 10))} 합격
                     ${(row._source === 'manual' || row.source === 'manual') ? ' &nbsp;|&nbsp; <span style="color:var(--accent-orange);">수기 입력</span>' : ''}
                 </div>
             </div>
-            <div class="form-row">
-                <div class="form-group"><label class="form-label">발행일 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="date" class="form-input" id="scIssueDate" value="${UIUtils.today()}"></div>
-                <div class="form-group"><label class="form-label">검사자</label>
-                    <input class="form-input" id="scInspector" value="${_esc(daily.inspector || reli.inspector || '')}" placeholder="검사자"></div>
-                <div class="form-group"><label class="form-label">출하 수량</label>
-                    <input type="number" class="form-input" id="scQty" min="1" value="${Number(row.qty) || 0}" readonly style="background:var(--bg-secondary);"></div>
+            <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:14px;">
+                <div style="padding:8px 12px;background:var(--bg-secondary);font-weight:700;font-size:0.84rem;">인쇄할 검사 기준·규격</div>
+                <div style="max-height:180px;overflow:auto;">
+                    <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;">
+                        <thead><tr><th style="white-space:nowrap;width:48px;">No.</th><th style="white-space:nowrap;">검사 항목</th><th style="white-space:nowrap;">규격</th><th style="white-space:nowrap;">검사 방법</th></tr></thead>
+                        <tbody>${criteria.length ? criteria.map((c, i) => `<tr><td style="text-align:center;white-space:nowrap;">${i + 1}</td><td>${_esc(c.item || '-')}</td><td>${_esc(c.spec || '-')}</td><td>${_esc(c.method || '-')}</td></tr>`).join('') : '<tr><td colspan="4" style="text-align:center;padding:16px;color:var(--text-muted);">등록된 기준 항목이 없습니다.</td></tr>'}</tbody>
+                    </table>
+                </div>
             </div>
-            <div class="form-group"><label class="form-label">비고</label>
-                <textarea class="form-textarea" id="scNote" rows="2" placeholder="특이사항"></textarea></div>
+            <div style="padding:10px 12px;border:1px solid var(--border);border-radius:8px;font-size:0.84rem;line-height:1.65;">
+                <strong>인쇄 후 작성 안내</strong><br>
+                이 화면에서는 검사 결과를 입력하지 않습니다. 업체 양식과 검사 기준·규격만 인쇄한 후 검사 결과, 측정값, 판정, 서명을 종이에 직접 작성합니다.<br>
+                <span style="color:var(--text-muted);">발행일: ${_esc(UIUtils.today())} · 출하수량: ${UIUtils.formatNumber(Number(row.qty) || 0)} EA</span>
+            </div>
             <input type="hidden" id="scShipmentId" value="${_esc(shipmentId)}">
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-outline" onclick="ShippingCertificateModule.openStandardFile('${st.standard.id}')">
+                <span class="material-symbols-outlined">description</span> 업체 양식 열기
+            </button>
             <button class="btn btn-primary" onclick="ShippingCertificateModule.saveIssue()">
-                <span class="material-symbols-outlined">task_alt</span> 발행 저장
+                <span class="material-symbols-outlined">task_alt</span> 발행 완료 처리
             </button>
         `, 'lg');
     }
 
     async function saveIssue() {
         const shipmentId = (document.getElementById('scShipmentId') || {}).value || '';
-        const issueDate = ((document.getElementById('scIssueDate') || {}).value || '').trim();
+        const issueDate = ((document.getElementById('scIssueDate') || {}).value || UIUtils.today()).trim();
         const inspector = ((document.getElementById('scInspector') || {}).value || '').trim();
         const note = ((document.getElementById('scNote') || {}).value || '').trim();
         if (!issueDate) { UIUtils.toast('발행일을 입력하세요.', 'warning'); return; }
@@ -1279,10 +1491,15 @@ var ShippingCertificateModule = (function () {
         const row = await _getShipment(shipmentId);
         if (!row) { UIUtils.toast('출하 계획품을 찾을 수 없습니다.', 'error'); return; }
         await _loadReli();
+        await _loadStandards();
         await _loadCerts();
         const st = _buildRowStatus(row);
+        if (!st.standard) { UIUtils.toast('납품처에 맞는 업체별 공통 기준서가 등록되지 않았습니다.', 'warning'); return; }
+        if (!st.standard.fileDataUrl) { UIUtils.toast('업체별 성적서 양식 파일을 먼저 등록하세요.', 'warning'); return; }
         if (!st.eligible) { UIUtils.toast('검사 완료 조건을 만족하지 않습니다.', 'warning'); return; }
         if (st.cert) { UIUtils.toast('이미 발행된 성적서입니다.', 'info'); return; }
+        const matchedCriteria = await _matchedCriteria(row, st.standard);
+        if (!matchedCriteria.length) { UIUtils.toast('출하검사 기준서에 등록된 검사 항목이 없습니다.', 'warning'); return; }
 
         const cert = {
             id: 'scert_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
@@ -1302,6 +1519,13 @@ var ShippingCertificateModule = (function () {
             reliId: st.reli.id || '',
             reliDate: (st.reli.date || '').slice(0, 10),
             reliLotNo: st.reli.lotNo || '',
+            standardId: st.standard.id || '',
+            standardRevision: st.standard.revision || '',
+            standardTitle: st.standard.title || '',
+            criteriaSnapshot: matchedCriteria.map(c => ({ ...c })),
+            templateFileName: st.standard.fileName || '',
+            issuedBy: (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser && AuthModule.getCurrentUser())
+                ? (AuthModule.getCurrentUser().displayName || AuthModule.getCurrentUser().username || '') : '',
             createdAt: new Date().toISOString()
         };
         _certs.push(cert);
@@ -1313,7 +1537,8 @@ var ShippingCertificateModule = (function () {
 
     async function viewCert(shipmentId) {
         await _loadCerts();
-        const cert = _certs.find(c => c.shipmentId === shipmentId);
+        const row = await _getShipment(shipmentId);
+        const cert = _certForShipment(shipmentId, row);
         if (!cert) { UIUtils.toast('성적서를 찾을 수 없습니다.', 'info'); return; }
         _showCertModal(cert);
     }
@@ -1351,6 +1576,9 @@ var ShippingCertificateModule = (function () {
         await _loadCerts();
         const cert = _certs.find(c => c.id === id);
         if (!cert) { UIUtils.toast('성적서를 찾을 수 없습니다.', 'error'); return; }
+        const criteriaRows = (Array.isArray(cert.criteriaSnapshot) ? cert.criteriaSnapshot : []).map((c, i) =>
+            '<tr><td style="text-align:center;">' + (i + 1) + '</td><td>' + _esc(c.item || '-') + '</td><td>' + _esc(c.spec || '-') + '</td><td>' + _esc(c.method || '-') + '</td><td style="height:28px;"></td></tr>'
+        ).join('');
 
         const win = window.open('', '_blank', 'width=860,height=720');
         win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8">
@@ -1382,6 +1610,11 @@ var ShippingCertificateModule = (function () {
             <tr><td style="text-align:center;">출하검사(신뢰성)</td><td style="text-align:center;">${_esc(cert.reliDate || '-')}</td><td style="text-align:center;font-family:monospace;">${_esc(cert.reliLotNo || '-')}</td><td class="ok">합격</td></tr>
         </table>
         <table>
+            <tr><th colspan="5">검사 기준 및 규격</th></tr>
+            <tr><th>No.</th><th>검사 항목</th><th>규격</th><th>검사 방법</th><th>검사 결과(수기)</th></tr>
+            ${criteriaRows || '<tr><td colspan="5" style="text-align:center;height:40px;">기준 항목 없음</td></tr>'}
+        </table>
+        <table>
             <tr><th>종합 판정</th></tr>
             <tr><td class="ok" style="padding:14px;font-size:15px;">합격 (출하 가능)</td></tr>
         </table>
@@ -1395,9 +1628,17 @@ var ShippingCertificateModule = (function () {
         win.document.close();
     }
 
+    async function hasIssuedForShipment(row) {
+        if (!row) return false;
+        await _loadCerts();
+        return !!_certForShipment(row.id, row);
+    }
+
     return {
         init, render, renderList, openIssue, saveIssue, viewCert, viewCertById, printCert,
-        openManualAdd, onManualCarChange, saveManualAdd, removeManual
+        openManualAdd, onManualCarChange, saveManualAdd, removeManual,
+        openStandardManager, saveStandard, openStandardFile, removeStandard,
+        hasIssuedForShipment
     };
 })();
 

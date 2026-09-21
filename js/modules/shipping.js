@@ -970,8 +970,49 @@ const ShippingStandbyModule = (function() {
             h: (v && v.h) || 100,
             label: (v && v.label) || '',
             span: (span === 1 || span === 2) ? span : 0,
-            rowSpan: Number(v && v.rowSpan) === 2 ? 2 : 1
+            rowSpan: Number(v && v.rowSpan) === 2 ? 2 : 1,
+            free: !!(v && v.free),
+            x: Number.isFinite(Number(v && v.x)) ? Number(v.x) : null,
+            y: Number.isFinite(Number(v && v.y)) ? Number(v.y) : null,
+            w: Number.isFinite(Number(v && v.w)) ? Number(v.w) : null
         };
+    }
+
+    // 자유 배치의 좌표는 편집 화면의 이미지 영역 폭을 기준으로 저장된다.
+    // A4 보기/출력에서는 좌측 열이 더 좁아질 수 있으므로, 카드가 검사표 위로
+    // 넘어가지 않도록 좌표·카드 크기를 같은 비율로 축소해 렌더링한다.
+    function _sstdFitFreeImagesToDocument(images, splitWidth, sourceWidth, padding) {
+        const list = (images || []).map(_sstdNormImg);
+        const isFree = list.some(o => o.free && o.x !== null && o.y !== null);
+        if (!isFree) return { images: list, isFree: false, height: 0 };
+
+        const widthValue = String(splitWidth || '360px');
+        const widthNumber = parseFloat(widthValue) || 360;
+        const documentWidth = 281 * 96 / 25.4; // A4 가로 281mm의 CSS px 기준
+        const leftWidth = widthValue.indexOf('%') >= 0
+            ? documentWidth * widthNumber / 100
+            : widthNumber;
+        const contentWidth = list.reduce((max, o) => {
+            if (!(o.free && o.x !== null && o.y !== null)) return max;
+            return Math.max(max, (o.x || 0) + Math.max(120, o.w || 220));
+        }, 0);
+        const baseWidth = Math.max(Number(sourceWidth) || 0, contentWidth, 1);
+        const availableWidth = Math.max(120, leftWidth - (Number(padding) || 12));
+        const scale = Math.min(1, availableWidth / baseWidth);
+        const scaled = list.map(o => {
+            if (!(o.free && o.x !== null && o.y !== null)) return o;
+            return Object.assign({}, o, {
+                x: Math.round(o.x * scale),
+                y: Math.round(o.y * scale),
+                w: Math.max(80, Math.round((o.w || 220) * scale)),
+                h: Math.max(40, Math.round((o.h || 100) * scale))
+            });
+        });
+        const height = Math.max(180, scaled.reduce((max, o) => {
+            if (!(o.free && o.x !== null && o.y !== null)) return max;
+            return Math.max(max, (o.y || 0) + (o.h || 100) + 28);
+        }, 0));
+        return { images: scaled, isFree: true, height };
     }
     function _sstdImgColSpan(o, i, total, imgs) {
         if (!o) return 1;
@@ -1311,14 +1352,19 @@ const ShippingStandbyModule = (function() {
             const colSpan = _sstdImgColSpan(o, i, images.length, images);
             const wide = colSpan === 2;
             const tall = _sstdImgRowSpan(o, i, images.length, images) === 2;
+            const free = o.free && o.x !== null && o.y !== null;
+            const freeStyle = free
+                ? `position:absolute;left:${Math.max(0, o.x)}px;top:${Math.max(0, o.y)}px;width:${Math.max(120, o.w || 220)}px;`
+                : '';
             return `
-            <div class="sstd-img-card" data-idx="${i}"
+            <div class="sstd-img-card" data-idx="${i}" draggable="${free ? 'false' : 'true'}"
                 ondragover="ShippingStandbyModule._sstdDragOver(event)"
                 ondrop="ShippingStandbyModule._sstdDragDrop(event,${i})"
-                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
-                <div class="sstd-img-dragbar" draggable="true" title="드래그하여 위치 변경"
-                    ondragstart="ShippingStandbyModule._sstdDragStart(event,${i})"
-                    ondragend="ShippingStandbyModule._sstdDragEnd(event)"
+                ondragstart="ShippingStandbyModule._sstdDragStart(event,${i})"
+                ondragend="ShippingStandbyModule._sstdDragEnd(event)"
+                onmousedown="${free ? `ShippingStandbyModule._sstdStartFreeDrag(event,${i})` : ''}"
+                style="position:relative;border:1px solid #ddd;border-radius:4px;background:#f9f9f9;user-select:none;${freeStyle}${free ? '' : (wide ? 'grid-column:1/-1;' : '')}${free ? '' : (tall ? 'grid-row:span 2;' : '')}">
+                <div class="sstd-img-dragbar" title="드래그하여 위치 변경"
                     style="flex:0 0 auto;padding:2px 48px 2px 4px;background:#e8edf2;border-bottom:1px solid #ddd;display:flex;align-items:center;gap:4px;cursor:grab;">
                     <span class="material-symbols-outlined" style="font-size:14px;color:#64748b;flex:0 0 auto;">drag_indicator</span>
                     <input type="text" value="${_esc(o.label)}" placeholder="라벨 (예: 외관)"
@@ -1555,17 +1601,25 @@ const ShippingStandbyModule = (function() {
                     <div class="sstd-img-pane">
                     <div class="doc-sec" style="flex:0 0 auto;display:flex;align-items:center;justify-content:space-between;padding:5px 8px;">
                         <span>외관 / 치수포인트</span>
-                        <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
-                            <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
-                            <input type="file" accept="image/*" multiple style="display:none;" onchange="ShippingStandbyModule._sstdAddImages(this)">
-                        </label>
+                        <span style="display:flex;align-items:center;gap:4px;">
+                            <button type="button" title="블록을 왼쪽 영역 안에서 자유롭게 이동"
+                                onclick="ShippingStandbyModule._sstdEnableFreeLayout()"
+                                style="border:1px solid #c4b5fd;background:#f5f3ff;color:#6d28d9;border-radius:3px;height:18px;font-size:9px;cursor:pointer;padding:0 5px;">자유 배치</button>
+                            <button type="button" title="첫 이미지를 왼쪽 세로 블록으로, 광택·색차를 오른쪽 위·아래로 배치"
+                                onclick="ShippingStandbyModule._sstdApplyImageLayout('left-tall')"
+                                style="border:1px solid #93c5fd;background:#eff6ff;color:#1d4ed8;border-radius:3px;height:18px;font-size:9px;cursor:pointer;padding:0 5px;">좌측 크게 배치</button>
+                            <label style="display:flex;align-items:center;gap:3px;cursor:pointer;font-size:.72rem;font-weight:400;color:#2563eb;white-space:nowrap;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>
+                                <input type="file" accept="image/*" multiple style="display:none;" onchange="ShippingStandbyModule._sstdAddImages(this)">
+                            </label>
+                        </span>
                     </div>
                     <div id="sstdImgPasteZone" tabindex="0"
                         onpaste="ShippingStandbyModule._sstdOnPaste(event)"
                         onfocus="this.style.outline='2px dashed #2563eb';this.style.outlineOffset='-3px'"
                         onblur="this.style.outline='none'" onclick="this.focus()"
                         style="outline:none;cursor:pointer;">
-                        <div id="sstdImgGrid">
+                        <div id="sstdImgGrid" style="${_sstdImages.some(img => _sstdNormImg(img).free) ? `position:relative;display:block;min-height:${Math.max(260, _sstdImages.reduce((max, img) => { const o = _sstdNormImg(img); return Math.max(max, (o.y || 0) + (o.h || 100) + 44); }, 0))}px;` : ''}">
                             ${_sstdRenderImgGrid(_sstdImages)}
                         </div>
                     </div>
@@ -1788,9 +1842,18 @@ const ShippingStandbyModule = (function() {
 
         // 마우스로 조절한 표 레이아웃(좌우 폭·블록 높이·주요검사Point 열 폭)도 그대로 저장 —
         // 안 그러면 편집 화면을 다시 열거나 보기/출력할 때 매번 기본값으로 되돌아가 버린다.
+        const splitTable = document.getElementById('sstdSplitTable');
+        const splitCol = document.getElementById('sstdSplitLeftCol');
+        const splitTableWidth = splitTable ? splitTable.getBoundingClientRect().width : 0;
+        const splitColWidth = splitCol ? splitCol.getBoundingClientRect().width : 0;
+        const splitLeftWidth = splitTableWidth && splitColWidth
+            ? (splitColWidth / splitTableWidth * 100).toFixed(3) + '%'
+            : (splitCol || {}).style.width || '';
         const layout = {
-            splitLeftWidth: (document.getElementById('sstdSplitLeftCol') || {}).style.width || '',
+            // A4 보기/출력 화면은 전체 문서를 확대/축소하므로 좌측 폭을 px가 아닌 비율로 저장한다.
+            splitLeftWidth,
             splitHeight: (document.getElementById('sstdSplitTable') || {}).style.height || '',
+            freeImageCanvasWidth: (document.getElementById('sstdImgGrid') || {}).clientWidth || 0,
             ptColWidths: [0, 1, 2, 3, 4, 5, 6, 7].map(i => (document.getElementById('sstdPtCol' + i) || {}).style.width || ''),
             bottomLeftWidth: (document.getElementById('sstdBottomLeftCol') || {}).style.width || '',
             revDateWidth: (document.getElementById('sstdRevDateCol') || {}).style.width || ''
@@ -1877,11 +1940,17 @@ const ShippingStandbyModule = (function() {
             <td style="padding:${cf ? '2px' : '0'};border:1px solid #bbb;text-align:center;vertical-align:middle;${cf ? '' : 'background:' + _SSTD_DIAG}">${cf ? _sstdConfirmerViewHtml(cf) : ''}</td>
         </tr>`;}).join('');
 
+        // 보기 화면은 편집 화면에서 저장한 좌표·카드 크기를 그대로 사용한다.
+        // A4 맞춤 축소는 인쇄 화면에서만 적용한다.
         const imgs = (data.images || []).map(_sstdNormImg);
+        const freeImgLayout = imgs.some(o => o.free && o.x !== null && o.y !== null);
+        const freeImgHeight = Math.max(260, imgs.reduce((max, o) =>
+            Math.max(max, (o.y || 0) + (o.h || 100) + 44), 0));
         const imgHtml = imgs.length ? imgs.map(function(o, i) {
             const wide = _sstdImgColSpan(o, i, imgs.length, imgs) === 2;
             const tall = _sstdImgRowSpan(o, i, imgs.length, imgs) === 2;
-            return `<div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
+            const free = o.free && o.x !== null && o.y !== null;
+            return `<div style="border:1px solid #ddd;border-radius:4px;overflow:hidden;background:#f9f9f9;${free ? `position:absolute;left:${o.x}px;top:${o.y}px;width:${o.w || 220}px;` : ''}${free ? '' : (wide ? 'grid-column:1/-1;' : '')}${free ? '' : (tall ? 'grid-row:span 2;' : '')}">
                 ${o.label ? `<div style="padding:1px 4px;background:#e8edf2;border-bottom:1px solid #ddd;font-size:10px;font-weight:700;">${_esc(o.label)}</div>` : ''}
                 <img src="${o.src}" style="width:100%;height:${o.h}px;object-fit:contain;display:block;background:#fff;">
             </div>`;
@@ -1891,12 +1960,12 @@ const ShippingStandbyModule = (function() {
         UIUtils.showModal('출하검사 기준서 보기', `
         <style>
             .modal-container:has(#sstdViewFit){height:96vh;max-height:96vh;width:min(96vw,1600px)!important;max-width:none!important;}
-            .modal-body:has(#sstdViewFit){overflow:hidden!important;padding:6px 10px 2px!important;display:flex;flex-direction:column;min-height:0;}
+            .modal-body:has(#sstdViewFit){overflow:auto!important;padding:6px 10px 2px!important;display:flex;flex-direction:column;min-height:0;}
             .modal-footer:has(+ *){ }
             .modal-container:has(#sstdViewFit) .modal-header{padding:10px 16px;}
             .modal-container:has(#sstdViewFit) .modal-footer{padding:8px 16px 12px;}
-            #sstdViewFit{flex:1 1 auto;min-height:0;width:100%;overflow:hidden;}
-            #sstdViewDoc { font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; transform-origin:top center; }
+            #sstdViewFit{flex:1 1 auto;min-height:0;width:100%;overflow:visible;display:block;}
+            #sstdViewDoc { width:100%; min-height:0; box-sizing:border-box; margin:0; font-family:'Malgun Gothic','맑은 고딕',sans-serif; font-size:11px; color:#111; }
             #sstdViewDoc table { border-collapse:collapse; width:100%; }
             #sstdViewDoc td, #sstdViewDoc th { border:1px solid #888; padding:2px 5px; vertical-align:middle; }
             #sstdViewDoc .dth { background:#d0e4f7; font-weight:700; text-align:center; }
@@ -1905,6 +1974,7 @@ const ShippingStandbyModule = (function() {
             #sstdViewDoc > table + table { margin-top:-1px; }
             #sstdViewDoc td > table { border-collapse:collapse; width:100%; }
             #sstdViewDoc td > table > tbody > tr:first-child > td { border-top:none; }
+            #sstdViewDoc .sstd-split-left { overflow:hidden; }
             #sstdViewDoc .sstd-corrective-stack { height:100%; }
             #sstdViewDoc .sstd-corrective-body { white-space:pre-wrap; }
         </style>
@@ -1933,7 +2003,7 @@ const ShippingStandbyModule = (function() {
                 <tr>
                     <td class="sstd-split-left" style="width:${_esc(_splitLeftWidth)};vertical-align:top;padding:0;">
                         <div class="dsec">외관 / 치수포인트</div>
-                        <div style="padding:6px;display:grid;grid-template-columns:${imgs.length > 1 ? '1fr 1fr' : '1fr'};gap:4px;">${imgHtml}</div>
+                        <div style="padding:6px;display:${freeImgLayout ? 'block' : 'grid'};position:relative;min-height:${freeImgLayout ? freeImgHeight + 'px' : '0'};grid-template-columns:${imgs.length > 1 ? '1fr 1fr' : '1fr'};gap:4px;">${imgHtml}</div>
                     </td>
                     <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                         <div class="dsec">주요검사 Point <span style="font-weight:400;font-size:10px;">(외관 / 신뢰성)</span></div>
@@ -2007,18 +2077,10 @@ const ShippingStandbyModule = (function() {
             }
             return;
         }
+        // 보기는 편집 캔버스와 동일한 폭으로 표시한다. 변환(scale)을 적용하면
+        // 자유 배치 카드의 좌표가 편집 화면과 달라진다.
         doc.style.transform = 'none';
         doc.style.marginBottom = '0';
-        const availW = wrap.clientWidth;
-        const availH = wrap.clientHeight;
-        if (availW < 40 || availH < 40) return;
-        const w = Math.max(1, doc.scrollWidth);
-        const h = Math.max(1, doc.scrollHeight);
-        let s = Math.min(1, availW / w, availH / h);
-        if (!isFinite(s) || s <= 0) s = 1;
-        doc.style.transformOrigin = 'top center';
-        doc.style.transform = 'scale(' + s + ')';
-        doc.style.marginBottom = ((s - 1) * h) + 'px';
     }
 
     function _sstdBindViewFit() {
@@ -2062,11 +2124,17 @@ const ShippingStandbyModule = (function() {
         const _pBottomLeftWidth = _pLayout.bottomLeftWidth || '48%';
         const _pRevDateWidth = _pLayout.revDateWidth || _SSTD_REV_DATE_W;
 
-        const pImgs = (std.images || []).map(_sstdNormImg);
+        const pImgLayout = _sstdFitFreeImagesToDocument(
+            std.images || [], _pSplitLeftWidth, _pLayout.freeImageCanvasWidth, 8
+        );
+        const pImgs = pImgLayout.images;
+        const pFreeImgLayout = pImgLayout.isFree;
+        const pFreeImgHeight = pImgLayout.height;
         const imgHtml = pImgs.map(function(o, i) {
             const wide = _sstdImgColSpan(o, i, pImgs.length, pImgs) === 2;
             const tall = _sstdImgRowSpan(o, i, pImgs.length, pImgs) === 2;
-            return `<div style="border:1px solid #ccc;padding:2px;${wide ? 'grid-column:1/-1;' : ''}${tall ? 'grid-row:span 2;' : ''}">
+            const free = o.free && o.x !== null && o.y !== null;
+            return `<div style="border:1px solid #ccc;padding:2px;${free ? `position:absolute;left:${o.x}px;top:${o.y}px;width:${o.w || 220}px;` : ''}${free ? '' : (wide ? 'grid-column:1/-1;' : '')}${free ? '' : (tall ? 'grid-row:span 2;' : '')}">
                 ${o.label ? `<div style="font-size:9px;font-weight:700;text-align:center;padding:2px 0;background:#e8edf2;">${_esc(o.label)}</div>` : ''}
                 <img src="${o.src}" style="height:${px2mm(o.h)}mm;max-width:100%;"></div>`;
         }).join('');
@@ -2098,7 +2166,7 @@ const ShippingStandbyModule = (function() {
             #sstdViewBar button{font-size:12px;padding:5px 10px;border-radius:6px;border:1px solid rgba(255,255,255,.35);background:#fff;color:#1e3a5f;cursor:pointer;font-weight:700;}
             #sstdViewBar button.danger{background:#dc2626;color:#fff;border-color:#dc2626;}
             #sstdFit{height:calc(100vh - 48px);overflow:hidden;display:flex;justify-content:center;align-items:flex-start;}
-            #sstdPage{width:281mm;background:#fff;padding:8mm;box-sizing:border-box;transform-origin:top center;box-shadow:0 4px 18px rgba(0,0,0,.18);}
+            #sstdPage{width:281mm;min-height:194mm;background:#fff;padding:0;box-sizing:border-box;transform-origin:top center;box-shadow:0 4px 18px rgba(0,0,0,.18);}
             @media print{
                 html,body{background:#fff;overflow:visible;width:281mm !important;height:auto;}
                 #sstdViewBar{display:none !important;}
@@ -2152,9 +2220,10 @@ const ShippingStandbyModule = (function() {
             body > table + table{margin-top:-1px;}
             td > table{border-collapse:collapse;width:100%;}
             td > table > tbody > tr:first-child > td{border-top:none;}
+            .sstd-split-left{overflow:hidden;}
             .sstd-corrective-stack{height:100%;}
             .sstd-corrective-body{white-space:pre-wrap;}
-            @media print{html,body{width:281mm;}}
+            @media print{html,body{width:281mm;}#sstdPage{min-height:194mm;}}
             ${viewCss}
         </style></head><body>${bar}
         <table>
@@ -2180,7 +2249,7 @@ const ShippingStandbyModule = (function() {
             <tr>
                 <td class="sstd-split-left" style="width:${_esc(_pSplitLeftWidth)};vertical-align:top;padding:0;">
                     <div class="doc-sec">외관 / 치수포인트</div>
-                    <div style="padding:4px;display:grid;grid-template-columns:${(std.images || []).length > 1 ? '1fr 1fr' : '1fr'};gap:4px;align-items:start;">${imgHtml || '<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}</div>
+                    <div style="padding:4px;display:${pFreeImgLayout ? 'block' : 'grid'};position:relative;min-height:${pFreeImgLayout ? pFreeImgHeight + 'px' : '0'};grid-template-columns:${(std.images || []).length > 1 ? '1fr 1fr' : '1fr'};gap:4px;align-items:start;">${imgHtml || '<div style="text-align:center;padding:20px;color:#aaa;">이미지 없음</div>'}</div>
                 </td>
                 <td class="sstd-split-right" style="vertical-align:top;padding:0;">
                     <div class="doc-sec">주요검사 Point (외관 / 신뢰성)</div>
@@ -2311,6 +2380,114 @@ const ShippingStandbyModule = (function() {
         const g = document.getElementById('sstdImgGrid');
         if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
     }
+
+    function _sstdEnableFreeLayout() {
+        const grid = document.getElementById('sstdImgGrid');
+        if (!grid || !_sstdImages.length) {
+            UIUtils.toast('먼저 이미지를 등록하세요.', 'info');
+            return;
+        }
+        const gridRect = grid.getBoundingClientRect();
+        const cards = Array.from(grid.querySelectorAll('.sstd-img-card'));
+        _sstdImages = _sstdImages.map(_sstdNormImg);
+        const placements = cards.map((card, index) => {
+            const o = _sstdImages[index];
+            const rect = card.getBoundingClientRect();
+            if (!o) return null;
+            o.free = true;
+            o.x = Math.max(0, Math.round(rect.left - gridRect.left));
+            o.y = Math.max(0, Math.round(rect.top - gridRect.top));
+            o.w = Math.max(120, Math.round(rect.width));
+            return { card, index, x: o.x, y: o.y, w: o.w };
+        });
+        const height = Math.max(260, Math.round(gridRect.height), _sstdImages.reduce((max, img) =>
+            Math.max(max, (img.y || 0) + (img.h || 100) + 44), 0));
+        grid.style.position = 'relative';
+        grid.style.display = 'block';
+        grid.style.minHeight = height + 'px';
+        // 기존 DOM을 다시 만들지 않고, 화면에 보이던 정확한 좌표와 폭을 유지한 채
+        // 절대 배치로 전환한다. 재렌더링하면 grid → block 전환 시 카드 폭이 달라진다.
+        placements.filter(Boolean).forEach(({ card, index, x, y, w }) => {
+            card.setAttribute('draggable', 'false');
+            card.style.position = 'absolute';
+            card.style.left = x + 'px';
+            card.style.top = y + 'px';
+            card.style.width = w + 'px';
+            card.style.maxWidth = 'none';
+            card.style.gridColumn = '';
+            card.style.gridRow = '';
+            card.onmousedown = function (event) { _sstdStartFreeDrag(event, index); };
+        });
+        UIUtils.toast('자유 배치 모드입니다. 블록을 원하는 위치로 끌어 놓으세요.', 'info');
+    }
+
+    function _sstdStartFreeDrag(e, idx) {
+        if (!_sstdImages[idx] || !_sstdImages[idx].free) return;
+        if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON' || e.target.closest('.sstd-img-hdl'))) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const grid = document.getElementById('sstdImgGrid');
+        const card = e.currentTarget;
+        if (!grid || !card) return;
+        const gridRect = grid.getBoundingClientRect();
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startLeft = Number(_sstdImages[idx].x) || 0;
+        const startTop = Number(_sstdImages[idx].y) || 0;
+        const prevUserSelect = document.body.style.userSelect;
+        document.body.style.userSelect = 'none';
+        card.style.zIndex = '20';
+        card.style.boxShadow = '0 4px 14px rgba(37,99,235,.25)';
+        function onMove(ev) {
+            const maxX = Math.max(0, grid.clientWidth - card.offsetWidth);
+            const maxY = Math.max(0, grid.clientHeight - card.offsetHeight);
+            const x = Math.max(0, Math.min(maxX, startLeft + ev.clientX - startX));
+            const y = Math.max(0, Math.min(maxY, startTop + ev.clientY - startY));
+            _sstdImages[idx].x = Math.round(x);
+            _sstdImages[idx].y = Math.round(y);
+            card.style.left = _sstdImages[idx].x + 'px';
+            card.style.top = _sstdImages[idx].y + 'px';
+        }
+        function onUp() {
+            document.removeEventListener('mousemove', onMove);
+            document.removeEventListener('mouseup', onUp);
+            document.body.style.userSelect = prevUserSelect || '';
+            card.style.zIndex = '';
+            card.style.boxShadow = '';
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+    }
+
+    function _sstdApplyImageLayout(mode) {
+        if (mode !== 'left-tall') return;
+        const imgs = _sstdImages.map(_sstdNormImg);
+        if (imgs.length < 2) {
+            UIUtils.toast('이미지를 2개 이상 등록한 뒤 배치하세요.', 'info');
+            return;
+        }
+        const labelOf = img => String(img.label || '').toLowerCase();
+        const findBy = re => imgs.find(img => re.test(labelOf(img)));
+        const dimension = findBy(/치수|dimension|라벨|외관/) || imgs[0];
+        const gloss = findBy(/광택|gloss/) && findBy(/광택|gloss/) !== dimension
+            ? findBy(/광택|gloss/) : null;
+        const color = findBy(/색차|color|colour/) && findBy(/색차|color|colour/) !== dimension
+            ? findBy(/색차|color|colour/) : null;
+        const rest = imgs.filter(img => img !== dimension && img !== gloss && img !== color);
+        const ordered = [dimension, gloss, color, ...rest].filter(Boolean);
+        ordered.forEach((img, index) => {
+            img.span = 1;
+            img.rowSpan = index === 0 ? 2 : 1;
+            img.free = false;
+            img.x = null;
+            img.y = null;
+            img.w = null;
+        });
+        _sstdImages = ordered;
+        const g = document.getElementById('sstdImgGrid');
+        if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
+        UIUtils.toast('왼쪽 큰 블록 + 오른쪽 2단 배치로 정렬했습니다. 저장하면 위치가 유지됩니다.', 'success');
+    }
     function _sstdDragStart(e, idx) {
         if (_sstdResizeOn) { e.preventDefault(); return; }
         if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'BUTTON')) {
@@ -2348,9 +2525,14 @@ const ShippingStandbyModule = (function() {
         if (_sstdDragIdx < 0 || _sstdDragIdx === toIdx) return;
         const imgs = _sstdImages.map(_sstdNormImg);
         if (toIdx < 0 || toIdx >= imgs.length) return;
-        const tmp = imgs[_sstdDragIdx];
-        imgs[_sstdDragIdx] = imgs[toIdx];
-        imgs[toIdx] = tmp;
+        const target = e.currentTarget && e.currentTarget.getBoundingClientRect
+            ? e.currentTarget.getBoundingClientRect() : null;
+        const dropAfter = target ? e.clientY >= target.top + target.height / 2 : false;
+        const moved = imgs.splice(_sstdDragIdx, 1)[0];
+        let insertAt = toIdx + (dropAfter ? 1 : 0);
+        if (_sstdDragIdx < insertAt) insertAt -= 1;
+        insertAt = Math.max(0, Math.min(imgs.length, insertAt));
+        imgs.splice(insertAt, 0, moved);
         _sstdImages = imgs;
         const g = document.getElementById('sstdImgGrid');
         if (g) g.innerHTML = _sstdRenderImgGrid(_sstdImages);
@@ -2375,11 +2557,9 @@ const ShippingStandbyModule = (function() {
         const startY = e.clientY;
         const startX = e.clientX;
         const startH = Number(_sstdImages[idx].h) || 100;
-        const col = document.getElementById('sstdSplitLeftCol');
-        const td = document.querySelector('#sstdDoc .sstd-split-left');
-        const startW = parseInt((col && col.style.width) || '360', 10) || 360;
         const card = document.querySelector('#sstdImgGrid .sstd-img-card[data-idx="' + idx + '"]');
         const wrap = card ? card.querySelector('.sstd-img-wrap') : null;
+        const startW = card ? card.getBoundingClientRect().width : 220;
         const prevSelect = document.body.style.userSelect;
         document.body.style.userSelect = 'none';
         function onMove(ev) {
@@ -2390,9 +2570,12 @@ const ShippingStandbyModule = (function() {
             if (wrap) wrap.style.height = newH + 'px';
             if (dir.indexOf('e') >= 0 || dir.indexOf('w') >= 0) {
                 const dx = dir.indexOf('e') >= 0 ? ev.clientX - startX : startX - ev.clientX;
-                const newW = Math.max(200, Math.min(900, startW + dx));
-                if (col) col.style.width = newW + 'px';
-                if (td) td.style.width = newW + 'px';
+                const newW = Math.max(120, Math.min(900, startW + dx));
+                _sstdImages[idx].w = newW;
+                if (card) {
+                    card.style.width = newW + 'px';
+                    card.style.maxWidth = '100%';
+                }
             }
             _sstdGrowSplitToGrid();
         }
@@ -2411,14 +2594,18 @@ const ShippingStandbyModule = (function() {
         e.preventDefault();
         const col = document.getElementById('sstdSplitLeftCol');
         const td = document.querySelector('#sstdDoc .sstd-split-left');
-        if (!col) return;
+        const table = document.getElementById('sstdSplitTable');
+        if (!col || !table) return;
         const startX = e.clientX;
-        const startW = parseInt(col.style.width, 10) || 360;
+        const tableWidth = table.getBoundingClientRect().width || 1;
+        let startW = parseFloat(col.style.width) || 360;
+        if (String(col.style.width).indexOf('%') >= 0) startW = (startW / 100) * tableWidth;
         function onMove(ev) {
             const dx = ev.clientX - startX;
             const newW = Math.max(200, Math.min(760, startW + dx));
-            col.style.width = newW + 'px';
-            if (td) td.style.width = newW + 'px';
+            const pct = (newW / tableWidth) * 100;
+            col.style.width = pct + '%';
+            if (td) td.style.width = pct + '%';
         }
         function onUp() {
             document.removeEventListener('mousemove', onMove);
@@ -3270,7 +3457,8 @@ const ShippingStandbyModule = (function() {
         _sstdAddImages, _sstdOnPaste, _sstdRemoveImage, _sstdUpdateImgLabel,
         _sstdStartSplitResize, _sstdStartSplitVResize, _sstdStartPtColResize, _sstdStartBottomResize,
         _sstdStartRevDateResize,
-        _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize,
+        _sstdDragStart, _sstdDragOver, _sstdDragEnd, _sstdDragDrop, _sstdStartResize, _sstdApplyImageLayout,
+        _sstdEnableFreeLayout, _sstdStartFreeDrag,
         _sstdMoveImage,
         _sstdToggleImgSpan,
         _sstdToggleImgRowSpan,
