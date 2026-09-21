@@ -3347,11 +3347,54 @@ td.pq-overdue-date-cell {
 
 .plan-day-modal .mes-grid {
     font-size: 13px;
+    width: max-content;
+    min-width: 100%;
+    table-layout: auto;
 }
 
 .plan-day-modal .mes-grid th,
 .plan-day-modal .mes-grid td {
     padding: 7px 8px;
+}
+
+.plan-day-modal .mes-grid .plan-note-col,
+.plan-day-modal .mes-grid .plan-note-cell {
+    min-width: 150px;
+    max-width: 260px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.plan-day-modal .mes-grid .plan-note-col {
+    text-align: center;
+}
+
+.plan-day-modal .mes-grid .plan-note-cell {
+    text-align: left;
+}
+
+.plan-day-modal .mes-grid .plan-note-cell {
+    color: var(--text-secondary);
+    font-size: 0.78rem;
+}
+
+.plan-note-input-row {
+    margin-top: -4px;
+}
+
+.plan-note-input-row .form-group {
+    width: 100%;
+}
+
+.plan-note-input-row .form-label {
+    text-align: center;
+}
+
+.plan-note-input-row textarea {
+    width: 100%;
+    min-height: 64px;
+    line-height: 1.5;
 }
 
 .plan-day-modal .time-cell,

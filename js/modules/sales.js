@@ -4857,7 +4857,11 @@ var SalesTodayShipmentModule = (function () {
     const CONFIG_KEY = 'sales_today_shipment_v1';
     const INVENTORY_STORE = DB.STORES.PRODUCT_INVENTORY;
     const _esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    /** onclick 인라인 문자열 인자용 이스케이프 (따옴표·역슬래시 깨짐 방지) */
+    const _js = s => String(s == null ? '' : s).replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/"/g, '&quot;');
     let _records = [];
+    /** 영업계획 행에서 [출하 등록]을 눌렀을 때 폼에 채울 값 */
+    let _prefill = null;
 
     function init() {}
 
@@ -4931,6 +4935,95 @@ var SalesTodayShipmentModule = (function () {
         return p ? (p.customer || p.deliveryCustomer || p.client || '') : '';
     }
 
+    /* ── 영업계획(납품계획) 연동 ─────────────────────────────────────────────
+     * 금일 출하 목록은 "영업 관리 > 영업 계획"의 같은 날짜 계획을 자동으로 끌어와
+     * 납품처별로 묶어 보여준다. 계획은 SALES_DELIVERY_PLAN 스토어에 날짜·품목별로
+     * 쪼개져 저장되므로 여기서 납품처·차종·품명·컬러 기준으로 합산한다.
+     * 납품처는 계획의 customer 값이 오염된 사례가 있어(엑셀 업로드 시 날짜 열 혼입)
+     * 영업 계획 화면과 같이 제품 마스터를 우선한다.
+     */
+    function _normKey(v) { return String(v == null ? '' : v).trim().toLowerCase().replace(/\s+/g, ''); }
+
+    function _findProductFor(plan) {
+        const list = _products();
+        if (plan.productId) {
+            const byId = list.find(p => p.id === plan.productId);
+            if (byId) return byId;
+        }
+        return list.find(p =>
+            _normKey(p.partName) === _normKey(plan.partName) &&
+            (!plan.carModel || _normKey(p.carModel) === _normKey(plan.carModel)) &&
+            (!plan.color || !p.color || _normKey(p.color) === _normKey(plan.color))
+        ) || list.find(p =>
+            _normKey(p.partName) === _normKey(plan.partName) &&
+            (!plan.carModel || _normKey(p.carModel) === _normKey(plan.carModel))
+        ) || null;
+    }
+
+    /** 해당 일자의 영업계획을 납품처·차종·품명·컬러로 합산한 목록 */
+    function _planRowsFor(date) {
+        const plans = (Storage.getAll(DB.STORES.SALES_DELIVERY_PLAN) || [])
+            .filter(p => String(p.date || '').slice(0, 10) === date);
+        const map = {};
+        plans.forEach(plan => {
+            const qty = Number(plan.planQty) || 0;
+            if (qty <= 0) return;
+            const product = _findProductFor(plan);
+            const customer = (product && (product.customer || product.deliveryCustomer || product.client)) || plan.customer || '';
+            const carModel = (product && product.carModel) || plan.carModel || '';
+            const partName = (product && product.partName) || plan.partName || '';
+            const color = plan.color || (product && product.color) || '';
+            const key = [_normKey(customer), _normKey(carModel), _normKey(partName), _normKey(color)].join('||');
+            if (!map[key]) map[key] = { key, customer, carModel, partName, color, planQty: 0 };
+            map[key].planQty += qty;
+        });
+        return Object.values(map).sort((a, b) =>
+            (a.customer || '').localeCompare(b.customer || '', 'ko') ||
+            (a.carModel || '').localeCompare(b.carModel || '', 'ko') ||
+            (a.partName || '').localeCompare(b.partName || '', 'ko'));
+    }
+
+    /** 등록 레코드 ↔ 계획 행 매칭 키(컬러는 양쪽에 있을 때만 비교) */
+    function _itemKey(r, withColor) {
+        return [_normKey(r.carModel), _normKey(r.partName)].concat(withColor ? [_normKey(r.color)] : []).join('||');
+    }
+
+    /** 계획 + 등록 실적을 납품처별로 묶은 화면용 구조 */
+    function _buildGroups(date) {
+        const planRows = _planRowsFor(date);
+        const records = _records.filter(r => (r.date || '') === date);
+        const used = new Set();
+        const groups = {};
+        const _group = name => {
+            const label = name || '(납품처 미지정)';
+            if (!groups[label]) groups[label] = { customer: label, items: [] };
+            return groups[label];
+        };
+
+        planRows.forEach(pr => {
+            const matched = records.filter(r => !used.has(r.id) && (
+                _itemKey(r, true) === _itemKey(pr, true) ||
+                (!pr.color && _itemKey(r, false) === _itemKey(pr, false))
+            ));
+            matched.forEach(r => used.add(r.id));
+            _group(pr.customer).items.push({ plan: pr, records: matched });
+        });
+
+        records.filter(r => !used.has(r.id)).forEach(r => {
+            _group(r.customer).items.push({ plan: null, records: [r] });
+        });
+
+        return Object.values(groups).sort((a, b) => a.customer.localeCompare(b.customer, 'ko'));
+    }
+
+    /** 제품 마스터의 판매가격(원/EA) — 없으면 0 */
+    function _unitPriceFor(car, part, color) {
+        const list = _products();
+        const p = list.find(x => x.carModel === car && x.partName === part && (!color || x.color === color))
+            || list.find(x => x.carModel === car && x.partName === part);
+        return p ? (Number(p.salePrice) || 0) : 0;
+    }
+
     function _opts(values, selected, placeholder) {
         return `<option value="">${placeholder}</option>` +
             values.map(v => `<option value="${_esc(v)}" ${v === selected ? 'selected' : ''}>${_esc(v)}</option>`).join('');
@@ -4984,8 +5077,9 @@ var SalesTodayShipmentModule = (function () {
             ${SalesProcessUI.renderSection('sales-today-shipment')}
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-body" style="padding:12px 16px;font-size:0.85rem;color:var(--text-secondary);line-height:1.55;">
-                    <strong style="color:var(--text-primary);">완제품 창고 연동</strong><br>
-                    금일 출하 등록 시 <strong>완제품 창고 재고(차종·품명·LOT)</strong>를 선택하면 등록과 동시에 창고에서 자동 출고됩니다.
+                    <strong style="color:var(--text-primary);">영업계획 자동 연동 · 완제품 창고 연동</strong><br>
+                    선택한 출하일자의 <strong>영업 계획</strong>이 <strong>납품처별</strong>로 자동 리스트업됩니다.
+                    각 행의 [출하 등록]으로 <strong>완제품 창고 재고(차종·품명·LOT)</strong>를 선택하면 등록과 동시에 창고에서 자동 출고됩니다.
                 </div>
             </div>
             <div class="card">
@@ -5009,11 +5103,12 @@ var SalesTodayShipmentModule = (function () {
                             <thead>
                                 <tr>
                                     <th>출하일자</th><th>납품처</th><th>차종</th><th>품명</th><th>LOT</th><th>컬러</th>
-                                    <th style="text-align:right;">수량</th><th>비고</th>
+                                    <th style="text-align:right;">계획수량</th><th style="text-align:right;">출하수량</th><th style="text-align:right;">잔량</th>
+                                    <th style="text-align:right;">단가</th><th style="text-align:right;">판매금액</th><th>비고</th>
                                     <th style="text-align:center;width:120px;">작업</th>
                                 </tr>
                             </thead>
-                            <tbody id="tsBody"><tr><td colspan="9" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
+                            <tbody id="tsBody"><tr><td colspan="13" style="text-align:center;padding:28px;color:var(--text-muted);">로딩 중...</td></tr></tbody>
                         </table>
                     </div>
                 </div>
@@ -5027,33 +5122,136 @@ var SalesTodayShipmentModule = (function () {
         const tbody = document.getElementById('tsBody');
         if (!tbody) return;
         const date = _todayField();
-        const rows = _records.filter(r => (r.date || '') === date)
-            .sort((a, b) => (a.customer || '').localeCompare(b.customer || '', 'ko') || (a.carModel || '').localeCompare(b.carModel || '', 'ko'));
-        if (!rows.length) {
-            tbody.innerHTML = `<tr><td colspan="9" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 출하 계획품이 없습니다.<br><span style="font-size:0.82rem;">[금일 출하 등록]으로 완제품 창고에서 선택하세요.</span></td></tr>`;
+        const groups = _buildGroups(date);
+        if (!groups.length) {
+            tbody.innerHTML = `<tr><td colspan="13" style="text-align:center;padding:40px;color:var(--text-muted);">${_esc(date)} 영업계획·출하 실적이 없습니다.<br><span style="font-size:0.82rem;">영업 관리 &gt; 영업 계획에 해당 일자 계획이 등록되면 납품처별로 자동 표시됩니다.</span></td></tr>`;
             return;
         }
-        const total = rows.reduce((s, r) => s + (Number(r.qty) || 0), 0);
-        tbody.innerHTML = rows.map(r => `
-            <tr>
-                <td>${_esc(r.date || '-')}</td>
-                <td>${_esc(r.customer || '-')}</td>
-                <td>${_esc(r.carModel || '-')}</td>
-                <td><strong>${_esc(r.partName || '-')}</strong></td>
-                <td style="font-family:monospace;font-size:0.82rem;">${_esc(_lotLabel(r))}</td>
-                <td>${_esc(r.color || '-')}</td>
-                <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(Number(r.qty) || 0)}</td>
-                <td style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.note || '')}</td>
-                <td style="text-align:center;white-space:nowrap;">
-                    <button class="btn btn-sm btn-outline" onclick="SalesTodayShipmentModule.openForm('${r.id}')">수정</button>
-                    <button class="btn btn-sm btn-danger" onclick="SalesTodayShipmentModule.remove('${r.id}')">삭제</button>
+
+        // 납품처 구분용 빈 행 — 그룹 사이 시각적 여백
+        const spacer = `<tr class="ts-group-gap"><td colspan="13" style="height:14px;padding:0;border:none;background:transparent;"></td></tr>`;
+        const _won = n => UIUtils.formatNumber(Math.round(Number(n) || 0));
+
+        let html = '';
+        let totalPlan = 0;
+        let totalShip = 0;
+        let totalAmount = 0;
+
+        groups.forEach((g, gi) => {
+            // 그룹 사이(첫 그룹 제외)에 빈 행을 넣어 납품처 구분을 명확히 한다.
+            if (gi > 0) html += spacer;
+
+            const gPlan = g.items.reduce((acc, it) => acc + (it.plan ? it.plan.planQty : 0), 0);
+            const gShip = g.items.reduce((acc, it) => acc + it.records.reduce((a2, r) => a2 + (Number(r.qty) || 0), 0), 0);
+            const gAmount = g.items.reduce((acc, it) => {
+                const base = it.plan || it.records[0];
+                const price = _unitPriceFor(base.carModel, base.partName, base.color);
+                return acc + it.records.reduce((a2, r) => a2 + (Number(r.qty) || 0), 0) * price;
+            }, 0);
+            totalPlan += gPlan;
+            totalShip += gShip;
+            totalAmount += gAmount;
+
+            html += `
+            <tr style="background:rgba(249,115,22,0.08);">
+                <td colspan="6" style="font-weight:700;color:var(--text-primary);">
+                    <span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;color:var(--accent-orange);">store</span>
+                    ${_esc(g.customer)}
+                    <span style="font-size:0.75rem;font-weight:500;color:var(--text-muted);margin-left:6px;">${g.items.length}품목</span>
                 </td>
-            </tr>`).join('') + `
-            <tr style="background:var(--bg-secondary);font-weight:700;">
-                <td colspan="6" style="text-align:right;">합계</td>
-                <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(total)}</td>
+                <td style="text-align:right;font-weight:700;">${UIUtils.formatNumber(gPlan)}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-blue);">${UIUtils.formatNumber(gShip)}</td>
+                <td style="text-align:right;font-weight:700;color:${gPlan - gShip > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${UIUtils.formatNumber(Math.max(0, gPlan - gShip))}</td>
+                <td></td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-green,#059669);">${_won(gAmount)}</td>
                 <td colspan="2"></td>
             </tr>`;
+
+            g.items.forEach(it => {
+                const base = it.plan || it.records[0];
+                const plan = it.plan ? it.plan.planQty : 0;
+                const shipped = it.records.reduce((acc, r) => acc + (Number(r.qty) || 0), 0);
+                const remain = Math.max(0, plan - shipped);
+                const price = _unitPriceFor(base.carModel, base.partName, base.color);
+                const priceCell = price ? `${_won(price)}` : '<span style="color:var(--text-muted);">-</span>';
+                const carArg = _js(base.carModel || '');
+                const partArg = _js(base.partName || '');
+
+                if (!it.records.length) {
+                    // 계획만 있고 아직 출하 등록이 안 된 행 — 영업계획에서 자동으로 올라온 항목
+                    html += `
+                    <tr>
+                        <td>${_esc(date)}</td>
+                        <td style="color:var(--text-muted);">${_esc(g.customer)}</td>
+                        <td>${_esc(base.carModel || '-')}</td>
+                        <td><strong>${_esc(base.partName || '-')}</strong></td>
+                        <td style="color:var(--text-muted);font-size:0.82rem;">미출고</td>
+                        <td>${_esc(base.color || '-')}</td>
+                        <td style="text-align:right;font-weight:600;">${UIUtils.formatNumber(plan)}</td>
+                        <td style="text-align:right;color:var(--text-muted);">0</td>
+                        <td style="text-align:right;font-weight:600;color:var(--accent-red);">${UIUtils.formatNumber(remain)}</td>
+                        <td style="text-align:right;">${priceCell}</td>
+                        <td style="text-align:right;color:var(--text-muted);" title="계획 기준 예상 금액">${price ? '(' + _won(plan * price) + ')' : '-'}</td>
+                        <td><span style="font-size:0.72rem;color:#d97706;font-weight:600;">영업계획</span></td>
+                        <td style="text-align:center;white-space:nowrap;">
+                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">출하 등록</button>
+                        </td>
+                    </tr>`;
+                    return;
+                }
+
+                it.records.forEach((r, idx) => {
+                    const qty = Number(r.qty) || 0;
+                    const rowPrice = _unitPriceFor(r.carModel, r.partName, r.color) || price;
+                    html += `
+                    <tr>
+                        <td>${_esc(r.date || date)}</td>
+                        <td style="color:var(--text-muted);">${_esc(r.customer || g.customer)}</td>
+                        <td>${_esc(r.carModel || '-')}</td>
+                        <td><strong>${_esc(r.partName || '-')}</strong></td>
+                        <td style="font-family:monospace;font-size:0.82rem;">${_esc(_lotLabel(r))}</td>
+                        <td>${_esc(r.color || '-')}</td>
+                        <td style="text-align:right;">${idx === 0 && plan ? UIUtils.formatNumber(plan) : '-'}</td>
+                        <td style="text-align:right;font-weight:600;color:var(--accent-blue);">${UIUtils.formatNumber(qty)}</td>
+                        <td style="text-align:right;color:${idx === 0 && remain > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${idx === 0 && plan ? UIUtils.formatNumber(remain) : '-'}</td>
+                        <td style="text-align:right;">${rowPrice ? _won(rowPrice) : '<span style="color:var(--text-muted);">-</span>'}</td>
+                        <td style="text-align:right;font-weight:600;">${rowPrice ? _won(qty * rowPrice) : '<span style="color:var(--text-muted);">-</span>'}</td>
+                        <td style="color:var(--text-muted);font-size:0.85rem;">${_esc(r.note || '')}</td>
+                        <td style="text-align:center;white-space:nowrap;">
+                            <button class="btn btn-sm btn-outline" onclick="SalesTodayShipmentModule.openForm('${r.id}')">수정</button>
+                            <button class="btn btn-sm btn-danger" onclick="SalesTodayShipmentModule.remove('${r.id}')">삭제</button>
+                        </td>
+                    </tr>`;
+                });
+
+                // 계획 대비 잔량이 남아 있으면 추가 출하 줄을 덧붙인다.
+                if (remain > 0) {
+                    html += `
+                    <tr style="background:var(--bg-secondary);">
+                        <td colspan="8" style="text-align:right;font-size:0.82rem;color:var(--text-muted);">
+                            ${_esc(base.carModel || '')} / ${_esc(base.partName || '')} 계획 잔량
+                        </td>
+                        <td style="text-align:right;font-weight:600;color:var(--accent-red);">${UIUtils.formatNumber(remain)}</td>
+                        <td colspan="3"></td>
+                        <td style="text-align:center;">
+                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">추가 출하</button>
+                        </td>
+                    </tr>`;
+                }
+            });
+        });
+
+        html += spacer + `
+            <tr style="background:var(--bg-secondary);font-weight:700;">
+                <td colspan="6" style="text-align:right;">전체 합계</td>
+                <td style="text-align:right;">${UIUtils.formatNumber(totalPlan)}</td>
+                <td style="text-align:right;color:var(--accent-blue);">${UIUtils.formatNumber(totalShip)}</td>
+                <td style="text-align:right;color:${totalPlan - totalShip > 0 ? 'var(--accent-red)' : 'var(--text-muted)'};">${UIUtils.formatNumber(Math.max(0, totalPlan - totalShip))}</td>
+                <td></td>
+                <td style="text-align:right;color:var(--accent-green,#059669);">${_won(totalAmount)}</td>
+                <td colspan="2"></td>
+            </tr>`;
+        tbody.innerHTML = html;
     }
 
     function _renderLotPanel(car, part, ignoreShipmentId = '') {
@@ -5085,15 +5283,28 @@ var SalesTodayShipmentModule = (function () {
             </div>`).join('')}`;
     }
 
+    /** 영업계획 행 → 출하 등록 폼 (차종·품명·수량 자동 채움, LOT은 선입선출 1순위) */
+    function openFormForPlan(carModel, partName, qty) {
+        _prefill = { carModel: carModel || '', partName: partName || '', qty: Number(qty) || 0 };
+        openForm('');
+    }
+
     function openForm(id) {
         const rec = id ? _records.find(r => r.id === id) : null;
+        const pre = (!rec && _prefill) ? _prefill : null;
+        _prefill = null;
         const ignoreId = id || '';
-        const car = rec ? (rec.carModel || '') : '';
-        const part = rec ? (rec.partName || '') : '';
-        const lotKey = rec ? _lotKey({ paintingDate: rec.paintingDate || '미표기', color: rec.color || '', lotNo: rec.lotNo || '' }) : '';
+        const car = rec ? (rec.carModel || '') : (pre ? pre.carModel : '');
+        const part = rec ? (rec.partName || '') : (pre ? pre.partName : '');
         const lots = (car && part) ? _getLotBalances(car, part, ignoreId) : [];
+        // 계획에서 넘어온 경우 재고 LOT 중 선입선출 1순위를 미리 고른다.
+        const lotKey = rec
+            ? _lotKey({ paintingDate: rec.paintingDate || '미표기', color: rec.color || '', lotNo: rec.lotNo || '' })
+            : (pre && lots.length ? _lotKey(lots[0]) : '');
         const selectedLot = lots.find(l => _lotKey(l) === lotKey);
         const maxQty = selectedLot ? selectedLot.balance : 0;
+        const preQty = (pre && selectedLot) ? Math.min(pre.qty || selectedLot.balance, selectedLot.balance) : 0;
+        const preCustomer = pre ? _customerFor(car, part, selectedLot ? selectedLot.color : '') : '';
 
         const carOpts = _opts(_carsFromStock(ignoreId), car, '-- 차종 선택 --');
         const partOpts = car ? _opts(_partsFromStock(car, ignoreId), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
@@ -5107,7 +5318,7 @@ var SalesTodayShipmentModule = (function () {
                 <div class="form-group"><label class="form-label">출하일자 <span style="color:var(--accent-red)">*</span></label>
                     <input type="date" class="form-input" id="tsDate" value="${rec ? _esc(rec.date) : _todayField()}"></div>
                 <div class="form-group"><label class="form-label">납품처</label>
-                    <input class="form-input" id="tsCustomer" value="${rec ? _esc(rec.customer || '') : ''}" placeholder="품목 선택 시 자동 채움" readonly style="background:var(--bg-secondary);"></div>
+                    <input class="form-input" id="tsCustomer" value="${rec ? _esc(rec.customer || '') : _esc(preCustomer)}" placeholder="품목 선택 시 자동 채움" readonly style="background:var(--bg-secondary);"></div>
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label>
@@ -5119,9 +5330,9 @@ var SalesTodayShipmentModule = (function () {
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">컬러</label>
-                    <input class="form-input" id="tsColor" value="${rec ? _esc(rec.color || '') : (selectedLot ? _esc(selectedLot.color) : '')}" readonly style="background:var(--bg-secondary);"></div>
+                    <input class="form-input" id="tsColor" value="${rec ? _esc(rec.color || '') : (selectedLot ? _esc(selectedLot.color || '') : '')}" readonly style="background:var(--bg-secondary);"></div>
                 <div class="form-group"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
-                    <input type="number" class="form-input" id="tsQty" min="1" max="${maxQty || ''}" value="${rec ? _esc(rec.qty || '') : ''}" placeholder="출하 수량">
+                    <input type="number" class="form-input" id="tsQty" min="1" max="${maxQty || ''}" value="${rec ? _esc(rec.qty || '') : (preQty || '')}" placeholder="출하 수량">
                     <div id="tsQtyHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${maxQty ? `가용 재고: ${UIUtils.formatNumber(maxQty)} EA` : 'LOT를 선택하세요.'}</div></div>
                 <div class="form-group" style="flex:2;"><label class="form-label">비고</label>
                     <input class="form-input" id="tsNote" value="${rec ? _esc(rec.note || '') : ''}" placeholder="특이사항"></div>
@@ -5286,7 +5497,7 @@ var SalesTodayShipmentModule = (function () {
         });
     }
 
-    return { init, render, renderList, openForm, onCarChange, onPartChange, onLotChange, saveForm, remove };
+    return { init, render, renderList, openForm, openFormForPlan, onCarChange, onPartChange, onLotChange, saveForm, remove };
 })();
 
 /**

@@ -9,6 +9,15 @@
 const ProductionPlanModule = (function() {
     const STORE = DB.STORES.PRODUCTION_PLANS;
 
+    function _escapeHtml(value) {
+        return String(value == null ? '' : value)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     const LINE_OPTIONS = ['도장-A', '도장-B'];
 
     let _autoTimer = null; // 자동 상태 갱신 타이머
@@ -655,7 +664,7 @@ const ProductionPlanModule = (function() {
                                 <tr>
                                     <th class="sticky-col time-col-header" style="width:140px;">시간 (시작~종료)</th>
                                     <th style="width:80px;">차종</th><th>제품명</th><th>도장 컬러</th>
-                                    <th style="text-align:center;">품목구분</th><th>수량</th><th>상태</th><th style="width:60px;">작업</th>
+                                    <th>수량</th><th class="plan-note-col">전달 사항</th><th>상태</th><th style="width:60px;">작업</th>
                                 </tr>
                             </thead>
                             <tbody id="planGridBody${suffix}"></tbody>
@@ -744,6 +753,39 @@ const ProductionPlanModule = (function() {
             }
             allSlots.sort();
         }
+
+        // 같은 계획이 여러 시간 행에 걸쳐 표시될 때 전달 사항 셀을 세로 병합한다.
+        // 식사 행은 별도 배너가 전체 열을 사용하므로 병합 범위에서 제외한다.
+        const noteSpanBySlot = {};
+        const noteCoveredSlots = new Set();
+        const planStartSlots = allSlots.filter(s => {
+            const p = slotData[s];
+            return p && (p.carModel || p.partName || Number(p.planQty) > 0);
+        });
+        planStartSlots.forEach((start, index) => {
+            const item = slotData[start] || {};
+            const startIndex = allSlots.indexOf(start);
+            const nextStartIndex = index + 1 < planStartSlots.length
+                ? allSlots.indexOf(planStartSlots[index + 1])
+                : allSlots.length;
+            let endIndex = nextStartIndex;
+            if (item.endTime) {
+                const endByTime = allSlots.findIndex((s, i) => i > startIndex && s >= item.endTime);
+                if (endByTime >= 0) endIndex = Math.min(endIndex, endByTime);
+            } else {
+                endIndex = startIndex + 1;
+            }
+            let span = 0;
+            for (let i = startIndex; i < endIndex; i++) {
+                const s = allSlots[i];
+                if (s === '12:30' || s === '13:00' || s === '17:30') break;
+                span++;
+            }
+            noteSpanBySlot[start] = Math.max(1, span);
+            for (let i = startIndex + 1; i < startIndex + span; i++) {
+                noteCoveredSlots.add(allSlots[i]);
+            }
+        });
 
         // 계획 순서 정렬 후 이전 계획 매핑 (교체 감지)
         const sortedPlans = Object.values(slotData)
@@ -922,6 +964,19 @@ const ProductionPlanModule = (function() {
             }
 
             const isOvertimeSlot = slot >= '18:00';
+            const planSpan = hasData ? (noteSpanBySlot[slot] || 1) : 1;
+            const mergedRowIsCovered = !hasData && activeItem && noteCoveredSlots.has(slot);
+            const rowSpanAttr = hasData && planSpan > 1 ? `rowspan="${planSpan}"` : '';
+            const mergedPlanCells = mergedRowIsCovered ? '' : `
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`)}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
+                    <td class="editable-cell text-right" ${trClick} ${rowSpanAttr}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
+                    <td class="editable-cell plan-note-cell" ${trClick} ${rowSpanAttr} title="${_escapeHtml((hasData ? item.workNote : '') || '')}">${hasData && item.workNote ? _escapeHtml(item.workNote) : ''}</td>
+                    <td class="editable-cell text-center" ${trClick} ${rowSpanAttr}>${item.isTemporary ? `<span class="badge" style="background:var(--accent-red,#ef4444);color:#fff;margin-right:4px;font-size:0.68rem;" title="사출·도료 재고 검증 없이 등록된 임시 계획">임시</span>` : ''}${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
+                    <td class="text-center" ${rowSpanAttr}>
+                        ${hasData ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
+                    </td>`;
             const dragAttrs = hasData && item.id
                 ? `draggable="true" ondragstart="ProductionPlanModule.onPlanDragStart(event,'${item.id}')" ondragend="ProductionPlanModule.onPlanDragEnd(event)"`
                 : '';
@@ -932,15 +987,7 @@ const ProductionPlanModule = (function() {
             return exchangeRow + `
                 <tr class="${rowClass} hover-row ${isOvertimeStart ? 'overtime-start' : ''} ${isOvertimeSlot ? 'overtime-slot' : ''}" ${dragAttrs} ${dropAttrs} style="cursor: ${hasData ? 'grab' : trCursor}; ${bgColorStyle}">
                     <td class="sticky-col time-cell" style="position:relative;padding-bottom:7px;" ${trClick}>${timeCellText}${barHTML}</td>
-                    <td class="editable-cell" ${trClick}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`)}</td>
-                    <td class="editable-cell" ${trClick}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
-                    <td class="editable-cell" ${trClick}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
-                    <td class="editable-cell text-center" ${trClick}>${item.carModel ? UIUtils.itemTypeBadge(item.carModel, item.partName, item.color) : ''}</td>
-                    <td class="editable-cell text-right" ${trClick}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
-                    <td class="editable-cell text-center" ${trClick}>${item.isTemporary ? `<span class="badge" style="background:var(--accent-red,#ef4444);color:#fff;margin-right:4px;font-size:0.68rem;" title="사출·도료 재고 검증 없이 등록된 임시 계획">임시</span>` : ''}${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
-                    <td class="text-center">
-                        ${hasData ? `<button class="btn btn-xs btn-icon btn-danger" onclick="ProductionPlanModule.removeSlot('${slot}', '${lineName}')" title="삭제" style="position:relative; z-index:10;"><span class="material-symbols-outlined" style="font-size:14px;">delete</span></button>` : ''}
-                    </td>
+                    ${mergedPlanCells}
                 </tr>
             `;
         }).join('');
@@ -1093,7 +1140,6 @@ const ProductionPlanModule = (function() {
             ProductionPlanModule.updateLaserWipPanel();
             ProductionPlanModule.updatePaintStockPanel();
             ProductionPlanModule.calcEndTime();
-            ProductionPlanModule._autoFillItemType();
             ProductionPlanModule._updateLinkedProductBanner();
         }, 0);
     }
@@ -1116,33 +1162,6 @@ const ProductionPlanModule = (function() {
             <span style="color:var(--text-primary);">${lp.partName}</span>
             <span style="color:var(--text-muted);font-size:0.75rem;">(${lp.customer || '납품처 미설정'})</span>
         </div>`;
-    }
-
-    // ── 품목구분 자동 입력 ────────────────────────────────────────────
-    function _autoFillItemType() {
-        const car   = (document.getElementById('sModel') || {}).value || '';
-        const part  = (document.getElementById('sPart')  || {}).value || '';
-        const color = (document.getElementById('sColor') || {}).value || '';
-        const hiddenEl = document.getElementById('sItemType');
-        const badgeEl  = document.getElementById('sItemTypeBadge');
-        if (!hiddenEl || !badgeEl) return;
-
-        const matched = _findProductForPlan(car, part, color);
-        const itemType = matched ? (matched.itemType || '') : '';
-        hiddenEl.value = itemType;
-
-        const BADGE_STYLES = {
-            '양산품': 'background:rgba(52,211,153,0.15);color:var(--accent-green);border-color:var(--accent-green);',
-            '개발품': 'background:rgba(59,130,246,0.15);color:var(--accent-blue);border-color:var(--accent-blue);',
-            'A/S품':  'background:rgba(245,158,11,0.15);color:#d97706;border-color:#d97706;'
-        };
-        if (itemType && BADGE_STYLES[itemType]) {
-            badgeEl.innerHTML = `<span style="font-weight:700;font-size:0.9rem;">${itemType}</span>`;
-            badgeEl.style.cssText = `padding:8px 12px;border-radius:6px;border:1px solid;min-height:38px;display:flex;align-items:center;${BADGE_STYLES[itemType]}`;
-        } else {
-            badgeEl.innerHTML = '—';
-            badgeEl.style.cssText = 'padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);min-height:38px;display:flex;align-items:center;font-size:0.9rem;color:var(--text-muted);';
-        }
     }
 
     function _normalizeProcessName(value) {
@@ -2447,6 +2466,7 @@ const ProductionPlanModule = (function() {
             : '';
         const mealTimeWorkValue = !!(currentItem && currentItem.mealTimeWork);
         const isTemporaryValue = !!(currentItem && currentItem.isTemporary);
+        const workNoteValue = (currentItem && currentItem.workNote) || '';
 
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         // 다른 제품의 linkedProductId로 지정된 제품(=레이져 분리 대상)은 도장 계획에서 숨김
@@ -2623,7 +2643,7 @@ const ProductionPlanModule = (function() {
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">도장 컬러 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule._autoFillItemType(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
+                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                         <option value="">선택</option>
                         ${colors.map(c => `<option value="${c}" ${c === colorValue ? 'selected' : ''}>${c}</option>`).join('')}
                     </select>
@@ -2632,16 +2652,11 @@ const ProductionPlanModule = (function() {
                     <label class="form-label">계획 수량 (EA)</label>
                     <input type="number" class="form-input" id="sQty" value="${qtyValue}" oninput="ProductionPlanModule.calcEndTime(); ProductionPlanModule.updateInjStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                 </div>
+            </div>
+            <div class="form-row plan-note-input-row">
                 <div class="form-group">
-                    <label class="form-label">품목구분 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(자동)</span></label>
-                    <div id="sItemTypeBadge" style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--bg-secondary);min-height:38px;display:flex;align-items:center;font-size:0.9rem;color:var(--text-muted);">
-                        —
-                    </div>
-                    <input type="hidden" id="sItemType" value="${(function() {
-                        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-                        const m = products.find(p => p.carModel === modelValue && p.partName === partValue && p.color === colorValue);
-                        return m ? (m.itemType || '') : '';
-                    })()}">
+                    <label class="form-label">작업 전달 사항</label>
+                    <textarea class="form-input" id="sWorkNote" rows="2" maxlength="500" placeholder="작업자에게 전달할 사항을 입력하세요">${_escapeHtml(workNoteValue)}</textarea>
                 </div>
             </div>
             <div id="linkedProductBanner" style="margin-bottom:8px;">${(function(){
@@ -2740,7 +2755,6 @@ const ProductionPlanModule = (function() {
             ProductionPlanModule.updateInjStockPanel(partValue, modelValue);
             ProductionPlanModule.updateLaserWipPanel(partValue, modelValue);
             ProductionPlanModule.updatePaintStockPanel(modelValue, partValue, colorValue);
-            ProductionPlanModule._autoFillItemType();
         }, 50);
     }
 
@@ -2856,7 +2870,7 @@ const ProductionPlanModule = (function() {
         const color         = document.getElementById('sColor').value.trim();
         const planQty       = Number(document.getElementById('sQty').value) || 0;
         const status        = document.getElementById('sStatus').value;
-        const itemType      = (document.getElementById('sItemType') || {}).value || '';
+        const workNote      = ((document.getElementById('sWorkNote') || {}).value || '').trim();
         const mealTimeWork  = !!(document.getElementById('sMealTimeWork')?.checked);
         const isTemporary   = !!(document.getElementById('sTemporary')?.checked);
 
@@ -3059,7 +3073,7 @@ const ProductionPlanModule = (function() {
                     savedId = null;
                 } else {
                     await Storage.update(STORE, existingId, {
-                        slot: newSlot, carModel, partName, color, itemType, planQty,
+                        slot: newSlot, carModel, partName, color, planQty, workNote,
                         startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
@@ -3073,13 +3087,13 @@ const ProductionPlanModule = (function() {
                 if (collision) {
                     savedId = collision.id;
                     await Storage.update(STORE, collision.id, {
-                        slot: newSlot, carModel, partName, color, itemType, planQty,
+                        slot: newSlot, carModel, partName, color, planQty, workNote,
                         startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
                 } else if (carModel || partName || planQty > 0) {
                     const added = await Storage.add(STORE, {
-                        date, line, slot: newSlot, carModel, partName, color, itemType, planQty,
+                        date, line, slot: newSlot, carModel, partName, color, planQty, workNote,
                         startTime, endTime, status, mealTimeWork, isTemporary,
                         productId: productId || undefined
                     });
@@ -3274,7 +3288,8 @@ const ProductionPlanModule = (function() {
                                 planQty: item.hourlyPlans[s],
                                 status: item.status,
                                 startTime: item.startTime,
-                                endTime: item.endTime
+                                endTime: item.endTime,
+                                workNote: item.workNote
                             };
                         }
                     }
@@ -3372,7 +3387,7 @@ const ProductionPlanModule = (function() {
                         <td style="text-align:right;">${q > 0 ? UIUtils.formatNumber(q) : ''} EA</td>
                         <td></td>
                         <td></td>
-                        <td></td>
+                        <td style="font-size:10px;">${_escapeHtml(item.workNote || '')}</td>
                     </tr>
                 `;
             } else if (isMealTime) {
@@ -3411,7 +3426,7 @@ const ProductionPlanModule = (function() {
                         <td style="text-align:right;"></td>
                         <td></td>
                         <td></td>
-                        <td></td>
+                        <td style="font-size:10px;">${_escapeHtml(activeItem.workNote || '')}</td>
                     </tr>
                 `;
             }
@@ -3884,7 +3899,6 @@ const ProductionPlanModule = (function() {
         updateInjStockPanel,
         updateLaserWipPanel,
         updatePaintStockPanel,
-        _autoFillItemType,
         _updateLinkedProductBanner,
         autoUpdateStatus,
         releasePastTemporaryPlans: _releasePastTemporaryPlans,

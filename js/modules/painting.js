@@ -6954,6 +6954,7 @@ const PaintingWorkModule = (function() {
         var planId = p.planId || '';
         var planStartTime = p.planStartTime || '';
         var planEndTime = p.planEndTime || '';
+        var workNote = p.workNote || '';
         var achievedQty = Number(p.achievedQty) || 0;
         var effectiveLine = p.line || _currentLine;
 
@@ -7096,6 +7097,9 @@ const PaintingWorkModule = (function() {
             effectiveLine +
             (planTimeLabel ? ' &nbsp;·&nbsp; <span class="material-symbols-outlined" style="font-size:13px;vertical-align:middle;margin-right:2px;">schedule</span>계획: ' + planTimeLabel : '') +
             (planId ? ' &nbsp;<span style="background:rgba(66,133,244,0.12);color:var(--accent-blue);border-radius:4px;padding:1px 7px;font-size:0.73rem;margin-left:4px;">계획 연동</span>' : '') +
+            '</div>' +
+            (workNote ? '<div style="margin-top:10px;padding:8px 10px;border-radius:7px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);font-size:0.82rem;line-height:1.45;white-space:pre-wrap;">' +
+                '<strong style="color:#b45309;">작업 전달 사항</strong> ' + _esc(workNote) + '</div>' : '') +
             '</div></div>';
 
         // ② 수량 행
@@ -7510,6 +7514,7 @@ const PaintingWorkModule = (function() {
             planDate: plan.date || '',
             planStartTime: plan.startTime || '',
             planEndTime: plan.endTime || '',
+            workNote: plan.workNote || '',
             achievedQty: achievedQty
         });
     }
@@ -9209,6 +9214,8 @@ const PaintingWorkModule = (function() {
                 '<span style="font-weight:700;font-size:0.95rem;color:' + planAchColor + ';">' + planAchRate + '%</span>' +
                 '</div></div>' +
                 '</div>' +
+                (plan.workNote ? '<div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);font-size:0.88rem;line-height:1.5;white-space:pre-wrap;">' +
+                    '<strong style="color:#b45309;">작업 전달 사항</strong><div style="margin-top:4px;">' + _esc(plan.workNote) + '</div></div>' : '') +
                 '</div></div>';
         } else {
             planHtml =

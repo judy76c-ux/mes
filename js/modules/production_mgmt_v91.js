@@ -1,4 +1,4 @@
-﻿/**
+﻿﻿/**
  * 생산 관리 모듈 (작업조건 관리, 초중종물 관리, 설비관리)
  */
 
@@ -17118,11 +17118,42 @@ var PaintMixModule = (function() {
                 <td style="font-size:12px;color:#64748b;">${_esc(r.note || '')}</td>
             </tr>`).join('') : `<tr><td colspan="6" style="text-align:center;padding:28px;color:#94a3b8;">이력이 없습니다.</td></tr>`;
 
-        const win = window.open('', '_blank', 'width=1100,height=820,scrollbars=yes,resizable=yes');
+        const lotIssues = _residualIssues().filter(it => it.r.materialId === materialId && it.r.lotNo === hist.lotNo);
+        const actHist = _residualActionsFor(materialId, hist.lotNo);
+        const expInfo = _residualExpiry(materialId, hist.lotNo);
+        const canAct = _canWritePaintMix();
+        const statusHtml = `<div class="card">
+      <div class="card-h"><h2>상태 · 조치</h2><span style="font-size:12px;color:#64748b;">유효기간 ${_esc(expInfo ? expInfo.expDate : '미등록')}</span></div>
+      <div style="padding:12px 14px;display:flex;flex-direction:column;gap:10px;font-size:13px;">
+        ${lotIssues.length ? lotIssues.map(it => {
+            const t = RESIDUAL_ISSUE_TEXT[it.level];
+            const bad = it.level === 'violation' || it.level === 'expired';
+            return `<div style="border:1px solid ${bad ? '#fecaca' : '#fde68a'};background:${bad ? '#fef2f2' : '#fffbeb'};border-radius:8px;padding:10px 12px;">
+              <div style="font-weight:700;color:${bad ? '#b91c1c' : '#b45309'};margin-bottom:4px;">${t.label}</div>
+              <div>${_esc(t.desc)}</div>
+              <div style="color:#475569;margin-top:2px;">${_esc(it.detail)}</div>
+              <div style="margin-top:6px;"><b>권장 조치:</b> ${t.actions.map(_esc).join(' / ')}</div>
+              <div style="margin-top:6px;">${it.lastAction ? `<span style="color:#15803d;font-weight:700;">조치완료</span> ${_esc(it.lastAction.action)}${it.lastAction.note ? ' · ' + _esc(it.lastAction.note) : ''} (${_esc(it.lastAction.date)} ${_esc(it.lastAction.operator || '')})` : '<span style="color:#dc2626;font-weight:700;">미조치</span>'}
+                ${canAct ? `<div style="margin-top:8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center;border-top:1px dashed #cbd5e1;padding-top:8px;">
+                  <b style="white-space:nowrap;">조치 입력</b>
+                  <select id="act_${it.level}" style="padding:5px;border:1px solid #cbd5e1;border-radius:6px;">${t.actions.map(a => `<option>${_esc(a)}</option>`).join('')}<option value="__etc">기타(직접 입력)</option></select>
+                  <input id="actNote_${it.level}" placeholder="상세 메모" style="flex:1;min-width:160px;padding:5px;border:1px solid #cbd5e1;border-radius:6px;">
+                  <input id="actDate_${it.level}" type="date" value="${UIUtils.today()}" style="padding:5px;border:1px solid #cbd5e1;border-radius:6px;">
+                  <button style="border:0;border-radius:6px;padding:6px 14px;background:#0f172a;color:#fff;cursor:pointer;font-weight:700;" onclick="if(window.opener&&window.opener.PaintMixModule){window.opener.PaintMixModule.saveResidualAction('${_js(materialId)}','${_js(hist.lotNo)}','${it.level}',document.getElementById('act_${it.level}').value,document.getElementById('actNote_${it.level}').value,document.getElementById('actDate_${it.level}').value);}else{alert('원래 화면이 닫혀 저장할 수 없습니다.');}">저장</button>
+                  <span style="font-size:11px;color:#64748b;width:100%;">※ '폐기'가 포함된 조치는 해당 LOT 잔량이 0으로 조정됩니다.</span>
+                </div>` : ''}</div>
+            </div>`;
+        }).join('') : '<div style="color:#15803d;">FIFO 위반·주의, 유효기간 만료·임박 사항이 없습니다.</div>'}
+        ${actHist.length ? `<div><b>조치 이력</b><ul style="margin:4px 0 0 18px;padding:0;">${actHist.map(a => `<li>${_esc(a.date)} [${_esc((RESIDUAL_ISSUE_TEXT[a.issueLevel] || {}).label || '')}] ${_esc(a.action)}${a.note ? ' · ' + _esc(a.note) : ''} (${_esc(a.operator || '-')})</li>`).join('')}</ul></div>` : ''}
+      </div>
+    </div>`;
+        const win = window.open('', 'pmixResidualHist', 'width=1100,height=820,scrollbars=yes,resizable=yes');
         if (!win) {
             UIUtils.toast('팝업이 차단되었습니다. 브라우저에서 팝업을 허용한 뒤 다시 시도하세요.', 'warning');
             return;
         }
+        win.document.open();
+        win.focus();
         win.document.write(`<!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -17153,7 +17184,6 @@ var PaintMixModule = (function() {
   <div class="toolbar">
     <h1>배합실 도료재고 이력 · ${_esc(hist.paintName || '-')} · LOT ${_esc(hist.lotNo)}</h1>
     <div style="display:flex;gap:8px;">
-      <button onclick="window.print()">인쇄</button>
       <button onclick="window.close()">닫기</button>
     </div>
   </div>
@@ -17167,6 +17197,7 @@ var PaintMixModule = (function() {
         <div class="box"><div class="lbl">현재 잔량</div><div class="val" style="color:${residColor}">${fmt(hist.residualG)}g</div></div>
       </div>
     </div>
+    ${statusHtml}
     <div class="card">
       <div class="card-h"><h2>입고 이력 (${hist.inRows.length}건)</h2><span style="font-size:12px;color:#0369a1;font-weight:700;">합계 ${fmt(hist.totalIn)}g</span></div>
       <table>
@@ -17214,12 +17245,234 @@ var PaintMixModule = (function() {
         return map;
     }
 
+    /* ── 배합실 도료재고: FIFO/유효기간 이슈 · 조치 · 알림 ── */
+    const RESIDUAL_EXPIRY_SOON_DAYS = 30;
+    const RESIDUAL_ALERT_NOTIFIED_KEY = 'paint_mix_residual_alert_notified_v1';
+    const RESIDUAL_ALERT_ROLES = ['paint_line_op', 'prod_manager', 'admin'];
+    const RESIDUAL_ALERT_RECIPIENTS_KEY = 'paint_mix_residual_alert_recipients_v1';
+    let _residualRecipientsCache = null;  // { roles: [], users: [] } — 미설정 시 기본 역할
+
+    async function _residualRecipients() {
+        if (_residualRecipientsCache) return _residualRecipientsCache;
+        let v = null;
+        try { v = await Storage.getConfigValue(RESIDUAL_ALERT_RECIPIENTS_KEY); } catch (e) { /* 무시 */ }
+        _residualRecipientsCache = (v && (Array.isArray(v.roles) || Array.isArray(v.users)))
+            ? { roles: v.roles || [], users: v.users || [] }
+            : { roles: RESIDUAL_ALERT_ROLES.slice(), users: [] };
+        return _residualRecipientsCache;
+    }
+
+    function _residualRecipientLabel(rc) {
+        const roles = (typeof AuthModule !== 'undefined' && AuthModule.getRoles) ? AuthModule.getRoles() : [];
+        const users = (typeof AuthModule !== 'undefined' && AuthModule.getUsers) ? AuthModule.getUsers() : [];
+        const names = rc.roles.map(k => (roles.find(r => r.key === k) || {}).label || k)
+            .concat(rc.users.map(id => { const u = users.find(x => String(x.id) === String(id)); return u ? (u.displayName || u.username) : id; }));
+        return names.length ? names.join(', ') : '지정 안 됨';
+    }
+
+    // 지정된 역할/사용자에게 쪽지 발송(사용자 중복은 역할 발송과 별개로 1통씩)
+    async function _sendResidualMessage(msg) {
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.sendSystemMessage !== 'function') return;
+        const rc = await _residualRecipients();
+        rc.roles.forEach(role => AuthModule.sendSystemMessage(Object.assign({}, msg, { targetType: 'role', targetId: role })));
+        rc.users.forEach(id => AuthModule.sendSystemMessage(Object.assign({}, msg, { targetType: 'user', targetId: id })));
+    }
+
+    async function openResidualRecipients() {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 수신자를 지정할 수 있습니다.', 'warning'); return; }
+        const rc = await _residualRecipients();
+        const roles = (AuthModule.getRoles && AuthModule.getRoles()) || [];
+        const users = ((AuthModule.getUsers && AuthModule.getUsers()) || []).filter(u => u.active !== false);
+        const chk = (name, val, on, label) => `<label style="display:inline-flex;align-items:center;gap:4px;white-space:nowrap;margin:0 12px 6px 0;font-size:0.82rem;"><input type="checkbox" name="${name}" value="${_esc(val)}" ${on ? 'checked' : ''}>${_esc(label)}</label>`;
+        UIUtils.showModal('배합실 도료 알림 수신자 지정', `
+            <div style="display:flex;flex-direction:column;gap:12px;">
+                <div style="font-size:0.8rem;color:var(--text-muted);">FIFO 위반 · 유효기간 만료/임박 알림과 조치 등록 결과를 받을 대상을 선택하세요.</div>
+                <div><strong style="font-size:0.85rem;">역할</strong><div style="margin-top:6px;">${roles.map(r => chk('pmixRcRole', r.key, rc.roles.includes(r.key), r.label)).join('')}</div></div>
+                <div><strong style="font-size:0.85rem;">개별 사용자</strong><div style="margin-top:6px;max-height:220px;overflow:auto;">${users.map(u => chk('pmixRcUser', String(u.id), rc.users.includes(String(u.id)), u.displayName || u.username)).join('')}</div></div>
+                <div style="display:flex;justify-content:flex-end;gap:6px;">
+                    <button class="btn btn-outline" onclick="UIUtils.closeModal()">취소</button>
+                    <button class="btn btn-primary" onclick="PaintMixModule.saveResidualRecipients()">저장</button>
+                </div>
+            </div>`);
+    }
+
+    async function saveResidualRecipients() {
+        const vals = n => Array.from(document.querySelectorAll(`input[name="${n}"]:checked`)).map(e => e.value);
+        const rc = { roles: vals('pmixRcRole'), users: vals('pmixRcUser') };
+        if (!rc.roles.length && !rc.users.length) { UIUtils.toast('수신자를 1개 이상 선택하세요.', 'warning'); return; }
+        await Storage.setConfigValue(RESIDUAL_ALERT_RECIPIENTS_KEY, rc);
+        _residualRecipientsCache = rc;
+        UIUtils.closeModal();
+        UIUtils.toast('알림 수신자가 저장되었습니다.', 'success');
+        renderResidualTab();
+    }
+    const RESIDUAL_ISSUE_TEXT = {
+        violation: {
+            label: 'FIFO 위반',
+            desc: '같은 도료의 오래된 LOT이 배합실에 남아 있는데, 더 최근 LOT을 먼저 사용한 기록이 있습니다(선입선출 위반).',
+            actions: ['오래된 LOT 우선 사용으로 전환', '오래된 LOT 상태 확인 후 사용', '오래된 LOT 폐기(품질 확인 후)', '실사 후 잔량 조정', '작업자 교육 실시']
+        },
+        warn: {
+            label: 'FIFO 주의',
+            desc: '같은 도료의 LOT이 2개 이상 배합실에 있습니다. 아직 위반은 아니지만, 반드시 오래된 LOT부터 사용해야 합니다.',
+            actions: ['오래된 LOT 우선 사용 표시(라벨 부착)', '오래된 LOT 우선 배치', '실사 후 잔량 조정']
+        },
+        expired: {
+            label: '유효기간 만료',
+            desc: '유효기간이 지난 도료입니다. 사용을 즉시 중지하고 격리·폐기 또는 품질 판정을 받아야 합니다.',
+            actions: ['사용 중지 · 격리 보관', '폐기 처리(잔량 0 조정)', '품질 판정 후 특채 사용', '공급사 반품']
+        },
+        expiring: {
+            label: '유효기간 임박',
+            desc: `유효기간이 ${RESIDUAL_EXPIRY_SOON_DAYS}일 이내로 남았습니다. 이 LOT을 우선 사용하세요.`,
+            actions: ['우선 사용 계획 수립', '우선 사용 라벨 부착', '추가 출고 보류']
+        }
+    };
+
+    function _residualActions() {
+        return (Storage.getAll(STORE) || []).filter(d => d._docKind === 'paint_residual_action');
+    }
+
+    function _residualActionsFor(materialId, lotNo) {
+        return _residualActions()
+            .filter(a => a.materialId === materialId && a.lotNo === lotNo)
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    }
+
+    // 유효기간: 도료 창고 입고 원장(expDate)에서 해당 도료+제조LOT의 가장 빠른 만료일
+    function _residualExpiry(materialId, lotNo) {
+        let exp = '';
+        (Storage.getAll(PAINT_INV_STORE) || []).forEach(r => {
+            if (r.type === '출고' || r.materialId !== materialId) return;
+            if ((r.prodLot || r.lotNo || '') !== lotNo) return;
+            if (r.expDate && (!exp || r.expDate < exp)) exp = r.expDate;
+        });
+        if (!exp) return null;
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        const d = new Date(String(exp).slice(0, 10)); d.setHours(0, 0, 0, 0);
+        if (isNaN(d)) return null;
+        const daysLeft = Math.round((d - today) / 86400000);
+        return {
+            expDate: String(exp).slice(0, 10),
+            daysLeft,
+            level: daysLeft < 0 ? 'expired' : daysLeft <= RESIDUAL_EXPIRY_SOON_DAYS ? 'expiring' : null
+        };
+    }
+
+    // 잔량이 있는 LOT의 이슈 목록(FIFO + 유효기간)
+    function _residualIssues(mixResiduals) {
+        const all = mixResiduals || _calcMixingRoomResiduals();
+        const fifoMap = {};
+        _groupResidualsBySupplier(all).forEach(g => Object.assign(fifoMap, _residualFifoMap(g.items)));
+        const issues = [];
+        all.filter(r => (Number(r.residualG) || 0) > 0).forEach(r => {
+            const key = `${r.materialId}__${r.lotNo}`;
+            const fifo = fifoMap[key];
+            if (fifo) issues.push({ r, key, level: fifo.level, detail: `기준(가장 오래된) LOT ${fifo.oldestLot} · 동일 도료 ${fifo.count}개 LOT` });
+            const ex = _residualExpiry(r.materialId, r.lotNo);
+            if (ex && ex.level) issues.push({ r, key, level: ex.level, detail: ex.level === 'expired' ? `유효기간 ${ex.expDate} (${Math.abs(ex.daysLeft)}일 경과)` : `유효기간 ${ex.expDate} (D-${ex.daysLeft})` });
+        });
+        issues.forEach(it => {
+            const acts = _residualActionsFor(it.r.materialId, it.r.lotNo).filter(a => a.issueLevel === it.level);
+            it.lastAction = acts[0] || null;
+        });
+        const order = { expired: 0, violation: 1, expiring: 2, warn: 3 };
+        return issues.sort((a, b) => order[a.level] - order[b.level]);
+    }
+
+    function _residualIssueBadge(level, title) {
+        const colors = { violation: '#dc2626', expired: '#7f1d1d', warn: '#f59e0b', expiring: '#ea580c' };
+        return `<span title="${_esc(title || RESIDUAL_ISSUE_TEXT[level].desc)}" style="margin-left:4px;background:${colors[level]};color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;vertical-align:middle;">${RESIDUAL_ISSUE_TEXT[level].label}</span>`;
+    }
+
+    // 작업자/관리자에게 자동 쪽지 — 같은 이슈(LOT+등급)는 한 번만, 조치가 등록된 이슈는 제외
+    async function _notifyResidualIssues(issues) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendSystemMessage !== 'function') return;
+            const pending = issues.filter(it => it.level !== 'warn' && !it.lastAction);
+            if (!pending.length) return;
+            let notified = [];
+            try { notified = (await Storage.getConfigValue(RESIDUAL_ALERT_NOTIFIED_KEY)) || []; } catch (e) { /* 무시 */ }
+            const set = new Set(Array.isArray(notified) ? notified : []);
+            const fresh = pending.filter(it => !set.has(`${it.key}::${it.level}`));
+            if (!fresh.length) return;
+            const body = fresh.map(it => {
+                const t = RESIDUAL_ISSUE_TEXT[it.level];
+                return `[${t.label}] ${it.r.paintName || '-'} · LOT ${it.r.lotNo} · 잔량 ${UIUtils.formatNumber(it.r.residualG)}g\n  - ${it.detail}\n  - ${t.desc}\n  - 권장 조치: ${t.actions.slice(0, 2).join(' / ')}`;
+            }).join('\n\n') + '\n\n도장 공정 > 배합실 도료재고 에서 확인 후 조치 사항을 등록해 주세요.';
+            const high = fresh.some(it => it.level === 'violation' || it.level === 'expired');
+            await _sendResidualMessage({
+                title: `배합실 도료 ${high ? '조치 필요' : '확인 요청'} (${fresh.length}건)`,
+                body,
+                category: 'paint_residual',
+                priority: high ? 'high' : 'normal'
+            });
+            fresh.forEach(it => set.add(`${it.key}::${it.level}`));
+            try { await Storage.setConfigValue(RESIDUAL_ALERT_NOTIFIED_KEY, Array.from(set)); } catch (e) { /* 무시 */ }
+        } catch (e) {
+            console.warn('[배합실 도료 알림]', e);
+        }
+    }
+
+    function _renderResidualIssuePanel(mixResiduals) {
+        const issues = _residualIssues(mixResiduals);
+        _notifyResidualIssues(issues);
+        if (!_residualRecipientsCache) _residualRecipients().then(rc => {
+            const el = document.getElementById('pmixRcLabel');
+            if (el) el.textContent = _residualRecipientLabel(rc);
+        });
+        const legend = ['violation', 'warn', 'expired', 'expiring'].map(l =>
+            `<div style="display:flex;gap:6px;align-items:flex-start;"><span style="flex:0 0 86px;">${_residualIssueBadge(l)}</span><span style="color:var(--text-secondary);">${_esc(RESIDUAL_ISSUE_TEXT[l].desc)}</span></div>`).join('');
+        const openCnt = issues.filter(i => !i.lastAction).length;
+        return `<div style="border:1px solid var(--border-color);border-radius:8px;margin-bottom:12px;overflow:hidden;">
+            <div style="padding:8px 12px;background:var(--bg-secondary, #f8fafc);font-size:0.78rem;display:flex;flex-direction:column;gap:4px;">
+                <strong style="font-size:0.8rem;">표시 기준 안내
+                    ${issues.length ? `<span style="margin-left:8px;color:${openCnt ? '#b91c1c' : '#15803d'};">확인 필요 ${issues.length}건 · 미조치 ${openCnt}건</span>` : ''}</strong>${legend}
+                <span style="color:var(--text-muted);">※ 도료명을 클릭하면 위반·주의·유효기간 상세 내용을 확인하고 조치 사항을 입력할 수 있습니다. FIFO 위반·유효기간 만료·임박은 지정된 수신자에게 쪽지 알림이 자동 발송됩니다(동일 건 1회).</span>
+                <div style="display:flex;align-items:center;gap:8px;white-space:nowrap;">
+                    <span class="material-symbols-outlined" style="font-size:16px;color:#0369a1;">notifications</span>
+                    <span>알림 수신자: <b id="pmixRcLabel">${_esc(_residualRecipientsCache ? _residualRecipientLabel(_residualRecipientsCache) : '불러오는 중…')}</b></span>
+                    ${_isAdmin() ? `<button class="btn btn-sm btn-outline" onclick="PaintMixModule.openResidualRecipients()">수신자 지정</button>` : ''}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    async function saveResidualAction(materialId, lotNo, level, sel, note, date) {
+        note = String(note || '').trim();
+        if (!_canWritePaintMix()) { UIUtils.toast('조치 등록 권한이 없습니다.', 'warning'); return false; }
+        if (!sel || (sel === '__etc' && !note)) { UIUtils.toast('조치 내용을 입력하세요.', 'warning'); return false; }
+        const action = sel === '__etc' ? '기타' : sel;
+        date = date || UIUtils.today();
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+        const operator = user ? (user.name || user.displayName || '') : '';
+        const cur = _calcMixingRoomResiduals().find(x => x.materialId === materialId && x.lotNo === lotNo);
+        await Storage.add(STORE, { _docKind: 'paint_residual_action', materialId, lotNo, issueLevel: level, action, note, date, operator });
+        if (/폐기/.test(action) && cur && cur.residualG) {
+            await Storage.add(STORE, { _docKind: 'paint_residual_adjust', kind: 'adjust', materialId, lotNo, adjustG: -cur.residualG, date, note: `폐기 처리(${RESIDUAL_ISSUE_TEXT[level].label} 조치)`, operator });
+        }
+        {
+            _sendResidualMessage({
+                title: `배합실 도료 조치 등록 — ${RESIDUAL_ISSUE_TEXT[level].label}`,
+                body: `${cur ? cur.paintName : materialId} · LOT ${lotNo}\n조치: ${action}${note ? ' · ' + note : ''}\n조치일: ${date} · 등록자: ${operator || '-'}`,
+                category: 'paint_residual', priority: 'normal'
+            });
+        }
+        UIUtils.toast('조치 사항이 등록되었습니다.', 'success');
+        renderResidualTab();
+        openResidualHistory(materialId, lotNo);
+        return true;
+    }
+
     function _renderResidualSupplierRow(r, fifo) {
         const pct = r.totalWithdrawG > 0 ? (r.residualG / r.totalWithdrawG * 100).toFixed(0) : 0;
         const color = Number(pct) > 50 ? '#15803d' : Number(pct) > 20 ? '#b45309' : '#b91c1c';
         const fifoBadge = !fifo ? '' : (fifo.level === 'violation'
             ? `<span title="FIFO 위반 의심 — 오래된 LOT(${_esc(fifo.oldestLot)})이 아직 남아 있는데 더 최근 LOT을 먼저 사용했습니다." style="margin-left:4px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;vertical-align:middle;">FIFO 위반</span>`
             : `<span title="동일 도료 LOT이 ${fifo.count}개 재고 중입니다. 오래된 LOT(${_esc(fifo.oldestLot)})부터 사용하세요." style="margin-left:4px;background:#f59e0b;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;vertical-align:middle;">FIFO 주의</span>`);
+        const expiry = (Number(r.residualG) || 0) > 0 ? _residualExpiry(r.materialId, r.lotNo) : null;
+        const expBadge = (expiry && expiry.level)
+            ? _residualIssueBadge(expiry.level, `${RESIDUAL_ISSUE_TEXT[expiry.level].desc} (유효기간 ${expiry.expDate})`) : '';
         const lotInvalid = !_isValidPaintLot(r.lotNo);
         const lotBadge = lotInvalid
             ? `<span title="제조 LOT은 제조일자 6자리(YYMMDD) 형식이어야 합니다. '조정' 버튼으로 바로잡아 주세요." style="margin-left:4px;background:#dc2626;color:#fff;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:999px;white-space:nowrap;">수정 필요</span>`
@@ -17233,7 +17486,7 @@ var PaintMixModule = (function() {
         return `<tr${fifo ? ` style="background:rgba(${fifo.level === 'violation' ? '220,38,38' : '245,158,11'},0.05);"` : ''}>
             <td style="width:120px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${_esc(r.paintName || '-')}">
                 <a href="javascript:void(0)" onclick="PaintMixModule.openResidualHistory('${_js(r.materialId)}','${_js(r.lotNo)}')"
-                   style="color:#0369a1;text-decoration:underline;font-weight:700;cursor:pointer;">${_esc(r.paintName || '-')}</a>${fifoBadge}
+                   style="color:#0369a1;text-decoration:underline;font-weight:700;cursor:pointer;">${_esc(r.paintName || '-')}</a>${fifoBadge}${expBadge}
             </td>
             <td style="font-family:monospace;font-size:0.78rem;${lotInvalid ? 'color:#dc2626;' : ''}">${_esc(r.lotNo)}${lotBadge}</td>
             <td style="text-align:right;">${UIUtils.formatNumber(r.totalWithdrawG)}</td>
@@ -17636,7 +17889,7 @@ var PaintMixModule = (function() {
         <div style="margin-bottom:14px;">
             <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
                 <div class="card-header">
-                    <h4><span class="material-symbols-outlined" style="color:#2563eb;">local_shipping</span> 오늘 도료창고 출고 목록
+                    <h4><span class="material-symbols-outlined" style="color:#2563eb;">local_shipping</span> 오늘 도료창고 출고 → 배합실 입고 목록
                         <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">${_esc(_pmixToday)} · ${todayOutgoing.length}건</span>
                     </h4>
                     <button class="btn btn-sm btn-outline" onclick="PaintMixModule.openWarehouseInboundHistory()">
@@ -17693,6 +17946,7 @@ var PaintMixModule = (function() {
                     </div>
                 </div>
                 <div class="card-body" style="padding:12px;">
+                    ${mixResiduals.length ? _renderResidualIssuePanel(mixResiduals) : ''}
                     ${mixResiduals.length ? _renderResidualSupplierSections(mixResiduals) : `<div style="text-align:center;padding:24px;color:var(--text-muted);">배합실에 잔량이 없습니다.</div>`}
                 </div>
             </div>
@@ -18999,7 +19253,7 @@ var PaintMixModule = (function() {
         _onResidualLotChange, _onRowCalc,
         _validateRow, _validateAllRows,
         renderResidualStock, filterResidualStock, exportResidualData, openResidualAdjust, saveResidualAdjust,
-        openMixResidualAdjust, saveMixResidualAdjust, deleteMixResidual, openResidualHistory, _onResLotBlur,
+        openMixResidualAdjust, saveMixResidualAdjust, deleteMixResidual, openResidualHistory, saveResidualAction, openResidualRecipients, saveResidualRecipients, _onResLotBlur,
         onResCategoryChange, onResSupplierChange,
         openWarehouseInboundHistory, searchWarehouseInboundHistory,
         saveNew, edit, saveEdit, remove, exportData,
@@ -31512,7 +31766,8 @@ var QualityPerformanceModule = (function() {
         { k:'process', label:'공정별' },
         { k:'partName', label:'품목별' },
         { k:'defectType', label:'불량 유형별' },
-        { k:'line', label:'라인별' }
+        { k:'line', label:'라인별' },
+        { k:'carModel', label:'차종별' }
     ];
     let _agg = 'overall';
 
@@ -31578,6 +31833,39 @@ var QualityPerformanceModule = (function() {
     const PROC_PAINT_A = '도장-A(레이져포함)';
     const PROC_PAINT_B = '도장-B';
     function _isAutoId(id) { return String(id || '').indexOf('auto|') === 0; }
+    /** 차종명 식별 헬퍼 — 레코드의 carModel 또는 품명에서 차종 정보 추출 */
+    function _resolveCarModel(r) {
+        if (!r) return '미지정';
+        if (r.carModel && String(r.carModel).trim()) return String(r.carModel).trim();
+        const partName = String(r.partName || '').trim();
+        if (!partName) return '미지정';
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const match = products.find(p => p && p.carModel && (
+            partName.startsWith(p.carModel) || 
+            partName.includes(p.carModel) || 
+            p.partName === partName
+        ));
+        if (match && match.carModel) return match.carModel;
+        const carPattern = /\b([A-Za-z]{2,4}\d{1,2}|[A-Za-z]{2,3})\b/;
+        const carMatch = partName.match(carPattern);
+        if (carMatch) return carMatch[1].toUpperCase();
+        const firstWord = partName.split(/[\s/_-]+/)[0];
+        if (firstWord && firstWord.length <= 8) return firstWord;
+        return '기타';
+    }
+    function _isLineB(r) {
+        if (!r) return false;
+        const p = String(r.process || '').trim();
+        const l = String(r.line || '').trim();
+        return p === PROC_PAINT_B || /도장-?B|B-?LINE|B라인|\bB\b/i.test(l) || /도장-?B/i.test(p);
+    }
+    function _isLineA(r) {
+        if (!r) return false;
+        const p = String(r.process || '').trim();
+        const l = String(r.line || '').trim();
+        if (_isLineB(r)) return false;
+        return p === PROC_PAINT_A || /도장-?A|A-?LINE|A라인|\bA\b/i.test(l) || /도장-?A|레이[저져]/i.test(p);
+    }
     /**
      * 공정불량 자동 실적 — 도장 검사·레이져 검사 기록을 월·공정·라인·품목 단위로 모은다.
      * 저장하지 않고 조회할 때마다 계산하므로 검사 기록이 바뀌면 바로 반영된다.
@@ -31592,8 +31880,9 @@ var QualityPerformanceModule = (function() {
             if (y !== Number(year) || !m) return;
             const part = [carModel, partName].map(s => String(s || '').trim()).filter(Boolean).join(' ');
             const key = ['auto', y, m, process, line || '', part].join('|');
-            if (!map[key]) map[key] = { id:key, autoKey:key, _auto:true, date:`${y}-${String(m).padStart(2,'0')}-01`, year:y, month:m, category:'process', process, line:line || '', partName:part, inputQty:0, defectQty:0, reworkQty:0, defectsByType:{} };
+            if (!map[key]) map[key] = { id:key, autoKey:key, _auto:true, date:`${y}-${String(m).padStart(2,'0')}-01`, year:y, month:m, category:'process', process, line:line || '', partName:part, carModel:carModel||'', inputQty:0, defectQty:0, reworkQty:0, defectsByType:{} };
             const r = map[key];
+            if (!r.carModel && carModel) r.carModel = carModel;
             r.inputQty += Number(inputQty) || 0;
             r.defectQty += Number(defectQty) || 0;
             r.reworkQty += Number(reworkQty) || 0;
@@ -31619,7 +31908,9 @@ var QualityPerformanceModule = (function() {
             // 공정은 도장 라인 기준 — 도장-A 제품의 외관검사는 레이져 공정에서 하므로
             // 도장-A는 레이져 검사까지 묶어 「도장-A(레이져포함)」으로 본다. 라인 값이 없으면 A로 본다(도장 화면 기준과 동일).
             const paintLine = String(i.line || (paintWork[i.workId] || {}).line || '').trim();
-            add(paintLine === '도장-B' ? PROC_PAINT_B : PROC_PAINT_A, i.date, '도장검사', i.carModel, i.partName, i.inspectionQty, i.defectQty, i.reworkQty, defects);
+            const carModel = String(i.carModel || (paintWork[i.workId] || {}).carModel || '').trim();
+            const partName = String(i.partName || (paintWork[i.workId] || {}).partName || '').trim();
+            add(paintLine === '도장-B' ? PROC_PAINT_B : PROC_PAINT_A, i.date, '도장검사', carModel, partName, i.inspectionQty, i.defectQty, i.reworkQty, defects);
         });
 
         const laserWork = {};
@@ -31627,7 +31918,9 @@ var QualityPerformanceModule = (function() {
         (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).forEach(i => {
             if (!i) return;
             const machine = String(i.machine || (laserWork[i.workLogId] || {}).machine || '').trim();
-            add(PROC_PAINT_A, i.date, '레이져 외관검사' + (machine ? ` (${machine})` : ''), i.carModel, i.partName, i.inspQty, i.failQty, 0, i.defectDetails);
+            const carModel = String(i.carModel || (laserWork[i.workLogId] || {}).carModel || '').trim();
+            const partName = String(i.partName || (laserWork[i.workLogId] || {}).partName || '').trim();
+            add(PROC_PAINT_A, i.date, '레이져 외관검사' + (machine ? ` (${machine})` : ''), carModel, partName, i.inspQty, i.failQty, 0, i.defectDetails);
         });
 
         const actions = {};
@@ -31646,9 +31939,29 @@ var QualityPerformanceModule = (function() {
         return _autoProcessRows(Number(String(id).split('|')[1])).find(r => r.id === id) || null;
     }
     function _targets(year) {
-        const map = {};
-        (Storage.getAll(STORE) || []).filter(r => r._docKind === 'target' && Number(r.year) === Number(year)).forEach(r => { map[r.category] = Number(r.targetPpm) || 0; });
+        const map = { lines:{}, cats:{} };
+        (Storage.getAll(STORE) || []).filter(r => r._docKind === 'target' && Number(r.year) === Number(year)).forEach(r => {
+            const ppm = Number(r.targetPpm) || 0;
+            if (r.line) {
+                map.lines[r.line] = ppm;
+                map[`${r.category}|${r.line}`] = ppm;
+            } else {
+                map.cats[r.category] = ppm;
+                map[r.category] = ppm;
+            }
+        });
         return map;
+    }
+    /** 구분 및 라인별 목표 PPM 조회 헬퍼 */
+    function _getTargetPpm(targets, category, line) {
+        if (!targets) return 0;
+        if (line) {
+            if (targets.lines && targets.lines[line] !== undefined) return targets.lines[line];
+            if (targets[`${category}|${line}`] !== undefined) return targets[`${category}|${line}`];
+            if (/도장-?B|B라인/i.test(line) && targets.lines && targets.lines['도장-B'] !== undefined) return targets.lines['도장-B'];
+            if (/도장-?A|A라인/i.test(line) && targets.lines && targets.lines['도장-A'] !== undefined) return targets.lines['도장-A'];
+        }
+        return targets[category] || (targets.cats && targets.cats[category]) || 0;
     }
     function _targetRows(year) { return (Storage.getAll(STORE) || []).filter(r => r._docKind === 'target' && Number(r.year) === Number(year)); }
     function _catLabel(k) { return (CATS.find(c => c.k === k) || {}).label || k || '-'; }
@@ -31670,77 +31983,409 @@ var QualityPerformanceModule = (function() {
     let _recordsOpen = false;
     function toggleRecords() { _recordsOpen = !_recordsOpen; _renderRecords(); }
 
-    const _charts = { line:null, defect:null };
-    /** 메인 그래프 — 라인(공정)별 불량수·불량률, 불량 유형별 불량수. 조회 조건(년/월/구분)을 그대로 따른다. */
+    const _charts = { paintB:null, paintA:null, carModel:null };
+    /** 
+     * 품질 실적 라인별/차종별 분석 (3개 섹션)
+     * 1) 도장-B : 불량률과 불량유형별
+     * 2) 도장-A : 불량률과 불량유형별 (레이져 공정 포함)
+     * 3) 차종별 불량 현황 : 차종별 투입/불량/불량률 비교
+     */
     function _renderCharts() {
         const el = document.getElementById('qperfCharts'); if (!el) return;
         Object.keys(_charts).forEach(k => { if (_charts[k]) { try { _charts[k].destroy(); } catch (e) {} _charts[k] = null; } });
 
-        const lines = {}, types = {};
-        _filtered().forEach(r => {
-            const lk = r.process || r.line || '미지정';
-            if (!lines[lk]) lines[lk] = { input:0, defect:0 };
-            lines[lk].input += Number(r.inputQty) || 0;
-            lines[lk].defect += (Number(r.defectQty) || 0) + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0);
-            if (r._auto) {
-                Object.entries(r.defectsByType || {}).forEach(([t, n]) => { types[t] = (types[t] || 0) + (Number(n) || 0); });
+        const data = _filtered();
+
+        const targets = _targets(Number(document.getElementById('qperfYear')?.value) || new Date().getFullYear());
+
+        // ── 1. 도장-B 실적 집계 ──
+        const rowsB = data.filter(_isLineB);
+        const inputB = rowsB.reduce((s, r) => s + (Number(r.inputQty) || 0), 0);
+        const defectB = rowsB.reduce((s, r) => s + (Number(r.defectQty) || 0) + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0), 0);
+        const rateB = inputB > 0 ? ((defectB / inputB) * 100).toFixed(2) : '0.00';
+        const ppmB = _ppm(defectB, inputB);
+        const targetB = _getTargetPpm(targets, 'process', '도장-B');
+        const missB = targetB > 0 && ppmB > targetB;
+        const typesB = {};
+        rowsB.forEach(r => {
+            if (r._auto && r.defectsByType) {
+                Object.entries(r.defectsByType).forEach(([t, n]) => { typesB[t] = (typesB[t] || 0) + (Number(n) || 0); });
             } else if (r.defectType && Number(r.defectQty) > 0) {
-                types[r.defectType] = (types[r.defectType] || 0) + Number(r.defectQty);
+                typesB[r.defectType] = (typesB[r.defectType] || 0) + Number(r.defectQty);
             }
         });
-        const lineRows = Object.entries(lines)
-            .map(([k, v]) => ({ k, ...v, rate: v.input > 0 ? v.defect / v.input * 100 : 0 }))
-            .sort((a, b) => b.rate - a.rate);
-        const typeRows = Object.entries(types).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).slice(0, 12);
+        const typeRowsB = Object.entries(typesB).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
 
-        const empty = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:.85rem;">표시할 실적이 없습니다.</div>';
-        el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(360px,1fr));gap:12px;margin-bottom:16px;">
-            <div class="card" style="padding:12px 16px;">
-                <h4 style="margin:0 0 8px;font-size:1rem;">라인별 실적 <span style="font-size:.74rem;font-weight:400;color:var(--text-muted);">불량수 · 불량률(%)</span></h4>
-                <div style="position:relative;height:280px;">${lineRows.length ? '<canvas id="qperfLineChart"></canvas>' : empty}</div>
+        // ── 2. 도장-A 실적 집계 ──
+        const rowsA = data.filter(_isLineA);
+        const inputA = rowsA.reduce((s, r) => s + (Number(r.inputQty) || 0), 0);
+        const defectA = rowsA.reduce((s, r) => s + (Number(r.defectQty) || 0) + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0), 0);
+        const rateA = inputA > 0 ? ((defectA / inputA) * 100).toFixed(2) : '0.00';
+        const ppmA = _ppm(defectA, inputA);
+        const targetA = _getTargetPpm(targets, 'process', '도장-A');
+        const missA = targetA > 0 && ppmA > targetA;
+        const typesA = {};
+        rowsA.forEach(r => {
+            if (r._auto && r.defectsByType) {
+                Object.entries(r.defectsByType).forEach(([t, n]) => { typesA[t] = (typesA[t] || 0) + (Number(n) || 0); });
+            } else if (r.defectType && Number(r.defectQty) > 0) {
+                typesA[r.defectType] = (typesA[r.defectType] || 0) + Number(r.defectQty);
+            }
+        });
+        const typeRowsA = Object.entries(typesA).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]);
+
+        // ── 3. 차종별 실적 집계 ──
+        const cars = {};
+        data.forEach(r => {
+            const c = _resolveCarModel(r) || '기타';
+            if (!cars[c]) cars[c] = { carModel: c, input: 0, defect: 0, defectsByType: {} };
+            cars[c].input += Number(r.inputQty) || 0;
+            const d = (Number(r.defectQty) || 0) + (r.category === 'process' ? (Number(r.reworkQty) || 0) : 0);
+            cars[c].defect += d;
+            if (r._auto && r.defectsByType) {
+                Object.entries(r.defectsByType).forEach(([t, n]) => {
+                    cars[c].defectsByType[t] = (cars[c].defectsByType[t] || 0) + (Number(n) || 0);
+                });
+            } else if (r.defectType && Number(r.defectQty) > 0) {
+                cars[c].defectsByType[r.defectType] = (cars[c].defectsByType[r.defectType] || 0) + Number(r.defectQty);
+            }
+        });
+        const carRows = Object.values(cars).map(c => {
+            const rateNum = c.input > 0 ? ((c.defect / c.input) * 100) : 0;
+            const topDefect = Object.entries(c.defectsByType).sort((a, b) => b[1] - a[1])[0];
+            return {
+                ...c,
+                rateNum,
+                rate: rateNum.toFixed(2) + '%',
+                ppm: _ppm(c.defect, c.input),
+                topDefectName: topDefect ? `${topDefect[0]} (${UIUtils.formatNumber(topDefect[1])})` : '-'
+            };
+        }).sort((a, b) => b.defect - a.defect || b.rateNum - a.rateNum);
+        const totalCarDefect = carRows.reduce((s, c) => s + c.defect, 0);
+        const worstCar = carRows.length ? [...carRows].sort((a, b) => b.rateNum - a.rateNum)[0] : null;
+
+        // ── 테이블 HTML 생성 ──
+        const emptyMsg = '<div style="height:100%;display:flex;align-items:center;justify-content:center;color:var(--text-muted);font-size:.82rem;">표시할 실적이 없습니다.</div>';
+
+        const tableRowsB = typeRowsB.length ? typeRowsB.map(([name, qty], idx) => {
+            const share = defectB > 0 ? ((qty / defectB) * 100).toFixed(1) : '0.0';
+            return `<tr>
+                <td style="text-align:center;font-weight:700;color:var(--text-muted);padding:5px 6px;">${idx + 1}</td>
+                <td style="font-weight:600;padding:5px 6px;">${_esc(name)}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-red);padding:5px 6px;">${_fmt(qty)}</td>
+                <td style="text-align:right;padding:5px 6px;color:var(--text-secondary);">${share}%</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">불량 내역이 없습니다.</td></tr>';
+
+        const tableRowsA = typeRowsA.length ? typeRowsA.map(([name, qty], idx) => {
+            const share = defectA > 0 ? ((qty / defectA) * 100).toFixed(1) : '0.0';
+            return `<tr>
+                <td style="text-align:center;font-weight:700;color:var(--text-muted);padding:5px 6px;">${idx + 1}</td>
+                <td style="font-weight:600;padding:5px 6px;">${_esc(name)}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-red);padding:5px 6px;">${_fmt(qty)}</td>
+                <td style="text-align:right;padding:5px 6px;color:var(--text-secondary);">${share}%</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);padding:16px;">불량 내역이 없습니다.</td></tr>';
+
+        const tableRowsCar = carRows.length ? carRows.map(c => {
+            return `<tr>
+                <td style="font-weight:700;padding:5px 6px;">${_esc(c.carModel)}</td>
+                <td style="text-align:right;padding:5px 6px;">${_fmt(c.input)}</td>
+                <td style="text-align:right;font-weight:700;color:var(--accent-red);padding:5px 6px;">${_fmt(c.defect)}</td>
+                <td style="text-align:right;font-weight:800;color:${c.rateNum > 3 ? 'var(--accent-red)' : 'var(--text-primary)'};padding:5px 6px;">${c.rate}</td>
+                <td style="font-size:0.72rem;color:var(--text-secondary);padding:5px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:110px;" title="${_esc(c.topDefectName)}">${_esc(c.topDefectName)}</td>
+            </tr>`;
+        }).join('') : '<tr><td colspan="5" style="text-align:center;color:var(--text-muted);padding:16px;">차종별 실적이 없습니다.</td></tr>';
+
+        el.innerHTML = `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(350px,1fr));gap:14px;margin-bottom:18px;">
+            <!-- 섹션 1: 도장-B -->
+            <div class="card" style="padding:14px 16px;display:flex;flex-direction:column;border-top:3.5px solid #8b5cf6;box-shadow:0 1px 4px rgba(0,0,0,.05);">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="badge" style="background:rgba(139,92,246,0.15);color:#7c3aed;font-weight:800;border:1px solid rgba(139,92,246,0.3);">도장-B</span>
+                            <h4 style="margin:0;font-size:0.98rem;font-weight:700;">불량률과 불량유형별</h4>
+                        </div>
+                        <div style="font-size:0.73rem;color:var(--text-muted);margin-top:2px;">B라인 실적 집계 (공정불량)</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end;">
+                            <span style="font-size:1.05rem;font-weight:900;color:#7c3aed;">${rateB}%</span>
+                            <span class="badge ${targetB ? (missB ? 'badge-danger' : 'badge-success') : 'badge-outline'}" style="font-size:0.68rem;padding:2px 5px;">${targetB ? (missB ? '목표미달' : '목표달성') : '목표없음'}</span>
+                        </div>
+                        <div style="font-size:0.71rem;color:var(--text-muted);">${_fmt(ppmB)} PPM ${targetB ? '<span style="color:var(--text-secondary);">/ 목표 ' + _fmt(targetB) + '</span>' : ''}</div>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:7px 10px;background:var(--bg-secondary);border-radius:8px;margin-bottom:10px;font-size:0.76rem;">
+                    <div><span style="color:var(--text-muted);">대상:</span> <strong>${_fmt(inputB)}</strong></div>
+                    <div><span style="color:var(--text-muted);">불량:</span> <strong style="color:var(--accent-red);">${_fmt(defectB)}</strong></div>
+                    <div><span style="color:var(--text-muted);">목표PPM:</span> <strong style="color:#7c3aed;">${targetB ? _fmt(targetB) : '미설정'}</strong></div>
+                </div>
+
+                <div style="position:relative;height:190px;margin-bottom:10px;">
+                    ${typeRowsB.length ? '<canvas id="qperfChartPaintB"></canvas>' : emptyMsg}
+                </div>
+
+                <div style="font-size:0.74rem;font-weight:700;color:var(--text-secondary);margin-bottom:4px;display:flex;justify-content:space-between;">
+                    <span>불량유형 순위</span>
+                    <span style="font-weight:400;color:var(--text-muted);">발생수 / 점유율</span>
+                </div>
+                <div class="data-table-wrapper" style="max-height:145px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                    <table class="data-table" style="font-size:0.75rem;margin:0;">
+                        <thead>
+                            <tr>
+                                <th style="width:34px;text-align:center;padding:4px 6px;">순위</th>
+                                <th style="padding:4px 6px;">불량 유형</th>
+                                <th style="text-align:right;padding:4px 6px;">불량수</th>
+                                <th style="text-align:right;padding:4px 6px;">점유율</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRowsB}</tbody>
+                    </table>
+                </div>
             </div>
-            <div class="card" style="padding:12px 16px;">
-                <h4 style="margin:0 0 8px;font-size:1rem;">불량 유형별 실적 <span style="font-size:.74rem;font-weight:400;color:var(--text-muted);">불량수 상위 12</span></h4>
-                <div style="position:relative;height:280px;">${typeRows.length ? '<canvas id="qperfDefectChart"></canvas>' : empty}</div>
+
+            <!-- 섹션 2: 도장-A -->
+            <div class="card" style="padding:14px 16px;display:flex;flex-direction:column;border-top:3.5px solid #2563eb;box-shadow:0 1px 4px rgba(0,0,0,.05);">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="badge" style="background:rgba(37,99,235,0.15);color:#2563eb;font-weight:800;border:1px solid rgba(37,99,235,0.3);">도장-A</span>
+                            <h4 style="margin:0;font-size:0.98rem;font-weight:700;">불량률과 불량 유형</h4>
+                        </div>
+                        <div style="font-size:0.73rem;color:var(--text-muted);margin-top:2px;">A라인(레이져포함) 실적 집계</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="display:flex;align-items:center;gap:5px;justify-content:flex-end;">
+                            <span style="font-size:1.05rem;font-weight:900;color:#2563eb;">${rateA}%</span>
+                            <span class="badge ${targetA ? (missA ? 'badge-danger' : 'badge-success') : 'badge-outline'}" style="font-size:0.68rem;padding:2px 5px;">${targetA ? (missA ? '목표미달' : '목표달성') : '목표없음'}</span>
+                        </div>
+                        <div style="font-size:0.71rem;color:var(--text-muted);">${_fmt(ppmA)} PPM ${targetA ? '<span style="color:var(--text-secondary);">/ 목표 ' + _fmt(targetA) + '</span>' : ''}</div>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:7px 10px;background:var(--bg-secondary);border-radius:8px;margin-bottom:10px;font-size:0.76rem;">
+                    <div><span style="color:var(--text-muted);">대상:</span> <strong>${_fmt(inputA)}</strong></div>
+                    <div><span style="color:var(--text-muted);">불량:</span> <strong style="color:var(--accent-red);">${_fmt(defectA)}</strong></div>
+                    <div><span style="color:var(--text-muted);">목표PPM:</span> <strong style="color:#2563eb;">${targetA ? _fmt(targetA) : '미설정'}</strong></div>
+                </div>
+
+                <div style="position:relative;height:190px;margin-bottom:10px;">
+                    ${typeRowsA.length ? '<canvas id="qperfChartPaintA"></canvas>' : emptyMsg}
+                </div>
+
+                <div style="font-size:0.74rem;font-weight:700;color:var(--text-secondary);margin-bottom:4px;display:flex;justify-content:space-between;">
+                    <span>불량유형 순위</span>
+                    <span style="font-weight:400;color:var(--text-muted);">발생수 / 점유율</span>
+                </div>
+                <div class="data-table-wrapper" style="max-height:145px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                    <table class="data-table" style="font-size:0.75rem;margin:0;">
+                        <thead>
+                            <tr>
+                                <th style="width:34px;text-align:center;padding:4px 6px;">순위</th>
+                                <th style="padding:4px 6px;">불량 유형</th>
+                                <th style="text-align:right;padding:4px 6px;">불량수</th>
+                                <th style="text-align:right;padding:4px 6px;">점유율</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRowsA}</tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- 섹션 3: 차종별 불량 현황 -->
+            <div class="card" style="padding:14px 16px;display:flex;flex-direction:column;border-top:3.5px solid #059669;box-shadow:0 1px 4px rgba(0,0,0,.05);">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:8px;">
+                    <div>
+                        <div style="display:flex;align-items:center;gap:6px;">
+                            <span class="badge" style="background:rgba(5,150,105,0.15);color:#059669;font-weight:800;border:1px solid rgba(5,150,105,0.3);">차종별</span>
+                            <h4 style="margin:0;font-size:0.98rem;font-weight:700;">차종별 불량 현황</h4>
+                        </div>
+                        <div style="font-size:0.73rem;color:var(--text-muted);margin-top:2px;">차종별 불량수 및 불량률(%) 현황</div>
+                    </div>
+                    <div style="text-align:right;">
+                        <div style="font-size:1.05rem;font-weight:900;color:#059669;">${carRows.length}개 차종</div>
+                        <div style="font-size:0.71rem;color:var(--text-muted);">총 불량 ${_fmt(totalCarDefect)}개</div>
+                    </div>
+                </div>
+
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:6px;padding:7px 10px;background:var(--bg-secondary);border-radius:8px;margin-bottom:10px;font-size:0.76rem;">
+                    <div><span style="color:var(--text-muted);">차종수:</span> <strong>${carRows.length}종</strong></div>
+                    <div><span style="color:var(--text-muted);">총불량:</span> <strong style="color:var(--accent-red);">${_fmt(totalCarDefect)}</strong></div>
+                    <div style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="color:var(--text-muted);">Worst:</span> <strong style="color:var(--accent-red);" title="${worstCar ? worstCar.carModel + ' (' + worstCar.rate + ')' : '-'}">${worstCar ? worstCar.carModel : '-'}</strong></div>
+                </div>
+
+                <div style="position:relative;height:190px;margin-bottom:10px;">
+                    ${carRows.length ? '<canvas id="qperfChartCarModel"></canvas>' : emptyMsg}
+                </div>
+
+                <div style="font-size:0.74rem;font-weight:700;color:var(--text-secondary);margin-bottom:4px;display:flex;justify-content:space-between;">
+                    <span>차종별 실적 현황</span>
+                    <span style="font-weight:400;color:var(--text-muted);">불량수 / 불량률 / 주요불량</span>
+                </div>
+                <div class="data-table-wrapper" style="max-height:145px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                    <table class="data-table" style="font-size:0.75rem;margin:0;">
+                        <thead>
+                            <tr>
+                                <th style="padding:4px 6px;">차종</th>
+                                <th style="text-align:right;padding:4px 6px;">대상수</th>
+                                <th style="text-align:right;padding:4px 6px;">불량수</th>
+                                <th style="text-align:right;padding:4px 6px;">불량률</th>
+                                <th style="padding:4px 6px;">주요 불량</th>
+                            </tr>
+                        </thead>
+                        <tbody>${tableRowsCar}</tbody>
+                    </table>
+                </div>
             </div>
         </div>`;
+
         if (typeof Chart === 'undefined') return;
 
-        const lc = document.getElementById('qperfLineChart');
-        if (lc) {
-            _charts.line = new Chart(lc, {
+        // 차트 1: 도장-B (불량유형 상위 6)
+        const canvasB = document.getElementById('qperfChartPaintB');
+        if (canvasB && typeRowsB.length) {
+            const sliceB = typeRowsB.slice(0, 6);
+            _charts.paintB = new Chart(canvasB, {
                 type: 'bar',
                 data: {
-                    labels: lineRows.map(r => r.k),
-                    datasets: [
-                        { type:'bar', label:'불량수', data: lineRows.map(r => r.defect), backgroundColor:'rgba(239,68,68,0.55)', borderColor:'#ef4444', borderWidth:1, yAxisID:'y', order:2 },
-                        { type:'line', label:'불량률(%)', data: lineRows.map(r => Number(r.rate.toFixed(2))), borderColor:'#2563eb', backgroundColor:'#2563eb', pointRadius:5, yAxisID:'y1', order:1 }
-                    ]
+                    labels: sliceB.map(([t]) => t),
+                    datasets: [{
+                        label: '불량수',
+                        data: sliceB.map(([, n]) => n),
+                        backgroundColor: 'rgba(139,92,246,0.65)',
+                        borderColor: '#7c3aed',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
                 },
                 options: {
-                    responsive:true, maintainAspectRatio:false,
-                    plugins: { tooltip: { callbacks: { afterBody: items => {
-                        const r = lineRows[items[0].dataIndex];
-                        return r ? `대상수량 ${_fmt(r.input)} · ${_fmt(_ppm(r.defect, r.input))} PPM` : '';
-                    } } } },
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `불량수: ${_fmt(ctx.parsed.x)}개 (${defectB > 0 ? ((ctx.parsed.x / defectB) * 100).toFixed(1) : 0}%)`
+                            }
+                        }
+                    },
                     scales: {
-                        y: { beginAtZero:true, title:{ display:true, text:'불량수' } },
-                        y1: { beginAtZero:true, position:'right', grid:{ drawOnChartArea:false }, title:{ display:true, text:'불량률(%)' } }
+                        x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.06)' }, ticks: { font: { size: 10 } } },
+                        y: { grid: { display: false }, ticks: { font: { size: 11 } } }
                     }
                 }
             });
         }
 
-        const dc = document.getElementById('qperfDefectChart');
-        if (dc) {
-            const total = typeRows.reduce((s, [, n]) => s + n, 0);
-            _charts.defect = new Chart(dc, {
+        // 차트 2: 도장-A (불량유형 상위 6)
+        const canvasA = document.getElementById('qperfChartPaintA');
+        if (canvasA && typeRowsA.length) {
+            const sliceA = typeRowsA.slice(0, 6);
+            _charts.paintA = new Chart(canvasA, {
                 type: 'bar',
-                data: { labels: typeRows.map(([t]) => t), datasets: [{ label:'불량수', data: typeRows.map(([, n]) => n), backgroundColor:'rgba(245,158,11,0.6)', borderColor:'#f59e0b', borderWidth:1 }] },
+                data: {
+                    labels: sliceA.map(([t]) => t),
+                    datasets: [{
+                        label: '불량수',
+                        data: sliceA.map(([, n]) => n),
+                        backgroundColor: 'rgba(37,99,235,0.65)',
+                        borderColor: '#2563eb',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
                 options: {
-                    indexAxis:'y', responsive:true, maintainAspectRatio:false,
-                    plugins: { legend:{ display:false }, tooltip: { callbacks: { label: ctx => `불량수 ${_fmt(ctx.parsed.x)} (${total > 0 ? (ctx.parsed.x / total * 100).toFixed(1) : 0}%)` } } },
-                    scales: { x: { beginAtZero:true } }
+                    indexAxis: 'y',
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: ctx => `불량수: ${_fmt(ctx.parsed.x)}개 (${defectA > 0 ? ((ctx.parsed.x / defectA) * 100).toFixed(1) : 0}%)`
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.06)' }, ticks: { font: { size: 10 } } },
+                        y: { grid: { display: false }, ticks: { font: { size: 11 } } }
+                    }
+                }
+            });
+        }
+
+        // 차트 3: 차종별 불량 현황 (불량수 Bar + 불량률 % Line Combo Chart)
+        const canvasCar = document.getElementById('qperfChartCarModel');
+        if (canvasCar && carRows.length) {
+            const sliceCar = carRows.slice(0, 7);
+            _charts.carModel = new Chart(canvasCar, {
+                type: 'bar',
+                data: {
+                    labels: sliceCar.map(c => c.carModel),
+                    datasets: [
+                        {
+                            type: 'bar',
+                            label: '불량수',
+                            data: sliceCar.map(c => c.defect),
+                            backgroundColor: 'rgba(16,185,129,0.65)',
+                            borderColor: '#059669',
+                            borderWidth: 1,
+                            borderRadius: 4,
+                            yAxisID: 'y',
+                            order: 2
+                        },
+                        {
+                            type: 'line',
+                            label: '불량률(%)',
+                            data: sliceCar.map(c => Number(c.rateNum.toFixed(2))),
+                            borderColor: '#ef4444',
+                            backgroundColor: '#ef4444',
+                            pointRadius: 4,
+                            pointHoverRadius: 6,
+                            borderWidth: 2,
+                            tension: 0.15,
+                            yAxisID: 'y1',
+                            order: 1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            display: true,
+                            position: 'top',
+                            labels: { boxWidth: 10, font: { size: 10 } }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                afterBody: items => {
+                                    const r = sliceCar[items[0].dataIndex];
+                                    return r ? `투입수: ${_fmt(r.input)} | ${_fmt(r.ppm)} PPM\n주요불량: ${r.topDefectName}` : '';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { ticks: { font: { size: 10 } }, grid: { display: false } },
+                        y: {
+                            beginAtZero: true,
+                            title: { display: true, text: '불량수', font: { size: 10 } },
+                            ticks: { font: { size: 9 } }
+                        },
+                        y1: {
+                            beginAtZero: true,
+                            position: 'right',
+                            grid: { drawOnChartArea: false },
+                            title: { display: true, text: '불량률(%)', font: { size: 10 } },
+                            ticks: { font: { size: 9 }, callback: v => v + '%' }
+                        }
+                    }
                 }
             });
         }
@@ -31758,15 +32403,34 @@ var QualityPerformanceModule = (function() {
         const data = _filtered(), targets = _targets(year);
         el.innerHTML = `<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px;">
             ${CATS.map(c => {
-                const s = _sum(data, c.k), target = targets[c.k] || 0, miss = target > 0 && s.ppm > target;
+                const s = _sum(data, c.k);
+                let target = targets[c.k] || 0;
+                let miss = target > 0 && s.ppm > target;
+                let hintText = `목표: ${target ? _fmt(target) + ' PPM 이하' : '미설정'} · ${c.hint}`;
+                if (c.k === 'process') {
+                    const targetB = _getTargetPpm(targets, 'process', '도장-B');
+                    const targetA = _getTargetPpm(targets, 'process', '도장-A');
+                    if (targetB || targetA) {
+                        const targetParts = [];
+                        if (targetA) targetParts.push(`도장-A ${_fmt(targetA)}PPM`);
+                        if (targetB) targetParts.push(`도장-B ${_fmt(targetB)}PPM`);
+                        hintText = `라인목표: ${targetParts.join(' · ')} · ${c.hint}`;
+                        const rowsB = data.filter(_isLineB), sB = _sum(rowsB);
+                        const rowsA = data.filter(_isLineA), sA = _sum(rowsA);
+                        const missB = targetB > 0 && sB.ppm > targetB;
+                        const missA = targetA > 0 && sA.ppm > targetA;
+                        miss = missB || missA;
+                        target = (targetA || targetB);
+                    }
+                }
                 return `<div class="card" style="padding:14px 16px;">
                     <div style="display:flex;justify-content:space-between;gap:8px;"><div><div style="font-size:.8rem;color:var(--text-muted);">${c.label}</div><div style="font-size:1.55rem;font-weight:900;">${_fmt(s.ppm)} PPM <span style="font-size:.95rem;font-weight:800;color:var(--text-secondary);">(${_rate(s.defect, s.input)})</span></div><div style="font-size:.74rem;color:var(--text-muted);">${c.qtyLabel} ${_fmt(s.input)} / 불량 ${_fmt(s.defect)}</div></div><span class="badge ${target ? (miss ? 'badge-danger' : 'badge-success') : 'badge-outline'}">${target ? (miss ? '목표미달' : '목표달성') : '목표없음'}</span></div>
-                    <div style="margin-top:10px;font-size:.78rem;color:var(--text-secondary);">목표: ${target ? _fmt(target) + ' PPM 이하' : '미설정'} · ${c.hint}</div>
+                    <div style="margin-top:10px;font-size:.78rem;color:var(--text-secondary);">${hintText}</div>
                 </div>`;
             }).join('')}
         </div>`;
     }
-    function _groupKey(r) { return _agg === 'overall' ? '전체' : _agg === 'category' ? _catLabel(r.category) : (r[_agg] || '미지정'); }
+    function _groupKey(r) { return _agg === 'overall' ? '전체' : _agg === 'category' ? _catLabel(r.category) : _agg === 'carModel' ? _resolveCarModel(r) : (r[_agg] || '미지정'); }
     function _groups() {
         const map = {};
         // 불량 유형별 집계에서 자동 실적은 유형마다 나눠 넣는다(한 행에 여러 유형이 섞여 있다).
@@ -31793,7 +32457,14 @@ var QualityPerformanceModule = (function() {
         const rows = _groups();
         el.innerHTML = `<div class="card" style="overflow:hidden;margin-bottom:16px;"><div style="padding:12px 16px;border-bottom:1px solid var(--border-color);display:flex;justify-content:space-between;"><h4 style="margin:0;font-size:1rem;">${(AGGS.find(a=>a.k===_agg)||AGGS[0]).label} 집계</h4><span style="font-size:.76rem;color:var(--text-muted);">공정불량은 불량수 + 재작업 수량 기준</span></div><div class="data-table-wrapper"><table class="data-table"><thead><tr><th>집계항목</th><th>구분</th><th>대상수량</th><th>불량수</th><th>PPM</th><th>불량률</th><th>목표</th><th>상태</th><th>대책 기록</th></tr></thead><tbody>
         ${rows.length ? rows.map(g => {
-            const one = g.cats.size === 1 ? Array.from(g.cats)[0] : '', target = one ? (targets[one] || 0) : 0, miss = target > 0 && g.ppm > target;
+            const one = g.cats.size === 1 ? Array.from(g.cats)[0] : '';
+            let target = 0;
+            if (_agg === 'line') {
+                target = _getTargetPpm(targets, 'process', g.key);
+            } else if (one) {
+                target = _getTargetPpm(targets, one, '');
+            }
+            const miss = target > 0 && g.ppm > target;
             return `<tr><td style="font-weight:800;">${_esc(g.key)}</td><td>${Array.from(g.cats).map(_catLabel).join(', ')}</td><td style="text-align:right;">${_fmt(g.input)}</td><td style="text-align:right;">${_fmt(g.defect)}</td><td style="text-align:right;font-weight:900;color:${miss?'var(--accent-red)':'var(--text-primary)'};">${_fmt(g.ppm)}</td><td style="text-align:right;">${_rate(g.defect, g.input)}</td><td style="text-align:right;">${target ? _fmt(target) : '-'}</td><td><span class="badge ${target ? (miss ? 'badge-danger':'badge-success') : 'badge-outline'}">${target ? (miss ? '목표미달':'목표달성') : '목표없음'}</span></td><td>${g.actions}/${g.rows}</td></tr>`;
         }).join('') : `<tr><td colspan="9" style="text-align:center;padding:28px;color:var(--text-muted);">집계할 실적이 없습니다.</td></tr>`}
         </tbody></table></div></div>`;
@@ -31803,7 +32474,9 @@ var QualityPerformanceModule = (function() {
         const targets = _targets(Number(document.getElementById('qperfYear')?.value) || new Date().getFullYear());
         const worst = _filtered().map(r => {
             const defect = (Number(r.defectQty)||0) + (r.category === 'process' ? (Number(r.reworkQty)||0) : 0);
-            return {...r, calcDefect:defect, ppm:_ppm(defect, Number(r.inputQty)||0), target:targets[r.category] || 0};
+            const line = _isLineB(r) ? '도장-B' : _isLineA(r) ? '도장-A' : (r.line || r.process || '');
+            const target = _getTargetPpm(targets, r.category, line);
+            return {...r, calcDefect:defect, ppm:_ppm(defect, Number(r.inputQty)||0), target};
         }).filter(r => r.target > 0 && r.ppm > r.target).sort((a,b)=>b.ppm-a.ppm).slice(0,10);
         el.innerHTML = `<div class="card" style="overflow:hidden;margin-bottom:16px;"><div style="padding:12px 16px;border-bottom:1px solid var(--border-color);"><h4 style="margin:0;font-size:1rem;">목표 미달 워스트 및 개선대책</h4><p style="margin:4px 0 0;font-size:.76rem;color:var(--text-muted);">목표 미달 항목은 근본 원인분석, 개선대책, 유효성 평가 기록이 필요합니다.</p></div><div class="data-table-wrapper"><table class="data-table"><thead><tr><th>월</th><th>구분</th><th>공정/라인</th><th>품목</th><th>불량유형</th><th>PPM</th><th>불량률</th><th>원인분석</th><th>개선대책</th><th>유효성</th><th>작업</th></tr></thead><tbody>
         ${worst.length ? worst.map(r => `<tr><td>${r.month}월</td><td>${_catLabel(r.category)}</td><td>${_esc(r.process||'-')} / ${_esc(r.line||'-')}</td><td>${_esc(r.partName||'-')}</td><td style="font-weight:700;">${_esc(r.defectType||'-')}</td><td style="text-align:right;font-weight:900;color:var(--accent-red);">${_fmt(r.ppm)}</td><td style="text-align:right;">${_rate(r.calcDefect, Number(r.inputQty)||0)}</td><td>${r.rootCause ? _esc(r.rootCause) : '<span style="color:var(--accent-red);">미작성</span>'}</td><td>${r.correctiveAction ? _esc(r.correctiveAction) : '<span style="color:var(--accent-red);">미작성</span>'}</td><td>${r.effectiveness ? _esc(r.effectiveness) : '<span style="color:var(--text-muted);">대기</span>'}</td><td><button class="btn btn-xs btn-outline" onclick="QualityPerformanceModule.openActionModal('${_js(r.id)}')">대책</button></td></tr>`).join('') : `<tr><td colspan="11" style="text-align:center;padding:24px;color:var(--text-muted);">목표 미달 워스트 항목이 없습니다.</td></tr>`}
@@ -31820,25 +32493,130 @@ var QualityPerformanceModule = (function() {
         ${rows.length ? rows.map(r => { const defect = (Number(r.defectQty)||0) + (r.category === 'process' ? (Number(r.reworkQty)||0) : 0); return `<tr><td>${r.year}-${String(r.month).padStart(2,'0')}</td><td>${_catLabel(r.category)}${r._auto ? ' <span class="badge badge-outline" title="도장/레이져 검사 기록에서 자동 집계">자동</span>' : ''}</td><td>${_esc(r.process||'-')}</td><td>${_esc(r.line||'-')}</td><td>${_esc(r.partName||'-')}</td><td>${_esc(r.defectType||'-')}</td><td style="text-align:right;">${_fmt(r.inputQty)}</td><td style="text-align:right;">${_fmt(r.defectQty)}</td><td style="text-align:right;">${r.category === 'process' ? _fmt(r.reworkQty) : '-'}</td><td style="text-align:right;font-weight:800;">${_fmt(_ppm(defect, Number(r.inputQty)||0))}</td><td style="text-align:right;">${_rate(defect, Number(r.inputQty)||0)}</td><td style="white-space:nowrap;">${r._auto ? '<span style="font-size:.72rem;color:var(--text-muted);">검사 기록에서 수정</span>' : `<button class="btn btn-xs btn-outline" onclick="QualityPerformanceModule.edit('${_js(r.id)}')">수정</button><button class="btn btn-xs btn-danger" onclick="QualityPerformanceModule.remove('${_js(r.id)}')">삭제</button>`}</td></tr>`; }).join('') : `<tr><td colspan="12" style="text-align:center;padding:28px;color:var(--text-muted);">품질 실적 기록이 없습니다.</td></tr>`}
         </tbody></table></div></div>`;
     }
-    function openTargetModal() {
-        const year = Number(document.getElementById('qperfYear')?.value) || new Date().getFullYear(), targets = _targets(year);
+    function openTargetModal(yearParam) {
+        const year = Number(yearParam) || Number(document.getElementById('qperfYear')?.value) || new Date().getFullYear();
+        const targets = _targets(year);
         const prevRows = _all().filter(r => Number(r.year) === year - 1).concat(_autoProcessRows(year - 1));
-        UIUtils.showModal('품질 목표 설정', `<div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px;font-size:.82rem;color:var(--text-secondary);">전년도 품질 실적을 기준으로 당해년도 PPM 목표를 설정합니다.</div><div class="form-row"><div class="form-group"><label class="form-label">목표년도</label><input type="number" class="form-input" id="qptYear" value="${year}"></div><div class="form-group"></div></div>${CATS.map(c=>{ const prev = _sum(prevRows, c.k); return `<div class="form-row"><div class="form-group"><label class="form-label">${c.label} 전년도 실적</label><input class="form-input" value="${_fmt(prev.ppm)} PPM" readonly style="background:var(--bg-secondary);"></div><div class="form-group"><label class="form-label">${c.label} 목표 PPM 이하</label><input type="number" min="0" class="form-input qptTarget" data-cat="${c.k}" value="${targets[c.k]||''}"></div></div>`; }).join('')}`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="QualityPerformanceModule.saveTargets()">저장</button>`, 'lg');
+
+        // 전년도 라인별 실적 계산
+        const prevBRows = prevRows.filter(_isLineB);
+        const prevB = _sum(prevBRows);
+        const prevARows = prevRows.filter(_isLineA);
+        const prevA = _sum(prevARows);
+        const prevCust = _sum(prevRows, 'customer');
+        const prevOut = _sum(prevRows, 'outsourcing');
+
+        const targetB = _getTargetPpm(targets, 'process', '도장-B');
+        const targetA = _getTargetPpm(targets, 'process', '도장-A');
+        const targetCust = targets['customer'] || 0;
+        const targetOut = targets['outsourcing'] || 0;
+
+        UIUtils.showModal('품질 목표 설정 (라인별)', `
+            <div style="padding:12px;background:var(--bg-secondary);border-radius:8px;margin-bottom:14px;font-size:.82rem;color:var(--text-secondary);line-height:1.5;">
+                전년도 실적을 기준으로 당해년도 <strong>라인별 공정품질 및 구분별 PPM 목표</strong>를 설정합니다.
+            </div>
+            <div class="form-row" style="margin-bottom:14px;">
+                <div class="form-group">
+                    <label class="form-label">목표년도</label>
+                    <input type="number" class="form-input" id="qptYear" value="${year}" onchange="QualityPerformanceModule.openTargetModal(this.value)">
+                </div>
+                <div class="form-group"></div>
+            </div>
+
+            <!-- 1. 공정품질 라인별 목표 -->
+            <div style="margin:16px 0 10px;font-weight:700;font-size:0.9rem;display:flex;align-items:center;gap:6px;border-bottom:1.5px solid var(--border-color);padding-bottom:6px;">
+                <span class="material-symbols-outlined" style="font-size:19px;color:var(--accent-blue);">precision_manufacturing</span>
+                <span>공정불량 라인별 목표 설정</span>
+            </div>
+
+            <div class="card" style="padding:12px 14px;margin-bottom:10px;background:var(--bg-primary);border-left:4px solid #8b5cf6;">
+                <div style="font-weight:700;font-size:0.86rem;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                    <span class="badge" style="background:rgba(139,92,246,0.15);color:#7c3aed;">도장-B</span>
+                    <span>도장 B라인 공정품질 목표</span>
+                </div>
+                <div class="form-row" style="margin-bottom:0;">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label" style="font-size:0.75rem;">전년도(${year-1}년) 실적</label>
+                        <input class="form-input" value="${_fmt(prevB.ppm)} PPM (${_rate(prevB.defect, prevB.input)})" readonly style="background:var(--bg-secondary);font-size:0.82rem;">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label" style="font-size:0.75rem;">당해년도(${year}년) 목표 PPM 이하 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="number" min="0" class="form-input qptTarget" data-cat="process" data-line="도장-B" value="${targetB || ''}" placeholder="예: 8000" style="font-weight:700;color:#7c3aed;">
+                    </div>
+                </div>
+            </div>
+
+            <div class="card" style="padding:12px 14px;margin-bottom:16px;background:var(--bg-primary);border-left:4px solid #2563eb;">
+                <div style="font-weight:700;font-size:0.86rem;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+                    <span class="badge" style="background:rgba(37,99,235,0.15);color:#2563eb;">도장-A</span>
+                    <span>도장 A라인(레이저포함) 공정품질 목표</span>
+                </div>
+                <div class="form-row" style="margin-bottom:0;">
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label" style="font-size:0.75rem;">전년도(${year-1}년) 실적</label>
+                        <input class="form-input" value="${_fmt(prevA.ppm)} PPM (${_rate(prevA.defect, prevA.input)})" readonly style="background:var(--bg-secondary);font-size:0.82rem;">
+                    </div>
+                    <div class="form-group" style="margin-bottom:0;">
+                        <label class="form-label" style="font-size:0.75rem;">당해년도(${year}년) 목표 PPM 이하 <span style="color:var(--accent-red)">*</span></label>
+                        <input type="number" min="0" class="form-input qptTarget" data-cat="process" data-line="도장-A" value="${targetA || ''}" placeholder="예: 5000" style="font-weight:700;color:#2563eb;">
+                    </div>
+                </div>
+            </div>
+
+            <!-- 2. 고객 및 외주 품질 목표 -->
+            <div style="margin:16px 0 10px;font-weight:700;font-size:0.9rem;display:flex;align-items:center;gap:6px;border-bottom:1.5px solid var(--border-color);padding-bottom:6px;">
+                <span class="material-symbols-outlined" style="font-size:19px;color:var(--accent-blue);">verified</span>
+                <span>고객 및 외주 품질 목표</span>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">고객불량 전년도 실적</label>
+                    <input class="form-input" value="${_fmt(prevCust.ppm)} PPM" readonly style="background:var(--bg-secondary);font-size:0.82rem;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">고객불량 목표 PPM 이하</label>
+                    <input type="number" min="0" class="form-input qptTarget" data-cat="customer" data-line="" value="${targetCust || ''}" placeholder="예: 100">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">외주불량 전년도 실적</label>
+                    <input class="form-input" value="${_fmt(prevOut.ppm)} PPM" readonly style="background:var(--bg-secondary);font-size:0.82rem;">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">외주불량 목표 PPM 이하</label>
+                    <input type="number" min="0" class="form-input qptTarget" data-cat="outsourcing" data-line="" value="${targetOut || ''}" placeholder="예: 500">
+                </div>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="QualityPerformanceModule.saveTargets()"><span class="material-symbols-outlined">save</span> 저장</button>
+        `, 'lg');
     }
     async function saveTargets() {
-        const year = Number(document.getElementById('qptYear').value), existing = _targetRows(year);
+        const year = Number(document.getElementById('qptYear').value);
+        const existing = _targetRows(year);
         for (const input of document.querySelectorAll('.qptTarget')) {
-            const category = input.getAttribute('data-cat'), targetPpm = Number(input.value) || 0, old = existing.find(r => r.category === category);
-            const data = { _docKind:'target', date:`${year}-01-01`, year, category, targetPpm };
-            if (old) await Storage.update(STORE, old.id, data); else await Storage.add(STORE, data);
+            const category = input.getAttribute('data-cat');
+            const line = input.getAttribute('data-line') || '';
+            const targetPpm = Number(input.value) || 0;
+            const old = existing.find(r => r.category === category && (r.line || '') === line);
+            const data = { _docKind:'target', date:`${year}-01-01`, year, category, line, targetPpm };
+            if (old) await Storage.update(STORE, old.id, data);
+            else await Storage.add(STORE, data);
         }
-        UIUtils.closeModal(); UIUtils.toast('품질 목표가 저장되었습니다.', 'success'); search();
+        UIUtils.closeModal();
+        UIUtils.toast('라인별 품질 목표가 저장되었습니다.', 'success');
+        search();
     }
     function _recordForm(d = {}) {
         const now = new Date(), year = d.year || Number(document.getElementById('qperfYear')?.value) || now.getFullYear(), month = d.month || Number(document.getElementById('qperfMonth')?.value) || (now.getMonth()+1), category = d.category || 'process';
         return `<div class="form-row"><div class="form-group"><label class="form-label">년도</label><input type="number" class="form-input" id="qprYear" value="${year}"></div><div class="form-group"><label class="form-label">월</label><select class="form-select" id="qprMonth">${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===month?'selected':''}>${m}월</option>`).join('')}</select></div></div>
         <div class="form-row"><div class="form-group"><label class="form-label">실적구분 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="qprCategory">${CATS.map(c=>`<option value="${c.k}" ${c.k===category?'selected':''}>${c.label}</option>`).join('')}</select></div><div class="form-group"><label class="form-label">공정</label><input class="form-input" id="qprProcess" value="${_esc(d.process||'')}" placeholder="예: 도장, 레이저, 출하"></div></div>
-        <div class="form-row"><div class="form-group"><label class="form-label">라인</label><input class="form-input" id="qprLine" value="${_esc(d.line||'')}" placeholder="예: A-LINE, B-LINE"></div><div class="form-group"><label class="form-label">품목</label><input class="form-input" id="qprPartName" value="${_esc(d.partName||'')}"></div></div>
+        <div class="form-row"><div class="form-group"><label class="form-label">라인</label><input class="form-input" id="qprLine" value="${_esc(d.line||'')}" placeholder="예: 도장-A, 도장-B"></div><div class="form-group"><label class="form-label">차종</label><input class="form-input" id="qprCarModel" value="${_esc(d.carModel||'')}" placeholder="예: CN7, DN8, NQ5"></div></div>
+        <div class="form-row"><div class="form-group"><label class="form-label">품목</label><input class="form-input" id="qprPartName" value="${_esc(d.partName||'')}"></div><div class="form-group"><label class="form-label">불량 유형</label><input class="form-input" id="qprDefectType" value="${_esc(d.defectType||'')}" placeholder="예: 색차, 찍힘, 먼지"></div></div>
         <div class="form-row"><div class="form-group"><label class="form-label">불량 유형</label><input class="form-input" id="qprDefectType" value="${_esc(d.defectType||'')}" placeholder="예: 색차, 찍힘"></div><div class="form-group"><label class="form-label">고객/외주처</label><input class="form-input" id="qprPartner" value="${_esc(d.partner||'')}"></div></div>
         <div class="form-row"><div class="form-group"><label class="form-label">대상수량 <span style="color:var(--accent-red)">*</span></label><input type="number" min="0" class="form-input" id="qprInputQty" value="${d.inputQty ?? ''}"></div><div class="form-group"><label class="form-label">불량수 <span style="color:var(--accent-red)">*</span></label><input type="number" min="0" class="form-input" id="qprDefectQty" value="${d.defectQty ?? ''}"></div></div>
         <div class="form-row"><div class="form-group"><label class="form-label">재작업 수량 (공정불량 포함)</label><input type="number" min="0" class="form-input" id="qprReworkQty" value="${d.reworkQty ?? 0}"></div><div class="form-group"><label class="form-label">담당자</label><input class="form-input" id="qprOwner" value="${_esc(d.owner||'')}"></div></div>
@@ -31846,7 +32624,7 @@ var QualityPerformanceModule = (function() {
     }
     function _collectRecord() {
         const year = Number(document.getElementById('qprYear').value), month = Number(document.getElementById('qprMonth').value);
-        return { date:`${year}-${String(month).padStart(2,'0')}-01`, year, month, category:document.getElementById('qprCategory').value, process:document.getElementById('qprProcess').value.trim(), line:document.getElementById('qprLine').value.trim(), partName:document.getElementById('qprPartName').value.trim(), defectType:document.getElementById('qprDefectType').value.trim(), partner:document.getElementById('qprPartner').value.trim(), inputQty:Number(document.getElementById('qprInputQty').value)||0, defectQty:Number(document.getElementById('qprDefectQty').value)||0, reworkQty:Number(document.getElementById('qprReworkQty').value)||0, owner:document.getElementById('qprOwner').value.trim(), note:document.getElementById('qprNote').value.trim() };
+        return { date:`${year}-${String(month).padStart(2,'0')}-01`, year, month, category:document.getElementById('qprCategory').value, process:document.getElementById('qprProcess').value.trim(), line:document.getElementById('qprLine').value.trim(), carModel:(document.getElementById('qprCarModel')?.value||'').trim(), partName:document.getElementById('qprPartName').value.trim(), defectType:document.getElementById('qprDefectType').value.trim(), partner:document.getElementById('qprPartner').value.trim(), inputQty:Number(document.getElementById('qprInputQty').value)||0, defectQty:Number(document.getElementById('qprDefectQty').value)||0, reworkQty:Number(document.getElementById('qprReworkQty').value)||0, owner:document.getElementById('qprOwner').value.trim(), note:document.getElementById('qprNote').value.trim() };
     }
     function openRecordModal() { UIUtils.showModal('품질 실적 등록', _recordForm(), `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button><button class="btn btn-primary" onclick="QualityPerformanceModule.saveNew()">등록</button>`, 'lg'); }
     async function saveNew() { const data = _collectRecord(); if (!data.inputQty && !data.defectQty) { UIUtils.toast('대상수량 또는 불량수를 입력하세요.', 'warning'); return; } await Storage.add(STORE, data); UIUtils.closeModal(); UIUtils.toast('품질 실적이 등록되었습니다.', 'success'); search(); }
