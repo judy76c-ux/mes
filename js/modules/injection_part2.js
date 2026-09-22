@@ -7034,15 +7034,14 @@ var InjectionWarehouseModule = (function() {
                     ${x.baselineReason ? `<div style="color:var(--text-muted);font-size:0.76rem;margin-top:2px;">사유: ${_escapeHtml(x.baselineReason)}</div>` : ''}
                 </div>
                 <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-                    ${canDelete ? `<button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626;"
-                        onclick="UIUtils.closeModal();InjectionWarehouseModule.openEditBaselineModal('${x.baselineId}')">기준값 수정</button>` : ''}
                     <button class="btn btn-sm btn-primary"
-                        onclick="InjectionWarehouseModule.openInspectionForLot('${_escapeHtml(x.partName)}','${_escapeHtml(x.lotNo)}')">수입검사 수량 수정</button>
+                        onclick="InjectionWarehouseModule.openInspectionForLot('${_escapeHtml(x.partName)}','${_escapeHtml(x.lotNo)}')">수입검사 수량(${UIUtils.formatNumber(x.authorizedQty)}→${UIUtils.formatNumber(x.baselineQty)})으로 수정</button>
                     <button class="btn btn-sm btn-outline"
                         onclick="UIUtils.closeModal();InjectionWarehouseModule.showPartDetail('${_escapeHtml(x.carModel)}','${_escapeHtml(x.partName)}','${_escapeHtml(x.color || '')}')">입출고 이력 보기</button>
                 </div>
                 <div style="margin-top:5px;font-size:0.74rem;color:var(--text-muted);">
-                    권장: 실물을 재확인해 기준값을 수입검사 수량으로 수정하고, 원인이 된 <strong>재고실사 보정</strong> 입고 행이 있으면 이력에서 삭제하세요.
+                    실물이 ${UIUtils.formatNumber(x.baselineQty)}개면 <strong>수입검사 수량 수정</strong>으로 올리세요 (창고 추가 입고 금지).
+                    실물이 다르면 <strong>입출고 이력</strong>에서 원인이 된 <strong>재고실사 보정</strong> 입고를 확인하세요.
                 </div>
             </div>`;
         }).join('');
