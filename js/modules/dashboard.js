@@ -259,6 +259,15 @@ const DashboardModule = (function() {
             grid.classList.add('is-free');
         }
         blocks.forEach(function(el) { _placeBlock(grid, el); });
+        // 저장된 예전 좌표가 겹쳐 있더라도 화면을 열 때 자동으로 분리한다.
+        blocks.forEach(function(el) {
+            const safe = _resolveCardCollision(grid, el, el.offsetLeft, el.offsetTop);
+            if (!safe.moved) return;
+            el.dataset.x = safe.left / (grid.clientWidth || 1);
+            el.dataset.y = safe.top;
+            el.style.left = safe.left + 'px';
+            el.style.top = safe.top + 'px';
+        });
         _updateGridHeight(grid);
     }
 
@@ -314,11 +323,55 @@ const DashboardModule = (function() {
         grid.querySelectorAll(':scope > .dash-block').forEach(function(o) {
             if (o === block) return;
             const l = o.offsetLeft, t = o.offsetTop, r = l + o.offsetWidth, b = t + o.offsetHeight;
-            xs.push(l, r - w, r + LAYOUT_GAP, l - w - LAYOUT_GAP);
-            ys.push(t, b - h, b + LAYOUT_GAP, t - h - LAYOUT_GAP);
+            // 카드의 같은 가장자리에 맞추면 서로 포개질 수 있으므로,
+            // 자석 후보는 항상 다른 카드의 바깥쪽(간격 포함)만 사용한다.
+            xs.push(r + LAYOUT_GAP, l - w - LAYOUT_GAP);
+            ys.push(b + LAYOUT_GAP, t - h - LAYOUT_GAP);
         });
         const sx = _snapAxis(left, xs), sy = _snapAxis(top, ys);
         return { left: sx.value, top: sy.value, snapped: sx.snapped || sy.snapped };
+    }
+
+    // 자유 배치 카드가 서로 겹치지 않도록, 충돌하면 가장 가까운 빈 자리로 옮긴다.
+    // 자석을 끈(Alt) 상태에서도 겹침만은 방지한다.
+    function _resolveCardCollision(grid, block, left, top) {
+        const w = block.offsetWidth, h = block.offsetHeight;
+        const maxLeft = Math.max(0, grid.clientWidth - w);
+        const clamp = function(x, y) {
+            return { left: Math.min(maxLeft, Math.max(0, Math.round(x))), top: Math.max(0, Math.round(y)) };
+        };
+        const others = Array.from(grid.querySelectorAll(':scope > .dash-block')).filter(function(el) {
+            return el !== block;
+        }).map(function(el) {
+            return { left: el.offsetLeft, top: el.offsetTop, right: el.offsetLeft + el.offsetWidth, bottom: el.offsetTop + el.offsetHeight };
+        });
+        const overlaps = function(x, y, o) {
+            return x < o.right + LAYOUT_GAP && x + w > o.left - LAYOUT_GAP &&
+                y < o.bottom + LAYOUT_GAP && y + h > o.top - LAYOUT_GAP;
+        };
+        const clear = function(pos) { return !others.some(function(o) { return overlaps(pos.left, pos.top, o); }); };
+        const initial = clamp(left, top);
+        if (clear(initial)) return Object.assign(initial, { moved: false });
+
+        const candidates = [];
+        others.forEach(function(o) {
+            candidates.push(clamp(o.left - w - LAYOUT_GAP, initial.top));
+            candidates.push(clamp(o.right + LAYOUT_GAP, initial.top));
+            candidates.push(clamp(initial.left, o.top - h - LAYOUT_GAP));
+            candidates.push(clamp(initial.left, o.bottom + LAYOUT_GAP));
+        });
+        const clearCandidate = candidates.filter(clear).sort(function(a, b) {
+            const da = Math.pow(a.left - initial.left, 2) + Math.pow(a.top - initial.top, 2);
+            const db = Math.pow(b.left - initial.left, 2) + Math.pow(b.top - initial.top, 2);
+            return da - db;
+        })[0];
+        if (clearCandidate) return Object.assign(clearCandidate, { moved: true });
+
+        // 주변에 즉시 빈 자리가 없으면, 모든 카드 아래의 첫 빈 줄로 이동한다.
+        const below = clamp(initial.left, others.reduce(function(max, o) {
+            return Math.max(max, o.bottom + LAYOUT_GAP);
+        }, 0));
+        return Object.assign(below, { moved: true });
     }
 
     function _initLayoutDnD() {
@@ -373,6 +426,10 @@ const DashboardModule = (function() {
                 }
                 left = Math.min(Math.max(0, grid.clientWidth - c.block.offsetWidth), Math.max(0, left));
                 top = Math.max(0, Math.round(top));
+                const safe = _resolveCardCollision(grid, c.block, left, top);
+                left = safe.left;
+                top = safe.top;
+                snapped = snapped || safe.moved;
                 c.block.dataset.x = left / (grid.clientWidth || 1);
                 c.block.dataset.y = top;
                 c.block.style.left = left + 'px';
@@ -388,6 +445,13 @@ const DashboardModule = (function() {
             const h = Math.round((c.startH + (e.clientY - c.startY)) / 8) * 8;
             c.block.dataset.h = Math.max(MIN_HEIGHT, h);
             _applyBlockStyle(c.block);
+            if (_isFree(grid)) {
+                const safe = _resolveCardCollision(grid, c.block, c.block.offsetLeft, c.block.offsetTop);
+                c.block.dataset.x = safe.left / (grid.clientWidth || 1);
+                c.block.dataset.y = safe.top;
+                c.block.style.left = safe.left + 'px';
+                c.block.style.top = safe.top + 'px';
+            }
             _updateGridHeight(grid);
         });
         ['pointerup', 'pointercancel'].forEach(function(evt) {

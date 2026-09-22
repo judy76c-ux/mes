@@ -6920,6 +6920,12 @@ var InjectionWarehouseModule = (function() {
     /** 품명+LOT 에 해당하는 수입검사를 찾아 수정 창을 연다 (여러 건이면 고르게 한다).
      *  재고실사 부풀림이 "실물이 실사 수량과 같음 = 수입검사 전표 수량 오류"인 경우,
      *  수입검사 LOT 수량·합격수량을 실제 수량으로 올리면 경고가 해소된다. */
+    /** 재고실사로 이미 창고에 잡힌 LOT의 수입검사 수정 — 저장 시 그 LOT을 입고 정산 처리(입고 대기 제외) */
+    function _editInspForStockCount(inspId, lotNo) {
+        InjectionIncomingModule.edit(inspId);
+        InjectionIncomingModule._settleLotOnSave = { inspId: inspId, lotNo: String(lotNo || '').trim() };
+    }
+
     function openInspectionForLot(partName, lotNo) {
         const part = _normKeyStr(partName);
         const lot = String(lotNo || '').trim();
@@ -6937,11 +6943,11 @@ var InjectionWarehouseModule = (function() {
         }
         const note = '<div style="padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:10px;font-size:0.82rem;line-height:1.6;">' +
             '실물이 <strong>재고실사 수량과 같을 때</strong>만 수입검사 LOT 수량·합격수량을 실제 수량으로 올리세요.<br>' +
-            '재고는 이미 재고실사로 창고에 잡혀 있으므로 <strong>입고 대기에서 추가 입고하지 마세요.</strong></div>';
+            '재고는 이미 재고실사로 창고에 잡혀 있으므로, 여기서 연 수정으로 저장하면 이 LOT은 <strong>입고 대기에 뜨지 않도록</strong> 자동 처리됩니다.</div>';
         if (hits.length === 1) {
             UIUtils.closeModal();
-            InjectionIncomingModule.edit(hits[0].id);
-            UIUtils.toast('실물이 재고실사 수량과 같을 때만 수량을 올리세요. 창고 추가 입고는 하지 마세요.', 'info');
+            _editInspForStockCount(hits[0].id, lot);
+            UIUtils.toast('실물이 재고실사 수량과 같을 때만 수량을 올리세요. 저장하면 이 LOT은 입고 대기에 뜨지 않습니다.', 'info');
             return;
         }
         const rows = hits.map(function (i) {
@@ -6951,7 +6957,7 @@ var InjectionWarehouseModule = (function() {
                 '<td style="padding:6px 8px;white-space:nowrap;">' + _escapeHtml(String(i.date || '').slice(0, 16)) + '</td>' +
                 '<td style="padding:6px 8px;">' + _escapeHtml(i.supplierName || '-') + '</td>' +
                 '<td style="padding:6px 8px;text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(Number(l.qty) || 0) + ' EA</td>' +
-                '<td style="padding:6px 8px;"><button class="btn btn-sm btn-primary" onclick="UIUtils.closeAllModals();InjectionIncomingModule.edit(\'' + i.id + '\')">수정</button></td>' +
+                '<td style="padding:6px 8px;"><button class="btn btn-sm btn-primary" onclick="UIUtils.closeAllModals();InjectionWarehouseModule._editInspForStockCount(\'' + i.id + '\',\'' + _escapeHtml(lot) + '\')">수정</button></td>' +
                 '</tr>';
         }).join('');
         UIUtils.showModal('수입검사 선택 — ' + _escapeHtml(partName) + ' · LOT ' + _escapeHtml(lot),
@@ -12967,6 +12973,7 @@ var InjectionWarehouseModule = (function() {
         applyInspectionPartNameChange,
         findPartNameMismatches,
         openInspectionForLot,
+        _editInspForStockCount,
         openPartNameMismatchModal,
         fixPartNameMismatch,
         removeLinkedInventoryRecords,

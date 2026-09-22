@@ -1276,6 +1276,7 @@ var InjectionIncomingModule = (function() {
     }
 
     function edit(id) {
+        InjectionIncomingModule._settleLotOnSave = null;   // 재고실사 창에서 연 경우 호출 직후 다시 지정됨
         const d = Storage.getById(STORE, id);
         if (!d) return;
 
@@ -1613,6 +1614,25 @@ var InjectionIncomingModule = (function() {
             return;
         }
 
+        // 입고 정산 표시(inboundSettled)는 폼에 없는 값 — 수정 저장 시 사라지지 않게 원본에서 이어받는다.
+        // 재고실사 부풀림 창에서 연 수정이면(이미 창고에 실사 수량으로 잡힌 LOT) 해당 LOT을 정산 처리해
+        // 늘어난 수량이 입고 대기에 떠서 이중 입고되는 것을 막는다.
+        const _origLots = (Storage.getById(STORE, id) || {}).lots || [];
+        const _settleReq = InjectionIncomingModule._settleLotOnSave;
+        lots.forEach(function(l) {
+            const o = _origLots.find(function(x) { return String(x.lotNo || '').trim() === l.lotNo; });
+            if (o && o.inboundSettled) {
+                l.inboundSettled = true;
+                if (o.inboundSettledAt) l.inboundSettledAt = o.inboundSettledAt;
+                if (o.inboundSettledReason) l.inboundSettledReason = o.inboundSettledReason;
+            }
+            if (_settleReq && String(_settleReq.inspId) === String(id) && _settleReq.lotNo === l.lotNo) {
+                l.inboundSettled = true;
+                l.inboundSettledAt = new Date().toISOString();
+                l.inboundSettledReason = 'stock-count-covered';
+            }
+        });
+
         const certifiedLotNos = getCertifiedLotNos();
         lots.forEach(l => {
             if (!l.certReceived && certifiedLotNos.has(l.lotNo)) l.certReceived = true;
@@ -1697,6 +1717,7 @@ var InjectionIncomingModule = (function() {
                 catch (e) { return Object.assign({}, Storage.getById(STORE, id) || {}); }
             })();
             await Storage.update(STORE, id, updateData);
+            InjectionIncomingModule._settleLotOnSave = null;
             await propagateCertReceived(updateData.lots);
             if (partPlan) {
                 partResult = await InjectionWarehouseModule.applyInspectionPartNameChange(id, _oldPartInfo, partPlan);
