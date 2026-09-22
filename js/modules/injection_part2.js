@@ -6440,6 +6440,227 @@ var InjectionWarehouseModule = (function() {
         return applied;
     }
 
+    // ── 수입검사 품명 정정 → 사출 창고 동반 정정 ──────────────────────
+    // 수입검사에서 품명을 잘못 골라 입고된 뒤 검사 품명을 고치면, 창고 입고 기록은 옛 품명으로
+    // 남아 옛 품명 재고는 과다·새 품명 재고는 0 이 된다. 아래 두 함수로 창고를 함께 바로잡는다.
+    //  1) 출고 이력이 없으면 → 입고 기록 자체의 품명/차종/컬러/사출처를 새 품명으로 정정
+    //  2) 이미 일부 출고됐으면 → 출고 이력은 두고, 남은 수량만 「품명 대체」 전표 한 쌍
+    //     (옛 품명 출고 − / 새 품명 입고 +, 같은 LOT)으로 옮긴다.
+
+    /** 검사 1건의 창고 입고 기록과 LOT별 출고(소진) 수량을 계산한다. */
+    function planInspectionPartNameChange(inspId, oldInfo) {
+        const id = String(inspId || '').trim();
+        const oldPart = String((oldInfo && oldInfo.partName) || '').trim();
+        if (!id || !oldPart) return null;
+        const inventory = Storage.getAll(STORE) || [];
+        const inbounds = inventory.filter(function (d) {
+            return d && d.type === '입고'
+                && String(d.inspId || '') === id
+                && String(d.partName || '').trim() === oldPart
+                && !_isSiteReturnInbound(d)
+                && !_isStockErrorResetRecord(d)
+                && !_isStockBaselineRecord(d);
+        });
+        if (!inbounds.length) return null;
+        const oldCar = String((oldInfo && oldInfo.carModel) || '').trim();
+        const lots = {};
+        inbounds.forEach(function (d) {
+            _inboundLotList(d).forEach(function (l) {
+                const n = String(l.lotNo || '').trim();
+                if (!n) return;
+                if (!lots[n]) lots[n] = { lotNo: n, inQty: 0, outQty: 0 };
+                lots[n].inQty += Number(l.qty) || 0;
+            });
+        });
+        inventory.forEach(function (o) {
+            if (!o || o.type !== '출고') return;
+            if (String(o.partName || '').trim() !== oldPart) return;
+            if (oldCar && o.carModel && String(o.carModel).trim() !== oldCar) return;
+            const outLots = (o.lots && o.lots.length) ? o.lots : (o.lotNo ? [{ lotNo: o.lotNo, qty: o.quantity }] : []);
+            outLots.forEach(function (l) {
+                const n = String(l.lotNo || '').trim();
+                if (lots[n]) lots[n].outQty += Number(l.qty) || 0;
+            });
+        });
+        const lotList = Object.keys(lots).map(function (n) {
+            const r = lots[n];
+            r.outQty = Math.min(r.inQty, r.outQty);
+            r.remain = Math.max(0, r.inQty - r.outQty);
+            return r;
+        });
+        return {
+            inbounds: inbounds,
+            lots: lotList,
+            consumed: lotList.some(function (l) { return l.outQty > 0; }),
+            totalIn: lotList.reduce(function (s, l) { return s + l.inQty; }, 0),
+            totalRemain: lotList.reduce(function (s, l) { return s + l.remain; }, 0)
+        };
+    }
+
+    /** plan 에 따라 창고를 새 품명으로 정정한다. 반환: { mode: 'rename'|'swap', count } */
+    async function applyInspectionPartNameChange(inspId, oldInfo, plan) {
+        const insp = Storage.getById(DB.STORES.INJECTION_INSPECTIONS, inspId);
+        if (!insp || !plan) return { mode: '', count: 0 };
+        const allMats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
+        const sameCarPart = allMats.filter(function (m) { return m.injPartName === insp.partName && m.carModel === insp.carModel; });
+        const matMatch = sameCarPart.find(function (m) { return _splitMasterColors(m).some(function (mc) { return _colorsMatch(mc, insp.color || ''); }); })
+            || (sameCarPart.length === 1 ? sameCarPart[0] : null);
+        const newColor = _resolveMasterColor(insp.carModel, insp.partName, insp.color, allMats) || insp.color || '';
+        const oldPart = String(oldInfo.partName || '');
+        const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
+        const stamp = '[품명 정정 ' + nowStr + '] ' + oldPart + ' → ' + insp.partName;
+
+        if (!plan.consumed) {
+            for (let i = 0; i < plan.inbounds.length; i++) {
+                const d = plan.inbounds[i];
+                await Storage.update(STORE, d.id, {
+                    partName: insp.partName || '',
+                    carModel: insp.carModel || '',
+                    color: newColor,
+                    supplier: insp.supplierName || d.supplier || '',
+                    injMaterialId: matMatch ? matMatch.id : d.injMaterialId,
+                    partNameCorrectedFrom: oldPart,
+                    note: (d.note ? d.note + ' / ' : '') + stamp
+                });
+            }
+            return { mode: 'rename', count: plan.inbounds.length };
+        }
+
+        // 일부 출고됨 — 옛 입고는 검사 연결을 풀고(대체 완료 표시), 남은 수량만 한 쌍 전표로 옮긴다.
+        for (let i = 0; i < plan.inbounds.length; i++) {
+            const d = plan.inbounds[i];
+            await Storage.update(STORE, d.id, {
+                inspId: '',
+                swappedInspId: String(inspId),
+                partNameSwappedTo: insp.partName || '',
+                note: (d.note ? d.note + ' / ' : '') + stamp + ' (잔량 품명 대체)'
+            });
+        }
+        const moveLots = plan.lots.filter(function (l) { return l.remain > 0; })
+            .map(function (l) { return { lotNo: l.lotNo, qty: l.remain }; });
+        if (!moveLots.length) return { mode: 'swap', count: 0 };
+        const qty = moveLots.reduce(function (s, l) { return s + l.qty; }, 0);
+        const reason = '수입검사 품명 정정 — ' + oldPart + ' → ' + insp.partName;
+        await _addInventoryRecord({
+            date: nowStr,
+            type: '출고',
+            carModel: oldInfo.carModel || '',
+            partName: oldPart,
+            color: oldInfo.color || '',
+            supplier: oldInfo.supplierName || '',
+            lots: moveLots, lotNo: moveLots[0].lotNo, quantity: qty, unit: 'EA',
+            source: '품명 대체',
+            resetReason: reason,
+            note: reason,
+            swappedInspId: String(inspId),
+            ..._actorFieldsForRecord('출고')
+        });
+        await _addInventoryRecord({
+            date: nowStr,
+            type: '입고',
+            carModel: insp.carModel || '',
+            partName: insp.partName || '',
+            color: newColor,
+            supplier: insp.supplierName || '',
+            lots: moveLots, lotNo: moveLots[0].lotNo, quantity: qty, unit: 'EA',
+            source: '품명 대체',
+            note: reason,
+            injMaterialId: matMatch ? matMatch.id : undefined,
+            inspId: insp.id,
+            inspDate: insp.date || undefined,
+            partNameCorrectedFrom: oldPart,
+            ..._actorFieldsForRecord('입고'),
+            receivedAt: new Date().toISOString()
+        });
+        return { mode: 'swap', count: moveLots.length, qty: qty };
+    }
+
+    /** 수입검사와 연결된(inspId) 창고 입고인데 품명이 검사와 다른 건 — 검사 품명만 고쳐진 과거 데이터 */
+    function findPartNameMismatches() {
+        const insps = {};
+        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(function (i) { insps[String(i.id)] = i; });
+        const seen = {};
+        const out = [];
+        (Storage.getAll(STORE) || []).forEach(function (d) {
+            if (!d || d.type !== '입고' || !d.inspId) return;
+            if (_isSiteReturnInbound(d) || _isStockErrorResetRecord(d) || _isStockBaselineRecord(d)) return;
+            const insp = insps[String(d.inspId)];
+            if (!insp) return;
+            const invPart = String(d.partName || '').trim();
+            if (!invPart || invPart === String(insp.partName || '').trim()) return;
+            const key = insp.id + '||' + invPart;
+            if (seen[key]) return;
+            seen[key] = true;
+            const oldInfo = { partName: invPart, carModel: d.carModel || '', color: d.color || '', supplierName: d.supplier || '' };
+            const plan = planInspectionPartNameChange(insp.id, oldInfo);
+            if (plan) out.push({ insp: insp, oldInfo: oldInfo, plan: plan });
+        });
+        return out;
+    }
+
+    let _partMismatchCache = [];
+
+    function openPartNameMismatchModal() {
+        const list = findPartNameMismatches();
+        if (!list.length) { UIUtils.toast('품명이 어긋난 창고 입고가 없습니다.', 'info'); renderOrphanInboundAudit(); return; }
+        const esc = function (v) { return _escapeHtml(v == null ? '' : String(v)); };
+        const rows = list.map(function (m, idx) {
+            const p = m.plan;
+            const lots = p.lots.map(function (l) {
+                return esc(l.lotNo) + ' ' + UIUtils.formatNumber(l.inQty)
+                    + (l.outQty ? ' <span style="color:#dc2626;">(출고 ' + UIUtils.formatNumber(l.outQty) + ')</span>' : '');
+            }).join('<br>');
+            return '<tr>' +
+                '<td style="padding:6px 8px;white-space:nowrap;">' + esc(String(m.insp.date || '').slice(0, 16)) + '</td>' +
+                '<td style="padding:6px 8px;">' + esc(m.oldInfo.partName) + '<br><span style="color:#2563eb;font-weight:700;">→ ' + esc(m.insp.partName) + '</span></td>' +
+                '<td style="padding:6px 8px;font-family:monospace;font-size:0.78rem;white-space:nowrap;">' + lots + '</td>' +
+                '<td style="padding:6px 8px;white-space:nowrap;">' + (p.consumed
+                    ? '<span style="color:#b45309;font-weight:700;">품명 대체 ' + UIUtils.formatNumber(p.totalRemain) + 'EA</span>'
+                    : '<span style="color:#059669;font-weight:700;">입고 품명 정정</span>') + '</td>' +
+                '<td style="padding:6px 8px;"><button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.fixPartNameMismatch(' + idx + ')">정정</button></td>' +
+                '</tr>';
+        }).join('');
+        _partMismatchCache = list;
+        UIUtils.showModal('수입검사 ↔ 창고 품명 불일치 정정',
+            '<div style="padding:4px 0;">' +
+                '<div style="padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:12px;font-size:0.84rem;line-height:1.65;">' +
+                '수입검사 품명만 고쳐지고 창고 입고는 옛 품명으로 남은 건입니다. <strong>수입검사 품명이 맞는지 먼저 확인</strong>한 뒤 정정하세요.<br>' +
+                '· 출고 이력 없음 → 입고 기록의 품명·차종·컬러를 검사 기준으로 정정 (LOT·입고일 유지)<br>' +
+                '· 일부 출고됨 → 남은 수량만 「품명 대체」 전표(옛 품명 − / 새 품명 +)로 이동</div>' +
+                '<table class="data-table compact" style="width:100%;border-collapse:collapse;font-size:0.82rem;">' +
+                '<thead><tr style="background:var(--bg-secondary);">' +
+                '<th style="padding:6px 8px;text-align:left;white-space:nowrap;">검사일</th>' +
+                '<th style="padding:6px 8px;text-align:left;">창고 품명 → 검사 품명</th>' +
+                '<th style="padding:6px 8px;text-align:left;white-space:nowrap;">LOT / 입고</th>' +
+                '<th style="padding:6px 8px;text-align:left;white-space:nowrap;">처리</th>' +
+                '<th style="padding:6px 8px;"></th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>' +
+            '</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>' +
+            (list.length > 1 ? '<button class="btn btn-primary" onclick="InjectionWarehouseModule.fixPartNameMismatch(-1)">전체 정정</button>' : ''),
+            '760px'
+        );
+    }
+
+    async function fixPartNameMismatch(idx) {
+        const targets = idx < 0 ? _partMismatchCache.slice() : [_partMismatchCache[idx]].filter(Boolean);
+        if (!targets.length) return;
+        let renamed = 0, swapped = 0;
+        for (let i = 0; i < targets.length; i++) {
+            const m = targets[i];
+            // 모달을 연 뒤 데이터가 바뀌었을 수 있으니 계획을 다시 계산
+            const plan = planInspectionPartNameChange(m.insp.id, m.oldInfo);
+            if (!plan) continue;
+            const r = await applyInspectionPartNameChange(m.insp.id, m.oldInfo, plan);
+            if (r.mode === 'rename') renamed++; else if (r.mode === 'swap') swapped++;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast('품명 정정 완료 — 입고 정정 ' + renamed + '건 · 품명 대체 ' + swapped + '건', 'success');
+        try { loadData(); } catch (e) {}
+        renderOrphanInboundAudit();
+        if (findPartNameMismatches().length) openPartNameMismatchModal();
+    }
+
     // ── 검사 이력 없는 입고 감사 ────────────────────────────────────
     // 수입검사 연동으로 만들어졌는데 정작 연결된 검사 기록이 없는 창고 입고를 찾아낸다.
     // (검사건 삭제 · 데이터 복원/초기화 등으로 검사만 사라진 경우 — 재고는 남아 실물과 어긋난다)
@@ -6458,6 +6679,7 @@ var InjectionWarehouseModule = (function() {
             if (_isSiteReturnInbound(d)) return false;
             const fromInsp = /수입검사/.test(String(d.source || '')) || !!(d.inspDate || d.inspId);
             if (!fromInsp) return false;
+            if (d.swappedInspId || d.partNameSwappedTo) return false;   // 품명 대체로 연결을 넘긴 옛 입고
             if (d.inspId && liveInspIds.has(String(d.inspId))) return false;
             return !_findLinkedInspectionId(d);
         }).map(function(d) {
@@ -6695,6 +6917,52 @@ var InjectionWarehouseModule = (function() {
      * findDuplicateLotInbounds() 가 재고실사 보정·기준점 레코드를 제외하기 때문에 생기는
      * 사각지대 — 재고실사에서 실사수량을 잘못 입력해 기준점이 부풀려진 케이스를 여기서 잡는다.
      */
+    /** 품명+LOT 에 해당하는 수입검사를 찾아 수정 창을 연다 (여러 건이면 고르게 한다).
+     *  재고실사 부풀림이 "실물이 실사 수량과 같음 = 수입검사 전표 수량 오류"인 경우,
+     *  수입검사 LOT 수량·합격수량을 실제 수량으로 올리면 경고가 해소된다. */
+    function openInspectionForLot(partName, lotNo) {
+        const part = _normKeyStr(partName);
+        const lot = String(lotNo || '').trim();
+        const hits = (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).filter(function (i) {
+            if (_normKeyStr(i.partName) !== part) return false;
+            const lots = (i.lots && i.lots.length) ? i.lots : (i.lotNo ? [{ lotNo: i.lotNo, qty: i.incomingQty }] : []);
+            return lots.some(function (l) { return String(l.lotNo || '').trim() === lot; });
+        }).sort(function (a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
+        if (typeof InjectionIncomingModule === 'undefined' || typeof InjectionIncomingModule.edit !== 'function') {
+            UIUtils.toast('수입검사 수정 기능을 불러올 수 없습니다.', 'error'); return;
+        }
+        if (!hits.length) {
+            UIUtils.toast('품명 ' + partName + ' · LOT ' + lot + ' 수입검사 기록이 없습니다. 수입검사를 먼저 등록하세요.', 'warning');
+            return;
+        }
+        const note = '<div style="padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;margin-bottom:10px;font-size:0.82rem;line-height:1.6;">' +
+            '실물이 <strong>재고실사 수량과 같을 때</strong>만 수입검사 LOT 수량·합격수량을 실제 수량으로 올리세요.<br>' +
+            '재고는 이미 재고실사로 창고에 잡혀 있으므로 <strong>입고 대기에서 추가 입고하지 마세요.</strong></div>';
+        if (hits.length === 1) {
+            UIUtils.closeModal();
+            InjectionIncomingModule.edit(hits[0].id);
+            UIUtils.toast('실물이 재고실사 수량과 같을 때만 수량을 올리세요. 창고 추가 입고는 하지 마세요.', 'info');
+            return;
+        }
+        const rows = hits.map(function (i) {
+            const l = ((i.lots && i.lots.length) ? i.lots : [{ lotNo: i.lotNo, qty: i.incomingQty }])
+                .find(function (x) { return String(x.lotNo || '').trim() === lot; }) || {};
+            return '<tr>' +
+                '<td style="padding:6px 8px;white-space:nowrap;">' + _escapeHtml(String(i.date || '').slice(0, 16)) + '</td>' +
+                '<td style="padding:6px 8px;">' + _escapeHtml(i.supplierName || '-') + '</td>' +
+                '<td style="padding:6px 8px;text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(Number(l.qty) || 0) + ' EA</td>' +
+                '<td style="padding:6px 8px;"><button class="btn btn-sm btn-primary" onclick="UIUtils.closeAllModals();InjectionIncomingModule.edit(\'' + i.id + '\')">수정</button></td>' +
+                '</tr>';
+        }).join('');
+        UIUtils.showModal('수입검사 선택 — ' + _escapeHtml(partName) + ' · LOT ' + _escapeHtml(lot),
+            note + '<table class="data-table compact" style="width:100%;border-collapse:collapse;font-size:0.82rem;">' +
+            '<thead><tr style="background:var(--bg-secondary);"><th style="padding:6px 8px;text-align:left;">검사일</th><th style="padding:6px 8px;text-align:left;">사출처</th>' +
+            '<th style="padding:6px 8px;text-align:right;">LOT 수량</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
+            '560px'
+        );
+    }
+
     function findBaselineInflatedLots() {
         _resetAuthLotQtyCache();
         const adjustMap = {}; // 품명||LOT → 재고실사 보정 순증(입고−출고)
@@ -6768,6 +7036,8 @@ var InjectionWarehouseModule = (function() {
                 <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
                     ${canDelete ? `<button class="btn btn-sm" style="background:#dc2626;color:#fff;border-color:#dc2626;"
                         onclick="UIUtils.closeModal();InjectionWarehouseModule.openEditBaselineModal('${x.baselineId}')">기준값 수정</button>` : ''}
+                    <button class="btn btn-sm btn-primary"
+                        onclick="InjectionWarehouseModule.openInspectionForLot('${_escapeHtml(x.partName)}','${_escapeHtml(x.lotNo)}')">수입검사 수량 수정</button>
                     <button class="btn btn-sm btn-outline"
                         onclick="UIUtils.closeModal();InjectionWarehouseModule.showPartDetail('${_escapeHtml(x.carModel)}','${_escapeHtml(x.partName)}','${_escapeHtml(x.color || '')}')">입출고 이력 보기</button>
                 </div>
@@ -7361,7 +7631,7 @@ var InjectionWarehouseModule = (function() {
         const dupes = findDuplicateLotInbounds();
         const inflated = findBaselineInflatedLots();
         const anomalyCount = dupes.length + inflated.length;
-        const dupeBanner = anomalyCount ? `
+        let dupeBanner = anomalyCount ? `
             <div class="card" style="margin-bottom:20px;border-left:3px solid var(--accent-red);background:rgba(239,68,68,.04);">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
                     <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
@@ -7390,6 +7660,19 @@ var InjectionWarehouseModule = (function() {
                 </div>
             </div>` : '';
 
+        const partMismatches = findPartNameMismatches();
+        if (partMismatches.length) dupeBanner = `
+            <div class="card" style="margin-bottom:20px;border-left:3px solid #f59e0b;background:rgba(245,158,11,.05);">
+                <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">
+                    <h4 style="display:flex;align-items:center;gap:8px;margin:0;">
+                        <span class="material-symbols-outlined" style="color:#f59e0b;">sync_problem</span>
+                        수입검사 ↔ 창고 품명 불일치
+                        <span style="font-size:0.78rem;background:#f59e0b;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">${partMismatches.length}건</span>
+                    </h4>
+                    <button class="btn btn-sm btn-primary" onclick="InjectionWarehouseModule.openPartNameMismatchModal()">
+                        <span class="material-symbols-outlined" style="font-size:16px;">build</span> 불일치 정정</button>
+                </div>
+            </div>` + dupeBanner;
         if (orphans.length === 0) { card.innerHTML = dupeBanner; return; }
 
         const totalQty = orphans.reduce(function(s, o) { return s + (Number(o.qty) || 0); }, 0);
@@ -12681,6 +12964,12 @@ var InjectionWarehouseModule = (function() {
         getLinkedInventoryForInspection,
         diffLinkedInboundVsInspection,
         applyInspectionQtyAdjustments,
+        planInspectionPartNameChange,
+        applyInspectionPartNameChange,
+        findPartNameMismatches,
+        openInspectionForLot,
+        openPartNameMismatchModal,
+        fixPartNameMismatch,
         removeLinkedInventoryRecords,
         markLinkedInventoryInspDeleted,
         findOrphanInspectionInbounds,

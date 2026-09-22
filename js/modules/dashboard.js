@@ -157,17 +157,23 @@ const DashboardModule = (function() {
     ══════════════════════════════════════════════════════════ */
     /* ══════════════════════════════════════════════════════════
        대시보드 블럭 자유 배치 엔진
-       - 12칸 그리드 위에서 블럭을 끌어 위치 이동(가까운 슬롯에 자석 스냅)
-       - 오른쪽 아래 모서리를 끌어 가로 폭(1/12 단위)과 높이(20px 단위) 조절
+       - 블럭 이름을 끌면 원하는 위치(픽셀 단위)로 자유 이동
+       - 다른 블럭/그리드 가장자리 12px 이내로 오면 자석처럼 붙음 (Alt 누르고 끌면 자석 해제)
+       - 오른쪽 아래 모서리를 끌어 가로 폭(1/12 단위)과 높이 조절
        - 배치/크기는 브라우저에 저장되어 다음 접속에도 유지
+       - 좁은 화면(900px 이하)에서는 기존 세로 흐름 배치로 표시
     ══════════════════════════════════════════════════════════ */
     const LAYOUT_KEY = 'mes_dashboard_layout_v2';
     const LAYOUT_COLS = 12;
+    const LAYOUT_GAP = 12;
+    const SNAP_DIST = 12;
+    const FREE_MIN_WIDTH = 900;
     const MIN_SPAN = 3;
     const MIN_HEIGHT = 100;
-    let _dragBlock = null;
-    let _dropMarker = null;
+    let _moveCtx = null;
     let _resizeCtx = null;
+    let _blockObserver = null;
+    let _winResizeBound = false;
 
     function _readLayout() {
         try {
@@ -176,16 +182,37 @@ const DashboardModule = (function() {
         } catch (e) { return null; }
     }
 
+    function _hasPos(el) { return el.dataset.x !== undefined && el.dataset.x !== ''; }
+
     function _saveLayout() {
         const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
         const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block')).map(function(el) {
-            return {
+            const row = {
                 key: el.dataset.block,
                 w: Number(el.dataset.w) || 6,
                 h: Number(el.dataset.h) || 0
             };
+            if (_hasPos(el)) { row.x = Number(el.dataset.x); row.y = Number(el.dataset.y) || 0; }
+            return row;
         });
         try { localStorage.setItem(LAYOUT_KEY, JSON.stringify({ blocks: blocks })); } catch (e) {}
+    }
+
+    function _isFree(grid) { return !!grid && grid.classList.contains('is-free'); }
+
+    function _spanWidth(grid, w) {
+        const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
+        return w * colW + (w - 1) * LAYOUT_GAP;
+    }
+
+    // x 는 그리드 폭 대비 비율(0~1), y 는 px — 창 폭이 바뀌어도 상대 위치 유지
+    function _placeBlock(grid, el) {
+        const width = _spanWidth(grid, Number(el.dataset.w) || 6);
+        const maxLeft = Math.max(0, grid.clientWidth - width);
+        const left = Math.min(maxLeft, Math.max(0, (Number(el.dataset.x) || 0) * grid.clientWidth));
+        el.style.width = width + 'px';
+        el.style.left = left + 'px';
+        el.style.top = Math.max(0, Number(el.dataset.y) || 0) + 'px';
     }
 
     function _applyBlockStyle(el) {
@@ -200,6 +227,39 @@ const DashboardModule = (function() {
         }
         const label = el.querySelector('.dash-block-size');
         if (label) label.textContent = w + '/' + LAYOUT_COLS + (h > 0 ? ' · ' + h + 'px' : '');
+        if (_isFree(el.parentElement)) _placeBlock(el.parentElement, el);
+    }
+
+    function _updateGridHeight(grid) {
+        if (!_isFree(grid)) { grid.style.height = ''; return; }
+        let bottom = 0;
+        grid.querySelectorAll(':scope > .dash-block').forEach(function(el) {
+            bottom = Math.max(bottom, el.offsetTop + el.offsetHeight);
+        });
+        grid.style.height = (bottom + 8) + 'px';
+    }
+
+    // 넓은 화면 = 자유 배치(절대 위치), 좁은 화면 = 기존 흐름 배치
+    function _enterFreeMode(grid) {
+        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
+        if (window.innerWidth <= FREE_MIN_WIDTH) {
+            if (_isFree(grid)) {
+                grid.classList.remove('is-free');
+                blocks.forEach(function(el) { el.style.left = el.style.top = el.style.width = ''; });
+            }
+            _updateGridHeight(grid);
+            return;
+        }
+        if (!_isFree(grid)) {
+            // 위치가 저장되지 않은 블럭은 현재 흐름 배치 자리를 시작 위치로 사용
+            const gw = grid.clientWidth || 1;
+            blocks.forEach(function(el) {
+                if (!_hasPos(el)) { el.dataset.x = el.offsetLeft / gw; el.dataset.y = el.offsetTop; }
+            });
+            grid.classList.add('is-free');
+        }
+        blocks.forEach(function(el) { _placeBlock(grid, el); });
+        _updateGridHeight(grid);
     }
 
     function _applySavedLayout() {
@@ -211,6 +271,7 @@ const DashboardModule = (function() {
                 if (!el) return;
                 if (row.w) el.dataset.w = row.w;
                 if (row.h) el.dataset.h = row.h;
+                if (typeof row.x === 'number') { el.dataset.x = row.x; el.dataset.y = row.y || 0; }
                 grid.appendChild(el);   // 저장된 순서대로 재배치
             });
             // 새 카드가 추가된 뒤 기존 저장 레이아웃을 사용하는 경우에는
@@ -227,6 +288,7 @@ const DashboardModule = (function() {
             }
         }
         Array.from(grid.querySelectorAll(':scope > .dash-block')).forEach(_applyBlockStyle);
+        _enterFreeMode(grid);
     }
 
     function resetLayout() {
@@ -236,91 +298,106 @@ const DashboardModule = (function() {
         UIUtils.toast('블럭 배치를 기본값으로 되돌렸습니다.', 'success');
     }
 
-    function _ensureMarker() {
-        if (!_dropMarker) {
-            _dropMarker = document.createElement('div');
-            _dropMarker.className = 'dash-drop-marker';
-        }
-        return _dropMarker;
+    // 자석: 후보 좌표 중 SNAP_DIST 이내에서 가장 가까운 값으로 붙인다
+    function _snapAxis(value, candidates) {
+        let best = value, bestD = Infinity;
+        candidates.forEach(function(c) {
+            const d = Math.abs(c - value);
+            if (d <= SNAP_DIST && d < bestD) { bestD = d; best = c; }
+        });
+        return { value: best, snapped: bestD !== Infinity };
     }
 
-    // 커서에 가장 가까운 블럭 경계를 찾아 자리표시를 붙인다 = 자석 스냅
-    function _snapMarker(grid, x, y) {
-        const marker = _ensureMarker();
-        marker.style.gridColumn = 'span ' + (Number(_dragBlock.dataset.w) || 6);
-        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'))
-            .filter(function(el) { return el !== _dragBlock; });
-        let before = null, best = Infinity;
-        blocks.forEach(function(el) {
-            const r = el.getBoundingClientRect();
-            const cy = r.top + r.height / 2;
-            [[r.left, cy, el], [r.right, cy, el.nextElementSibling]].forEach(function(pt) {
-                const d = Math.hypot(x - pt[0], y - pt[1]);
-                if (d < best) { best = d; before = pt[2]; }
-            });
+    function _magnet(grid, block, left, top) {
+        const w = block.offsetWidth, h = block.offsetHeight;
+        const xs = [0, grid.clientWidth - w], ys = [0];
+        grid.querySelectorAll(':scope > .dash-block').forEach(function(o) {
+            if (o === block) return;
+            const l = o.offsetLeft, t = o.offsetTop, r = l + o.offsetWidth, b = t + o.offsetHeight;
+            xs.push(l, r - w, r + LAYOUT_GAP, l - w - LAYOUT_GAP);
+            ys.push(t, b - h, b + LAYOUT_GAP, t - h - LAYOUT_GAP);
         });
-        if (before === marker) return;
-        if (before) grid.insertBefore(marker, before); else grid.appendChild(marker);
+        const sx = _snapAxis(left, xs), sy = _snapAxis(top, ys);
+        return { left: sx.value, top: sy.value, snapped: sx.snapped || sy.snapped };
     }
 
     function _initLayoutDnD() {
         const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
 
-        grid.addEventListener('dragstart', function(e) {
-            if (_resizeCtx) { e.preventDefault(); return; }
-            const block = e.target.closest('.dash-block');
-            if (!block) return;
-            _dragBlock = block;
-            block.classList.add('is-dragging');
-            document.body.classList.add('dash-layout-dragging');
-            try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', block.dataset.block); } catch (err) {}
-        });
-        grid.addEventListener('dragover', function(e) {
-            if (!_dragBlock) return;
-            e.preventDefault();
-            try { e.dataTransfer.dropEffect = 'move'; } catch (err) {}
-            _snapMarker(grid, e.clientX, e.clientY);
-        });
-        grid.addEventListener('drop', function(e) {
-            if (!_dragBlock) return;
-            e.preventDefault();
-            const marker = _ensureMarker();
-            if (marker.parentNode) marker.parentNode.insertBefore(_dragBlock, marker);
-            _endDrag();
-            _saveLayout();
-        });
-        grid.addEventListener('dragend', _endDrag);
-
-        // ── 크기 조절 (오른쪽 아래 모서리) ──
         grid.addEventListener('pointerdown', function(e) {
-            const handle = e.target.closest('.dash-block-resize');
-            if (!handle) return;
-            const block = handle.closest('.dash-block');
-            const body = block.querySelector(':scope > .dash-block-body');
-            const colW = (grid.clientWidth - 11 * 12) / LAYOUT_COLS; // gap 12px 기준 1칸 폭
-            _resizeCtx = {
+            if (e.button !== 0) return;
+            // ── 크기 조절 (오른쪽 아래 모서리) ──
+            const resizeHandle = e.target.closest('.dash-block-resize');
+            if (resizeHandle) {
+                const block = resizeHandle.closest('.dash-block');
+                const body = block.querySelector(':scope > .dash-block-body');
+                const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
+                _resizeCtx = {
+                    block: block,
+                    startX: e.clientX, startY: e.clientY,
+                    startW: Number(block.dataset.w) || 6,
+                    startH: Number(block.dataset.h) || (body ? body.getBoundingClientRect().height : 200),
+                    colW: colW
+                };
+                block.classList.add('is-resizing');
+                document.body.classList.add('dash-layout-resizing');
+                resizeHandle.setPointerCapture(e.pointerId);
+                e.preventDefault();
+                return;
+            }
+            // ── 자유 이동 (블럭 이름 영역) ──
+            const moveHandle = e.target.closest('.dash-block-handle');
+            if (!moveHandle || !_isFree(grid)) return;
+            const block = moveHandle.closest('.dash-block');
+            _moveCtx = {
                 block: block,
                 startX: e.clientX, startY: e.clientY,
-                startW: Number(block.dataset.w) || 6,
-                startH: Number(block.dataset.h) || (body ? body.getBoundingClientRect().height : 200),
-                colW: colW
+                startLeft: block.offsetLeft, startTop: block.offsetTop
             };
-            block.classList.add('is-resizing');
-            document.body.classList.add('dash-layout-resizing');
-            handle.setPointerCapture(e.pointerId);
+            grid.querySelectorAll(':scope > .dash-block').forEach(function(el) { el.style.zIndex = ''; });
+            block.style.zIndex = 5;   // 끌고 있는 블럭을 맨 앞으로
+            block.classList.add('is-dragging');
+            document.body.classList.add('dash-layout-dragging');
+            moveHandle.setPointerCapture(e.pointerId);
             e.preventDefault();
         });
         grid.addEventListener('pointermove', function(e) {
+            if (_moveCtx) {
+                const c = _moveCtx;
+                let left = c.startLeft + (e.clientX - c.startX);
+                let top = c.startTop + (e.clientY - c.startY);
+                let snapped = false;
+                if (!e.altKey) {
+                    const m = _magnet(grid, c.block, left, top);
+                    left = m.left; top = m.top; snapped = m.snapped;
+                }
+                left = Math.min(Math.max(0, grid.clientWidth - c.block.offsetWidth), Math.max(0, left));
+                top = Math.max(0, Math.round(top));
+                c.block.dataset.x = left / (grid.clientWidth || 1);
+                c.block.dataset.y = top;
+                c.block.style.left = left + 'px';
+                c.block.style.top = top + 'px';
+                c.block.classList.toggle('is-snapped', snapped);
+                _updateGridHeight(grid);
+                return;
+            }
             if (!_resizeCtx) return;
             const c = _resizeCtx;
-            const spanDelta = Math.round((e.clientX - c.startX) / (c.colW + 12));
+            const spanDelta = Math.round((e.clientX - c.startX) / (c.colW + LAYOUT_GAP));
             c.block.dataset.w = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, c.startW + spanDelta));
             const h = Math.round((c.startH + (e.clientY - c.startY)) / 8) * 8;
             c.block.dataset.h = Math.max(MIN_HEIGHT, h);
             _applyBlockStyle(c.block);
+            _updateGridHeight(grid);
         });
         ['pointerup', 'pointercancel'].forEach(function(evt) {
             grid.addEventListener(evt, function() {
+                if (_moveCtx) {
+                    _moveCtx.block.classList.remove('is-dragging', 'is-snapped');
+                    document.body.classList.remove('dash-layout-dragging');
+                    _moveCtx = null;
+                    _saveLayout();
+                }
                 if (!_resizeCtx) return;
                 _resizeCtx.block.classList.remove('is-resizing');
                 document.body.classList.remove('dash-layout-resizing');
@@ -337,13 +414,20 @@ const DashboardModule = (function() {
             _applyBlockStyle(block);
             _saveLayout();
         });
-    }
 
-    function _endDrag() {
-        if (_dragBlock) _dragBlock.classList.remove('is-dragging');
-        _dragBlock = null;
-        document.body.classList.remove('dash-layout-dragging');
-        if (_dropMarker && _dropMarker.parentNode) _dropMarker.parentNode.removeChild(_dropMarker);
+        // 블럭 내용이 늦게 채워져 높이가 바뀌면 그리드 높이도 따라간다
+        if (_blockObserver) _blockObserver.disconnect();
+        if (window.ResizeObserver) {
+            _blockObserver = new ResizeObserver(function() { _updateGridHeight(grid); });
+            grid.querySelectorAll(':scope > .dash-block').forEach(function(el) { _blockObserver.observe(el); });
+        }
+        if (!_winResizeBound) {
+            _winResizeBound = true;
+            window.addEventListener('resize', function() {
+                const g = document.getElementById('dashLayoutGrid');
+                if (g) _enterFreeMode(g);
+            });
+        }
     }
 
     function _removeDuplicateBlocks(grid) {
@@ -362,20 +446,20 @@ const DashboardModule = (function() {
         container.innerHTML = `
         <div class="dash-standard-page fade-in-up">
             <div class="dash-free-grid" id="dashLayoutGrid">
-                <div class="dash-block" data-block="incoming" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>수입검사 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="productionTiles" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>생산 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProdTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="improvement" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>개선활동 / 우수 사원<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashImprovementTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="monitorTiles" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>점검 / 관리 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashMonitorTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="fifoViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>선입선출(FIFO) 위반 — 사출 · 도료<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashFifoViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="processViolation" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>프로세스 위반 — 직접 입고(미검사)<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProcessViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="managerAlerts" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>관리자 보고 누락<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashManagerAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="qualityStandby" data-w="7" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>초중종물 · 출하검사 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="paintPending" data-w="5" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도료 입고 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashPaintPending"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="jigLife" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도장 지그 교체 임박<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashJigLifeAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
-                <div class="dash-block" data-block="alertRow" data-w="12" draggable="true"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>경보<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="incoming" data-w="7"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>수입검사 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="card dash-standard-incoming-panel"><div class="dash-section-heading compact"><div><span class="dash-section-kicker">TODAY / INCOMING INSPECTION</span><h2>수입검사 현황</h2></div><span class="dash-section-note">오늘 입고된 품목</span></div><div id="dashIncomingSummary"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="productionTiles" data-w="5"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>생산 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProdTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="improvement" data-w="5"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>개선활동 / 우수 사원<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashImprovementTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="monitorTiles" data-w="5"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>점검 / 관리 현황<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashMonitorTiles"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="fifoViolation" data-w="12"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>선입선출(FIFO) 위반 — 사출 · 도료<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashFifoViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="processViolation" data-w="12"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>프로세스 위반 — 직접 입고(미검사)<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashProcessViolation"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="managerAlerts" data-w="7"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>관리자 보고 누락<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashManagerAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="qualityStandby" data-w="7"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>초중종물 · 출하검사 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div class="dash-standard-row"><div id="dashQualityStdWarnings"></div><div id="dashShippingStandby"></div></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="paintPending" data-w="5"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도료 입고 대기<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashPaintPending"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="jigLife" data-w="12"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>도장 지그 교체 임박<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashJigLifeAlerts"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
+                <div class="dash-block" data-block="alertRow" data-w="12"><div class="dash-block-handle"><span class="material-symbols-outlined">drag_indicator</span>경보<span class="dash-block-size"></span></div><div class="dash-block-body"><div id="dashAlertRow" style="display:none;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;"></div></div><div class="dash-block-resize" title="끌어서 크기 조절 · 더블클릭 시 높이 자동"></div></div>
             </div>
             <div class="dash-layout-tools">
-                <span class="dash-layout-tip">블럭 이름을 끌어 위치 이동 · 오른쪽 아래 모서리를 끌어 크기 조절</span>
+                <span class="dash-layout-tip">블럭 이름을 끌어 자유 이동(가장자리 자석 · Alt 누르면 해제) · 오른쪽 아래 모서리를 끌어 크기 조절</span>
                 <button class="dash-layout-reset" onclick="DashboardModule.resetLayout()">
                     <span class="material-symbols-outlined">restart_alt</span>블럭 배치 초기화
                 </button>

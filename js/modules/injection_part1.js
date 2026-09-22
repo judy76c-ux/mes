@@ -130,6 +130,8 @@ var InjectionIncomingModule = (function() {
     }
 
     function search() {
+        // 사출 창고 화면 등 다른 페이지에서 수정 창을 연 경우 검색 목록이 없으므로 건너뛴다
+        if (!document.getElementById('injInspStart')) return;
         const start = document.getElementById('injInspStart').value;
         const end = document.getElementById('injInspEnd').value;
         const carModel = (document.getElementById('injInspCarModel') || {}).value || '';
@@ -1676,6 +1678,19 @@ var InjectionIncomingModule = (function() {
         const warehouseExcess = warehouseDeltas.filter(function (d) { return d && d.delta < 0; });
         const warehouseShort = warehouseDeltas.filter(function (d) { return d && d.delta > 0; });
 
+        // 품명이 바뀌었고 이미 창고에 입고된 기록이 있으면 창고도 함께 정정한다
+        const _origInsp = Storage.getById(STORE, id) || {};
+        const _oldPartInfo = {
+            partName: _origInsp.partName || '', carModel: _origInsp.carModel || '',
+            color: _origInsp.color || '', supplierName: _origInsp.supplierName || ''
+        };
+        const partPlan = (String(_oldPartInfo.partName).trim() !== updateData.partName
+            && typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.planInspectionPartNameChange === 'function')
+            ? InjectionWarehouseModule.planInspectionPartNameChange(id, _oldPartInfo)
+            : null;
+        let partResult = null;
+
         async function _persistInspEdit(alsoAdjustWarehouse) {
             const prevSnap = (function () {
                 try { return JSON.parse(JSON.stringify(Storage.getById(STORE, id) || {})); }
@@ -1683,6 +1698,9 @@ var InjectionIncomingModule = (function() {
             })();
             await Storage.update(STORE, id, updateData);
             await propagateCertReceived(updateData.lots);
+            if (partPlan) {
+                partResult = await InjectionWarehouseModule.applyInspectionPartNameChange(id, _oldPartInfo, partPlan);
+            }
             if (alsoAdjustWarehouse && warehouseExcess.length
                     && typeof InjectionWarehouseModule.applyInspectionQtyAdjustments === 'function') {
                 await InjectionWarehouseModule.applyInspectionQtyAdjustments(id, warehouseExcess);
@@ -1699,9 +1717,13 @@ var InjectionIncomingModule = (function() {
                 }
             } catch (e) { console.warn('[InjectionIncoming] change log failed', e); }
             UIUtils.closeModal();
-            UIUtils.toast(alsoAdjustWarehouse
-                ? '수입검사를 수정하고 사출 창고 과다 재고를 보정했습니다.'
-                : '수정되었습니다.', 'success');
+            UIUtils.toast(partResult && partResult.mode === 'rename'
+                ? '수입검사와 사출 창고 입고 기록의 품명을 함께 정정했습니다.'
+                : partResult && partResult.mode === 'swap'
+                    ? '수입검사를 수정하고 남은 재고를 품명 대체 전표로 옮겼습니다.'
+                    : alsoAdjustWarehouse
+                        ? '수입검사를 수정하고 사출 창고 과다 재고를 보정했습니다.'
+                        : '수정되었습니다.', 'success');
             search();
             try {
                 if (typeof InjectionWarehouseModule !== 'undefined') {
@@ -1710,6 +1732,42 @@ var InjectionIncomingModule = (function() {
                 }
             } catch (e) {}
         }
+
+        if (partPlan && !InjectionIncomingModule._partChangeConfirmed) {
+            const esc = function (v) { return String(v == null ? '' : v).replace(/&/g, '&amp;').replace(/</g, '&lt;'); };
+            const rows = partPlan.lots.map(function (l) {
+                return '<tr>' +
+                    '<td style="padding:4px 8px;font-family:monospace;white-space:nowrap;">' + esc(l.lotNo) + '</td>' +
+                    '<td style="padding:4px 8px;text-align:right;white-space:nowrap;">' + UIUtils.formatNumber(l.inQty) + '</td>' +
+                    '<td style="padding:4px 8px;text-align:right;white-space:nowrap;' + (l.outQty ? 'color:#dc2626;font-weight:700;' : '') + '">' + UIUtils.formatNumber(l.outQty) + '</td>' +
+                    '<td style="padding:4px 8px;text-align:right;white-space:nowrap;font-weight:700;">' + UIUtils.formatNumber(l.remain) + '</td>' +
+                    '</tr>';
+            }).join('');
+            const guide = partPlan.consumed
+                ? '이 LOT은 <strong>이미 일부 출고</strong>되었습니다. 출고 이력은 그대로 두고, <strong>남은 수량 '
+                    + UIUtils.formatNumber(partPlan.totalRemain) + 'EA만 「품명 대체」 전표</strong>(옛 품명 출고 − / 새 품명 입고 +)로 옮깁니다.<br>'
+                    + '<span style="color:#b45309;">이미 출고된 수량은 옛 품명으로 기록되어 있으니 현장(도장 등)에서 실물 품명을 확인하세요.</span>'
+                : '아직 출고된 수량이 없습니다. 창고 입고 기록 ' + partPlan.inbounds.length + '건(' + UIUtils.formatNumber(partPlan.totalIn)
+                    + 'EA)의 <strong>품명·차종·컬러를 새 품명으로 함께 정정</strong>합니다. LOT·입고일·선입선출 순서는 그대로 유지됩니다.';
+            UIUtils.showModal('품명 변경 — 사출 창고 동반 정정',
+                '<div style="padding:4px 0;">' +
+                    '<div style="margin-bottom:10px;font-size:0.9rem;"><strong>' + esc(_oldPartInfo.partName) + '</strong> → <strong style="color:#2563eb;">' + esc(updateData.partName) + '</strong></div>' +
+                    '<div style="padding:12px 14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;margin-bottom:12px;font-size:0.85rem;line-height:1.65;">' + guide + '</div>' +
+                    '<table class="data-table compact" style="width:100%;border-collapse:collapse;font-size:0.82rem;">' +
+                    '<thead><tr style="background:var(--bg-secondary);">' +
+                    '<th style="padding:4px 8px;text-align:left;">사출 LOT</th>' +
+                    '<th style="padding:4px 8px;text-align:right;">입고</th>' +
+                    '<th style="padding:4px 8px;text-align:right;">출고됨</th>' +
+                    '<th style="padding:4px 8px;text-align:right;">' + (partPlan.consumed ? '대체 수량' : '정정 수량') + '</th>' +
+                    '</tr></thead><tbody>' + rows + '</tbody></table>' +
+                '</div>',
+                '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+                '<button class="btn btn-primary" onclick="InjectionIncomingModule._confirmPartChangeSave(\'' + id + '\')">검사+창고 품명 함께 정정</button>',
+                '560px'
+            );
+            return;
+        }
+        InjectionIncomingModule._partChangeConfirmed = false;
 
         if (warehouseExcess.length) {
             const lines = warehouseExcess.map(function (d) {
@@ -1749,6 +1807,13 @@ var InjectionIncomingModule = (function() {
         }
 
         await _persistInspEdit(false);
+    }
+
+    // 품명 변경 확인 → 확인창을 닫으면 모달 스택에서 수정 폼(입력값 포함)이 복원되고, 그 값으로 다시 저장
+    async function _confirmPartChangeSave(id) {
+        UIUtils.closeModal();
+        InjectionIncomingModule._partChangeConfirmed = true;
+        await saveEdit(id);
     }
 
     async function _persistInspEditOnly() {
@@ -2380,6 +2445,7 @@ var InjectionIncomingModule = (function() {
         edit,
         saveEdit,
         _persistInspEditOnly,
+        _confirmPartChangeSave,
         _persistInspEditWithStock,
         remove,
         confirmDelete,
