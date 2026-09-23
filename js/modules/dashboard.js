@@ -1725,7 +1725,7 @@ const DashboardModule = (function() {
     }
 
     /* ══════════════════════════════════════════════════════════
-       경보 3열 (사출 입고 대기 / 실적 미입력 / 도료 사용 미등록)
+       경보 그룹 (생산실적 경보 / 자재관리 경보)
     ══════════════════════════════════════════════════════════ */
     async function renderAlertRow() {
         const el = document.getElementById('dashAlertRow');
@@ -1824,18 +1824,28 @@ const DashboardModule = (function() {
             }
         } catch (e) { console.warn('[Dashboard] LOT 오류 스캔 실패:', e); }
 
-        function _alertCard(icon, iconColor, title, count, rows, nav, emptyMsg, onClickJs) {
-            if (!count) return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-secondary);display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:0.82rem;">
+        function _alertGroupCard(icon, iconColor, title, items, emptyMsg) {
+            const activeItems = items.filter(item => item.count > 0);
+            const total = activeItems.reduce((sum, item) => sum + item.count, 0);
+            if (!total) return `<div style="border:1px solid var(--border-color);border-radius:8px;padding:10px 12px;background:var(--bg-secondary);display:flex;align-items:center;gap:8px;color:var(--text-muted);font-size:0.82rem;">
                 <span class="material-symbols-outlined" style="font-size:16px;color:var(--accent-green);">check_circle</span>${emptyMsg}</div>`;
+
+            const sections = activeItems.map(item => `<section>
+                <div style="display:flex;align-items:center;justify-content:space-between;padding:5px 10px;background:var(--bg-secondary);border-top:1px solid var(--border-color);">
+                    <span style="font-size:.7rem;font-weight:700;color:${item.color || iconColor};">${item.label} <b style="background:${item.color || iconColor};color:#fff;border-radius:10px;padding:1px 6px;font-size:.65rem;">${item.count}건</b></span>
+                    <button onclick="${item.onClickJs || `Router.navigate('${item.nav}')`}" style="border:none;background:none;cursor:pointer;font-size:.68rem;color:${item.color || iconColor};font-weight:600;padding:2px 4px;">바로가기 →</button>
+                </div>
+                <div style="max-height:160px;overflow-y:auto;">${item.rows}</div>
+            </section>`).join('');
+
             return `<div style="border:1px solid var(--border-color);border-top:3px solid ${iconColor};border-radius:8px;overflow:hidden;background:var(--bg-primary);">
                 <div style="display:flex;align-items:center;justify-content:space-between;padding:7px 12px;background:${iconColor}0d;">
-                    <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:${iconColor};letter-spacing:.04em;text-transform:uppercase;">
+                    <div style="display:flex;align-items:center;gap:5px;font-size:.72rem;font-weight:700;color:${iconColor};letter-spacing:.04em;">
                         <span class="material-symbols-outlined" style="font-size:14px;">${icon}</span>${title}
-                        <span style="background:${iconColor};color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${count}건</span>
+                        <span style="background:${iconColor};color:#fff;border-radius:10px;padding:1px 7px;font-size:.68rem;">${total}건</span>
                     </div>
-                    <button onclick="${onClickJs || `Router.navigate('${nav}')`}" style="border:none;background:none;cursor:pointer;font-size:.72rem;color:${iconColor};font-weight:600;padding:2px 6px;">바로가기 →</button>
                 </div>
-                <div style="max-height:160px;overflow-y:auto;">${rows}</div>
+                ${sections}
             </div>`;
         }
 
@@ -1888,18 +1898,22 @@ const DashboardModule = (function() {
                     <td style="padding:4px 8px;font-size:0.72rem;font-family:monospace;color:var(--text-muted);">${_esc(e.original||'')}</td>
                 </tr>`).join('') + `</table>` : '';
 
-            const total = (injPending.length > 0 ? 1 : 0) + (unenteredPlans.length > 0 ? 1 : 0)
-                + (list.length > 0 ? 1 : 0) + (lotErrors.length > 0 ? 1 : 0);
+            const productionAlertCount = unenteredPlans.length + list.length;
+            const materialAlertCount = injPending.length + lotErrors.length;
+            const total = (productionAlertCount > 0 ? 1 : 0) + (materialAlertCount > 0 ? 1 : 0);
             if (!total) { el.style.display = 'none'; el.innerHTML = ''; return; }
             el.style.display = 'grid';
             el.innerHTML =
-                _alertCard('precision_manufacturing', '#8b5cf6', '사출 입고 대기', injPending.length, injRows, 'warehouse-overview', '사출 입고 대기 없음') +
-                _alertCard('edit_note',               '#f59e0b', '실적 미입력',    unenteredPlans.length, unenteredRows, 'painting-work-a', '미입력 계획 없음') +
-                _alertCard('barcode_scanner',         '#dc2626', '사출 LOT 형식 오류', lotErrors.length, lotErrorRows, null, 'LOT 형식 오류 없음',
-                    lotErrors.length === 1
+                _alertGroupCard('precision_manufacturing', '#ef4444', '생산실적 경보', [
+                    { label:'실적 미입력', count:unenteredPlans.length, rows:unenteredRows, nav:'painting-work-a', color:'#f59e0b' },
+                    { label:'도료 사용 미등록', count:list.length, rows:_paintRowsHtml(list), nav:'paint-mix', color:'#ef4444' }
+                ], '생산실적 경보 없음') +
+                _alertGroupCard('inventory_2', '#8b5cf6', '자재관리 경보', [
+                    { label:'사출 입고 대기', count:injPending.length, rows:injRows, nav:'warehouse-overview', color:'#8b5cf6' },
+                    { label:'사출 LOT 형식 오류', count:lotErrors.length, rows:lotErrorRows, onClickJs:lotErrors.length === 1
                         ? `App.goToLotErrorSource('${_esc(lotErrors[0].src||'')}','${_esc(lotErrors[0].id||'')}')`
-                        : 'App.goToLotRepairTab()') +
-                _alertCard('science',                 '#ef4444', '도료 사용 미등록', list.length, _paintRowsHtml(list), 'paint-mix', '도료 사용 모두 등록됨');
+                        : 'App.goToLotRepairTab()', color:'#dc2626' }
+                ], '자재관리 경보 없음');
         }
 
         _paintHtml(paintMissing);
