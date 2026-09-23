@@ -137,11 +137,14 @@ body.sidebar-hidden .main-area .sdp-table-scroll {
 .dash-block { position:relative;min-width:0;grid-column:span 6; }
 .dash-block-body { min-width:0; }
 .dash-block-handle { display:flex;align-items:center;gap:4px;margin:0 0 4px 2px;padding:2px 6px;border-radius:6px;
-    font-size:.64rem;font-weight:700;color:#94a3b8;letter-spacing:.02em;cursor:grab;opacity:0;transition:opacity .15s,background .15s; }
-.dash-block-handle .material-symbols-outlined { font-size:15px; }
+    font-size:.78rem;font-weight:800;color:#334155;letter-spacing:.02em;cursor:grab;transition:background .15s,color .15s; }
+.dash-block-handle .material-symbols-outlined { font-size:15px;color:#94a3b8; }
 .dash-block-size { margin-left:auto;font-size:.58rem;color:#cbd5e1;font-weight:700; }
-.dash-block:hover .dash-block-handle, body.dash-layout-dragging .dash-block-handle,
-body.dash-layout-resizing .dash-block-handle { opacity:1; }
+/* 카드 제목은 항상 표시, 끌기 아이콘·크기 표시는 마우스를 올렸을 때만 */
+.dash-block-handle .material-symbols-outlined, .dash-block-size { opacity:0;transition:opacity .15s; }
+.dash-block:hover .dash-block-handle .material-symbols-outlined, .dash-block:hover .dash-block-size,
+body.dash-layout-dragging .dash-block-handle .material-symbols-outlined, body.dash-layout-dragging .dash-block-size,
+body.dash-layout-resizing .dash-block-handle .material-symbols-outlined, body.dash-layout-resizing .dash-block-size { opacity:1; }
 .dash-block-handle:hover { background:#eef2f7;color:#475569; }
 .dash-block-handle:active { cursor:grabbing; }
 .dash-block.is-dragging { opacity:.45; }
