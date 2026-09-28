@@ -270,7 +270,7 @@ const ApiClient = (function() {
 
   function photoUrl(relUrl) {
     if (!relUrl) return '';
-    if (relUrl.startsWith('http')) return relUrl;
+    if (relUrl.startsWith('http') || relUrl.startsWith('data:')) return relUrl;
     return (getApiBase() || '') + relUrl;
   }
 

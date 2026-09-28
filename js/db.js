@@ -5,7 +5,7 @@
 
 const DB = (function() {
     const DB_NAME = 'ProductionMES_DB';
-    const DB_VERSION = 56;
+    const DB_VERSION = 57;
     let db = null;
 
     // 스토어 이름 - 전체 공정에 대응
@@ -86,6 +86,7 @@ const DB = (function() {
 
         // 설비관리 (v21)
         EQUIP_MASTER:       'equip_master',
+        EQUIP_PROFILE:      'equip_profile', // 대표 설비 사양/모델 마스터
         EQUIP_SPARE:        'equip_spare',
         EQUIP_CHECK_ITEM:   'equip_check_item',
         EQUIP_CHECK_RECORD: 'equip_check_record',
@@ -1140,6 +1141,10 @@ const DB = (function() {
                 if (!database.objectStoreNames.contains(STORES.EQUIP_MASTER)) {
                     const store = database.createObjectStore(STORES.EQUIP_MASTER, { keyPath: 'id' });
                     store.createIndex('line', 'line', { unique: false });
+                }
+                if (!database.objectStoreNames.contains(STORES.EQUIP_PROFILE)) {
+                    const store = database.createObjectStore(STORES.EQUIP_PROFILE, { keyPath: 'id' });
+                    store.createIndex('name', 'name', { unique: false });
                 }
                 if (!database.objectStoreNames.contains(STORES.EQUIP_SPARE)) {
                     const store = database.createObjectStore(STORES.EQUIP_SPARE, { keyPath: 'id' });

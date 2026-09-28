@@ -19291,10 +19291,121 @@ var ProdSubMaterialsModule = (function() {
     const CATEGORIES = ['포장재', '라벨', '테이프', '지그/소모품', '검사 부자재', '기타'];
     const PROCESS_MAP = {
         '사출공정': ['수입검사', '사출창고', '사출성형', '조립/포장'],
-        '도장공정': ['수입검사', '배합/사용', '도장-A', '도장-B', '건조', '검사', '포장'],
+        '도장공정': ['수입검사', '배합/사용', '도장-A', '도장-B', '도장-A,B 공용', '건조', '검사', '포장'],
         '레이저공정': ['대기품', '레이저가공', '검사', '지그관리'],
         '출하공정': ['출하검사', '제품창고', '출고']
     };
+
+    let _typePhotos = [];
+    let _typePhotoAddMode = false;
+
+    function _typePhotoSectionHtml() {
+        const photos = _typePhotos;
+        const addMode = _typePhotoAddMode;
+        return `
+            <div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;color:var(--text-secondary);
+                        display:flex;align-items:center;gap:6px;">
+                <span class="material-symbols-outlined" style="font-size:16px;">photo_camera</span>부자재 사진
+                <button type="button" class="btn btn-outline btn-sm" style="margin-left:auto;"
+                        onclick="ProdSubMaterialsModule.toggleTypePhotoAddMode()">
+                    <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">${addMode?'close':'add_photo_alternate'}</span>
+                    ${addMode?'취소':'추가'}
+                </button>
+            </div>
+            ${photos.length === 0 && !addMode
+                ? `<div style="display:flex;align-items:center;justify-content:center;height:120px;
+                               border:2px dashed var(--border-color);border-radius:10px;
+                               color:var(--text-muted);font-size:0.82rem;">
+                       사진 없음 · 위 "추가" 버튼을 눌러 등록하세요.
+                   </div>`
+                : `<div style="display:grid;grid-template-columns:repeat(${(photos.length + (addMode?1:0))<=1?'1':'3'},1fr);gap:5px;">
+                       ${photos.map((p,i) => `
+                       <div style="position:relative;aspect-ratio:4/3;overflow:hidden;
+                                   border-radius:7px;border:1px solid var(--border-color);cursor:pointer;"
+                            onclick="ProdSubMaterialsModule.openTypePhotoViewer(${i})">
+                           <img src="${p}" style="width:100%;height:100%;object-fit:cover;">
+                           <button type="button" onclick="event.stopPropagation();ProdSubMaterialsModule.deleteTypePhoto(${i})"
+                               style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);border:none;
+                                      border-radius:50%;width:22px;height:22px;color:#fff;cursor:pointer;
+                                      font-size:14px;line-height:22px;text-align:center;padding:0;">×</button>
+                       </div>`).join('')}
+                       ${addMode ? `
+                       <div id="psmTypePhotoZone" tabindex="0" onpaste="ProdSubMaterialsModule.pasteTypePhoto(event)"
+                            style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                                   aspect-ratio:${photos.length===0?'auto':'4/3'};${photos.length===0?'height:120px;':''}
+                                   border:2px dashed var(--accent-blue);border-radius:${photos.length===0?'10px':'7px'};
+                                   color:var(--text-muted);font-size:0.76rem;text-align:center;outline:none;cursor:text;padding:6px;">
+                           <span class="material-symbols-outlined" style="font-size:${photos.length===0?'32px':'24px'};margin-bottom:4px;opacity:.5;color:var(--accent-blue);">content_paste</span>
+                           <span>이 영역 클릭 후<br>Ctrl+V로 사진 붙여넣기</span>
+                       </div>` : ''}
+                   </div>`}
+        `;
+    }
+
+    function _refreshTypePhotoSection() {
+        const el = document.getElementById('psmTypePhotoSection');
+        if (el) el.innerHTML = _typePhotoSectionHtml();
+    }
+
+    function toggleTypePhotoAddMode() {
+        _typePhotoAddMode = !_typePhotoAddMode;
+        _refreshTypePhotoSection();
+        if (_typePhotoAddMode) {
+            setTimeout(() => document.getElementById('psmTypePhotoZone')?.focus(), 0);
+        }
+    }
+
+    function pasteTypePhoto(event) {
+        const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+        const imgItems = items.filter(item => item.type && item.type.startsWith('image/'));
+        if (!imgItems.length) return;
+        event.preventDefault();
+        const files = imgItems.map(item => item.getAsFile()).filter(Boolean);
+        let pending = files.length;
+        if (!pending) return;
+        files.forEach(file => {
+            const reader = new FileReader();
+            reader.onload = e => {
+                _typePhotos.push(e.target.result);
+                pending--;
+                if (pending === 0) {
+                    _typePhotoAddMode = false;
+                    _refreshTypePhotoSection();
+                }
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+
+    function deleteTypePhoto(idx) {
+        _typePhotos.splice(idx, 1);
+        _refreshTypePhotoSection();
+    }
+
+    function openTypePhotoViewer(idx) {
+        if (!_typePhotos[idx]) return;
+        UIUtils.showModal('부자재 사진', `
+            <div style="text-align:center;">
+                <img src="${_typePhotos[idx]}" style="max-width:100%;max-height:520px;border-radius:8px;display:inline-block;">
+            </div>`, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
+    function viewTypePhotos(id) {
+        const data = Storage.getById(STORE, id);
+        const photos = (data && data.photos) || [];
+        if (!photos.length) return;
+        UIUtils.showModal(`부자재 사진 — ${_esc(data.materialName || '')} (${photos.length}장)`, `
+            <div style="display:grid;grid-template-columns:repeat(${photos.length===1?'1':'2'},1fr);gap:8px;">
+                ${photos.map(p => `
+                <div style="overflow:hidden;border-radius:8px;border:1px solid var(--border-color);
+                            display:flex;align-items:center;justify-content:center;background:var(--bg-secondary);">
+                    <img src="${p}" style="max-width:100%;max-height:420px;width:auto;height:auto;display:block;cursor:zoom-in;"
+                         onclick="window.open(this.src,'_blank')">
+                </div>`).join('')}
+            </div>`, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
 
     function render(container) {
         const filterHTML = `
@@ -19439,6 +19550,7 @@ var ProdSubMaterialsModule = (function() {
                                     <th>규격/용도</th>
                                     <th style="width:80px;">단위</th>
                                     <th>비고</th>
+                                    <th style="min-width:180px;">사진</th>
                                     <th style="width:120px;">작업</th>
                                 </tr>
                             </thead>
@@ -19492,12 +19604,21 @@ var ProdSubMaterialsModule = (function() {
                     <td>${_esc(d.unit || '-')}</td>
                     <td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(d.note || '-')}</td>
                     <td>
+                        ${(d.photos && d.photos.length)
+                            ? `<div style="display:flex;gap:5px;flex-wrap:wrap;align-items:center;">
+                                   ${d.photos.map(p => `
+                                   <img src="${p}" onclick="ProdSubMaterialsModule.viewTypePhotos('${_js(d.id)}')"
+                                        style="height:64px;width:auto;max-width:96px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);cursor:pointer;">`).join('')}
+                               </div>`
+                            : `<span style="color:var(--text-muted);font-size:.78rem;">-</span>`}
+                    </td>
+                    <td>
                         <button class="btn btn-sm btn-outline" onclick="ProdSubMaterialsModule.editType('${_js(d.id)}')">수정</button>
                         <button class="btn btn-sm btn-danger" onclick="ProdSubMaterialsModule.removeType('${_js(d.id)}')">삭제</button>
                     </td>
                 </tr>
             `).join('')
-            : `<tr><td colspan="8" style="text-align:center;padding:26px;color:var(--text-muted);">등록된 소모자재 종류가 없습니다.</td></tr>`;
+            : `<tr><td colspan="9" style="text-align:center;padding:26px;color:var(--text-muted);">등록된 소모자재 종류가 없습니다.</td></tr>`;
     }
 
     function _typeFormHtml(d = {}) {
@@ -19539,6 +19660,7 @@ var ProdSubMaterialsModule = (function() {
                     <label class="form-label">비고</label>
                     <textarea class="form-textarea" id="psmTypeNote" rows="3" placeholder="사용 기준이나 관리 포인트를 입력">${_esc(d.note || '')}</textarea>
                 </div>
+                <div id="psmTypePhotoSection">${_typePhotoSectionHtml()}</div>
             </div>
         `;
     }
@@ -19546,6 +19668,7 @@ var ProdSubMaterialsModule = (function() {
     function _collectTypeData() {
         return {
             _docKind: TYPE_KIND,
+            photos: _typePhotos.slice(),
             mainProcess: document.getElementById('psmTypeMainProcess')?.value || '',
             subProcess: document.getElementById('psmTypeSubProcess')?.value || '',
             materialName: document.getElementById('psmTypeMaterialName')?.value.trim() || '',
@@ -19563,6 +19686,8 @@ var ProdSubMaterialsModule = (function() {
     }
 
     function openTypeModal() {
+        _typePhotos = [];
+        _typePhotoAddMode = false;
         UIUtils.showModal('소모자재 종류 등록', _typeFormHtml(), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeNew()">등록</button>
@@ -19582,6 +19707,8 @@ var ProdSubMaterialsModule = (function() {
     function editType(id) {
         const data = Storage.getById(STORE, id);
         if (!data) return;
+        _typePhotos = (data.photos || []).slice();
+        _typePhotoAddMode = false;
         UIUtils.showModal('소모자재 종류 수정', _typeFormHtml(data), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeEdit('${_js(id)}')">저장</button>
@@ -19816,6 +19943,11 @@ var ProdSubMaterialsModule = (function() {
         editType,
         saveTypeEdit,
         removeType,
+        toggleTypePhotoAddMode,
+        pasteTypePhoto,
+        deleteTypePhoto,
+        openTypePhotoViewer,
+        viewTypePhotos,
         openAddModal,
         saveNew,
         edit,
@@ -26188,7 +26320,9 @@ window.addEventListener('afterprint', () => {
  *    도장A라인 / 도장B라인 × 스페어관리 / 점검항목 / 이상발생 / 비가동이력
  */
 var ProdEquipmentModule = (function() {
+    function _js(s) { return String(s ?? '').replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
     const ST_EQUIP  = DB.STORES.EQUIP_MASTER;
+    const ST_PROFILE = DB.STORES.EQUIP_PROFILE;
     const ST_SPARE  = DB.STORES.EQUIP_SPARE;
     const ST_CITEM  = DB.STORES.EQUIP_CHECK_ITEM;
     const ST_CREC   = DB.STORES.EQUIP_CHECK_RECORD;
@@ -26216,11 +26350,9 @@ var ProdEquipmentModule = (function() {
 
     // 레이져 공정 목록
     const LASER_PROC_STATIONS = [
-        { name:'레이져 가공기',  icon:'bolt',                   no:10 },
-        { name:'로딩/언로딩',   icon:'upload',                  no:20 },
-        { name:'지그/픽스쳐',   icon:'build',                   no:30 },
-        { name:'마킹/각인',     icon:'draw',                    no:40 },
-        { name:'검사 설비',     icon:'search',                   no:50 },
+        { name:'지그조립',      icon:'build',                    no:10 },
+        { name:'마킹/각인',     icon:'draw',                    no:20 },
+        { name:'검사',          icon:'search',                   no:30 },
         { name:'공용',         icon:'handyman',                 no:0, common:true },
     ];
     // 사출기 공정 목록
@@ -26255,6 +26387,8 @@ var ProdEquipmentModule = (function() {
     let _subTab   = 'spare';
     let _rightTab   = 'map';   // 'map' | 'detail'
     let _layoutEditMode = false;
+    let _photoAddMode = false;
+    let _manualAddMode = false;
 
     // 도장(A/B) 세부공정 순서 — 제조관리 표준 기준
     const PROC_STATIONS = [
@@ -26502,7 +26636,23 @@ var ProdEquipmentModule = (function() {
     // ── 메인 렌더 ────────────────────────────────────────────────
     function init() {}
 
-    function render(container) {
+    // 레이져 공정 개편: 레이져 가공기→마킹/각인 통합, 로딩/언로딩·지그/픽스쳐→지그조립 통합, 검사 설비→검사 개명
+    const LASER_PROC_RENAME_MAP = {
+        '레이져 가공기': '마킹/각인',
+        '로딩/언로딩':   '지그조립',
+        '지그/픽스쳐':   '지그조립',
+        '검사 설비':     '검사'
+    };
+    async function _migrateLegacyLaserProcess() {
+        const list = (Storage.getAll(ST_EQUIP) || [])
+            .filter(x => x.line === '레이져' && LASER_PROC_RENAME_MAP[x.process]);
+        for (const x of list) {
+            await Storage.update(ST_EQUIP, x.id, { ...x, process: LASER_PROC_RENAME_MAP[x.process] });
+        }
+    }
+
+    async function render(container) {
+        await _migrateLegacyLaserProcess();
         try {
             const pendingMode = sessionStorage.getItem('prodEquipmentMode');
             const validModes = _EQUIP_TABS.map(function(t) { return t.key; });
@@ -26789,12 +26939,26 @@ var ProdEquipmentModule = (function() {
                             설비 목록
                             <span id="equipListSummary" style="font-weight:400;font-size:0.78rem;color:var(--text-muted);"></span>
                         </span>
-                        ${!_li ? `
-                        <div style="display:flex;align-items:center;gap:4px;font-size:0.76rem;color:var(--text-muted);
-                                    background:var(--bg-tertiary,#f1f5f9);padding:4px 9px;border-radius:6px;">
-                            <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 후 편집 가능
-                        </div>` : `
-                        <span style="font-size:0.74rem;color:var(--text-muted);">각 공정 카드의 <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-2px;">add_circle</span> 를 눌러 설비를 추가하세요</span>`}
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            ${_li ? `
+                            <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.openEquipProfileModal()"
+                                    title="라인·공정에서 공통으로 사용할 대표 설비 사양">
+                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">library_add</span>
+                                대표 사양 관리
+                            </button>` : ''}
+                            ${_isAdmin() ? `
+                            <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.migratePhotosToNas()"
+                                    title="기존 base64 설비 사진을 NAS로 이관">
+                                <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">cloud_upload</span>
+                                기존 사진 NAS 이관
+                            </button>` : ''}
+                            ${!_li ? `
+                            <div style="display:flex;align-items:center;gap:4px;font-size:0.76rem;color:var(--text-muted);
+                                        background:var(--bg-tertiary,#f1f5f9);padding:4px 9px;border-radius:6px;">
+                                <span class="material-symbols-outlined" style="font-size:14px;">lock</span>로그인 후 편집 가능
+                            </div>` : `
+                            <span style="font-size:0.74rem;color:var(--text-muted);">각 공정 카드의 <span class="material-symbols-outlined" style="font-size:12px;vertical-align:-2px;">add_circle</span> 를 눌러 설비를 추가하세요</span>`}
+                        </div>
                     </div>
                     <div id="equipListBody"></div>
                 </div>
@@ -27251,10 +27415,13 @@ var ProdEquipmentModule = (function() {
             </div>`;
         };
 
+        // 하위 설비까지 합치면 세로로 한참 길어지는 공정은 폭을 2배로 넓혀 2열로 접어 담는다.
+        const WIDE_PROCS = new Set(['하도 스프레이', '상도 스프레이']);
         const renderCol = (proc, equips, isCommon, isUncat) => {
             const hasIssue   = equips.some(e => e.status === '수리중' || e.status === '점검중');
             const issueCount = equips.filter(e => e.status === '수리중' || e.status === '점검중').length;
             const tint       = isCommon ? '#0d9488' : _procColor(proc);
+            const isWide     = WIDE_PROCS.has(proc.name);
             // 하위 설비 트리 구성 — parentId가 이 컬럼 안의 다른 설비를 가리킬 때만 자식으로 취급한다.
             // 부모가 삭제·이동돼 링크가 끊긴 고아 항목은 최상위로 자연스럽게 떨어진다(조용히 안 보이는 사고 방지).
             const byId = new Map(equips.map(e => [e.id, e]));
@@ -27269,10 +27436,12 @@ var ProdEquipmentModule = (function() {
                         ${kids.map(c => renderEquipChip(c, true, 0)).join('')}
                        </div>`
                     : '';
-                return renderEquipChip(e, false, kids.length) + kidsHtml;
+                const block = renderEquipChip(e, false, kids.length) + kidsHtml;
+                // 2열 모드에서는 부모+하위를 한 덩어리로 묶어 열이 나뉠 때 쪼개지지 않게 한다.
+                return isWide ? `<div style="break-inside:avoid;">${block}</div>` : block;
             }).join('');
             return `
-            <div style="flex:0 0 176px;width:176px;border-right:1px solid var(--border-color);
+            <div style="flex:0 0 ${isWide?352:176}px;width:${isWide?352:176}px;border-right:1px solid var(--border-color);
                         display:flex;flex-direction:column;">
                 <div style="padding:8px 10px;background:${tint}1c;
                            border-bottom:3px solid ${tint};user-select:none;">
@@ -27313,7 +27482,8 @@ var ProdEquipmentModule = (function() {
                         </button>` : ''}
                     </div>` : ''}
                 </div>
-                <div style="flex:1;padding-top:6px;overflow-y:auto;max-height:520px;">
+                <div style="flex:1;padding-top:6px;overflow-y:auto;max-height:520px;
+                            ${isWide ? 'column-count:2;column-gap:8px;' : ''}">
                     ${equips.length > 0 ? equipTreeHtml :
                         `<div style="padding:8px 10px;font-size:0.76rem;color:var(--text-muted);">설비 없음</div>`}
                 </div>
@@ -27506,6 +27676,7 @@ var ProdEquipmentModule = (function() {
         _equipId  = id;
         _subTab   = 'ledger';
         _rightTab = 'detail';
+        _photoAddMode = false;
         _renderEquipList();
         _renderRightPanel();
     }
@@ -27549,6 +27720,7 @@ var ProdEquipmentModule = (function() {
     function _renderDetail() {
         const equip = Storage.getById(ST_EQUIP, _equipId);
         if (!equip) return;
+        const profile = equip.profileId ? Storage.getById(ST_PROFILE, equip.profileId) : null;
         const dp = document.getElementById('equipRightPanel') || document.getElementById('equipDetailPanel');
         if (!dp) return;
         const sCol = equip.status === '정상' ? 'var(--accent-green)' :
@@ -27562,11 +27734,16 @@ var ProdEquipmentModule = (function() {
                     <span style="font-weight:700;font-size:0.95rem;">${_esc(equip.name)}</span>
                     <span style="font-size:0.76rem;color:var(--text-muted);">${equip.line}</span>
                     ${equip.model ? `<span style="font-size:0.76rem;color:var(--text-muted);">${_esc(equip.model)}</span>` : ''}
+                    ${profile ? `<span style="font-size:0.7rem;color:#1d4ed8;background:#dbeafe;padding:2px 7px;border-radius:9px;">대표 사양: ${_esc(profile.name)}</span>` : ''}
                     <span style="font-size:0.73rem;font-weight:600;color:${sCol};
                                  background:${sCol}22;padding:2px 8px;border-radius:10px;">${equip.status || '정상'}</span>
                 </div>
                 <div style="display:flex;gap:6px;">
                     ${_isLoggedIn() ? `
+                    <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.openEquipCloneModal('${equip.id}')"
+                            title="하위 설비까지 복제하여 다른 라인·공정에 적용">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">content_copy</span>하위 포함 복제
+                    </button>
                     <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.editEquip('${equip.id}')">수정</button>
                     <button class="btn btn-danger btn-sm"  onclick="ProdEquipmentModule.deleteEquip('${equip.id}')">삭제</button>` : `
                     <span style="font-size:0.76rem;color:var(--text-muted);display:flex;align-items:center;gap:4px;">
@@ -27575,6 +27752,7 @@ var ProdEquipmentModule = (function() {
                 </div>
             </div>
             ${equip.note ? `<div style="padding:6px 16px;font-size:0.8rem;color:var(--text-muted);border-bottom:1px solid var(--border-color);">${_esc(equip.note)}</div>` : ''}
+            ${profile && profile.specSummary ? `<div style="padding:6px 16px;font-size:0.78rem;color:var(--text-secondary);border-bottom:1px solid var(--border-color);"><b>공통 사양</b> · ${_esc(profile.specSummary)}</div>` : ''}
 
             <!-- 서브 탭 -->
             <div style="display:flex;background:var(--bg-secondary);border-bottom:1px solid var(--border-color);">
@@ -28218,6 +28396,78 @@ var ProdEquipmentModule = (function() {
     // ════════════════════════════════════════════════════════════
     // 설비 마스터 CRUD
     // ════════════════════════════════════════════════════════════
+    function _profileOptions(selectedId) {
+        const profiles = (Storage.getAll(ST_PROFILE) || [])
+            .slice().sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko'));
+        return '<option value="">-- 대표 사양을 선택해 불러오기 --</option>' + profiles.map(p =>
+            `<option value="${p.id}" ${selectedId===p.id?'selected':''}>${_esc(p.name)}${p.model ? ' · ' + _esc(p.model) : ''}</option>`
+        ).join('');
+    }
+    function _applyEquipProfile() {
+        const id = document.getElementById('efProfile')?.value || '';
+        const p = id ? Storage.getById(ST_PROFILE, id) : null;
+        const profileId = document.getElementById('efProfileId');
+        if (!p) {
+            if (profileId) profileId.value = '';
+            return;
+        }
+        const model = document.getElementById('efModel');
+        const note = document.getElementById('efNote');
+        if (model) model.value = p.model || '';
+        if (note && p.note) note.value = p.note;
+        if (profileId) profileId.value = p.id;
+        UIUtils.toast(`대표 사양 '${p.name}'을 불러왔습니다. 설비명·설치일·상태는 현재 설비에 맞게 입력하세요.`, 'success');
+    }
+    function _profileForm(p) {
+        p = p || {};
+        return `<div class="form-group">
+                    <label class="form-label">대표 사양명 <span style="color:var(--accent-red)">*</span></label>
+                    <input class="form-input" id="epName" value="${_esc(p.name||'')}" placeholder="예: 도장 로봇 표준형">
+                </div>
+                <div class="form-row">
+                    <div class="form-group"><label class="form-label">설비 종류</label>
+                        <input class="form-input" id="epType" value="${_esc(p.type||'')}" placeholder="예: 도장 로봇"></div>
+                    <div class="form-group"><label class="form-label">모델/형식</label>
+                        <input class="form-input" id="epModel" value="${_esc(p.model||'')}" placeholder="제조사 모델명"></div>
+                </div>
+                <div class="form-group"><label class="form-label">공통 사양</label>
+                    <textarea class="form-textarea" id="epSpec" rows="3" placeholder="용량, 축수, 사양 등">${_esc(p.specSummary||'')}</textarea></div>
+                <div class="form-group"><label class="form-label">비고</label>
+                    <textarea class="form-textarea" id="epNote" rows="2">${_esc(p.note||'')}</textarea></div>`;
+    }
+    function _collectProfile() {
+        return { name:document.getElementById('epName').value.trim(), type:document.getElementById('epType').value.trim(),
+            model:document.getElementById('epModel').value.trim(), specSummary:document.getElementById('epSpec').value.trim(),
+            note:document.getElementById('epNote').value.trim() };
+    }
+    function openEquipProfileModal(editId) {
+        if (!_isLoggedIn()) { UIUtils.toast('대표 사양 관리는 로그인 후 가능합니다.', 'warning'); return; }
+        const p = editId ? Storage.getById(ST_PROFILE, editId) : null;
+        const profiles = (Storage.getAll(ST_PROFILE) || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko'));
+        const list = profiles.length ? `<div style="margin-top:14px;border-top:1px solid var(--border-color);padding-top:10px;">
+            <div style="font-size:.76rem;color:var(--text-muted);margin-bottom:6px;">등록된 대표 사양 · 설비 등록 시 여러 라인/공정에서 재사용</div>
+            ${profiles.map(x => `<div style="display:flex;align-items:center;gap:8px;padding:7px 0;border-bottom:1px solid var(--border-color);">
+                <div style="flex:1;min-width:0;"><b style="font-size:.82rem;">${_esc(x.name)}</b><span style="font-size:.74rem;color:var(--text-muted);margin-left:7px;">${_esc(x.model||x.type||'')}</span></div>
+                <button class="btn btn-xs btn-outline" onclick="ProdEquipmentModule.openEquipProfileModal('${x.id}')">수정</button>
+                <button class="btn btn-xs btn-danger" onclick="ProdEquipmentModule.deleteEquipProfile('${x.id}')">삭제</button>
+            </div>`).join('')}</div>` : '';
+        UIUtils.showModal(p ? '대표 설비 사양 수정' : '대표 설비 사양 등록', _profileForm(p) + list, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+            <button class="btn btn-primary" onclick="ProdEquipmentModule.saveEquipProfile('${editId||''}')">저장</button>`, 'md');
+    }
+    async function saveEquipProfile(id) {
+        const data = _collectProfile();
+        if (!data.name) { UIUtils.toast('대표 사양명을 입력하세요.', 'warning'); return; }
+        if (id) await Storage.update(ST_PROFILE, id, data); else await Storage.add(ST_PROFILE, data);
+        UIUtils.closeModal();
+        UIUtils.toast('대표 사양이 저장되었습니다.', 'success');
+    }
+    function deleteEquipProfile(id) {
+        const used = (Storage.getAll(ST_EQUIP)||[]).filter(e => e.profileId === id).length;
+        UIUtils.confirm(used ? `현재 ${used}대 설비가 사용 중입니다. 대표 사양을 삭제해도 설비 데이터는 유지됩니다. 삭제하시겠습니까?` : '대표 사양을 삭제하시겠습니까?', async () => {
+            await Storage.remove(ST_PROFILE, id); UIUtils.closeModal(); openEquipProfileModal();
+        });
+    }
     function _equipProcOptions(line, selProc) {
         return '<option value="">-- 공정 선택 --</option>' +
             _getProcStations(line).map(p =>
@@ -28245,6 +28495,18 @@ var ProdEquipmentModule = (function() {
         const proc = document.getElementById('efProcess')?.value || '';
         const sel  = document.getElementById('efParent');
         if (sel) sel.innerHTML = _equipParentOptions(line, proc, _equipFormEditId, '');
+    }
+    function _normalizeDateStr(s) {
+        s = String(s || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+        // 하이픈 누락/중복 입력 등으로 깨진 값(예: "202103-11", "202306-02-08")을 앞 8자리(YYYYMMDD) 기준으로 복원.
+        // 뒤에 남는 자릿수는 잘못 겹쳐 들어간 값으로 보고 버린다.
+        const digits = s.replace(/\D/g, '');
+        if (digits.length < 8) return '';
+        const y = digits.slice(0, 4), m = digits.slice(4, 6), d = digits.slice(6, 8);
+        const mi = Number(m), di = Number(d);
+        if (mi < 1 || mi > 12 || di < 1 || di > 31) return '';
+        return `${y}-${m}-${d}`;
     }
     function _equipForm(e, defaultProcess) {
         e = e || {};
@@ -28291,10 +28553,18 @@ var ProdEquipmentModule = (function() {
                 <input type="text" class="form-input" id="efModel" value="${_esc(e.model||'')}">
             </div>
         </div>
+        <div class="form-group" style="padding:10px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;">
+            <label class="form-label" style="color:#1d4ed8;">대표 설비 사양 <span style="font-size:.72rem;font-weight:400;color:var(--text-muted);">(공통 모델/사양 불러오기)</span></label>
+            <select class="form-select" id="efProfile" onchange="ProdEquipmentModule._applyEquipProfile()">
+                ${_profileOptions(e.profileId || '')}
+            </select>
+            <input type="hidden" id="efProfileId" value="${_esc(e.profileId||'')}">
+            <div style="font-size:.7rem;color:var(--text-muted);margin-top:4px;">대표 사양은 한 번만 등록하고 도장 A/B, 하도·상도 스프레이 등 여러 설비에서 선택해 사용할 수 있습니다.</div>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label">설치일</label>
-                <input type="date" class="form-input" id="efInstall" value="${e.installDate||''}">
+                <input type="date" class="form-input" id="efInstall" value="${_normalizeDateStr(e.installDate)}">
             </div>
             <div class="form-group">
                 <label class="form-label">상태</label>
@@ -28322,6 +28592,7 @@ var ProdEquipmentModule = (function() {
             parentId:(parentEl && !parentEl.disabled) ? (parentEl.value || '') : '',
             name:document.getElementById('efName').value.trim(),
             model:document.getElementById('efModel').value.trim(),
+            profileId:document.getElementById('efProfileId')?.value || document.getElementById('efProfile')?.value || '',
             installDate:document.getElementById('efInstall').value,
             status:document.getElementById('efStatus').value,
             sortOrder:Number(document.getElementById('efOrder').value)||0,
@@ -28351,6 +28622,109 @@ var ProdEquipmentModule = (function() {
         UIUtils.closeModal();
         _renderEquipList();
         if (_equipId) _renderDetail();
+    }
+    function _equipTreeRows(rootId) {
+        const all = Storage.getAll(ST_EQUIP) || [];
+        const rows = [];
+        function walk(parentId, depth) {
+            all.filter(x => x.parentId === parentId)
+                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'', 'ko'))
+                .forEach(x => { rows.push({ equip:x, depth }); walk(x.id, depth + 1); });
+        }
+        const root = Storage.getById(ST_EQUIP, rootId);
+        if (root) { rows.push({ equip:root, depth:0 }); walk(root.id, 1); }
+        return rows;
+    }
+    function _equipRoot(id) {
+        const all = Storage.getAll(ST_EQUIP) || [];
+        let current = Storage.getById(ST_EQUIP, id);
+        const seen = new Set();
+        while (current && current.parentId && !seen.has(current.id)) {
+            seen.add(current.id);
+            const parent = all.find(x => x.id === current.parentId);
+            if (!parent) break;
+            current = parent;
+        }
+        return current || null;
+    }
+    function _cloneProcessOptions(line, selected) {
+        return _getProcStations(line).map(p =>
+            `<option value="${_esc(p.name)}" ${selected===p.name?'selected':''}>${_esc(p.name)}</option>`
+        ).join('');
+    }
+    function _onCloneLineChange() {
+        const line = document.getElementById('ecLine')?.value || _line;
+        const sel = document.getElementById('ecProcess');
+        if (sel) sel.innerHTML = _cloneProcessOptions(line, sel.dataset.selected || '');
+    }
+    function openEquipCloneModal(id) {
+        if (!_isLoggedIn()) { UIUtils.toast('설비 복제는 로그인 후 가능합니다.', 'warning'); return; }
+        const root = _equipRoot(id);
+        if (!root) return;
+        const rows = _equipTreeRows(root.id);
+        const firstProcess = root.process || _getProcStations(_line)[0]?.name || '';
+        const treeHtml = rows.map(r =>
+            `<div style="padding:4px 0 4px ${r.depth*18}px;font-size:.8rem;color:${r.depth ? 'var(--text-secondary)' : 'var(--text-primary)'};">
+                ${r.depth ? 'ㄴ ' : ''}<b>${_esc(r.equip.name)}</b>
+                ${r.equip.model ? `<span style="color:var(--text-muted);margin-left:6px;">${_esc(r.equip.model)}</span>` : ''}
+            </div>`
+        ).join('');
+        const body = `<div style="font-size:.77rem;color:var(--text-muted);margin-bottom:10px;">
+                원본 설비와 하위 설비를 함께 복제합니다. 점검·수리·비가동 이력은 복사하지 않습니다.
+            </div>
+            <div style="padding:8px 10px;background:var(--bg-secondary);border-radius:8px;margin-bottom:12px;">
+                <div style="font-size:.72rem;color:var(--text-muted);margin-bottom:4px;">복제 대상 트리 (${rows.length}대)</div>
+                ${treeHtml}
+            </div>
+            <div class="form-row">
+                <div class="form-group"><label class="form-label">적용 라인</label>
+                    <select class="form-select" id="ecLine" onchange="ProdEquipmentModule._onCloneLineChange()">
+                        ${LINES.map(l => `<option value="${l}" ${l===_line?'selected':''}>${l}</option>`).join('')}
+                    </select></div>
+                <div class="form-group"><label class="form-label">적용 공정</label>
+                    <select class="form-select" id="ecProcess" data-selected="${_esc(firstProcess)}">
+                        ${_cloneProcessOptions(_line, firstProcess)}
+                    </select></div>
+            </div>
+            <div class="form-group"><label class="form-label">대표 설비명</label>
+                <input class="form-input" id="ecName" value="${_esc(root.name)}" placeholder="예: 로봇 B-#1"></div>`;
+        UIUtils.showModal(`하위 설비 포함 복제 · ${root.name}`, body, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProdEquipmentModule.saveEquipClone('${root.id}')">복제 적용</button>`, 'md');
+    }
+    async function saveEquipClone(sourceId) {
+        const source = _equipRoot(sourceId);
+        const line = document.getElementById('ecLine')?.value || '';
+        const process = document.getElementById('ecProcess')?.value || '';
+        const name = document.getElementById('ecName')?.value.trim() || '';
+        if (!source || !line || !process || !name) { UIUtils.toast('적용 라인·공정·설비명을 입력하세요.', 'warning'); return; }
+        const rows = _equipTreeRows(source.id);
+        const idMap = new Map();
+        const created = [];
+        for (const row of rows) {
+            const original = row.equip;
+            const data = {
+                line, process,
+                parentId: original.parentId ? (idMap.get(original.parentId) || '') : '',
+                name: row.depth === 0 ? name : original.name,
+                model: original.model || '',
+                profileId: original.profileId || '',
+                specs: original.specs ? JSON.parse(JSON.stringify(original.specs)) : {},
+                specsEnabled: original.specsEnabled !== false,
+                installDate: '',
+                status: '정상',
+                sortOrder: original.sortOrder || (row.depth + 1) * 10,
+                note: original.note || ''
+            };
+            const saved = await Storage.add(ST_EQUIP, data);
+            idMap.set(original.id, saved.id);
+            created.push(saved);
+        }
+        _equipId = created[0]?.id || null;
+        UIUtils.closeModal();
+        UIUtils.toast(`'${name}' 및 하위 설비 ${Math.max(0, created.length-1)}대를 복제했습니다.`, 'success');
+        _renderEquipList();
+        _renderDetail();
     }
     function deleteEquip(id) {
         if (!_isLoggedIn()) { UIUtils.toast('설비 삭제는 로그인 후 가능합니다.', 'warning'); return; }
@@ -28382,14 +28756,19 @@ var ProdEquipmentModule = (function() {
         if (!equip) { el.innerHTML = '<p>설비 정보를 불러올 수 없습니다.</p>'; return; }
         const photos  = equip.photos  || [];
         const specs   = equip.specs   || {};
+        const specsEnabled = equip.specsEnabled !== false;
+        const manuals = equip.manuals || [];
         const repairs = (equip.repairs || []).slice().sort((a,b) => (b.date||'').localeCompare(a.date||''));
         const sCol    = equip.status === '정상' ? '#16a34a' :
                         equip.status === '점검중' ? '#d97706' :
                         equip.status === '수리중' ? '#dc2626' : 'var(--text-muted)';
         el.innerHTML = `
         <div>
+            ${_isAdmin() ? `<div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:4px;">
+                관리자 전용 · 열 너비: 기본정보 480px / 사진 760px
+            </div>` : ''}
             <!-- ① 기본정보 + 사진 -->
-            <div style="display:grid;grid-template-columns:1fr 260px;gap:16px;margin-bottom:20px;">
+            <div style="display:grid;grid-template-columns:480px 760px;gap:16px;margin-bottom:20px;">
                 <!-- 기본정보 -->
                 <div>
                     <div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;color:var(--text-secondary);
@@ -28400,7 +28779,7 @@ var ProdEquipmentModule = (function() {
                     </div>
                     <table style="width:100%;border-collapse:collapse;font-size:0.84rem;">
                         ${[['설비명',equip.name],['공정 라인',equip.line],['공정',equip.process],
-                           ['모델/형식',equip.model||'-'],['설치일',equip.installDate||'-'],
+                           ['모델/형식',equip.model||'-'],['설치일',_normalizeDateStr(equip.installDate)||equip.installDate||'-'],
                            ['상태','<span style="font-weight:600;color:'+sCol+';">'+(equip.status||'정상')+'</span>'],
                            ['비고',equip.note||'-']
                           ].map(([k,v]) => `
@@ -28416,34 +28795,38 @@ var ProdEquipmentModule = (function() {
                     <div style="font-weight:700;font-size:0.88rem;margin-bottom:8px;color:var(--text-secondary);
                                 display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="font-size:16px;">photo_camera</span>설비 사진
-                        <label style="margin-left:auto;cursor:pointer;padding:4px 10px;font-size:0.78rem;font-weight:600;
-                                      border:1px solid var(--accent-blue);border-radius:6px;color:var(--accent-blue);
-                                      display:flex;align-items:center;gap:3px;">
-                            <span class="material-symbols-outlined" style="font-size:14px;">add_photo_alternate</span>추가
-                            <input type="file" accept="image/*" multiple style="display:none;"
-                                   onchange="ProdEquipmentModule.uploadEquipPhotos(this.files)">
-                        </label>
+                        <button class="btn btn-outline btn-sm" style="margin-left:auto;"
+                                onclick="ProdEquipmentModule.togglePhotoAddMode()">
+                            <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">${_photoAddMode?'close':'add_photo_alternate'}</span>
+                            ${_photoAddMode?'취소':'추가'}
+                        </button>
                     </div>
-                    ${photos.length === 0
-                        ? `<label style="display:flex;flex-direction:column;align-items:center;justify-content:center;
-                                         border:2px dashed var(--border-color);border-radius:10px;height:170px;
-                                         color:var(--text-muted);font-size:0.82rem;cursor:pointer;">
-                               <span class="material-symbols-outlined" style="font-size:36px;margin-bottom:6px;opacity:.4;">add_photo_alternate</span>
-                               사진 없음 · 클릭하여 추가
-                               <input type="file" accept="image/*" multiple style="display:none;"
-                                      onchange="ProdEquipmentModule.uploadEquipPhotos(this.files)">
-                           </label>`
-                        : `<div style="display:grid;grid-template-columns:repeat(${photos.length===1?'1':'2'},1fr);gap:5px;">
+                    ${photos.length === 0 && !_photoAddMode
+                        ? `<div style="display:flex;align-items:center;justify-content:center;height:170px;
+                                       border:2px dashed var(--border-color);border-radius:10px;
+                                       color:var(--text-muted);font-size:0.82rem;">
+                               사진 없음 · 위 "추가" 버튼을 눌러 등록하세요.
+                           </div>`
+                        : `<div style="display:grid;grid-template-columns:repeat(${(photos.length + (_photoAddMode?1:0))<=1?'1':'2'},1fr);gap:5px;">
                                ${photos.map((p,i) => `
                                <div style="position:relative;aspect-ratio:4/3;overflow:hidden;
                                            border-radius:7px;border:1px solid var(--border-color);cursor:pointer;"
                                     onclick="ProdEquipmentModule.openPhotoViewer(${i})">
-                                   <img src="${p}" style="width:100%;height:100%;object-fit:cover;">
+                                   <img src="${ApiClient.photoUrl(p)}" style="width:100%;height:100%;object-fit:cover;">
                                    <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquipPhoto(${i})"
                                        style="position:absolute;top:3px;right:3px;background:rgba(0,0,0,.55);border:none;
                                               border-radius:50%;width:22px;height:22px;color:#fff;cursor:pointer;
                                               font-size:14px;line-height:22px;text-align:center;padding:0;">×</button>
                                </div>`).join('')}
+                               ${_photoAddMode ? `
+                               <div id="equipPhotoZone" tabindex="0" onpaste="ProdEquipmentModule.pasteEquipPhoto(event)"
+                                    style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                                           aspect-ratio:${photos.length===0?'auto':'4/3'};${photos.length===0?'height:340px;':''}
+                                           border:2px dashed var(--accent-blue);border-radius:${photos.length===0?'10px':'7px'};
+                                           color:var(--text-muted);font-size:0.78rem;text-align:center;outline:none;cursor:text;padding:6px;">
+                                   <span class="material-symbols-outlined" style="font-size:${photos.length===0?'56px':'28px'};margin-bottom:4px;opacity:.5;color:var(--accent-blue);">content_paste</span>
+                                   <span style="font-size:${photos.length===0?'0.9rem':'0.78rem'};">이 영역 클릭 후<br>Ctrl+V로 사진 붙여넣기</span>
+                               </div>` : ''}
                            </div>`}
                 </div>
             </div>
@@ -28454,9 +28837,20 @@ var ProdEquipmentModule = (function() {
                     <div style="font-weight:700;font-size:0.88rem;color:var(--text-secondary);
                                 display:flex;align-items:center;gap:6px;">
                         <span class="material-symbols-outlined" style="font-size:16px;">engineering</span>제원 (사양)
+                        <label style="display:flex;align-items:center;gap:4px;font-weight:500;font-size:.78rem;
+                                      color:var(--text-muted);cursor:pointer;margin-left:8px;">
+                            <input type="checkbox" ${specsEnabled?'checked':''}
+                                   onchange="ProdEquipmentModule.toggleSpecsEnabled(this.checked)">
+                            제원 사용
+                        </label>
                     </div>
-                    <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.openSpecModal()">제원 수정</button>
+                    ${specsEnabled ? `<button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.openSpecModal()">제원 수정</button>` : ''}
                 </div>
+                ${!specsEnabled ? `
+                <div style="padding:14px;text-align:center;color:var(--text-muted);font-size:.82rem;
+                            border:1px dashed var(--border-color);border-radius:8px;">
+                    이 설비는 제원 정보를 사용하지 않습니다. 필요 시 위 "제원 사용" 체크박스로 활성화하세요.
+                </div>` : `
                 <table style="width:100%;border-collapse:collapse;font-size:0.83rem;">
                     <thead>
                         <tr style="background:var(--bg-secondary);">
@@ -28468,7 +28862,7 @@ var ProdEquipmentModule = (function() {
                             <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">크기 (mm)</th>
                             <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">중량(kg)</th>
                             <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">구매처</th>
-                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">담당자</th>
+                            <th style="padding:6px 10px;border:1px solid var(--border-color);text-align:left;">구매처 연락번호</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -28481,16 +28875,32 @@ var ProdEquipmentModule = (function() {
                             <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.dimensions||'-')}</td>
                             <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.weight||'-')}</td>
                             <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.supplier||'-')}</td>
-                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.manager||'-')}</td>
+                            <td style="padding:6px 10px;border:1px solid var(--border-color);">${_esc(specs.supplierContact||'-')}</td>
                         </tr>
                     </tbody>
                 </table>
                 ${specs.special ? `<div style="margin-top:5px;padding:7px 10px;background:var(--bg-secondary);
                     border-radius:6px;font-size:.81rem;color:var(--text-secondary);">
-                    <strong>특기사항:</strong> ${_esc(specs.special)}</div>` : ''}
+                    <strong>특기사항:</strong> ${_esc(specs.special)}</div>` : ''}`}
             </div>
 
-            <!-- ③ 수리 이력 -->
+            <!-- ③ 매뉴얼 -->
+            <div style="margin-bottom:20px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                    <div style="font-weight:700;font-size:0.88rem;color:var(--text-secondary);
+                                display:flex;align-items:center;gap:6px;">
+                        <span class="material-symbols-outlined" style="font-size:16px;">menu_book</span>
+                        매뉴얼 <span style="font-size:.8rem;color:var(--text-muted);font-weight:400;">(${manuals.length}건)</span>
+                    </div>
+                    <button class="btn btn-outline btn-sm" onclick="ProdEquipmentModule.toggleManualAddMode()">
+                        <span class="material-symbols-outlined" style="font-size:14px;vertical-align:-3px;">${_manualAddMode?'close':'note_add'}</span>
+                        ${_manualAddMode?'취소':'등록'}
+                    </button>
+                </div>
+                <div id="equipManualSection">${_equipManualSectionHtml(manuals)}</div>
+            </div>
+
+            <!-- ④ 수리 이력 -->
             <div>
                 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
                     <div style="font-weight:700;font-size:0.88rem;color:var(--text-secondary);
@@ -28542,6 +28952,14 @@ var ProdEquipmentModule = (function() {
         </div>`;
     }
 
+    async function toggleSpecsEnabled(checked) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        if (!equip) return;
+        await Storage.update(ST_EQUIP, _equipId, { ...equip, specsEnabled: !!checked });
+        _subTab = 'ledger';
+        _renderDetail();
+    }
+
     function openSpecModal() {
         const equip = Storage.getById(ST_EQUIP, _equipId);
         if (!equip) return;
@@ -28589,8 +29007,8 @@ var ProdEquipmentModule = (function() {
         </div>
         <div class="form-row">
             <div class="form-group">
-                <label class="form-label">담당자</label>
-                <input type="text" class="form-input" id="spMgr" value="${_esc(s.manager||'')}">
+                <label class="form-label">구매처 연락번호</label>
+                <input type="text" class="form-input" id="spSuppContact" value="${_esc(s.supplierContact||'')}" placeholder="예: 02-1234-5678">
             </div>
             <div class="form-group">
                 <label class="form-label">구매가 (원)</label>
@@ -28619,7 +29037,7 @@ var ProdEquipmentModule = (function() {
             dimensions:   document.getElementById('spDim').value.trim(),
             weight:       document.getElementById('spWt').value.trim(),
             supplier:     document.getElementById('spSupp').value.trim(),
-            manager:      document.getElementById('spMgr').value.trim(),
+            supplierContact: document.getElementById('spSuppContact').value.trim(),
             purchasePrice:document.getElementById('spPrice').value.trim(),
             special:      document.getElementById('spSpecial').value.trim()
         };
@@ -28728,22 +29146,102 @@ var ProdEquipmentModule = (function() {
         });
     }
 
-    async function uploadEquipPhotos(files) {
-        const equip = Storage.getById(ST_EQUIP, _equipId);
-        if (!equip) return;
-        const photos = (equip.photos || []).slice();
+    function _dataUrlToFile(dataUrl, filename) {
+        const commaIdx = dataUrl.indexOf(',');
+        const header = dataUrl.slice(0, commaIdx);
+        const mimeMatch = header.match(/data:(.*?);base64/);
+        const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+        const bin = atob(dataUrl.slice(commaIdx + 1));
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        return new File([arr], filename, { type: mime });
+    }
+
+    async function migratePhotosToNas() {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 실행할 수 있습니다.', 'warning'); return; }
+        UIUtils.confirm('기존에 base64로 저장된 설비 사진을 모두 NAS로 이관하시겠습니까? 사진 수에 따라 시간이 걸릴 수 있습니다.', async () => {
+            const list = Storage.getAll(ST_EQUIP) || [];
+            let migratedEquip = 0, migratedPhotos = 0, failed = 0;
+            UIUtils.toast('사진 이관을 시작합니다...', 'info');
+            for (const equip of list) {
+                const photos = equip.photos || [];
+                if (!photos.some(p => p && p.startsWith('data:'))) continue;
+                const newPhotos = [];
+                let changed = false;
+                for (let i = 0; i < photos.length; i++) {
+                    const p = photos[i];
+                    if (p && p.startsWith('data:')) {
+                        try {
+                            const file = _dataUrlToFile(p, `equip_${equip.id}_${i}.jpg`);
+                            const url = await ApiClient.uploadPhoto(file, 'equipment');
+                            newPhotos.push(url);
+                            migratedPhotos++;
+                            changed = true;
+                        } catch (e) {
+                            newPhotos.push(p);
+                            failed++;
+                        }
+                    } else {
+                        newPhotos.push(p);
+                    }
+                }
+                if (changed) {
+                    await Storage.update(ST_EQUIP, equip.id, { ...equip, photos: newPhotos });
+                    migratedEquip++;
+                }
+            }
+            UIUtils.toast(
+                `이관 완료: 설비 ${migratedEquip}건 · 사진 ${migratedPhotos}장${failed ? ` (실패 ${failed}장)` : ''}`,
+                failed ? 'warning' : 'success'
+            );
+            if (_equipId) _renderDetail();
+        });
+    }
+
+    async function _addEquipPhotoFiles(files) {
+        // 업로드가 끝나기 전에 다른 설비로 이동할 수 있으므로, 시작 시점의 설비 id를 고정해 사용한다.
+        const equipId = _equipId;
+        if (!Storage.getById(ST_EQUIP, equipId)) return 0;
+        const newUrls = [];
         for (const file of Array.from(files)) {
-            if (!file.type.startsWith('image/')) continue;
-            const b64 = await new Promise((res, rej) => {
-                const reader = new FileReader();
-                reader.onload  = e => res(e.target.result);
-                reader.onerror = rej;
-                reader.readAsDataURL(file);
-            });
-            photos.push(b64);
+            if (!file.type || !file.type.startsWith('image/')) continue;
+            try {
+                const url = await ApiClient.uploadPhoto(file, 'equipment');
+                newUrls.push(url);
+            } catch (e) {
+                UIUtils.toast('사진 업로드 실패: ' + e.message, 'error');
+            }
         }
-        await Storage.update(ST_EQUIP, _equipId, { ...equip, photos });
-        UIUtils.toast('사진이 저장되었습니다.', 'success');
+        if (newUrls.length > 0) {
+            // 업로드 중 사진이 더 추가/삭제됐을 수 있으므로 최신 레코드를 다시 읽어 병합
+            const latest = Storage.getById(ST_EQUIP, equipId);
+            if (latest) {
+                await Storage.update(ST_EQUIP, equipId, { ...latest, photos: [...(latest.photos || []), ...newUrls] });
+            }
+        }
+        return newUrls.length;
+    }
+
+    function togglePhotoAddMode() {
+        _photoAddMode = !_photoAddMode;
+        _subTab = 'ledger';
+        _renderDetail();
+        if (_photoAddMode) {
+            setTimeout(() => document.getElementById('equipPhotoZone')?.focus(), 0);
+        }
+    }
+
+    async function pasteEquipPhoto(event) {
+        const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+        const imgItems = items.filter(item => item.type && item.type.startsWith('image/'));
+        if (!imgItems.length) return;
+        event.preventDefault();
+        const files = imgItems.map(item => item.getAsFile()).filter(Boolean);
+        UIUtils.toast('사진 업로드 중...', 'info');
+        const added = await _addEquipPhotoFiles(files);
+        if (added === 0) return;
+        UIUtils.toast('사진이 붙여넣기 되었습니다.', 'success');
+        _photoAddMode = false;
         _subTab = 'ledger';
         _renderDetail();
     }
@@ -28753,8 +29251,11 @@ var ProdEquipmentModule = (function() {
             const equip = Storage.getById(ST_EQUIP, _equipId);
             if (!equip) return;
             const photos = (equip.photos || []).slice();
-            photos.splice(idx, 1);
+            const [removed] = photos.splice(idx, 1);
             await Storage.update(ST_EQUIP, _equipId, { ...equip, photos });
+            if (removed && !removed.startsWith('data:')) {
+                try { await ApiClient.deletePhoto(removed); } catch (e) { /* NAS 파일 삭제 실패는 무시 */ }
+            }
             UIUtils.toast('삭제되었습니다.', 'success');
             _subTab = 'ledger';
             _renderDetail();
@@ -28766,9 +29267,202 @@ var ProdEquipmentModule = (function() {
         if (!equip || !equip.photos || !equip.photos[idx]) return;
         UIUtils.showModal('설비 사진', `
             <div style="text-align:center;">
-                <img src="${equip.photos[idx]}" style="max-width:100%;max-height:520px;border-radius:8px;display:inline-block;">
+                <img src="${ApiClient.photoUrl(equip.photos[idx])}" style="max-width:100%;max-height:520px;border-radius:8px;display:inline-block;">
             </div>`, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // 매뉴얼 등록 (파일 업로드 / 클립보드 사진 스크랩)
+    // ════════════════════════════════════════════════════════════
+    function _fmtFileSize(n) {
+        n = Number(n) || 0;
+        if (n >= 1024*1024) return (n/1024/1024).toFixed(1) + ' MB';
+        if (n >= 1024) return (n/1024).toFixed(0) + ' KB';
+        return n + ' B';
+    }
+    function _manualFileIcon(type, name) {
+        const t = String(type || '');
+        const n = String(name || '').toLowerCase();
+        if (t.startsWith('image/')) return 'image';
+        if (t.includes('pdf') || n.endsWith('.pdf')) return 'picture_as_pdf';
+        if (t.includes('word') || n.endsWith('.doc') || n.endsWith('.docx')) return 'description';
+        if (t.includes('sheet') || n.endsWith('.xls') || n.endsWith('.xlsx')) return 'table_chart';
+        return 'draft';
+    }
+
+    function _equipManualSectionHtml(manuals) {
+        const images = manuals.filter(m => String(m.fileType||'').startsWith('image/'));
+        const files  = manuals.filter(m => !String(m.fileType||'').startsWith('image/'));
+
+        const imageGridHtml = images.length === 0 ? '' : `
+            <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:8px;margin-bottom:${files.length?'10px':(_manualAddMode?'10px':'0')};">
+                ${images.map(m => `
+                <div style="position:relative;aspect-ratio:4/3;overflow:hidden;border-radius:7px;
+                            border:1px solid var(--border-color);cursor:pointer;"
+                     onclick="ProdEquipmentModule.openEquipManual('${_js(m.id)}')" title="${_esc(m.fileName||'')}">
+                    <img src="${ApiClient.photoUrl(m.fileUrl)}" style="width:100%;height:100%;object-fit:cover;">
+                    <button onclick="event.stopPropagation();ProdEquipmentModule.deleteEquipManual('${_js(m.id)}')"
+                        style="position:absolute;top:5px;right:5px;background:rgba(0,0,0,.55);border:none;
+                               border-radius:50%;width:26px;height:26px;color:#fff;cursor:pointer;
+                               font-size:16px;line-height:26px;text-align:center;padding:0;">×</button>
+                </div>`).join('')}
+            </div>`;
+
+        const fileListHtml = files.length === 0 ? '' : `
+            <div style="display:flex;flex-direction:column;gap:6px;${_manualAddMode?'margin-bottom:10px;':''}">
+                   ${files.map(m => `
+                   <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border-color);
+                               border-radius:7px;background:var(--bg-secondary);">
+                       <span class="material-symbols-outlined" style="font-size:20px;color:var(--accent-blue);">${_manualFileIcon(m.fileType, m.fileName)}</span>
+                       <span style="flex:1;font-size:.83rem;color:var(--text-primary);cursor:pointer;overflow:hidden;
+                                     text-overflow:ellipsis;white-space:nowrap;"
+                             onclick="ProdEquipmentModule.openEquipManual('${_js(m.id)}')" title="${_esc(m.fileName||'')}">
+                           ${_esc(m.fileName || '매뉴얼 파일')}
+                       </span>
+                       <span style="font-size:.72rem;color:var(--text-muted);white-space:nowrap;">${_fmtFileSize(m.fileSize)}</span>
+                       <button class="btn btn-sm btn-outline" onclick="ProdEquipmentModule.openEquipManual('${_js(m.id)}')">열기</button>
+                       <button onclick="ProdEquipmentModule.deleteEquipManual('${_js(m.id)}')"
+                           style="background:none;border:none;color:#dc2626;cursor:pointer;font-size:18px;line-height:1;padding:2px;">×</button>
+                   </div>`).join('')}
+               </div>`;
+
+        const listHtml = manuals.length === 0
+            ? `<div style="padding:14px;text-align:center;color:var(--text-muted);font-size:.82rem;
+                          border:1px dashed var(--border-color);border-radius:8px;${_manualAddMode?'margin-bottom:10px;':''}">
+                   등록된 매뉴얼이 없습니다.
+               </div>`
+            : imageGridHtml + fileListHtml;
+        const addHtml = !_manualAddMode ? '' : `
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <div id="equipManualDropZone"
+                    ondragover="event.preventDefault();this.style.borderColor='var(--accent-blue)';this.style.background='var(--bg-secondary)';"
+                    ondragleave="this.style.borderColor='var(--border-color)';this.style.background='transparent';"
+                    ondrop="event.preventDefault();this.style.borderColor='var(--border-color)';this.style.background='transparent';ProdEquipmentModule.dropEquipManualFiles(event)"
+                    onclick="document.getElementById('equipManualFileInput').click()"
+                    style="border:2px dashed var(--border-color);border-radius:8px;padding:16px;text-align:center;cursor:pointer;">
+                    <span class="material-symbols-outlined" style="font-size:28px;color:var(--text-muted);display:block;margin-bottom:4px;">upload_file</span>
+                    <div style="font-size:.8rem;color:var(--text-muted);">파일을 끌어다 놓거나 클릭</div>
+                    <div style="font-size:.72rem;color:var(--text-muted);margin-top:2px;">PDF / 이미지 / Excel / Word</div>
+                    <input type="file" id="equipManualFileInput" multiple
+                        accept=".pdf,.jpg,.jpeg,.png,.webp,.xlsx,.xls,.doc,.docx,.hwp"
+                        style="display:none;" onchange="ProdEquipmentModule.uploadEquipManualFiles(this.files)">
+                </div>
+                <div id="equipManualPasteZone" tabindex="0" onpaste="ProdEquipmentModule.pasteEquipManual(event)"
+                     style="display:flex;flex-direction:column;align-items:center;justify-content:center;
+                            border:2px dashed var(--accent-blue);border-radius:8px;padding:16px;
+                            color:var(--text-muted);font-size:.8rem;text-align:center;outline:none;cursor:text;">
+                    <span class="material-symbols-outlined" style="font-size:28px;margin-bottom:4px;opacity:.6;color:var(--accent-blue);">content_paste</span>
+                    이 영역 클릭 후<br>Ctrl+V로 사진(스크랩) 붙여넣기
+                </div>
+            </div>`;
+        return listHtml + addHtml;
+    }
+
+    function _refreshEquipManualSection() {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        const el = document.getElementById('equipManualSection');
+        if (el && equip) el.innerHTML = _equipManualSectionHtml(equip.manuals || []);
+    }
+
+    function toggleManualAddMode() {
+        _manualAddMode = !_manualAddMode;
+        _refreshEquipManualSection();
+        if (_manualAddMode) {
+            setTimeout(() => document.getElementById('equipManualPasteZone')?.focus(), 0);
+        }
+    }
+
+    async function _saveEquipManualFile(file) {
+        // 업로드가 끝나기 전에 다른 설비로 이동할 수 있으므로, 시작 시점의 설비 id를 고정해 사용한다.
+        const equipId = _equipId;
+        if (!Storage.getById(ST_EQUIP, equipId)) return false;
+        try {
+            const safeFileName = (file.name || '매뉴얼').replace(/[^\w가-힣.()\-]/g, '_');
+            // 저장 파일명은 매번 고유하게 생성한다 (클립보드 붙여넣기는 항상 "image.png"로 동일한 이름이 와서,
+            // 원본 파일명을 그대로 쓰면 서로 다른 매뉴얼이 NAS의 같은 경로를 덮어써 버리는 문제가 있었음).
+            const ext = (safeFileName.match(/\.[a-zA-Z0-9]+$/) || ['.jpg'])[0];
+            const uniqueFileName = `${Date.now()}_${Math.random().toString(36).slice(2, 8)}${ext}`;
+            const fileUrl = await ApiClient.uploadPhoto(file, 'equipment-manual', { filename: uniqueFileName });
+            // 업로드 중 매뉴얼이 더 추가/삭제됐을 수 있으므로 최신 레코드를 다시 읽어 병합
+            const latest = Storage.getById(ST_EQUIP, equipId);
+            if (!latest) return false;
+            const manuals = (latest.manuals || []).slice();
+            manuals.push({
+                id: 'man_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6),
+                fileName: file.name || safeFileName,
+                fileType: file.type || '',
+                fileSize: file.size || 0,
+                fileUrl,
+                uploadedAt: UIUtils.now()
+            });
+            await Storage.update(ST_EQUIP, equipId, { ...latest, manuals });
+            return true;
+        } catch (e) {
+            UIUtils.toast('매뉴얼 업로드 실패: ' + e.message, 'error');
+            return false;
+        }
+    }
+
+    async function uploadEquipManualFiles(fileList) {
+        const files = Array.from(fileList || []);
+        if (!files.length) return;
+        UIUtils.toast('매뉴얼 업로드 중...', 'info');
+        let ok = 0;
+        for (const file of files) { if (await _saveEquipManualFile(file)) ok++; }
+        if (ok > 0) {
+            UIUtils.toast(`매뉴얼 ${ok}건이 등록되었습니다.`, 'success');
+            _manualAddMode = false;
+            _subTab = 'ledger';
+            _renderDetail();
+        }
+    }
+
+    async function dropEquipManualFiles(event) {
+        const files = Array.from((event.dataTransfer && event.dataTransfer.files) || []);
+        await uploadEquipManualFiles(files);
+    }
+
+    async function pasteEquipManual(event) {
+        const items = event.clipboardData && event.clipboardData.items ? Array.from(event.clipboardData.items) : [];
+        const imgItems = items.filter(item => item.type && item.type.startsWith('image/'));
+        if (!imgItems.length) return;
+        event.preventDefault();
+        const files = imgItems.map(item => item.getAsFile()).filter(Boolean);
+        await uploadEquipManualFiles(files);
+    }
+
+    function deleteEquipManual(id) {
+        UIUtils.confirm('이 매뉴얼을 삭제하시겠습니까?', async () => {
+            const equip = Storage.getById(ST_EQUIP, _equipId);
+            if (!equip) return;
+            const manuals = (equip.manuals || []).slice();
+            const idx = manuals.findIndex(m => m.id === id);
+            if (idx === -1) return;
+            const [removed] = manuals.splice(idx, 1);
+            await Storage.update(ST_EQUIP, _equipId, { ...equip, manuals });
+            if (removed && removed.fileUrl) {
+                try { await ApiClient.deletePhoto(removed.fileUrl); } catch (e) { /* NAS 파일 삭제 실패는 무시 */ }
+            }
+            UIUtils.toast('삭제되었습니다.', 'success');
+            _subTab = 'ledger';
+            _renderDetail();
+        });
+    }
+
+    function openEquipManual(id) {
+        const equip = Storage.getById(ST_EQUIP, _equipId);
+        const m = equip && (equip.manuals || []).find(x => x.id === id);
+        if (!m || !m.fileUrl) { UIUtils.toast('파일을 찾을 수 없습니다.', 'warning'); return; }
+        if (String(m.fileType||'').startsWith('image/')) {
+            UIUtils.showModal(m.fileName || '매뉴얼 사진', `
+                <div style="text-align:center;">
+                    <img src="${ApiClient.photoUrl(m.fileUrl)}" style="max-width:100%;max-height:520px;border-radius:8px;display:inline-block;">
+                </div>`, `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+            return;
+        }
+        window.open(ApiClient.photoUrl(m.fileUrl), '_blank');
     }
 
     // ════════════════════════════════════════════════════════════
@@ -31440,6 +32134,11 @@ var ProdEquipmentModule = (function() {
         _startDragTile,
         switchSubTab,
         openEquipAddModal,
+        openEquipCloneModal,
+        saveEquipClone,
+        openEquipProfileModal,
+        saveEquipProfile,
+        deleteEquipProfile,
         editEquip,
         saveEquip,
         deleteEquip,
@@ -31465,13 +32164,24 @@ var ProdEquipmentModule = (function() {
         restoreProcs,
         // 설비 폼 헬퍼
         _onEquipLineChange,
+        _onCloneLineChange,
+        _applyEquipProfile,
         // 관리대장
         openSpecModal,
+        toggleSpecsEnabled,
         saveSpec,
         openRepairModal,
         saveRepair,
         deleteRepair,
-        uploadEquipPhotos,
+        pasteEquipPhoto,
+        togglePhotoAddMode,
+        migratePhotosToNas,
+        toggleManualAddMode,
+        uploadEquipManualFiles,
+        dropEquipManualFiles,
+        pasteEquipManual,
+        deleteEquipManual,
+        openEquipManual,
         deleteEquipPhoto,
         openPhotoViewer,
         // 온도 프로파일

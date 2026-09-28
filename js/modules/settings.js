@@ -10843,6 +10843,7 @@ const SettingsModule = (function() {
         { name: '출하검사',        subdir: 'shipping' },
         { name: '작업조건 관리',   subdir: 'work-conditions' },
         { name: '설비관리',        subdir: 'equipment' },
+        { name: '설비 매뉴얼',     subdir: 'equipment-manual' },
         { name: '3정5S',           subdir: '5s-management' },
         { name: '한도견본',        subdir: 'limit-samples' },
         { name: '개선활동',        subdir: 'improvement' }
@@ -10858,7 +10859,9 @@ const SettingsModule = (function() {
         'MSDS':               '안전관리 › MSDS 등록대장',
         'TDS':                '제조 관리 표준 › 도료 TDS 파일 첨부',
         'paint_jig':          '도장지그 › 도장 지그 대장',
-        'quality-checksheet': '초중종물 관리 (체크시트 사진, 연/월 하위 폴더)'
+        'quality-checksheet': '초중종물 관리 (체크시트 사진, 연/월 하위 폴더)',
+        'equipment':          '설비관리 (설비 사진)',
+        'equipment-manual':   '설비관리 (설비 매뉴얼 첨부)'
     };
     function _photoPageUsage(subdir) {
         const label = PHOTO_PAGE_USAGE[subdir];
