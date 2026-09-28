@@ -758,6 +758,8 @@ const ProductionPlanModule = (function() {
         // 식사 행은 별도 배너가 전체 열을 사용하므로 병합 범위에서 제외한다.
         const noteSpanBySlot = {};
         const noteCoveredSlots = new Set();
+        const continuationSpanBySlot = {};
+        const continuationCoveredSlots = new Set();
         const planStartSlots = allSlots.filter(s => {
             const p = slotData[s];
             return p && (p.carModel || p.partName || Number(p.planQty) > 0);
@@ -785,6 +787,29 @@ const ProductionPlanModule = (function() {
             for (let i = startIndex + 1; i < startIndex + span; i++) {
                 noteCoveredSlots.add(allSlots[i]);
             }
+
+            // 점심/저녁 식사 행에서 HTML rowspan을 끊어야 하므로,
+            // 식사 이후 같은 작업이 이어지는 구간은 별도의 rowspan으로 다시 병합한다.
+            const endByTime = item.endTime
+                ? allSlots.findIndex((s, i) => i > startIndex && s >= item.endTime)
+                : -1;
+            const segmentEnd = endByTime >= 0 ? Math.min(endByTime, nextStartIndex) : nextStartIndex;
+            ['12:30', '17:30'].forEach(mealSlot => {
+                const mealIndex = allSlots.indexOf(mealSlot);
+                if (mealIndex < 0 || mealIndex <= startIndex || mealIndex >= segmentEnd) return;
+                const afterMealIndex = mealSlot === '12:30'
+                    ? allSlots.indexOf('13:30')
+                    : mealIndex + 1;
+                if (afterMealIndex < 0 || afterMealIndex >= segmentEnd) return;
+                const spanEnd = Math.min(segmentEnd, endByTime >= 0 ? endByTime : segmentEnd);
+                const continuationSpan = spanEnd - afterMealIndex;
+                if (continuationSpan <= 0) return;
+                const continuationStart = allSlots[afterMealIndex];
+                continuationSpanBySlot[continuationStart] = continuationSpan;
+                for (let i = afterMealIndex + 1; i < afterMealIndex + continuationSpan; i++) {
+                    continuationCoveredSlots.add(allSlots[i]);
+                }
+            });
         });
 
         // 계획 순서 정렬 후 이전 계획 매핑 (교체 감지)
@@ -799,6 +824,7 @@ const ProductionPlanModule = (function() {
         let activeItem = null;
         let activeEndTime = '';
         let _nextSuggestTime = ''; // 다음 작업 권장 시작 시간 (마지막 종료+5분)
+        let emptyNoticeShown = false; // 연속된 빈 작업 구간에는 "작업 없음"을 한 번만 표시
 
         tbody.innerHTML = allSlots.map(slot => {
             let rowClass = getSlotClass(slot);
@@ -881,6 +907,7 @@ const ProductionPlanModule = (function() {
             const isOvertimeStart = (slot === '18:00');
 
             if (isMealTime) {
+                emptyNoticeShown = false;
                 // 점심 두 슬롯(12:30, 13:00)을 한 행으로 병합: 13:00 슬롯은 빈 tr만 렌더링
                 if (slot === '13:00') return '<tr class="lunch-time" style="cursor:not-allowed;background-color:#f1f5f9;"></tr>';
                 let mealText = '';
@@ -964,11 +991,21 @@ const ProductionPlanModule = (function() {
             }
 
             const isOvertimeSlot = slot >= '18:00';
-            const planSpan = hasData ? (noteSpanBySlot[slot] || 1) : 1;
-            const mergedRowIsCovered = !hasData && activeItem && noteCoveredSlots.has(slot);
-            const rowSpanAttr = hasData && planSpan > 1 ? `rowspan="${planSpan}"` : '';
+            const planSpan = hasData
+                ? (noteSpanBySlot[slot] || 1)
+                : (continuationSpanBySlot[slot] || 1);
+            const mergedRowIsCovered = !hasData && activeItem &&
+                (noteCoveredSlots.has(slot) || continuationCoveredSlots.has(slot));
+            const rowSpanAttr = planSpan > 1 ? `rowspan="${planSpan}"` : '';
+            if (hasData) {
+                emptyNoticeShown = false;
+            }
+            const emptyNotice = !hasData && !activeItem && !emptyNoticeShown
+                ? '<span style="color:#94a3b8;font-weight:700;">작업 없음</span>'
+                : '';
+            if (emptyNotice) emptyNoticeShown = true;
             const mergedPlanCells = mergedRowIsCovered ? '' : `
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.carModel || (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`)}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.carModel || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`))}</td>
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
                     <td class="editable-cell text-right" ${trClick} ${rowSpanAttr}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
@@ -1113,13 +1150,36 @@ const ProductionPlanModule = (function() {
         const partSel = document.getElementById('sPart');
         const colorSel = document.getElementById('sColor');
 
+        const isColorFirst = String(modelSel?.value || '').trim().toUpperCase() === 'RIVN';
+
         if (target === 'model') {
             const selectedModel = modelSel.value;
-            const validParts = [...new Set(lineProducts.filter(p => p.carModel === selectedModel).map(p => p.partName).filter(Boolean))];
-            partSel.innerHTML = '<option value="">선택</option>' + validParts.map(p => `<option value="${p}">${p}</option>`).join('');
+            const modelProducts = lineProducts.filter(p => p.carModel === selectedModel);
+            const validParts = [...new Set(modelProducts.map(p => p.partName).filter(Boolean))];
+            partSel.innerHTML = '<option value="">도장 컬러를 먼저 선택하세요</option>' +
+                (isColorFirst ? '' : validParts.map(p => `<option value="${p}">${p}</option>`).join(''));
             partSel.value = '';
-            colorSel.innerHTML = '<option value="">선택</option>';
+            const validColors = [...new Set(modelProducts
+                .map(p => _getPlanColorForLine(p, line || (document.getElementById('sLine') || {}).value || ''))
+                .filter(Boolean))];
+            colorSel.innerHTML = '<option value="">선택</option>' +
+                (isColorFirst ? validColors.map(c => `<option value="${c}">${_paintColorLabel(c)}</option>`).join('') : '');
             colorSel.value = '';
+            partSel.disabled = isColorFirst;
+        } else if (target === 'color') {
+            const selectedModel = modelSel.value;
+            const selectedColor = colorSel.value;
+            const _curLine = line || (document.getElementById('sLine') || {}).value || '';
+            const validParts = [...new Set(
+                lineProducts
+                    .filter(p => p.carModel === selectedModel &&
+                        (!selectedColor || _getPlanColorForLine(p, _curLine) === selectedColor))
+                    .map(p => p.partName).filter(Boolean)
+            )];
+            partSel.innerHTML = '<option value="">선택</option>' +
+                validParts.map(p => `<option value="${p}">${p}</option>`).join('');
+            partSel.value = '';
+            partSel.disabled = false;
         } else if (target === 'part') {
             const selectedModel = modelSel.value;
             const selectedPart = partSel.value;
@@ -1131,8 +1191,10 @@ const ProductionPlanModule = (function() {
                     .map(p => _getPlanColorForLine(p, _curLine))
                     .filter(Boolean)
             )];
-            colorSel.innerHTML = '<option value="">선택</option>' + validColors.map(c => `<option value="${c}">${c}</option>`).join('');
-            colorSel.value = '';
+            if (!isColorFirst) {
+            colorSel.innerHTML = '<option value="">선택</option>' + validColors.map(c => `<option value="${c}">${_paintColorLabel(c)}</option>`).join('');
+                colorSel.value = '';
+            }
         }
         // DOM 커밋 후 실행 (선택값 반영 보장)
         setTimeout(function() {
@@ -1190,6 +1252,13 @@ const ProductionPlanModule = (function() {
         if (line === '도장-A' && product.paintColorA) return product.paintColorA;
         if (line === '도장-B' && product.paintColorB) return product.paintColorB;
         return product.color || '';
+    }
+
+    function _paintColorLabel(color) {
+        const key = String(color || '').trim().toUpperCase().replace(/[.s_-]/g, '');
+        if (key === 'BB') return 'BB';
+        if (key === 'GB') return 'GB';
+        return color || '';
     }
 
     function _usesLaserWipForLine(product, line) {
@@ -2484,13 +2553,20 @@ const ProductionPlanModule = (function() {
         if (lineProducts.length === 0) lineProducts = products;
         const models = UIUtils.sortCarModels(lineProducts.map(p => p.carModel), lineProducts);
 
+        const isColorFirst = String(modelValue || '').trim().toUpperCase() === 'RIVN';
         let parts = [];
         let colors = [];
-        if (modelValue) parts = [...new Set(lineProducts.filter(p => p.carModel === modelValue).map(p => p.partName).filter(Boolean))];
-        if (modelValue && partValue) {
+        if (modelValue && (!isColorFirst || colorValue)) {
+            parts = [...new Set(lineProducts
+                .filter(p => p.carModel === modelValue &&
+                    (!isColorFirst || _getPlanColorForLine(p, line) === colorValue))
+                .map(p => p.partName).filter(Boolean))];
+        }
+        if (modelValue && (partValue || isColorFirst)) {
             colors = [...new Set(
                 lineProducts
-                    .filter(p => p.carModel === modelValue && p.partName === partValue)
+                    .filter(p => p.carModel === modelValue &&
+                        (!partValue || p.partName === partValue))
                     .map(p => _getPlanColorForLine(p, line))   // ← 라인별 컬러 우선
                     .filter(Boolean)
             )];
@@ -2633,19 +2709,19 @@ const ProductionPlanModule = (function() {
                     </select>
                 </div>
                 <div class="form-group">
-                    <label class="form-label">제품명 (품명)</label>
-                    <select class="form-select" id="sPart" onchange="ProductionPlanModule.updateDropdowns('part', '${line}')">
+                    <label class="form-label">도장 컬러 <span style="color:var(--accent-red)">*</span>${isColorFirst ? ' <span style="font-size:.72rem;color:var(--accent-blue);">(먼저 선택)</span>' : ''}</label>
+                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.updateDropdowns('color', '${line}'); ProductionPlanModule.calcEndTime(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
                         <option value="">선택</option>
-                        ${parts.map(p => `<option value="${p}" ${p === partValue ? 'selected' : ''}>${p}</option>`).join('')}
+                        ${colors.map(c => `<option value="${c}" ${c === colorValue ? 'selected' : ''}>${_paintColorLabel(c)}</option>`).join('')}
                     </select>
                 </div>
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">도장 컬러 <span style="color:var(--accent-red)">*</span></label>
-                    <select class="form-select" id="sColor" onchange="ProductionPlanModule.calcEndTime(); ProductionPlanModule.updatePaintStockPanel(); ProductionPlanModule.updateLaserWipPanel();">
-                        <option value="">선택</option>
-                        ${colors.map(c => `<option value="${c}" ${c === colorValue ? 'selected' : ''}>${c}</option>`).join('')}
+                    <label class="form-label">제품명 (품명)</label>
+                    <select class="form-select" id="sPart" onchange="ProductionPlanModule.updateDropdowns('part', '${line}')" ${isColorFirst && !colorValue ? 'disabled' : ''}>
+                        <option value="">${isColorFirst && !colorValue ? '도장 컬러를 먼저 선택하세요' : '선택'}</option>
+                        ${parts.map(p => `<option value="${p}" ${p === partValue ? 'selected' : ''}>${p}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">
@@ -3272,6 +3348,7 @@ const ProductionPlanModule = (function() {
         const allData = Storage.getAll(STORE);
 
         const slotData = {};
+        const legacySlots = new Set(); // 종료시간이 없는 구식(hourlyPlans) 슬롯 — 병합 대상에서 제외
         allData.forEach(item => {
             if (item.date === date && item.line === line) {
                 const key = _planSlotKey(item);
@@ -3287,17 +3364,17 @@ const ProductionPlanModule = (function() {
                                 color: item.color,
                                 planQty: item.hourlyPlans[s],
                                 status: item.status,
-                                startTime: item.startTime,
+                                startTime: item.startTime || s,
                                 endTime: item.endTime,
                                 workNote: item.workNote
                             };
+                            legacySlots.add(s);
                         }
                     }
                 }
             }
         });
 
-        const allSlots = Array.from(new Set([...TIME_SLOTS, ...Object.keys(slotData)])).sort();
         const slotRangeText = (slot, capEnd = '') => {
             const idx = TIME_SLOTS.indexOf(slot);
             if (idx >= 0 && TIME_SLOTS[idx + 1]) {
@@ -3307,147 +3384,141 @@ const ProductionPlanModule = (function() {
             }
             return slot;
         };
+
+        // 점심(12:30~13:30)·석식(17:30~18:00)에 걸치는 계획은 그 구간만큼 실제로 멈추므로,
+        // 식사 시간을 기준으로 계획을 여러 구간(segment)으로 쪼갠 뒤 각 구간을 한 줄로 병합해 출력한다.
+        // (기존에는 30분 슬롯마다 한 줄씩 똑같은 내용을 반복 출력했다.)
+        const MEAL_BREAKS = [{ s: '12:30', e: '13:30' }, { s: '17:30', e: '18:00' }];
+        function splitByMeals(seg) {
+            let segs = [seg];
+            MEAL_BREAKS.forEach(b => {
+                const next = [];
+                segs.forEach(sg => {
+                    if (sg.start < b.e && sg.end > b.s) {
+                        if (sg.start < b.s) next.push({ ...sg, end: b.s });
+                        if (sg.end > b.e) next.push({ ...sg, start: b.e });
+                    } else {
+                        next.push(sg);
+                    }
+                });
+                segs = next;
+            });
+            return segs.filter(sg => sg.start < sg.end);
+        }
+
+        const blocks = [];
+        Object.keys(slotData).forEach(key => {
+            const item = slotData[key];
+            if (!item.startTime) return;
+            if (legacySlots.has(key)) {
+                // 종료시간을 모르는 구식 데이터는 30분짜리 단일 블록으로만 표시
+                blocks.push({ start: key, end: '', item, isFirst: true, legacy: true });
+                return;
+            }
+            if (!item.endTime) return;
+            const segs = splitByMeals({ start: item.startTime, end: item.endTime });
+            segs.forEach((seg, i) => blocks.push({ start: seg.start, end: seg.end, item, isFirst: i === 0 }));
+        });
+        blocks.sort((a, b) => a.start.localeCompare(b.start) || (a.isFirst === b.isFirst ? 0 : a.isFirst ? -1 : 1));
+
+        const MEAL_BANNERS = [
+            { start: '12:30', end: '13:30', mealText: '점심 시간 (LUNCH TIME)' },
+            { start: '17:30', end: '18:00', mealText: '저녁 식사 (DINNER TIME)' }
+        ];
+
+        // 행 높이를 실제 소요 시간에 비례하게 그린다 — 작업 시간이 긴 행은 크게,
+        // 계획이 없는 빈 시간은 그만큼만 작게 표시한다 (고정 개수의 빈 행을 채우던 방식 대신
+        // 하루 타임라인(08:30~20:00)을 실제 분(分) 단위 비율로 환산).
+        const _toMin = (t) => { const [h, m] = t.split(':').map(Number); return h * 60 + m; };
+        const DAY_START_MIN = _toMin('08:30');
+        const DAY_END_MIN = _toMin('20:00');
+        const PX_PER_MIN = 1.0;
+        const MIN_ROW_PX = 22;
+        const rowHeightPx = (min) => Math.max(MIN_ROW_PX, Math.round(min * PX_PER_MIN));
+        const idleRow = (min) => `
+                    <tr style="height:${Math.max(6, Math.round(min * PX_PER_MIN))}px;">
+                        <td colspan="9" style="border-left:none;border-right:none;background:#fff;"></td>
+                    </tr>
+                `;
+        const mealBanner = (b) => `
+                    <tr style="background-color: #f1f5f9;height:${rowHeightPx(_toMin(b.end) - _toMin(b.start))}px;">
+                        <td style="text-align:center;">-</td>
+                        <td style="text-align:center;">${b.start} ~ ${b.end}</td>
+                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;">${b.mealText}</td>
+                    </tr>
+                `;
+
+        // 흑백 인쇄를 고려해, 실제 색상 대신 제품(차종·품명·컬러)이 바뀔 때마다
+        // 옅은 회색 톤을 번갈아 적용해 구간을 구분한다.
+        const SHADE_PALETTE = ['#ffffff', '#e6e6e6', '#cfcfcf'];
+        let prevProductKey = null;
+        let shadeIdx = -1;
+
         let totalQty = 0;
         let totalMinutes = 0;
         let rowIdx = 1;
         let renderedRowCount = 0;
-        let activeItem = null;
-        let activeEndTime = '';
+        const rowsHtml = [];
 
-        let tableRows = allSlots.map(slot => {
-            const item = slotData[slot] || {};
-            const q = Number(item.planQty) || 0;
+        // 계획 블록과 식사 배너를 하나의 타임라인으로 합쳐 시각 순서대로 정렬하고,
+        // 사이사이 빈 시간은 실제 분(分)만큼만 차지하는 idle 행으로 채운다.
+        const events = [
+            ...blocks.map(b => ({
+                type: 'block', start: _toMin(b.start),
+                end: b.end ? _toMin(b.end) : _toMin(b.start) + 30,
+                data: b
+            })),
+            ...MEAL_BANNERS.map(b => ({ type: 'meal', start: _toMin(b.start), end: _toMin(b.end), data: b }))
+        ].sort((a, b) => a.start - b.start || (a.type === 'block' ? -1 : 1));
 
-            const isLunch = (slot === '12:30' || slot === '13:00');
-            const isDinner = (slot === '17:30');
-            const isMealTime = isLunch || isDinner;
-            const hasData = item.carModel || item.partName || q > 0;
-
-            if (hasData) {
-                activeItem = item;
-                activeEndTime = item.endTime || '';
+        let cursorMin = DAY_START_MIN;
+        events.forEach(ev => {
+            if (ev.start > cursorMin) {
+                rowsHtml.push(idleRow(ev.start - cursorMin));
             }
-
-            let isHighlight = false;
-            if (activeItem && activeEndTime) {
-                const activeStart = activeItem.startTime || activeItem.slot;
-                if (slot >= activeStart && slot < activeEndTime) {
-                    isHighlight = true;
-                } else if (slot >= activeEndTime) {
-                    if (!hasData) {
-                        activeItem = null;
-                        activeEndTime = '';
-                    }
+            if (ev.type === 'meal') {
+                rowsHtml.push(mealBanner(ev.data));
+                renderedRowCount++;
+            } else {
+                const block = ev.data;
+                const item = block.item;
+                const q = Number(item.planQty) || 0;
+                const productKey = `${item.carModel || ''}|${item.partName || ''}|${item.color || ''}`;
+                if (productKey !== prevProductKey) {
+                    shadeIdx = (shadeIdx + 1) % SHADE_PALETTE.length;
+                    prevProductKey = productKey;
                 }
-            }
+                const shade = SHADE_PALETTE[shadeIdx];
 
-            if (hasData) {
-                totalQty += q;
+                const diffMin = ev.end - ev.start;
+                if (block.isFirst) totalQty += q;
+                if (diffMin > 0) totalMinutes += diffMin;
 
-                // 식사 시간(점심 12:30~13:30, 석식 17:30~18:00) 중첩 확인 및 차감
-                if (item.startTime && item.endTime) {
-                    const [sH, sM] = item.startTime.split(':').map(Number);
-                    const [eH, eM] = item.endTime.split(':').map(Number);
-                    let sTotal = sH * 60 + sM;
-                    let eTotal = eH * 60 + eM;
-                    let diff = eTotal - sTotal;
+                const isOvertimeStart = block.start === '18:00';
+                const timeText = block.legacy ? slotRangeText(block.start) : `${block.start} ~ ${block.end}`;
+                renderedRowCount++;
 
-                    if (!item.mealTimeWork) {
-                        const breaks = [{
-                                s: 12 * 60 + 30,
-                                e: 13 * 60 + 30
-                            }, // 점심
-                            {
-                                s: 17 * 60 + 30,
-                                e: 18 * 60
-                            } // 석식
-                        ];
-
-                        breaks.forEach(b => {
-                            const overlapStart = Math.max(sTotal, b.s);
-                            const overlapEnd = Math.min(eTotal, b.e);
-                            if (overlapStart < overlapEnd) {
-                                diff -= (overlapEnd - overlapStart);
-                            }
-                        });
-                    }
-                    if (diff > 0) totalMinutes += diff;
-                }
-
-                const isOvertimeStart = (item.startTime === '18:00' || (!item.startTime && slot === '18:00'));
-                renderedRowCount += 1;
-
-                return `
-                    <tr class="${isOvertimeStart ? 'overtime-row' : ''}">
-                        <td style="text-align:center;">${rowIdx++}</td>
-                        <td style="text-align:center;">${slotRangeText(slot, item.endTime || '')}</td>
+                rowsHtml.push(`
+                    <tr class="${isOvertimeStart ? 'overtime-row' : ''}" style="background-color:${shade};height:${rowHeightPx(diffMin)}px;">
+                        <td style="text-align:center;">${block.isFirst ? rowIdx++ : '-'}</td>
+                        <td style="text-align:center;">${timeText}</td>
                         <td style="text-align:center;">${item.carModel || ''}</td>
                         <td>${item.partName || ''}</td>
                         <td style="text-align:center;">${item.color || ''}</td>
-                        <td style="text-align:right;">${q > 0 ? UIUtils.formatNumber(q) : ''} EA</td>
+                        <td style="text-align:right;">${block.isFirst && q > 0 ? UIUtils.formatNumber(q) + ' EA' : ''}</td>
                         <td></td>
                         <td></td>
-                        <td style="font-size:10px;">${_escapeHtml(item.workNote || '')}</td>
+                        <td style="font-size:10px;">${block.isFirst ? _escapeHtml(item.workNote || '') : ''}</td>
                     </tr>
-                `;
-            } else if (isMealTime) {
-                if (slot === '13:00') return '';
-                let mealText = '';
-                let timeRange = '';
-                if (isLunch) {
-                    mealText = '점심 시간 (LUNCH TIME)';
-                    timeRange = '12:30 ~ 13:30';
-                } else {
-                    mealText = '저녁 식사 (DINNER TIME)';
-                    timeRange = '17:30 ~ 18:00';
-                }
-                const isMealRunning = activeItem && activeItem.mealTimeWork && activeEndTime > slot;
-                const mealRunText = isMealRunning
-                    ? ` <span style="margin-left:10px;color:#ea580c;font-weight:bold;">교대 가동 중 - ${activeItem.carModel || ''} ${activeItem.partName || ''}</span>`
-                    : '';
-                renderedRowCount += 1;
-                return `
-                    <tr class="${isLunch ? 'lunch-time' : 'dinner-time'}" style="background-color: #f1f5f9;">
-                        <td style="text-align:center;">-</td>
-                        <td style="text-align:center;">${timeRange}</td>
-                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;">${mealText}${mealRunText}</td>
-                    </tr>
-                `;
-            } else if (isHighlight && activeItem) {
-                const isOvertimeStart = (slot === '18:00');
-                renderedRowCount += 1;
-                return `
-                    <tr class="${isOvertimeStart ? 'overtime-row' : ''}" style="background-color:${getCarModelColor(activeItem.carModel, activeItem.partName, activeItem.color)};">
-                        <td style="text-align:center;">-</td>
-                        <td style="text-align:center;">${slotRangeText(slot, activeEndTime)}</td>
-                        <td style="text-align:center;color:#777;">${activeItem.carModel || ''}</td>
-                        <td style="color:#777;">${activeItem.partName || ''}</td>
-                        <td style="text-align:center;color:#777;">${activeItem.color || ''}</td>
-                        <td style="text-align:right;"></td>
-                        <td></td>
-                        <td></td>
-                        <td style="font-size:10px;">${_escapeHtml(activeItem.workNote || '')}</td>
-                    </tr>
-                `;
+                `);
             }
-            return '';
-        }).join('');
+            cursorMin = Math.max(cursorMin, ev.end);
+        });
+        if (DAY_END_MIN > cursorMin) {
+            rowsHtml.push(idleRow(DAY_END_MIN - cursorMin));
+        }
 
-        const minPrintableRows = 12;
-        const fillerCount = Math.max(0, minPrintableRows - renderedRowCount);
-        const fillerRows = Array.from({ length: fillerCount }, () => `
-            <tr class="filler-row">
-                <td style="text-align:center;">&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-                <td>&nbsp;</td>
-            </tr>
-        `).join('');
+        let tableRows = rowsHtml.join('');
 
         // 총 시간을 시간/분으로 변환
         const totalHours = Math.floor(totalMinutes / 60);
