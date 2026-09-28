@@ -3421,9 +3421,11 @@ const ProductionPlanModule = (function() {
         });
         blocks.sort((a, b) => a.start.localeCompare(b.start) || (a.isFirst === b.isFirst ? 0 : a.isFirst ? -1 : 1));
 
+        // 18:00 이후로 이어지는(잔업) 계획이 있을 때만 저녁 식사 시간을 표시한다.
+        const hasOvertimePlan = blocks.some(b => b.start >= '18:00');
         const MEAL_BANNERS = [
             { start: '12:30', end: '13:30', mealText: '점심 시간 (LUNCH TIME)' },
-            { start: '17:30', end: '18:00', mealText: '저녁 식사 (DINNER TIME)' }
+            ...(hasOvertimePlan ? [{ start: '17:30', end: '18:00', mealText: '저녁 식사 (DINNER TIME)' }] : [])
         ];
 
         // 행 높이를 실제 소요 시간에 비례하게 그린다 — 작업 시간이 긴 행은 크게,
@@ -3436,15 +3438,16 @@ const ProductionPlanModule = (function() {
         const MIN_ROW_PX = 22;
         const rowHeightPx = (min) => Math.max(MIN_ROW_PX, Math.round(min * PX_PER_MIN));
         const idleRow = (min) => `
-                    <tr style="height:${Math.max(6, Math.round(min * PX_PER_MIN))}px;">
-                        <td colspan="9" style="border-left:none;border-right:none;background:#fff;"></td>
+                    <tr class="idle-row" style="height:${Math.max(4, Math.round(min * PX_PER_MIN))}px;">
+                        <td colspan="9" style="background:#fff;"></td>
                     </tr>
                 `;
+        const MEAL_ROW_PX = 20; // 식사 시간은 실제 길이와 무관하게 얇은 안내 줄로만 표시
         const mealBanner = (b) => `
-                    <tr style="background-color: #f1f5f9;height:${rowHeightPx(_toMin(b.end) - _toMin(b.start))}px;">
-                        <td style="text-align:center;">-</td>
-                        <td style="text-align:center;">${b.start} ~ ${b.end}</td>
-                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;">${b.mealText}</td>
+                    <tr style="background-color: #f1f5f9;height:${MEAL_ROW_PX}px;">
+                        <td style="text-align:center;padding:2px 4px;">-</td>
+                        <td style="text-align:center;padding:2px 4px;">${b.start} ~ ${b.end}</td>
+                        <td colspan="7" style="text-align:center; font-weight:bold; color:#94a3b8;padding:2px 4px;">${b.mealText}</td>
                     </tr>
                 `;
 
@@ -3536,10 +3539,10 @@ const ProductionPlanModule = (function() {
                     .header h1 { margin: 0; font-size: 24px; }
                     .info { font-size: 14px; }
                     table { width: 100%; border-collapse: collapse; margin-top: 10px; table-layout: fixed; }
-                    th, td { border: 1px solid #333; padding: 8px 4px; font-size: 11px; word-break: break-all; }
+                    th, td { border: 1px solid #333; padding: 4px 4px; font-size: 11px; word-break: break-all; }
                     th { background-color: #f2f2f2; font-weight: bold; }
                     .overtime-row td { border-top: 3px solid #333 !important; }
-                    .filler-row td { height: 34px; }
+                    .idle-row td { padding: 0; border-left: none; border-right: none; border-bottom: none; }
                     .total-label { text-align:right; font-weight:bold; background:#f9f9f9; }
                     .total-value { text-align:right; font-weight:bold; background:#f9f9f9; color: #0056b3; }
                     .footer { margin-top: 30px; text-align: right; font-size: 12px; color: #666; }
@@ -3570,8 +3573,7 @@ const ProductionPlanModule = (function() {
                         </tr>
                     </thead>
                     <tbody>
-                        ${tableRows || '<tr><td colspan="9" style="text-align:center; padding:40px;">해당 날짜에 등록된 계획이 없습니다.</td></tr>'}
-                        ${tableRows ? fillerRows : ''}
+                        ${renderedRowCount > 0 ? tableRows : '<tr><td colspan="9" style="text-align:center; padding:40px;">해당 날짜에 등록된 계획이 없습니다.</td></tr>'}
                     </tbody>
                     <tfoot>
                         <tr>
