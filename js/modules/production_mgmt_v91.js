@@ -20989,6 +20989,57 @@ var ProdQualityModule = (function() {
     }
 
     // ── 품목별 기준값 편집 모달 ────────────────────────────────────────────────
+    // 관리항목 참고 사진 썸네일/업로드 UI (읽기전용이면 업로드 버튼 대신 '-' 표시)
+    function _pqPhotoThumbHtml(src, readOnly) {
+        if (src) {
+            return `
+                <img src="${_esc(src)}" onclick="ProdQualityModule._pqViewItemPhoto(this.src)"
+                    style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);cursor:pointer;display:block;margin:0 auto;">
+                ${readOnly ? '' : `<button type="button" onclick="ProdQualityModule._pqRemoveItemPhoto(this)"
+                    style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:0.68rem;padding:2px 0;display:block;margin:0 auto;">삭제</button>`}
+            `;
+        }
+        return readOnly
+            ? `<span style="font-size:0.72rem;color:var(--text-muted);">-</span>`
+            : `<label style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;color:var(--accent-blue);font-size:0.66rem;white-space:nowrap;">
+                   <span class="material-symbols-outlined" style="font-size:20px;">add_a_photo</span>사진 첨부
+                   <input type="file" accept="image/*" style="display:none;" onchange="ProdQualityModule._pqHandleItemPhotoChange(event)">
+               </label>`;
+    }
+
+    function _pqHandleItemPhotoChange(event) {
+        const input = event.target;
+        const file = input.files && input.files[0];
+        if (!file) return;
+        if (!file.type.startsWith('image/')) { UIUtils.toast('이미지 파일만 첨부할 수 있습니다.', 'warning'); return; }
+        const row = input.closest('.pq-spec-item-row');
+        if (!row) return;
+        const reader = new FileReader();
+        reader.onload = e => {
+            const dataUrl = String(e.target.result || '');
+            const hidden = row.querySelector('.pqs-photo-val');
+            if (hidden) hidden.value = dataUrl;
+            const wrap = row.querySelector('.pqs-photo-wrap');
+            if (wrap) wrap.innerHTML = _pqPhotoThumbHtml(dataUrl, false);
+        };
+        reader.onerror = () => UIUtils.toast('이미지를 읽을 수 없습니다.', 'error');
+        reader.readAsDataURL(file);
+    }
+
+    function _pqRemoveItemPhoto(btn) {
+        const row = btn.closest('.pq-spec-item-row');
+        if (!row) return;
+        const hidden = row.querySelector('.pqs-photo-val');
+        if (hidden) hidden.value = '';
+        const wrap = row.querySelector('.pqs-photo-wrap');
+        if (wrap) wrap.innerHTML = _pqPhotoThumbHtml('', false);
+    }
+
+    function _pqViewItemPhoto(src) {
+        if (!src) return;
+        UIUtils.showModal('관리항목 참고 사진', `<div style="text-align:center;"><img src="${_esc(src)}" style="max-width:100%;max-height:70vh;border-radius:8px;"></div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
     function _specItemRowHtml(item = {}, opts = {}) {
         const readOnly = !!opts.readOnly;
         const showDelete = !!opts.showDelete;
@@ -21017,19 +21068,22 @@ var ProdQualityModule = (function() {
                 <input type="hidden" class="pqs-key" value="${_esc(item.key||'')}">
                 <input type="hidden" class="pqs-label-val" value="${_esc(item.label||'')}">
                 <input type="hidden" class="pqs-unit-val" value="${_esc(item.unit||'')}">
-                <input type="hidden" class="pqs-method-val" value="${_esc(item.method||'')}">
                 <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
                 <div style="display:flex;align-items:flex-start;gap:2px;">
                     ${dragHandle}
-                    <div>
+                    <div style="min-width:0;flex:1;">
                         <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
                         ${_specModeBadge(_specModeOf(item))}
-                        <div style="font-size:0.75rem;color:var(--text-muted);">${_esc(item.method||'')}</div>
+                        <input type="text" class="form-input pqs-method-val" value="${_esc(item.method||'')}" placeholder="점검방법 입력 (예: 도막측정기, 크로스컷)" ${readOnly ? 'disabled' : ''} style="margin-top:4px;height:28px;padding:3px 7px;font-size:0.76rem;width:100%;">
                     </div>
                 </div>
             </td>
             <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
             <td>${specEditor}</td>
+            <td style="text-align:center;vertical-align:middle;">
+                <input type="hidden" class="pqs-photo-val" value="${_esc(item.photo||'')}">
+                <div class="pqs-photo-wrap">${_pqPhotoThumbHtml(item.photo||'', readOnly)}</div>
+            </td>
             ${showDelete ? `<td style="text-align:center;vertical-align:middle;">${delBtn}</td>` : ''}
         </tr>`;
     }
@@ -21061,9 +21115,10 @@ var ProdQualityModule = (function() {
             <div style="overflow:auto;max-height:58vh;">
                 <table class="data-table">
                     <thead><tr>
-                        <th style="min-width:140px;">관리항목</th>
+                        <th style="min-width:200px;">관리항목 / 점검방법</th>
                         <th style="text-align:center;min-width:60px;">단위</th>
                         <th style="min-width:180px;">기준값 / 범위</th>
+                        <th style="text-align:center;min-width:70px;width:70px;">사진</th>
                     </tr></thead>
                     <tbody id="pqSpecItemsBody">${items.map(i=>_specItemRowHtml(i)).join('')}</tbody>
                 </table>
@@ -21087,7 +21142,8 @@ var ProdQualityModule = (function() {
                 key:       row.querySelector('.pqs-key')?.value || '',
                 label:     row.querySelector('.pqs-label-val')?.value || '',
                 unit:      row.querySelector('.pqs-unit-val')?.value || '',
-                method:    row.querySelector('.pqs-method-val')?.value || '',
+                method:    row.querySelector('.pqs-method-val')?.value?.trim() || '',
+                photo:     row.querySelector('.pqs-photo-val')?.value || '',
                 inputType: row.querySelector('.pqs-input-type')?.value || 'text',
                 spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
                 upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
@@ -21326,9 +21382,10 @@ var ProdQualityModule = (function() {
                         <div style="overflow:auto;">
                             <table class="data-table">
                                 <thead><tr>
-                                    <th style="min-width:140px;">관리항목</th>
+                                    <th style="min-width:200px;">관리항목 / 점검방법</th>
                                     <th style="text-align:center;min-width:60px;">단위</th>
                                     <th style="min-width:180px;">기준값 / 범위</th>
+                                    <th style="text-align:center;min-width:70px;width:70px;">사진</th>
                                     ${!viewOnly ? `<th style="text-align:center;min-width:70px;width:70px;">관리항목 삭제</th>` : ''}
                                 </tr></thead>
                                 <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly, showDelete: !viewOnly })).join('')}</tbody>
@@ -21506,7 +21563,8 @@ var ProdQualityModule = (function() {
                 key:       row.querySelector('.pqs-key')?.value || '',
                 label:     row.querySelector('.pqs-label-val')?.value || '',
                 unit:      row.querySelector('.pqs-unit-val')?.value || '',
-                method:    row.querySelector('.pqs-method-val')?.value || '',
+                method:    row.querySelector('.pqs-method-val')?.value?.trim() || '',
+                photo:     row.querySelector('.pqs-photo-val')?.value || '',
                 inputType: row.querySelector('.pqs-input-type')?.value || 'text',
                 spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
                 upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
@@ -22270,6 +22328,33 @@ var ProdQualityModule = (function() {
         });
     }
 
+    // 생산계획이 삭제(취소)되면, 그 계획으로 자동 발행됐지만 아직 DATA가 입력되지
+    // 않은 초중종물 C/S는 더 이상 의미가 없으므로 함께 정리한다.
+    // DATA(측정값)가 이미 입력된 건은 실제 검사 이력일 수 있으므로 보존한다.
+    async function _cleanupOrphanedPlanIssues() {
+        let removed = 0;
+        try {
+            const planIds = new Set((Storage.getAll(PLAN_STORE) || []).map(p => String(p && p.id)));
+            const orphaned = _issues().filter(function(i) {
+                if (!i || !i.planId) return false;
+                if (planIds.has(String(i.planId))) return false;
+                if (i.dataRecordId) return false;
+                return true;
+            });
+            for (let i = 0; i < orphaned.length; i++) {
+                try {
+                    await Storage.remove(STORE, orphaned[i].id);
+                    removed += 1;
+                } catch (eRm) {
+                    console.warn('[ProdQuality] orphaned issue remove failed:', eRm);
+                }
+            }
+        } catch (eCleanup) {
+            console.warn('[ProdQuality] _cleanupOrphanedPlanIssues failed:', eCleanup);
+        }
+        return removed;
+    }
+
     async function syncFromStartedPlans() {
         if (_syncFromPlansRunning) return 0;
         _syncFromPlansRunning = true;
@@ -22277,7 +22362,9 @@ var ProdQualityModule = (function() {
         try {
             if (typeof Storage.refresh === 'function') {
                 await Storage.refresh(STORE);
+                await Storage.refresh(PLAN_STORE);
             }
+            const removed = await _cleanupOrphanedPlanIssues();
             const due = _dueQualityPlans();
             const works = Storage.getAll(PAINT_WORK_STORE) || [];
             const workByPlan = new Map();
@@ -22303,7 +22390,7 @@ var ProdQualityModule = (function() {
                     _creatingPlanIds.delete(planId);
                 }
             }
-            if (created && _pqIsMainListVisible()) search();
+            if ((created || removed) && _pqIsMainListVisible()) search();
         } catch (eSync) {
             console.warn('[ProdQuality] syncFromStartedPlans failed:', eSync);
         } finally {
@@ -23979,6 +24066,7 @@ var ProdQualityModule = (function() {
                 label:  row.querySelector('.pq-item-label')?.value.trim()  || '',
                 spec:   row.querySelector('.pq-item-spec')?.value.trim()   || '',
                 method: row.querySelector('.pq-item-method')?.value.trim() || '',
+                photo:  row.querySelector('.pq-item-photo')?.value || '',
                 unit:   row.querySelector('.pq-item-unit')?.value.trim()   || '',
                 inputType: row.querySelector('.pq-item-input-type')?.value || (isNum ? 'number' : 'select')
             };
@@ -24025,6 +24113,7 @@ var ProdQualityModule = (function() {
                 label: prev.label || item.label || '',
                 spec: prev.spec || item.spec || '',
                 method: prev.method || item.method || '',
+                photo: prev.photo || item.photo || '',
                 unit: prev.unit || item.unit || '',
                 inputType: prev.inputType || item.inputType || (idx >= 0 && _isNumericItem(item) ? 'number' : 'select'),
                 selected: prev.selected !== undefined ? prev.selected : item.selected
@@ -24087,8 +24176,13 @@ var ProdQualityModule = (function() {
                     <input type="hidden" class="pq-item-key"     value="${_esc(item.key || Storage.generateId())}">
                     <input type="hidden" class="pq-item-numeric" value="${isNum?'1':'0'}">
                     <input type="hidden" class="pq-item-input-type" value="${_esc(inputType)}">
-                    <input type="text" class="form-input pq-item-label" value="${_esc(item.label || '')}"
-                        style="min-width:100px;height:30px;padding:4px 6px;font-size:0.78rem;">
+                    <input type="hidden" class="pq-item-photo" value="${_esc(item.photo || '')}">
+                    <div style="display:flex;align-items:center;gap:4px;">
+                        <input type="text" class="form-input pq-item-label" value="${_esc(item.label || '')}"
+                            style="min-width:100px;height:30px;padding:4px 6px;font-size:0.78rem;flex:1;">
+                        ${item.photo ? `<img src="${_esc(item.photo)}" onclick="ProdQualityModule._pqViewItemPhoto(this.src)"
+                            title="관리항목 참고 사진" style="width:26px;height:26px;object-fit:cover;border-radius:4px;border:1px solid var(--border-color);cursor:pointer;flex:0 0 auto;">` : ''}
+                    </div>
                 </td>
                 <td>${specEditor}</td>
                 <td><input type="text" class="form-input pq-item-method" value="${_esc(item.method || '')}"
@@ -24147,6 +24241,7 @@ var ProdQualityModule = (function() {
                 label:  row.querySelector('.pq-item-label')?.value.trim()  || '',
                 spec:   row.querySelector('.pq-item-spec')?.value.trim()   || '',
                 method: row.querySelector('.pq-item-method')?.value.trim() || '',
+                photo:  row.querySelector('.pq-item-photo')?.value || '',
                 unit:   row.querySelector('.pq-item-unit')?.value.trim()   || '',
                 inputType: row.querySelector('.pq-item-input-type')?.value || (isNum ? 'number' : 'select')
             };
@@ -25766,7 +25861,7 @@ var ProdQualityModule = (function() {
                     ${groupCellHtml}
                     <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
                     ${specCells(item)}
-                    <td class="method-cell">${_esc(item.method || '')}</td>
+                    <td class="method-cell">${_esc(item.method || '')}${item.photo ? `<br><img src="${_esc(item.photo)}" style="width:30px;height:30px;object-fit:cover;border:1px solid #94a3b8;border-radius:3px;margin-top:2px;">` : ''}</td>
                     ${renderMeasureCell(item, '초물')}
                     ${renderMeasureCell(item, '중물')}
                     ${renderMeasureCell(item, '종물')}
@@ -26287,6 +26382,9 @@ window.addEventListener('afterprint', () => {
         ,onSpecLoadAnyCarModelChange
         ,applyAnyTemplateToSpec
         ,_pqRemoveSpecItem
+        ,_pqHandleItemPhotoChange
+        ,_pqRemoveItemPhoto
+        ,_pqViewItemPhoto
         ,_pqSpecDragStart
         ,_pqSpecDragOver
         ,_pqSpecDragLeave

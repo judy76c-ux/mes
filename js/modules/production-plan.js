@@ -1150,7 +1150,10 @@ const ProductionPlanModule = (function() {
         const partSel = document.getElementById('sPart');
         const colorSel = document.getElementById('sColor');
 
-        const isColorFirst = String(modelSel?.value || '').trim().toUpperCase() === 'RIVN';
+        // 도장 계획은 차종 선택 후 도장 컬러를 먼저 고르고 품명을 좁힌다.
+        // 기존에는 RIVN에만 적용되어 T1XX 등 다른 차종의 컬러 목록이 비어
+        // 보이는 문제가 있었다.
+        const isColorFirst = true;
 
         if (target === 'model') {
             const selectedModel = modelSel.value;
@@ -2553,7 +2556,9 @@ const ProductionPlanModule = (function() {
         if (lineProducts.length === 0) lineProducts = products;
         const models = UIUtils.sortCarModels(lineProducts.map(p => p.carModel), lineProducts);
 
-        const isColorFirst = String(modelValue || '').trim().toUpperCase() === 'RIVN';
+        // 도장 컬러 우선 선택은 특정 차종이 아니라 모든 도장 계획에 적용한다.
+        // 그래야 paintColorA/B가 품명별로 다른 제품도 차종 선택 직후 선택할 수 있다.
+        const isColorFirst = true;
         let parts = [];
         let colors = [];
         if (modelValue && (!isColorFirst || colorValue)) {
