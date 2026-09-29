@@ -7099,7 +7099,7 @@ const PaintingWorkModule = (function() {
             (planId ? ' &nbsp;<span style="background:rgba(66,133,244,0.12);color:var(--accent-blue);border-radius:4px;padding:1px 7px;font-size:0.73rem;margin-left:4px;">계획 연동</span>' : '') +
             '</div>' +
             (workNote ? '<div style="margin-top:10px;padding:8px 10px;border-radius:7px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.28);font-size:0.82rem;line-height:1.45;white-space:pre-wrap;">' +
-                '<strong style="color:#b45309;">작업 전달 사항</strong> ' + _esc(workNote) + '</div>' : '') +
+                '<strong style="color:#b45309;">작업 전달 사항</strong> ' + _pwEsc(workNote) + '</div>' : '') +
             '</div></div>';
 
         // ② 수량 행
@@ -9215,7 +9215,7 @@ const PaintingWorkModule = (function() {
                 '</div></div>' +
                 '</div>' +
                 (plan.workNote ? '<div style="margin-top:14px;padding:10px 12px;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.3);font-size:0.88rem;line-height:1.5;white-space:pre-wrap;">' +
-                    '<strong style="color:#b45309;">작업 전달 사항</strong><div style="margin-top:4px;">' + _esc(plan.workNote) + '</div></div>' : '') +
+                    '<strong style="color:#b45309;">작업 전달 사항</strong><div style="margin-top:4px;">' + _pwEsc(plan.workNote) + '</div></div>' : '') +
                 '</div></div>';
         } else {
             planHtml =

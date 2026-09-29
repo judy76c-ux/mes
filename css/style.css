@@ -133,7 +133,7 @@ body.sidebar-hidden .main-area .sdp-table-scroll {
 .dash-standard-page { display:flex;flex-direction:column;gap:12px;max-width:1680px;margin:0 auto;padding-bottom:28px; }
 .dash-standard-grid { display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:12px;align-items:start; }
 .dash-standard-col { display:flex;flex-direction:column;gap:12px;min-width:0; }
-.dash-free-grid { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:start;grid-auto-flow:row; }
+.dash-free-grid { display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:6px;align-items:start;grid-auto-flow:row; }
 .dash-block { position:relative;min-width:0;grid-column:span 6; }
 .dash-block-body { min-width:0; }
 .dash-block-handle { display:flex;align-items:center;gap:4px;margin:0 0 4px 2px;padding:2px 6px;border-radius:6px;
@@ -171,6 +171,10 @@ body.dash-layout-dragging .dash-free-grid { outline:1px dashed #cbd5e1;outline-o
 .dash-standard-col:empty { display:none; }
 .dash-standard-row { display:flex;flex-wrap:wrap;gap:10px;align-items:stretch; }
 .dash-standard-row > div { flex:0 1 240px;max-width:240px;min-width:0; }
+.dash-standard-row > #dashShippingStandby .dash-tile,
+.dash-standard-row > #dashQualityStdWarnings .dash-tile { background:#fff !important;box-shadow:0 5px 16px rgba(15,23,42,.14) !important; }
+.dash-standard-row > #dashShippingStandby .dash-tile:hover,
+.dash-standard-row > #dashQualityStdWarnings .dash-tile:hover { box-shadow:0 9px 24px rgba(15,23,42,.20) !important; }
 .dash-block[data-block="qualityStandby"] > .dash-block-resize { opacity:.7; }
 .dash-block[data-block="qualityStandby"] > .dash-block-resize:hover { opacity:1; }
 .dash-standard-incoming-panel { margin-bottom:0;padding:12px 16px; }
@@ -1933,7 +1937,8 @@ input[type="time"] {
     font-size: 8px;
     font-weight: 800;
     line-height: 1.1;
-    white-space: nowrap;
+    white-space: normal;
+    word-break: keep-all;
 }
 
 .sdp-coverage-full { color: #047857; }
@@ -2081,6 +2086,7 @@ input[type="time"] {
     position: sticky;
     background: #fff;
     z-index: 3;
+    overflow: hidden;
 }
 
 .sdp-status-table thead tr:nth-child(2) th:nth-child(-n+6) {

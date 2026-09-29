@@ -134,7 +134,7 @@ const DashboardModule = (function() {
                     min-height:${minH};display:flex;flex-direction:column;justify-content:space-between;
                     transition:box-shadow .18s,transform .12s;"
              onmouseover="this.style.boxShadow='0 4px 14px rgba(0,0,0,0.09)';this.style.transform='translateY(-2px)'"
-             onmouseout="this.style.boxShadow='none';this.style.transform='none'">
+             onmouseout="this.style.boxShadow='';this.style.transform='none'">
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:4px;">
                 <span class="material-symbols-outlined" style="font-size:${iconSz};color:${C};opacity:.85;">${icon}</span>
                 ${badge
@@ -165,7 +165,7 @@ const DashboardModule = (function() {
     ══════════════════════════════════════════════════════════ */
     const LAYOUT_KEY = 'mes_dashboard_layout_v2';
     const LAYOUT_COLS = 12;
-    const LAYOUT_GAP = 12;
+    const LAYOUT_GAP = 6;
     const SNAP_DIST = 12;
     const FREE_MIN_WIDTH = 900;
     const MIN_SPAN = 3;
@@ -237,6 +237,51 @@ const DashboardModule = (function() {
             bottom = Math.max(bottom, el.offsetTop + el.offsetHeight);
         });
         grid.style.height = (bottom + 8) + 'px';
+    }
+
+    // 카드의 폭을 유지하면서 위쪽 빈 공간부터 채워 배치한다.
+    function autoArrangeLayout() {
+        const grid = document.getElementById('dashLayoutGrid');
+        if (!grid) return;
+        if (window.innerWidth <= FREE_MIN_WIDTH) {
+            UIUtils.toast('자동 정렬은 넓은 화면에서 사용할 수 있습니다.', 'info');
+            return;
+        }
+
+        _enterFreeMode(grid);
+        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
+        if (!blocks.length) return;
+        const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
+        const placed = [];
+
+        blocks.forEach(function(block) {
+            const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
+            block.style.width = (span * colW + (span - 1) * LAYOUT_GAP) + 'px';
+        });
+        blocks.forEach(function(block) {
+            const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
+            const width = span * colW + (span - 1) * LAYOUT_GAP;
+            let best = null;
+            for (let col = 0; col <= LAYOUT_COLS - span; col += 1) {
+                const left = col * (colW + LAYOUT_GAP);
+                const top = placed.reduce(function(y, other) {
+                    const overlapsX = left < other.right && left + width > other.left;
+                    return overlapsX ? Math.max(y, other.bottom + LAYOUT_GAP) : y;
+                }, 0);
+                if (!best || top < best.top || (top === best.top && left < best.left)) {
+                    best = { left: left, top: top };
+                }
+            }
+            const height = block.offsetHeight;
+            block.dataset.x = best.left / (grid.clientWidth || 1);
+            block.dataset.y = best.top;
+            block.style.left = best.left + 'px';
+            block.style.top = best.top + 'px';
+            placed.push({ left: best.left, top: best.top, right: best.left + width, bottom: best.top + height });
+        });
+        _updateGridHeight(grid);
+        _saveLayout();
+        UIUtils.toast('대시보드 카드를 빈 공간 없이 자동 정렬했습니다.', 'success');
     }
 
     // 넓은 화면 = 자유 배치(절대 위치), 좁은 화면 = 기존 흐름 배치
@@ -507,6 +552,7 @@ const DashboardModule = (function() {
     }
 
     function renderStandardDashboard(container) {
+        const hadSavedLayout = !!_readLayout();
         container.innerHTML = `
         <div class="dash-standard-page fade-in-up">
             <div class="dash-free-grid" id="dashLayoutGrid">
@@ -524,6 +570,9 @@ const DashboardModule = (function() {
             </div>
             <div class="dash-layout-tools">
                 <span class="dash-layout-tip">블럭 이름을 끌어 자유 이동(가장자리 자석 · Alt 누르면 해제) · 오른쪽 아래 모서리를 끌어 크기 조절</span>
+                <button class="dash-layout-reset" onclick="DashboardModule.autoArrangeLayout()">
+                    <span class="material-symbols-outlined">auto_awesome_mosaic</span>자동 정렬
+                </button>
                 <button class="dash-layout-reset" onclick="DashboardModule.resetLayout()">
                     <span class="material-symbols-outlined">restart_alt</span>블럭 배치 초기화
                 </button>
@@ -547,6 +596,12 @@ const DashboardModule = (function() {
         renderImprovementTiles();
         _bindCacheWarmRefreshOnce();
         _loadSummary();
+        // 카드 내부 내용이 모두 렌더링된 뒤 실제 높이로 한 번 더 압축 정렬한다.
+        if (!hadSavedLayout && window.innerWidth > FREE_MIN_WIDTH) {
+            setTimeout(function() {
+                if (document.getElementById('dashLayoutGrid')) autoArrangeLayout();
+            }, 800);
+        }
     }
 
     /* ══════════════════════════════════════════════════════════
@@ -2929,6 +2984,7 @@ const DashboardModule = (function() {
     return {
         render,
         resetLayout,
+        autoArrangeLayout,
         toggleFullscreen,
         refresh,
         refreshQualityWarnings,
