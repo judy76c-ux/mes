@@ -419,6 +419,42 @@ const DashboardModule = (function() {
         return Object.assign(below, { moved: true });
     }
 
+    // 기준 카드(fixed)는 그 자리에 두고, 나머지 카드는 좌우 위치를 유지한 채
+    // 겹치지 않는 가장 위쪽 자리로 다시 쌓는다. (끌기·크기 조절 중 카드가 맨 아래로 밀려나거나
+    // 빈 자리가 없어 다시 옮길 수 없게 되는 문제 방지)
+    function _reflowAround(grid, fixed) {
+        const gw = grid.clientWidth || 1;
+        const others = Array.from(grid.querySelectorAll(':scope > .dash-block')).filter(function(el) {
+            return el !== fixed;
+        }).sort(function(a, b) {
+            return (a.offsetTop - b.offsetTop) || (a.offsetLeft - b.offsetLeft);
+        });
+        const rect = function(el, left, top) {
+            return { left: left, right: left + el.offsetWidth, top: top, bottom: top + el.offsetHeight };
+        };
+        const placed = [rect(fixed, fixed.offsetLeft, fixed.offsetTop)];
+        others.forEach(function(el) {
+            const left = el.offsetLeft;
+            const right = left + el.offsetWidth;
+            const h = el.offsetHeight;
+            const ys = [0].concat(placed.map(function(p) { return p.bottom + LAYOUT_GAP; }))
+                .sort(function(a, b) { return a - b; });
+            let top = ys[ys.length - 1];
+            for (let i = 0; i < ys.length; i += 1) {
+                const y = ys[i];
+                const hit = placed.some(function(p) {
+                    return left < p.right + LAYOUT_GAP && right > p.left - LAYOUT_GAP &&
+                        y < p.bottom + LAYOUT_GAP && y + h > p.top - LAYOUT_GAP;
+                });
+                if (!hit) { top = y; break; }
+            }
+            el.dataset.x = left / gw;
+            el.dataset.y = top;
+            el.style.top = top + 'px';
+            placed.push(rect(el, left, top));
+        });
+    }
+
     function _initLayoutDnD() {
         const grid = document.getElementById('dashLayoutGrid'); if (!grid) return;
 
@@ -471,14 +507,11 @@ const DashboardModule = (function() {
                 }
                 left = Math.min(Math.max(0, grid.clientWidth - c.block.offsetWidth), Math.max(0, left));
                 top = Math.max(0, Math.round(top));
-                const safe = _resolveCardCollision(grid, c.block, left, top);
-                left = safe.left;
-                top = safe.top;
-                snapped = snapped || safe.moved;
                 c.block.dataset.x = left / (grid.clientWidth || 1);
                 c.block.dataset.y = top;
                 c.block.style.left = left + 'px';
                 c.block.style.top = top + 'px';
+                _reflowAround(grid, c.block);
                 c.block.classList.toggle('is-snapped', snapped);
                 _updateGridHeight(grid);
                 return;
@@ -491,11 +524,13 @@ const DashboardModule = (function() {
             c.block.dataset.h = Math.max(MIN_HEIGHT, h);
             _applyBlockStyle(c.block);
             if (_isFree(grid)) {
-                const safe = _resolveCardCollision(grid, c.block, c.block.offsetLeft, c.block.offsetTop);
-                c.block.dataset.x = safe.left / (grid.clientWidth || 1);
-                c.block.dataset.y = safe.top;
-                c.block.style.left = safe.left + 'px';
-                c.block.style.top = safe.top + 'px';
+                // 폭이 늘어 오른쪽 끝을 넘으면 왼쪽으로만 당기고, 겹치는 다른 카드는 아래로 밀어낸다
+                const maxLeft = Math.max(0, grid.clientWidth - c.block.offsetWidth);
+                if (c.block.offsetLeft > maxLeft) {
+                    c.block.dataset.x = maxLeft / (grid.clientWidth || 1);
+                    c.block.style.left = maxLeft + 'px';
+                }
+                _reflowAround(grid, c.block);
             }
             _updateGridHeight(grid);
         });

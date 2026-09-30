@@ -17,7 +17,7 @@ var PaintingNavUI = (function() {
         { id: 'painting-work-b',       tab: '',                    icon: 'format_paint',    label: '도장-B 작업현황',       sub: '도장-B 작업일지 입력·조회' },
         { id: 'painting-inspection',   tab: 'inspection',          icon: 'done_all',        label: '외관 검사',             sub: '도장 완료품 외관 검사 진행' },
         { id: 'painting-inspection',   tab: 'completion',          icon: 'task_alt',        label: '검사완료 실적',          sub: '외관 검사 완료 이력 조회' },
-        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '재사용 자재',         sub: '재사용 자재 관리' },
+        { id: 'painting-rework-wip',   tab: '',                    icon: 'autorenew',       label: '잔여 재공품',         sub: '잔여 재공품 관리' },
         { id: 'painting-inspection',   tab: 'nonconform-standard', icon: 'description',     label: '부적합품 처리 기준서',   sub: '기준서 업로드 및 인쇄' }
     ];
 
@@ -2694,7 +2694,7 @@ const PaintingWorkModule = (function() {
                             '입고 처리</button></td></tr>';
                 }).join('') +
                 '</tbody></table>')
-            : '<p style="margin:0;font-size:0.82rem;color:var(--text-muted);">이 품목에 대해 현장 미확인 창고/재사용 자재 출고가 없습니다.</p>';
+            : '<p style="margin:0;font-size:0.82rem;color:var(--text-muted);">이 품목에 대해 현장 미확인 창고/잔여 재공품 출고가 없습니다.</p>';
 
         var existingHtml = existing.length
             ? ('<table class="data-table compact" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:0.82rem;">' +
@@ -4033,7 +4033,7 @@ const PaintingWorkModule = (function() {
         var paint = (l.paintLot && l.paintLot !== '-') ? l.paintLot : '';
         var isRework = l.lotSource === 'site_rework';
         var label = isRework
-            ? '현장 재사용 자재 / 사출 ' + l.lotNo + (l.color ? ' │ ' + l.color : '') +
+            ? '현장 잔여 재공품 / 사출 ' + l.lotNo + (l.color ? ' │ ' + l.color : '') +
               ' │ 잔량 ' + UIUtils.formatNumber(l.balance) + ' EA'
             : '도장 ' + (paint || '미지정') + ' / 사출 ' + l.lotNo +
               (l.color ? ' │ ' + l.color : '') +
@@ -4131,7 +4131,7 @@ const PaintingWorkModule = (function() {
 
     function buildLaserWipLotOptionsHtml(carModel, partName, opts) {
         var lots = getLaserWipLots(carModel, partName, opts);
-        if (lots.length === 0) return '<option value="" data-balance="">-- 재공품·현장 재사용 자재 LOT 없음 --</option>';
+        if (lots.length === 0) return '<option value="" data-balance="">-- 재공품·현장 잔여 재공품 LOT 없음 --</option>';
         var wipLots = lots.filter(function (l) { return l.lotSource !== 'site_rework'; });
         var reworkLots = lots.filter(function (l) { return l.lotSource === 'site_rework'; });
         var html = '<option value="" data-balance="">-- LOT 선택 --</option>';
@@ -4141,7 +4141,7 @@ const PaintingWorkModule = (function() {
             html += '</optgroup>';
         }
         if (reworkLots.length) {
-            html += '<optgroup label="▶ 현장입고 재사용 자재 (레이져 생략)">';
+            html += '<optgroup label="▶ 현장입고 잔여 재공품 (레이져 생략)">';
             html += reworkLots.map(function (l, i) { return _laserWipLotOptionHtml(l, !wipLots.length && i === 0); }).join('');
             html += '</optgroup>';
         }
@@ -4504,7 +4504,7 @@ const PaintingWorkModule = (function() {
                     return excludeLotNos.indexOf(key) < 0;
                 })
                 : wipLots;
-            if (wipFiltered.length === 0) return '<option value="" data-balance="">-- 재공품·현장 재사용 자재 LOT 없음 --</option>';
+            if (wipFiltered.length === 0) return '<option value="" data-balance="">-- 재공품·현장 잔여 재공품 LOT 없음 --</option>';
             var laserHtml = '<option value="" data-balance="">-- LOT 선택 --</option>';
             var wipOnly = wipFiltered.filter(function (l) { return l.lotSource !== 'site_rework'; });
             var reworkOnly = wipFiltered.filter(function (l) { return l.lotSource === 'site_rework'; });
@@ -4514,7 +4514,7 @@ const PaintingWorkModule = (function() {
                 laserHtml += '</optgroup>';
             }
             if (reworkOnly.length) {
-                laserHtml += '<optgroup label="▶ 현장입고 재사용 자재 (레이져 생략)">';
+                laserHtml += '<optgroup label="▶ 현장입고 잔여 재공품 (레이져 생략)">';
                 laserHtml += reworkOnly.map(function (l) { return _laserWipLotOptionHtml(l, false); }).join('');
                 laserHtml += '</optgroup>';
             }
@@ -4818,21 +4818,156 @@ const PaintingWorkModule = (function() {
         }
     }
 
+    function _putReworkPicks(picks) {
+        if (!document.getElementById('pwLotRows')) {
+            UIUtils.toast('실적 입력 화면이 열려 있을 때만 LOT을 선택할 수 있습니다.', 'warning');
+            return;
+        }
+        var flag = document.getElementById('pwUseReworkMaterial');
+        if (flag) {
+            if (!flag.checked) {
+                flag.checked = true;
+                toggleReworkUseBox(flag, true);
+            }
+        }
+        // 잔여 재공품 재공 수량(사출명별 잔여 재공품 현황)이 상한. 이미 ②에 잡힌 재사용 행은 뺀 나머지만 쓸 수 있고,
+        // 작업 투입수량 중 다른 LOT이 이미 채운 몫을 넘겨 잡지 않는다.
+        var rwAvail = 0;
+        if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty) {
+            var _pcm = (document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '';
+            var _ppn = ((document.getElementById('pwInjPartSelect') || {}).value || '').trim()
+                || (document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '';
+            var _pcolor = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
+            rwAvail = Number(ReworkWipModule.getStockQty(_pcm, _ppn, _pcolor)) || 0;
+        }
+        if (!(rwAvail > 0)) {
+            UIUtils.toast('현장 잔여 재공품 재공 수량이 없어 선택할 수 없습니다.', 'warning');
+            return;
+        }
+        var neededQty = Number((document.getElementById('addPwInputQty') || document.getElementById('editPwInputQty') || {}).value) || 0;
+        var rwUsed = 0, otherUsed = 0;
+        document.querySelectorAll('#pwLotRows .pw-lot-row').forEach(function (row) {
+            var sel = row.querySelector('.pw-lot-sel');
+            var opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+            var q = Number((row.querySelector('.pw-lot-qty') || {}).value) || 0;
+            var isRw = (opt && String(opt.getAttribute('data-lot-source') || '') === 'site_rework')
+                || (sel && String(sel.value || '').indexOf('rework:') === 0);
+            if (isRw) rwUsed += q; else otherUsed += q;
+        });
+        var rwLeft = Math.max(0, rwAvail - rwUsed);
+        // 필요 수량 안에서 잔여 재공품를 우선 쓰고, 모자란 만큼만 다른 LOT이 채운다(아래에서 다른 LOT 수량을 줄여 맞춤).
+        if (neededQty > 0) rwLeft = Math.min(rwLeft, Math.max(0, neededQty - rwUsed));
+        if (!(rwLeft > 0)) {
+            UIUtils.toast('잔여 재공품 ' + UIUtils.formatNumber(rwAvail) + ' EA를 이미 투입 목록에 모두 잡았거나 필요 수량을 채웠습니다.', 'warning');
+            return;
+        }
+        var capped = false;
+        picks = picks.map(function (p) {
+            var q = Math.min(p.qty, rwLeft);
+            if (q < p.qty) capped = true;
+            rwLeft -= q;
+            return { lotNo: p.lotNo, qty: q };
+        }).filter(function (p) { return p.qty > 0; });
+        if (capped) {
+            UIUtils.toast('잔여 재공품 재공 수량(' + UIUtils.formatNumber(rwAvail) + ' EA) 한도로 사용 수량을 줄여 담았습니다.', 'info');
+        }
+        var added = 0;
+        picks.forEach(function (p) {
+            var before = document.querySelectorAll('#pwLotRows .pw-lot-row').length;
+            addMissingLotRow({
+                dataset: {
+                    lot: p.lotNo,
+                    qty: String(p.qty),
+                    forceRework: '1',
+                    source: 'site_rework'
+                }
+            });
+            if (document.querySelectorAll('#pwLotRows .pw-lot-row').length > before) added++;
+        });
+        if (added > 0) {
+            // 잔여 재공품를 넣은 만큼 다른(창고 공급) LOT 수량을 뒤에서부터 줄여 투입수량에 맞춘다.
+            if (neededQty > 0) {
+                var allRows = Array.prototype.slice.call(document.querySelectorAll('#pwLotRows .pw-lot-row'));
+                var rwSum = 0, otherRows = [];
+                allRows.forEach(function (row) {
+                    var sel = row.querySelector('.pw-lot-sel');
+                    var opt = sel && sel.options ? sel.options[sel.selectedIndex] : null;
+                    var q = Number((row.querySelector('.pw-lot-qty') || {}).value) || 0;
+                    var isRw = (opt && String(opt.getAttribute('data-lot-source') || '') === 'site_rework')
+                        || (sel && String(sel.value || '').indexOf('rework:') === 0);
+                    if (isRw) rwSum += q; else otherRows.push(row);
+                });
+                var otherSum = otherRows.reduce(function (t, row) { return t + (Number((row.querySelector('.pw-lot-qty') || {}).value) || 0); }, 0);
+                var excess = rwSum + otherSum - neededQty;
+                for (var oi = otherRows.length - 1; oi >= 0 && excess > 0; oi--) {
+                    var qi = otherRows[oi].querySelector('.pw-lot-qty');
+                    var cur = Number(qi && qi.value) || 0;
+                    var cut = Math.min(cur, excess);
+                    excess -= cut;
+                    if (cur - cut > 0) qi.value = cur - cut;
+                    else otherRows[oi].remove();
+                }
+            }
+            setTimeout(_updateLotSummary, 80);
+            UIUtils.toast(added + '개 잔여 재공품 LOT을 도장 투입에 추가했습니다.', 'success');
+            var rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
+            var last = rows[rows.length - 1];
+            if (last && last.scrollIntoView) {
+                last.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                last.style.outline = '2px solid #7c3aed';
+                setTimeout(function () { last.style.outline = ''; }, 1800);
+            }
+        }
+    }
+
+    /** 「잔여 재공품 사용」 — 잔여 재공품 재공 입고 이력(사출LOT·수입검사일)에서 골라 ② 도장 투입에 넣는다. */
     function openPastInboundPicker() {
-        var line = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
-            || (typeof _currentLine !== 'undefined' ? _currentLine : '') || '도장-A';
-        var date = ((document.getElementById('addPwDateHidden') || {}).value || '').slice(0, 10);
         var car = ((document.getElementById('addPwCarModelHidden') || document.getElementById('editPwCarModel') || {}).value || '').trim();
         var part = ((document.getElementById('pwInjPartSelect') || {}).value || '').trim()
             || ((document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '').trim();
         var color = ((document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '').trim();
-        openMaterialHistory(line, {
-            pickMode: true,
-            date: date,
-            carModel: car,
-            partName: part,
-            color: color
-        });
+        if (typeof ReworkWipModule === 'undefined' || !ReworkWipModule.getStockLots) {
+            UIUtils.toast('잔여 재공품 모듈을 불러오지 못했습니다.', 'error');
+            return;
+        }
+        var lots = ReworkWipModule.getStockLots(car, part, color) || [];
+        if (!lots.length) {
+            UIUtils.toast('선택할 수 있는 잔여 재공품 재공이 없습니다.', 'warning');
+            return;
+        }
+        _reworkPickList = lots;
+        var total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+        var rows = lots.map(function (l, i) {
+            return '<tr style="cursor:pointer;border-top:1px solid var(--border-color);" ' +
+                'onmouseover="this.style.background=\'rgba(124,58,237,0.07)\'" onmouseout="this.style.background=\'\'" ' +
+                'onclick="PaintingWorkModule.pickReworkStockLot(' + i + ')">' +
+                '<td style="padding:6px 10px;">' + _pwEsc(l.date || '-') + '</td>' +
+                '<td style="padding:6px 10px;font-family:monospace;font-weight:700;">' + _pwEsc(l.injLot || '-') + '</td>' +
+                '<td style="padding:6px 10px;">' + _pwEsc(l.inspDate || '-') + '</td>' +
+                '<td style="padding:6px 10px;">' + _pwEsc(l.reworkType || '-') + '</td>' +
+                '<td style="padding:6px 10px;text-align:right;font-weight:700;color:#7c3aed;">' + UIUtils.formatNumber(l.qty) + ' EA</td>' +
+                '</tr>';
+        }).join('');
+        var body = '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">' +
+            _pwEsc(car) + ' / ' + _pwEsc(part) + (color ? ' / ' + _pwEsc(color) : '') +
+            ' — 현재 잔여 재공품 재공 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(total) + ' EA</strong>. ' +
+            '행을 클릭하면 사출LOT이 ② 도장 투입에 들어갑니다. 필요한 수량만큼만 담기고, 수량은 투입 행에서 수정할 수 있습니다.</div>' +
+            '<table style="width:100%;border-collapse:collapse;font-size:0.85rem;">' +
+            '<thead><tr style="text-align:left;color:var(--text-secondary);font-size:0.78rem;">' +
+            '<th style="padding:6px 10px;">입고일</th><th style="padding:6px 10px;">사출LOT</th>' +
+            '<th style="padding:6px 10px;">수입검사일</th><th style="padding:6px 10px;">재공 발생 종류</th>' +
+            '<th style="padding:6px 10px;text-align:right;">재공수량</th></tr></thead><tbody>' + rows + '</tbody></table>';
+        var footer = '<button type="button" class="btn btn-secondary" onclick="UIUtils.closeChildModal ? UIUtils.closeChildModal() : UIUtils.closeModal()">닫기</button>';
+        if (typeof UIUtils.showChildModal === 'function') UIUtils.showChildModal('잔여 재공품 재공에서 LOT 선택', body, footer, 'sm');
+        else UIUtils.showModal('잔여 재공품 재공에서 LOT 선택', body, footer);
+    }
+
+    var _reworkPickList = [];
+    function pickReworkStockLot(idx) {
+        var l = _reworkPickList[idx];
+        if (!l || !l.injLot) { UIUtils.toast('사출LOT이 없는 재공은 선택할 수 없습니다.', 'warning'); return; }
+        if (typeof UIUtils.closeChildModal === 'function' && UIUtils.isChildModalOpen && UIUtils.isChildModalOpen()) UIUtils.closeChildModal();
+        _putReworkPicks([{ lotNo: l.injLot, qty: l.qty }]);
     }
 
     function openMaterialHistory(line, opts) {
@@ -5274,40 +5409,7 @@ const PaintingWorkModule = (function() {
             return { lotNo: u.lotNo, qty: qty };
         }
 
-        function _putPicks(picks) {
-            if (!document.getElementById('pwLotRows')) {
-                UIUtils.toast('실적 입력 화면이 열려 있을 때만 LOT을 선택할 수 있습니다.', 'warning');
-                return;
-            }
-            var flag = document.getElementById('pwUseReworkMaterial');
-            if (flag) {
-                flag.checked = true;
-                toggleReworkUseBox(flag);
-            }
-            var added = 0;
-            picks.forEach(function (p) {
-                var before = document.querySelectorAll('#pwLotRows .pw-lot-row').length;
-                addMissingLotRow({
-                    dataset: {
-                        lot: p.lotNo,
-                        qty: String(p.qty),
-                        forceRework: '1',
-                        source: 'site_rework'
-                    }
-                });
-                if (document.querySelectorAll('#pwLotRows .pw-lot-row').length > before) added++;
-            });
-            if (added > 0) {
-                UIUtils.toast(added + '개 재사용 LOT을 도장 투입에 추가했습니다.', 'success');
-                var rows = document.querySelectorAll('#pwLotRows .pw-lot-row');
-                var last = rows[rows.length - 1];
-                if (last && last.scrollIntoView) {
-                    last.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    last.style.outline = '2px solid #7c3aed';
-                    setTimeout(function () { last.style.outline = ''; }, 1800);
-                }
-            }
-        }
+        function _putPicks(picks) { _putReworkPicks(picks); }
 
         function _applyAfterFormRestore(picks) {
             var hasForm = !!document.getElementById('pwLotRows');
@@ -5811,8 +5913,8 @@ const PaintingWorkModule = (function() {
             } else if (hasInboundHist) {
                 var isLaserWipSummary = (document.getElementById('addPwIsLaserWip') || {}).value === '1';
                 guideHtml = isLaserWipSummary
-                    ? '레이져 후 재공품과 현장입고 재사용 자재를 함께 선택할 수 있습니다. 재사용 자재는 레이져를 거치지 않아도 됩니다.<br>' +
-                      '위 LOT 목록에서 <strong>현장입고 재사용 자재</strong>를 추가하거나, 재공품 잔량을 늘려 투입하세요.'
+                    ? '레이져 후 재공품과 현장입고 잔여 재공품을 함께 선택할 수 있습니다. 잔여 재공품은 레이져를 거치지 않아도 됩니다.<br>' +
+                      '위 LOT 목록에서 <strong>현장입고 잔여 재공품</strong>를 추가하거나, 재공품 잔량을 늘려 투입하세요.'
                     : ('현장 입고 이력은 있으나 <strong>사용 가능 잔량이 없습니다</strong>. ' +
                       '추가 투입을 위해 사출 창고 생산출고 → 현장 입고가 필요합니다.<br>' +
                       '물류 담당자 사용자 <strong>' + nameText + '</strong> 에게 ' +
@@ -5985,7 +6087,7 @@ const PaintingWorkModule = (function() {
     }
 
     /** 현장 투입(또는 재공) LOT 목록 — 당일 현장입고분 우선, lotNo 오름차순 = FIFO.
-     *  「재사용 자재 사용」이 켜져 있으면 현장입고 재사용 LOT을 뒤에 이어 붙인다. */
+     *  「잔여 재공품 사용」이 켜져 있으면 현장입고 재사용 LOT을 뒤에 이어 붙인다. */
     function _getAvailableLotsFifo() {
         var injPartSel = document.getElementById('pwInjPartSelect');
         var injPartName = injPartSel ? injPartSel.value : '';
@@ -6052,6 +6154,14 @@ const PaintingWorkModule = (function() {
     function _isLotConfirmedReceived(lotNo, carModel, injPartName, isLaserWipProduct, partName) {
         var lot = String(lotNo || '').trim();
         if (!lot) return false;
+        // 잔여 재공품 재공 입고 이력에서 고른 사출LOT은 현장 입고 확인 기록이 없어도 유효하다
+        try {
+            if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockLots) {
+                var _rwCol = (document.getElementById('addPwColorHidden') || document.getElementById('editPwColor') || {}).value || '';
+                var _rwLots = ReworkWipModule.getStockLots(carModel, injPartName || partName, _rwCol) || [];
+                if (_rwLots.some(function (l) { return String(l.injLot || '').trim() === lot; })) return true;
+            }
+        } catch (eRwConf) { /* 무시 */ }
         if (isLaserWipProduct) {
             var wipLots = getLaserWipLots(carModel, partName);
             if (wipLots.some(function (l) {
@@ -6152,6 +6262,11 @@ const PaintingWorkModule = (function() {
             remain -= take;
         }
         if (useRework && remain > 0.001) {
+            // 잔여 재공품은 「사출명별 잔여 재공품 현황」 재공 수량까지만 자동 배분한다.
+            var rwCap = Infinity;
+            if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty) {
+                rwCap = Math.max(0, (Number(ReworkWipModule.getStockQty(cm, injPartName || pn, planColor)) || 0) - reworkTaken);
+            }
             var keptKeys = {};
             keptRework.forEach(function (k) { keptKeys[String(k.optionKey || k.lotNo)] = true; });
             fifoRework.forEach(function (l) {
@@ -6160,7 +6275,9 @@ const PaintingWorkModule = (function() {
                 if (keptKeys[key]) return;
                 var rBal = Number(l.balance) || 0;
                 if (rBal <= 0) return;
-                var rTake = Math.min(rBal, remain);
+                var rTake = Math.min(rBal, remain, rwCap);
+                if (rTake <= 0) return;
+                rwCap -= rTake;
                 allocations.push({
                     lotNo: l.lotNo,
                     optionKey: key,
@@ -6186,7 +6303,7 @@ const PaintingWorkModule = (function() {
             if (wantRework && !lotOptRe.test(lotsHtml)) {
                 lotsHtml = '<option value="' + _pwEsc(selectVal) + '" data-lot-no="' + _pwEsc(a.lotNo) +
                     '" data-lot-source="site_rework" data-balance="' + a.balance + '" selected>' +
-                    '현장 재사용 자재 / 사출 ' + _pwEsc(a.lotNo) + ' │ ' + UIUtils.formatNumber(a.balance) + ' EA</option>' +
+                    '현장 잔여 재공품 / 사출 ' + _pwEsc(a.lotNo) + ' │ ' + UIUtils.formatNumber(a.balance) + ' EA</option>' +
                     lotsHtml;
             }
             container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, selectVal, a.qty));
@@ -7202,9 +7319,9 @@ const PaintingWorkModule = (function() {
         var _lotSectionIcon = isLaserWipProduct ? 'bolt' : 'inventory_2';
         var _lotSectionTitle = isLaserWipProduct ? '재공품 LOT' : '사출 LOT';
         var _lotSectionDesc  = isLaserWipProduct
-            ? '(레이져 후 재공품 + 현장입고 재사용 자재 · 재사용 자재는 레이져 생략)'
+            ? '(레이져 후 재공품 + 현장입고 잔여 재공품 · 잔여 재공품은 레이져 생략)'
             : '(당일 도장 현장 입고 잔량 · 복수 LOT 입력 가능)';
-        var _lotColHeader = isLaserWipProduct ? '재공·재사용 자재 LOT 선택' : '현장 투입 LOT 선택';
+        var _lotColHeader = isLaserWipProduct ? '재공·잔여 재공품 LOT 선택' : '현장 투입 LOT 선택';
         var _lotAddBtnDisabled = initialLotCount <= 1
             ? ' disabled title="' + (isLaserWipProduct ? '재공품 LOT가 1개 이하여서 추가할 수 없습니다' : '현장 투입 LOT가 1개 이하여서 추가할 수 없습니다') + '"'
             : '';
@@ -7214,7 +7331,7 @@ const PaintingWorkModule = (function() {
         // 먼저 걸려서 자동으로 채워지고, 정작 오늘 들어온(아직 미입고 처리 중인) 새 LOT은
         // 화면에 안 보인 채 조용히 묻혀버리는 사고로 이어진다.
         var unmatchedInboundHtml = (carModel && partName)
-            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
+            ? (_lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·잔여 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
                _buildUnmatchedInboundWarningHtml({
                    carModel: carModel,
                    partName: isLaserWipProduct ? (laserInjPartName || partName) : partName,
@@ -7258,9 +7375,9 @@ const PaintingWorkModule = (function() {
             var _rwInjName = (isLaserWipProduct ? (laserInjPartName || partName) : (autoInjPartName || partName)) || '';
             var _siteRwQty = 0;
             try {
-                if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
-                    var _siteLots = PaintingInputModule.getLotsByInjPart(effectiveLine, _rwInjName, color, carModel) || [];
-                    _siteRwQty = _siteLots.reduce(function (s, l) { return s + (Number(l.balance) || 0); }, 0);
+                // 「사출명별 잔여 재공품 현황」(잔여 재공품 재공 재고)과 같은 값을 보여준다.
+                if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty) {
+                    _siteRwQty = Number(ReworkWipModule.getStockQty(carModel, _rwInjName, color)) || 0;
                 }
             } catch (eRwSite) { _siteRwQty = 0; }
             reworkUseHtml =
@@ -7269,16 +7386,16 @@ const PaintingWorkModule = (function() {
                 '<label style="display:flex;align-items:center;gap:8px;font-size:0.86rem;font-weight:700;color:#7c3aed;cursor:pointer;">' +
                 '<input type="checkbox" id="pwUseReworkMaterial" onchange="PaintingWorkModule.toggleReworkUseBox(this)" style="width:16px;height:16px;accent-color:#7c3aed;">' +
                 '<span class="material-symbols-outlined" style="font-size:17px;">autorenew</span>' +
-                '재사용 자재 사용' +
+                '잔여 재공품 사용' +
                 '</label>' +
                 '<div id="pwReworkUseExtras" style="display:none;margin-top:8px;">' +
                 '<button type="button" class="btn btn-sm" style="background:#7c3aed;color:#fff;border:none;padding:4px 10px;white-space:nowrap;" ' +
                 'onclick="PaintingWorkModule.openPastInboundPicker()">' +
-                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">history</span> 도장현장 입고에서 선택</button>' +
+                '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">history</span> 잔여 재공품 재공에서 선택</button>' +
                 '<div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;line-height:1.45;">' +
-                '같은 <strong>차종 · 사출명 · 컬러</strong>의 도장현장 입고 LOT만 고릅니다. 재사용 자재 창고에서 바로 빼지 않습니다.' +
+                '같은 <strong>차종 · 사출명 · 컬러</strong>의 잔여 재공품 재공(사출LOT·수입검사일)에서 고릅니다. 재공 수량과 필요 수량을 넘지 않습니다.' +
                 (_siteRwQty > 0
-                    ? '<br>현재 현장 잔량 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(_siteRwQty) + ' EA</strong>' +
+                    ? '<br>현재 현장 잔여 재공품 보유 <strong style="color:#7c3aed;">' + UIUtils.formatNumber(_siteRwQty) + ' EA</strong>' +
                       (color ? ' (' + _pwEsc(color) + ')' : '')
                     : '') +
                 '</div>' +
@@ -7302,7 +7419,7 @@ const PaintingWorkModule = (function() {
             (isLaserWipProduct
                 ? '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;border-bottom:1px solid var(--border);font-size:0.82rem;color:var(--accent-blue);">' +
                   '<span class="material-symbols-outlined" style="font-size:16px;">bolt</span>' +
-                  '<strong>레이져 후 재공품</strong>과 <strong>현장입고 재사용 자재</strong>를 함께 선택할 수 있습니다. 재사용 자재는 레이져를 거치지 않아도 됩니다.' +
+                  '<strong>레이져 후 재공품</strong>과 <strong>현장입고 잔여 재공품</strong>을 함께 선택할 수 있습니다. 잔여 재공품은 레이져를 거치지 않아도 됩니다.' +
                   '<input type="hidden" id="pwInjPartSelect" value="' + _pwEsc(laserInjPartName || '') + '">' +
                   '</div>'
                 : '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px;padding-bottom:9px;' +
@@ -7926,8 +8043,17 @@ const PaintingWorkModule = (function() {
         var savedWork = await Storage.add(STORE, data);
         var isLaserWipSave = ((document.getElementById('addPwIsLaserWip') || {}).value || '') === '1';
         if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
-            try { await PaintingInputModule.deductForWork(savedWork || data); }
+            try {
+                // 잔여 재공품 행은 현장 입고 LOT이 아니라 재공 재고에서 차감하므로 현장 LOT 차감 대상에서 뺀다.
+                var siteOnlyLots = (data.lots || []).filter(function (l) { return !_isReworkLot(l); });
+                var siteOnlyQty = siteOnlyLots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
+                await PaintingInputModule.deductForWork(Object.assign({}, savedWork || data, {
+                    lots: siteOnlyLots,
+                    inputQty: siteOnlyLots.length === (data.lots || []).length ? (savedWork || data).inputQty : siteOnlyQty
+                }));
+            }
             catch (eDeduct) { console.warn('[PaintingWork] 투입 자재 차감 실패:', eDeduct); }
+            await _deductReworkWip(savedWork || data);
         } else if (isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
             var reworkLots = (data.lots || []).filter(function (l) {
                 return l && (l.lotSource === 'site_rework' || String(l.optionKey || '').indexOf('rework:') === 0);
@@ -7942,6 +8068,7 @@ const PaintingWorkModule = (function() {
                 } catch (eRwDeduct) { console.warn('[PaintingWork] 리워크 현장 LOT 차감 실패:', eRwDeduct); }
             }
         }
+        if (isLaserWipSave) await _deductReworkWip(savedWork || data);
         if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined'
             && typeof PaintingInputModule.writeOffExpiredSiteLots === 'function') {
             try {
@@ -9720,8 +9847,8 @@ const PaintingWorkModule = (function() {
             '</div>';
     }
 
-    // 재사용 자재 → 도장현장 출고로 들어온 입고분(isReworkInbound)임을 표시하는 배지.
-    // 창고 생산출고와 뒤섞여 보이면 이 LOT이 사출 창고 재고가 아니라 재사용 자재에서 온
+    // 잔여 재공품 → 도장현장 출고로 들어온 입고분(isReworkInbound)임을 표시하는 배지.
+    // 창고 생산출고와 뒤섞여 보이면 이 LOT이 사출 창고 재고가 아니라 잔여 재공품에서 온
     // 것을 놓쳐, 사출 창고 재고와 대조하며 혼란스러워하는 문제가 있었다.
     // 플래그(isReworkInbound)는 이 기능 이후 확인된 입고 건에만 붙어 있어, 그전 건이나 자동
     // 입고 경로 건은 리워크인데도 플래그가 없다 — 실제 리워크 출고 원장까지 대조해 판정한다.
@@ -9736,14 +9863,14 @@ const PaintingWorkModule = (function() {
 
     function _reworkInboundBadgeHtml() {
         return ' <span style="font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;' +
-            'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">재사용 자재</span>';
+            'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">잔여 재공품</span>';
     }
 
     /** 입고 위치 칸 — 사출 창고 / 리워크를 배지로 구분 */
     function _inboundLocationCellHtml(isRework) {
         return isRework
             ? '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
-              'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">재사용 자재</span>'
+              'background:rgba(124,58,237,.12);color:#7c3aed;white-space:nowrap;">잔여 재공품</span>'
             : '<span style="font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:999px;' +
               'background:rgba(37,99,235,.10);color:#2563eb;white-space:nowrap;">사출 창고</span>';
     }
@@ -9773,7 +9900,7 @@ const PaintingWorkModule = (function() {
         return '<thead><tr style="color:var(--text-muted);text-align:left;">' +
             '<th style="padding:4px 8px;white-space:nowrap;">입고일</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">입고시간</th>' +
-            '<th style="padding:4px 8px;white-space:nowrap;" title="사출 창고 또는 재사용 자재">입고 위치</th>' +
+            '<th style="padding:4px 8px;white-space:nowrap;" title="사출 창고 또는 잔여 재공품">입고 위치</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">차종</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">사출명</th>' +
             '<th style="padding:4px 8px;white-space:nowrap;">컬러</th>' +
@@ -10188,7 +10315,7 @@ const PaintingWorkModule = (function() {
         var lotOptRe = new RegExp('value="' + selectVal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '"');
         if (!lotOptRe.test(lotsHtml)) {
             var missingLabel = forceRework || selectVal === reworkKey
-                ? ('현장 재사용 자재 / 사출 ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA')
+                ? ('현장 잔여 재공품 / 사출 ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA')
                 : ('이 도장작업일 미반영분 │ LOT ' + _pwEsc(lotNo) + ' │ ' + UIUtils.formatNumber(qty) + ' EA');
             var missingOpt = '<option value="' + _pwEsc(selectVal) + '" data-lot-no="' + _pwEsc(lotNo) + '" data-lot-source="' +
                 ((forceRework || isLaser) ? 'site_rework' : '') + '" data-balance="' + qty + '" selected>' +
@@ -10235,14 +10362,14 @@ const PaintingWorkModule = (function() {
         warnEl.outerHTML = _buildUnmatchedInboundWarningHtml(dSnapshot);
     }
 
-    function toggleReworkUseBox(checkboxEl) {
+    function toggleReworkUseBox(checkboxEl, silent) {
         var extras = document.getElementById('pwReworkUseExtras');
         var on = !!(checkboxEl && checkboxEl.checked);
         if (extras) extras.style.display = on ? '' : 'none';
         // 체크하는 즉시 ② 도장 투입에 현장 재사용 LOT 행을 붙이고, 해제하면 재사용 행을 뺀다.
         _execAutoFill();
-        if (on && !_reworkLotRowCount()) {
-            UIUtils.toast('현장 재사용 자재 잔량이 없거나, 차종·사출명·컬러가 맞는 입고가 없습니다.', 'warning');
+        if (on && !silent && !_reworkLotRowCount()) {
+            UIUtils.toast('현장 잔여 재공품 잔량이 없거나, 차종·사출명·컬러가 맞는 입고가 없습니다.', 'warning');
         }
     }
 
@@ -10257,8 +10384,8 @@ const PaintingWorkModule = (function() {
         return n;
     }
 
-    /** "재사용 자재 사용" 박스의 [리워크에서 투입 처리] 버튼 — 별도 화면 이동 없이 그 자리에서
-     *  ① 재사용 자재 출고(즉시 차감) → ② 도장현장 입고 확정(자동) → ③ 사출 창고 「현장 사출
+    /** "잔여 재공품 사용" 박스의 [리워크에서 투입 처리] 버튼 — 별도 화면 이동 없이 그 자리에서
+     *  ① 잔여 재공품 출고(즉시 차감) → ② 도장현장 입고 확정(자동) → ③ 사출 창고 「현장 사출
      *  요청」 취소(acked 반영)까지 한 번에 처리하고, 방금 확정된 LOT을 ②투입 목록에 자동
      *  추가한다. 기본 흐름(사출 창고에서 공급)은 이 박스를 쓰지 않으면 그대로 유지된다. */
     async function applyReworkMaterial(btnEl) {
@@ -10285,7 +10412,7 @@ const PaintingWorkModule = (function() {
             return;
         }
         if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.dispatchFromPaintingWork !== 'function') {
-            UIUtils.toast('재사용 자재 모듈을 사용할 수 없습니다.', 'error');
+            UIUtils.toast('잔여 재공품 모듈을 사용할 수 없습니다.', 'error');
             return;
         }
 
@@ -10296,10 +10423,10 @@ const PaintingWorkModule = (function() {
 
             var outRec = await ReworkWipModule.dispatchFromPaintingWork({
                 carModel: cm, partName: injPartName, color: color, qty: qty, line: line,
-                note: '도장 실적 입력 — 재사용 자재 사용'
+                note: '도장 실적 입력 — 잔여 재공품 사용'
             });
             if (!outRec) {
-                UIUtils.toast('재사용 자재 출고 처리에 실패했습니다.', 'error');
+                UIUtils.toast('잔여 재공품 출고 처리에 실패했습니다.', 'error');
                 return;
             }
 
@@ -10311,11 +10438,11 @@ const PaintingWorkModule = (function() {
 
             if (typeof InjectionWarehouseModule !== 'undefined' && typeof InjectionWarehouseModule.ackReworkUsageFromWork === 'function') {
                 await InjectionWarehouseModule.ackReworkUsageFromWork(cm, injPartName, color, qty, {
-                    note: '도장 실적 입력 — 재사용 자재 사용 (' + line + ')'
+                    note: '도장 실적 입력 — 잔여 재공품 사용 (' + line + ')'
                 });
             }
 
-            UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 재사용 자재에서 투입 처리했습니다. 사출 창고 요청도 취소됩니다.', 'success');
+            UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 잔여 재공품에서 투입 처리했습니다. 사출 창고 요청도 취소됩니다.', 'success');
 
             var lotNo = outRec.lotNo || (Array.isArray(outRec.lots) && outRec.lots[0] && outRec.lots[0].lotNo) || '';
             if (lotNo) {
@@ -10331,7 +10458,7 @@ const PaintingWorkModule = (function() {
             }
             if (qtyEl) qtyEl.value = '';
         } catch (e) {
-            UIUtils.toast('재사용 자재 적용 실패: ' + (e && e.message ? e.message : e), 'error');
+            UIUtils.toast('잔여 재공품 적용 실패: ' + (e && e.message ? e.message : e), 'error');
         } finally {
             if (btnEl) btnEl.disabled = false;
         }
@@ -10468,7 +10595,7 @@ const PaintingWorkModule = (function() {
             _workEditContextHiddenHtml(d) +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·잔여 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +
@@ -10671,7 +10798,7 @@ const PaintingWorkModule = (function() {
             _workEditContextHiddenHtml(d) +
             '<input type="hidden" id="pwInjPartSelect" value="' + _resolveInjPartNameForWork(d.carModel, d.partName, d.color) + '">' +
 
-            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·재사용 자재에서 이 라인으로 실제 입고된 LOT·수량)') +
+            _lotFlowStepHeaderHtml('1', '#2563eb', '창고 → 도장현장 입고', '(사출 창고·잔여 재공품에서 이 라인으로 실제 입고된 LOT·수량)') +
             _buildUnmatchedInboundWarningHtml(d) +
 
             '<div style="margin-top:14px;">' +
@@ -10938,14 +11065,29 @@ const PaintingWorkModule = (function() {
         // 부모 창이 남는다 — 저장 후에는 스택까지 전부 닫는다.
         UIUtils.closeAllModals();
         var editedWork = Storage.getById(STORE, id);
+        await _deductReworkWip(editedWork);
         _attachQualityIssueToWork(editedWork);
         loadAll();
+    }
+
+    function _isReworkLot(l) {
+        return !!l && (l.lotSource === 'site_rework' || String(l.optionKey || '').indexOf('rework:') === 0);
+    }
+
+    /** 실적에 잡힌 잔여 재공품 LOT만큼 재공 재고를 차감한다(수정 저장 땐 기존 차감을 지우고 다시 만든다). */
+    async function _deductReworkWip(work) {
+        if (!work || !work.id || typeof ReworkWipModule === 'undefined' || !ReworkWipModule.deductForWork) return;
+        try { await ReworkWipModule.deductForWork(work); }
+        catch (e) { console.warn('[PaintingWork] 잔여 재공품 차감 실패:', e); UIUtils.toast('잔여 재공품 차감 중 오류가 발생했습니다. 재공 현황을 확인하세요.', 'warning'); }
     }
 
     function remove(id) {
         UIUtils.confirm('삭제하시겠습니까?', async () => {
             var work = Storage.getById(STORE, id);
             await Storage.remove(STORE, id);
+            try {
+                if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.restoreForWork) await ReworkWipModule.restoreForWork(id);
+            } catch (eRwRestore) { console.warn('[PaintingWork] 잔여 재공품 복원 실패:', eRwRestore); }
 
             // 사출 창고 재고 복원: refWorkId로 연결된 (과거) 자동 출고 기록만 역처리한다.
             // 도장 작업실적 입력 시 자동 차감 기능은 폐지됐으므로, 이제부터 저장되는 실적은
@@ -11464,6 +11606,7 @@ const PaintingWorkModule = (function() {
         confirmInputInbound,
         openMaterialHistory,
         openPastInboundPicker,
+        pickReworkStockLot,
         openMissingInboundForPlan,
         confirmPendingInboundForPlan,
         applyInboundUseDate,

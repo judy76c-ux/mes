@@ -92,7 +92,7 @@ const AuthModule = (function () {
         { id:'painting-work-a',           label:'도장-A 작업',        group:'도장공정' },
         { id:'painting-work-b',           label:'도장-B 작업',        group:'도장공정' },
         { id:'painting-inspection',       label:'도장 검사일지',      group:'도장공정' },
-        { id:'painting-rework-wip',       label:'재사용 자재',      group:'도장공정' },
+        { id:'painting-rework-wip',       label:'잔여 재공품',      group:'도장공정' },
         { id:'paint-mix',                 label:'배합작업',           group:'도장공정' },
         { id:'laser-process',             label:'레이저 작업',        group:'레이저공정' },
         { id:'laser-standby',             label:'레이져 대기품',      group:'레이져공정' },

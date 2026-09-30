@@ -14982,6 +14982,12 @@ var PaintMixModule = (function() {
     }
 
     /* ── 배합 이력만 별도 탭 ── */
+    // 도료 사용 이력에는 경화제·희석제(신너)를 넣지 않는다 — 주제(도료)만 표시·집계한다.
+    // (등록 폼은 이미 제외하지만, 예전에 함께 저장된 기록이 이력에 남아 보이는 것을 막는다)
+    function _historyUsages(m) {
+        return (m && m.usages || []).filter(u => u.role !== '경화제' && u.role !== '희석제');
+    }
+
     function renderMixHistTab() {
         const pane = document.getElementById('pmixPane_mixhist');
         if (!pane) return;
@@ -15037,8 +15043,8 @@ var PaintMixModule = (function() {
 
         const statsEl = document.getElementById('pmixHistStats');
         if (statsEl) {
-            const totalG = mixes.reduce((s,m) => s + (m.usages||[]).reduce((a,u) => a + (Number(u.usageG)||0), 0), 0);
-            const totalCans = mixes.reduce((s,m) => s + (m.usages||[]).reduce((a,u) => a + (Number(u.warehouseCans)||0), 0), 0);
+            const totalG = mixes.reduce((s,m) => s + _historyUsages(m).reduce((a,u) => a + (Number(u.usageG)||0), 0), 0);
+            const totalCans = mixes.reduce((s,m) => s + _historyUsages(m).reduce((a,u) => a + (Number(u.warehouseCans)||0), 0), 0);
             statsEl.innerHTML = `
                 <div class="stat-card blue"><div class="stat-card-value">${mixes.length}</div><div class="stat-card-label">배합 건수</div></div>
                 <div class="stat-card green"><div class="stat-card-value">${UIUtils.formatNumber(totalG)}g</div><div class="stat-card-label">총 사용량</div></div>
@@ -15052,8 +15058,8 @@ var PaintMixModule = (function() {
             return;
         }
         tbody.innerHTML = mixes.map((m, i) => {
-            const totalG = (m.usages||[]).reduce((s,u) => s + (Number(u.usageG)||0), 0);
-            const summary = (m.usages||[]).map(u => {
+            const totalG = _historyUsages(m).reduce((s,u) => s + (Number(u.usageG)||0), 0);
+            const summary = _historyUsages(m).map(u => {
                 const parts = [];
                 if (Number(u.usageG) > 0) parts.push(`사용 ${UIUtils.formatNumber(u.usageG)}g`);
                 if (Number(u.warehouseCans) > 0) parts.push(`출고 ${u.warehouseCans}캔`);
@@ -15061,7 +15067,7 @@ var PaintMixModule = (function() {
                 if (residG > 0) parts.push(`<span style="color:#f59e0b;">잔량 ${UIUtils.formatNumber(residG)}g</span>`);
                 return `<span style="font-size:0.78rem;">[${_esc(u.usageType||'-')}] ${_esc(u.paintName||'-')}${parts.length?' ('+parts.join(', ')+')':''}</span>`;
             }).join('<br>');
-            const warehouseOutSummary = (m.usages||[]).filter(u => Number(u.warehouseCans) > 0).map(u =>
+            const warehouseOutSummary = _historyUsages(m).filter(u => Number(u.warehouseCans) > 0).map(u =>
                 `<span style="font-size:0.78rem;">${_esc(u.paintName||'-')}: <strong style="color:#ea580c;">${UIUtils.formatNumber(u.warehouseCans)}캔</strong></span>`
             ).join('<br>');
             const _mhd = (m.date||'').split(' ')[0]; const _mht = (m.date||'').split(' ')[1]||m.startTime||'';
@@ -16499,7 +16505,7 @@ var PaintMixModule = (function() {
 
     function renderStats(works, mixes) {
         const issuedWorkIds = new Set(mixes.map(m => m.workId).filter(Boolean));
-        const totalUsageG = mixes.reduce((s, m) => s + (m.usages || []).reduce((a, u) => a + (Number(u.usageG) || 0), 0), 0);
+        const totalUsageG = mixes.reduce((s, m) => s + _historyUsages(m).reduce((a, u) => a + (Number(u.usageG) || 0), 0), 0);
         const el = document.getElementById('pmixStats');
         if (!el) return;
         el.innerHTML = `
@@ -16616,9 +16622,9 @@ var PaintMixModule = (function() {
             return;
         }
         tbody.innerHTML = mixes.map((m, i) => {
-            const totalG = (m.usages || []).reduce((s, u) => s + (Number(u.usageG) || 0), 0);
-            const totalCans = (m.usages || []).reduce((s, u) => s + (Number(u.warehouseCans) || 0), 0);
-            const summary = (m.usages || []).map(u => {
+            const totalG = _historyUsages(m).reduce((s, u) => s + (Number(u.usageG) || 0), 0);
+            const totalCans = _historyUsages(m).reduce((s, u) => s + (Number(u.warehouseCans) || 0), 0);
+            const summary = _historyUsages(m).map(u => {
                 const usageG = Number(u.usageG) || 0;
                 const cans = Number(u.warehouseCans) || 0;
                 const parts = [];
@@ -16648,6 +16654,12 @@ var PaintMixModule = (function() {
     }
 
     /* ── 배합실 도료재고: 창고 출고량(g) - 도료사용량(g) 집계 ── */
+    // 배합실 도료 재고는 주제(도료)만 관리한다 — 경화제·희석제(신너)는 제외.
+    function _isHardenerOrThinnerMat(mat) {
+        const t = String((mat && mat.paintType) || '').trim();
+        return t === '경화제' || t === '희석제' || t === '신너';
+    }
+
     function _calcMixingRoomResiduals() {
         const mats  = Storage.getAll(PAINT_MAT_STORE) || [];
         const mixes = _mixes();
@@ -16752,6 +16764,7 @@ var PaintMixModule = (function() {
 
         return Object.values(map)
             .filter(r => r.residualG > 0)
+            .filter(r => !_isHardenerOrThinnerMat(mats.find(x => x.id === r.materialId)))
             .sort((a, b) => (a.paintName||'').localeCompare(b.paintName||'', 'ko'));
     }
 
@@ -16764,6 +16777,7 @@ var PaintMixModule = (function() {
     // 등록 대상 도료가 많을 때 이름 하나로 통 목록에서 찾는 대신 단계별로 걸러 찾게 한다.
     function _pmixResFilteredMats(category, supplier) {
         return (Storage.getAll(PAINT_MAT_STORE) || []).filter(m => {
+            if (_isHardenerOrThinnerMat(m)) return false;
             if (category && String(m.paintType || '').trim() !== category) return false;
             if (supplier && String(m.supplier || '').trim() !== supplier) return false;
             return true;
@@ -16795,7 +16809,7 @@ var PaintMixModule = (function() {
     function openMixResidualAdjust(materialId, lotNo) {
         if (!_canWritePaintMix()) { UIUtils.toast('배합작업 입력 권한이 없습니다.', 'warning'); return; }
         const isNew = !materialId;
-        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const mats = (Storage.getAll(PAINT_MAT_STORE) || []).filter(m => !_isHardenerOrThinnerMat(m));
         const current = isNew ? null : _calcMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
         const categories = [...new Set(mats.map(m => m.paintType || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
         const suppliers = [...new Set(mats.map(m => m.supplier || '').filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
@@ -19235,7 +19249,7 @@ var PaintMixModule = (function() {
     }
 
     function exportData() {
-        const rows = _mixes().flatMap(m => (m.usages || []).map(u => [
+        const rows = _mixes().flatMap(m => _historyUsages(m).map(u => [
             m.date, m.line, m.carModel, m.partName, m.productionLot, u.paintSpec, u.role, u.paintName, u.prodLot, u.usageG || 0, u.warehouseCans || 0, u.packUnit || '', m.operator || '', m.note || ''
         ]));
         Storage.exportToCSV(['일자','라인','차종','품명','생산LOT','도료사양','구분','도료명','도료LOT','사용량(g)','창고출고(캔)','포장(KG/캔)','작업자','비고'], rows, '도료배합관리');
@@ -20917,6 +20931,9 @@ var ProdQualityModule = (function() {
                                 _normText(t.paintProcess || '') === _normText(p.paintProcess)
                             ) || null;
                         }
+                        // 개정일자 = 이 품목 기준(템플릿)을 마지막으로 저장한 날짜
+                        const revisedRaw = status === 'none' || !tmplForPreset ? '' : String(tmplForPreset.updatedAt || tmplForPreset.createdAt || '').slice(0, 10);
+                        const revisedText = revisedRaw ? _esc(revisedRaw) : '<span style="color:var(--text-muted);">-</span>';
                         const matchedPresetName = status === 'none'
                             ? null
                             : _presetNameForTemplate(tmplForPreset, specItems);
@@ -20934,6 +20951,7 @@ var ProdQualityModule = (function() {
                             <td style="font-size:0.83rem;font-weight:600;">${_esc(p.partName)}${procBadge}</td>
                             <td style="font-size:0.82rem;">${_esc(p.color)||'<span style="color:var(--text-muted);">-</span>'}</td>
                             <td>${presetCellHtml}</td>
+                            <td style="font-size:0.78rem;font-family:monospace;white-space:nowrap;text-align:center;">${revisedText}</td>
                             ${specCells}
                             <td style="text-align:center;padding:6px;">
                                 <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
@@ -20975,6 +20993,7 @@ var ProdQualityModule = (function() {
                                     <th style="min-width:110px;">품명</th>
                                     <th style="min-width:80px;">컬러</th>
                                     <th style="min-width:110px;">적용 프리셋</th>
+                                    <th style="min-width:90px;">개정일자</th>
                                     ${headerCols}
                                     <th style="text-align:center;min-width:80px;">작업</th>
                                 </tr>
@@ -21196,7 +21215,7 @@ var ProdQualityModule = (function() {
         });
         const sameColorTemplateCandidates = _getSameColorTemplateCandidates(productId, color, proc);
 
-        const items = _sortItemsByMaster(_productSpecItems(carModel, partName, color, { paintProcess: proc }).map(item => _normalizeItemForEdit({ ...item })));
+        const items = _keepItemOrder(_productSpecItems(carModel, partName, color, { paintProcess: proc }).map(item => _normalizeItemForEdit({ ...item })));
 
         const status = _specStatus(items);
         const filledCount = items.filter(_hasSpecValue).length;
@@ -21525,7 +21544,7 @@ var ProdQualityModule = (function() {
     function _renderSpecItemsToPage(items) {
         const body = document.getElementById('pqSpecItemsBody');
         if (!body) return;
-        const normalized = _sortItemsByMaster((items || []).map(item => _normalizeItemForEdit({ ...item })));
+        const normalized = _keepItemOrder((items || []).map(item => _normalizeItemForEdit({ ...item })));
         body.innerHTML = normalized.map(i => _specItemRowHtml(i, { readOnly: false, showDelete: true })).join('');
         _pqUpdatePresetDetection();
     }
@@ -22877,7 +22896,7 @@ var ProdQualityModule = (function() {
     }
 
     function _measureItemsForIssue(issue = {}) {
-        return _sortItemsByMaster(_normalizeQualityItems(issue.items || []))
+        return _keepItemOrder(_normalizeQualityItems(issue.items || []))
             .map(item => ({ ...item, measureGroup: _measureGroupOfItem(item) }))
             .filter(item => item.measureGroup);
     }
@@ -23136,6 +23155,10 @@ var ProdQualityModule = (function() {
     }
 
     function openDataModal(issueId) {
+        _confirmSpecChangesThen(issueId, () => _openDataModalCore(issueId));
+    }
+
+    function _openDataModalCore(issueId) {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
@@ -23145,6 +23168,87 @@ var ProdQualityModule = (function() {
             <button class="btn btn-primary" onclick="ProdQualityModule.saveMeasureRecord('${_js(issueId)}','${_js(record.id || '')}')">저장</button>
         `, 'xl');
         setTimeout(_renderAllPqDataPhotoLists, 50);
+    }
+
+    // 품목별 기준이 발행/기록 이후 바뀌었는지 비교 — 같은 항목(key/label)의 현재 기준과 저장 기준이 다르면 목록으로 돌려준다.
+    // 저장 기준이 비어 있는 옛 기록은 표시 단계에서 현재 기준으로 보완되므로 '변경'으로 보지 않는다.
+    function _detectSpecChanges(issue, record) {
+        const cur = _productSpecItems(issue.carModel || '', issue.partName || '', issue.color || '', {
+            fallbackToMaster: false,
+            paintProcess: issue.line || ''
+        });
+        if (!cur.length) return [];
+        const norm = v => String(v || '').replace(/\s+/g, ' ').trim();
+        const findCur = it => cur.find(c =>
+            (it.key && String(c.key || '').toLowerCase() === String(it.key).toLowerCase()) ||
+            (it.label && String(c.label || '').trim() === String(it.label).trim()));
+        const changes = [];
+        const seen = new Set();
+        const scan = (list, src) => (list || []).forEach(it => {
+            const match = findCur(it);
+            if (!match) return;
+            const oldSpec = norm(src === 'issue' ? (_composeRangeSpec(it) || it.spec) : it.spec);
+            const newSpec = norm(_composeRangeSpec(match) || match.spec);
+            if (!oldSpec || !newSpec || oldSpec === newSpec || oldSpec === '-') return;
+            const id = String(it.key || it.label);
+            if (seen.has(id)) return;
+            seen.add(id);
+            changes.push({ key: it.key, label: it.label || it.key, oldSpec, newSpec });
+        });
+        scan(_measureItemsForIssue(issue), 'issue');
+        scan(record && record.items, 'record');
+        return changes;
+    }
+
+    async function _applySpecChanges(issue, record) {
+        const cur = _productSpecItems(issue.carModel || '', issue.partName || '', issue.color || '', {
+            fallbackToMaster: false,
+            paintProcess: issue.line || ''
+        });
+        const findCur = it => cur.find(c =>
+            (it.key && String(c.key || '').toLowerCase() === String(it.key).toLowerCase()) ||
+            (it.label && String(c.label || '').trim() === String(it.label).trim()));
+        const items = (issue.items || []).map(it => {
+            const m = findCur(it);
+            return m ? { ...it, ...m, selected: it.selected } : it;
+        });
+        await Storage.update(STORE, issue.id, { ...issue, items });
+        if (record && record.id) {
+            const rItems = (record.items || []).map(it => {
+                const m = findCur(it);
+                if (!m) return it;
+                return { ...it, spec: _composeRangeSpec(m) || String(m.spec || '').trim() || it.spec,
+                    unit: m.unit || it.unit, method: m.method || it.method };
+            });
+            await Storage.update(STORE, record.id, { ...record, items: rItems });
+        }
+    }
+
+    // 편집(DATA 입력) 진입 시 기준이 바뀌었으면 변경된 기준으로 적용할지 묻고, 답한 뒤 next()를 실행한다.
+    function _confirmSpecChangesThen(issueId, next) {
+        const issue = Storage.getById(STORE, issueId);
+        if (!issue) return;
+        const record = _measureRecordForIssue(issueId) || {};
+        const changes = _detectSpecChanges(issue, record);
+        if (!changes.length) { next(); return; }
+        const NL = String.fromCharCode(10);
+        const lines = changes.slice(0, 8).map(c => '· ' + c.label + ': ' + c.oldSpec + '  →  ' + c.newSpec).join(NL);
+        const more = changes.length > 8 ? NL + '… 외 ' + (changes.length - 8) + '건' : '';
+        UIUtils.confirm(
+            '품목별 관리 기준이 변경되었습니다.' + NL + NL + lines + more + NL + NL +
+            '변경된 기준으로 적용하시겠습니까?' + NL + '(취소하면 저장된 기존 기준 그대로 편집합니다)',
+            async function () {
+                try {
+                    await _applySpecChanges(issue, record);
+                    UIUtils.toast('변경된 기준으로 적용했습니다.', 'success');
+                } catch (e) {
+                    console.error('[ProdQuality] 기준 변경 적용 실패:', e);
+                    UIUtils.toast('기준 적용 중 오류가 발생했습니다.', 'error');
+                }
+                setTimeout(next, 50);
+            },
+            function () { setTimeout(next, 50); }
+        );
     }
 
     function openDataView(issueId) {
@@ -23907,6 +24011,11 @@ var ProdQualityModule = (function() {
         }
     }
 
+    // 품목별 기준에서 사용자가 정한 관리항목 순서(드래그)를 그대로 유지한다. (마스터 순서로 재정렬하면 저장한 순서가 되돌아감)
+    function _keepItemOrder(items = []) {
+        return [...items];
+    }
+
     function _sortItemsByMaster(items = [], masterItems = null) {
         const masters = masterItems || _masterItems();
         const order = new Map();
@@ -23941,7 +24050,7 @@ var ProdQualityModule = (function() {
             ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
             : (d.items || []);
         const items = templateItems.length
-            ? _sortItemsByMaster(_mergeIssueItems(templateItems, d.items || []).map(item => _normalizeItemForEdit({ ...item })))
+            ? _keepItemOrder(_mergeIssueItems(templateItems, d.items || []).map(item => _normalizeItemForEdit({ ...item })))
             : [];
         const compactGridTop = 'display:grid;grid-template-columns:0.9fr 1fr 1.6fr;gap:8px 12px;margin-bottom:8px;';
         const compactGrid = 'display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px 12px;margin-bottom:8px;';
@@ -24059,7 +24168,7 @@ var ProdQualityModule = (function() {
     }
 
     function _collectIssueItems() {
-        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
+        const items = _keepItemOrder([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
             const isNum = row.querySelector('.pq-item-numeric')?.value === '1';
             const obj = {
                 key:    row.querySelector('.pq-item-key')?.value    || Storage.generateId(),
@@ -24142,7 +24251,7 @@ var ProdQualityModule = (function() {
         const baseItems = presetItems.length
             ? presetItems
             : _itemsForCar(carModel, resolvedColor).map(item => _normalizeItemForEdit({ ...item }));
-        return _sortItemsByMaster(_mergeIssueItems(baseItems, currentItems).map(item => _normalizeItemForEdit({ ...item })));
+        return _keepItemOrder(_mergeIssueItems(baseItems, currentItems).map(item => _normalizeItemForEdit({ ...item })));
     }
 
     function _issueItemRowHtml(item = {}, no = '') {
@@ -24234,7 +24343,7 @@ var ProdQualityModule = (function() {
 
     function collectData() {
         const types = [...document.querySelectorAll('.pq-type-check:checked')].map(el => el.value);
-        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
+        const items = _keepItemOrder([...document.querySelectorAll('.pq-issue-item-row')].map(row => {
             const isNum = row.querySelector('.pq-item-numeric')?.value === '1';
             const obj = {
                 key:    row.querySelector('.pq-item-key')?.value    || Storage.generateId(),
@@ -24760,7 +24869,7 @@ var ProdQualityModule = (function() {
         const selectedColor = color || '';
         const tmpl      = _templateFor(selectedCar, selectedColor);
         const hasTemplate = !!(tmpl && Array.isArray(tmpl.items) && tmpl.items.length > 0);
-        const items = _sortItemsByMaster(hasTemplate
+        const items = _keepItemOrder(hasTemplate
             ? _normalizeQualityItems(tmpl.items)
             : _masterItems().map(item => ({ ...item, selected: true })));
         UIUtils.showModal('차종/컬러별 초중종물 기준설정',
@@ -25751,7 +25860,10 @@ var ProdQualityModule = (function() {
             ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
                 .filter(item => item.selected !== false)
             : [];
-        const items = _sortItemsByMaster(
+        // 인쇄 순서는 관리 기준 화면에서 저장한 항목 순서를 그대로 사용한다.
+        // 마스터 기본 순서로 다시 정렬하면 사용자가 지정한 관리 기준 순서와
+        // 인쇄물이 달라지므로, 병합 결과의 현재 순서를 보존한다.
+        const items = _keepItemOrder(
             (templateItems.length
                 ? _mergeIssueItems(templateItems, d.items || [])
                 : _normalizeQualityItems(d.items || [])

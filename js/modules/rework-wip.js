@@ -1,5 +1,5 @@
 /**
- * 재사용 자재 현황
+ * 잔여 재공품 현황
  * - 도장 외관검사에서 입력한 리워크수가 입고로 적립됨
  * - 차종/부품별 재고 + 입출고 이력 관리
  * - LOT은 사출LOT · 수입검사일 · 도장LOT 로 구분해 저장·표시한다
@@ -8,7 +8,7 @@
 var ReworkWipModule = (function () {
     const WIP_STORE = DB.STORES.REWORK_WIP;
 
-    // 리워크 종류 — 원인별로 재발 방지 조치가 다르므로(도장 누락→도장 공정 점검,
+    // 재공 발생 종류 — 원인별로 재발 방지 조치가 다르므로(도장 누락→도장 공정 점검,
     // 사출재작업→사출 성형 조건, 세척누락→전처리 공정) 원인을 구분해 남긴다.
     const REWORK_TYPES = ['도장 누락', '사출재작업', '세척누락', '소량 잔량'];
 
@@ -215,7 +215,7 @@ var ReworkWipModule = (function () {
         return list;
     }
 
-    /** 재사용 자재 색상 → 사출자재 마스터의 사출 컬러.
+    /** 잔여 재공품 색상 → 사출자재 마스터의 사출 컬러.
      *  도장 컬러(BK+CLEAR)나 라인코드(6PS·AZ3)가 저장돼 있어도 소재 컬러(WHITE 등)로 보여 준다. */
     function _toInjColor(carModel, partName, storedColor) {
         var want = String(storedColor || '').trim();
@@ -280,12 +280,89 @@ var ReworkWipModule = (function () {
             if (r.type === '입고') map[key].qty += (Number(r.qty) || 0);
             else map[key].qty -= (Number(r.qty) || 0);
         });
-        return Object.values(map).filter(function (s) { return s.qty !== 0; })
+        return Object.values(map).filter(function (s) { return s.qty > 0; })
             .sort(function (a, b) {
                 return String(a.carModel).localeCompare(String(b.carModel)) ||
                     String(a.partName).localeCompare(String(b.partName)) ||
                     String(a.color).localeCompare(String(b.color));
             });
+    }
+
+    /** 재고가 마이너스인 품목과, 그 마이너스를 만든 출고 기록(최신순)을 돌려준다. */
+    function _negativeItems(records) {
+        const map = {};
+        records.forEach(function (r) {
+            const injPart = _displayPartName(r.carModel, r.partName);
+            const injColor = _displayInjColor(r.carModel, r.partName, r.color);
+            const key = (r.carModel || '') + '||' + injPart + '||' + injColor;
+            if (!map[key]) map[key] = { carModel: r.carModel, partName: injPart, color: injColor, qty: 0, outs: [] };
+            if (r.type === '입고') map[key].qty += (Number(r.qty) || 0);
+            else { map[key].qty -= (Number(r.qty) || 0); map[key].outs.push(r); }
+        });
+        return Object.values(map).filter(function (m) { return m.qty < 0; }).map(function (m) {
+            m.outs.sort(function (a, b) {
+                return String(b.date || '').localeCompare(String(a.date || '')) ||
+                    String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+            });
+            return m;
+        });
+    }
+
+    /** 마이너스 재고 정리 — 마이너스를 없애는 데 필요한 만큼, 최근 출고부터 삭제 후보로 미리 체크해 보여준다. */
+    function openNegativeCleanup() {
+        const items = _negativeItems(_getAll());
+        if (!items.length) { UIUtils.toast('마이너스 재고가 없습니다.', 'info'); return; }
+        const srcNames = { dispatch_to_line: '현장출고', painting_work_use: '도장실적 사용', manual: '수기등록' };
+        const body = items.map(function (m) {
+            let need = -m.qty;
+            const rows = m.outs.map(function (r) {
+                const q = Number(r.qty) || 0;
+                const pre = need > 0;
+                if (pre) need -= q;
+                const f = _lotFieldsOf(r);
+                return `<tr style="border-top:1px solid var(--border-color);">
+                    <td style="padding:6px 8px;"><input type="checkbox" class="rw-neg-chk" value="${_esc(r.id)}" ${pre ? 'checked' : ''}></td>
+                    <td style="padding:6px 8px;white-space:nowrap;">${_esc(String(r.date || '').slice(0, 10))}</td>
+                    <td style="padding:6px 8px;text-align:right;font-weight:700;color:#dc2626;">-${_fmt(q)}</td>
+                    <td style="padding:6px 8px;font-family:monospace;">${_esc(f.injLot || '-')}</td>
+                    <td style="padding:6px 8px;font-size:.8rem;color:var(--text-muted);">${_esc(srcNames[r.source] || r.source || '-')}</td>
+                    <td style="padding:6px 8px;font-size:.78rem;color:var(--text-muted);">${_esc(r.note || '')}</td>
+                </tr>`;
+            }).join('');
+            return `<div style="margin-bottom:14px;">
+                <div style="font-weight:700;margin-bottom:6px;">${_esc(m.carModel || '-')} · ${_esc(m.partName)}${m.color ? ' · ' + _esc(m.color) : ''}
+                    <span style="color:#dc2626;">(재고 ${_fmt(m.qty)} EA)</span></div>
+                <table style="width:100%;border-collapse:collapse;font-size:.84rem;">
+                    <thead><tr style="text-align:left;color:var(--text-secondary);font-size:.76rem;">
+                        <th style="padding:4px 8px;">삭제</th><th style="padding:4px 8px;">일자</th>
+                        <th style="padding:4px 8px;text-align:right;">출고수량</th><th style="padding:4px 8px;">사출LOT</th>
+                        <th style="padding:4px 8px;">출처</th><th style="padding:4px 8px;">비고</th></tr></thead>
+                    <tbody>${rows}</tbody>
+                </table></div>`;
+        }).join('');
+        UIUtils.showModal('마이너스 재고 정리',
+            `<div style="font-size:.82rem;color:var(--text-muted);margin-bottom:10px;">
+                입고 없이 출고만 쌓여 재고가 마이너스가 된 품목입니다. 마이너스를 없애는 데 필요한 만큼 최근 출고부터 삭제 후보로 체크했습니다.
+                <strong>실제로 현장에 나간 출고인지 확인하고</strong>, 잘못된 기록만 체크해서 삭제하세요. 삭제는 되돌릴 수 없습니다.
+            </div>${body}`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-danger" onclick="ReworkWipModule.applyNegativeCleanup()">선택한 출고 삭제</button>`,
+            '820px');
+    }
+
+    async function applyNegativeCleanup() {
+        const ids = Array.prototype.map.call(document.querySelectorAll('.rw-neg-chk:checked'), function (el) { return el.value; });
+        if (!ids.length) { UIUtils.toast('삭제할 출고를 선택하세요.', 'warning'); return; }
+        if (!confirm(ids.length + '건의 출고 기록을 삭제합니다. 되돌릴 수 없습니다. 계속하시겠습니까?')) return;
+        try {
+            for (let i = 0; i < ids.length; i++) await Storage.remove(WIP_STORE, ids[i]);
+            UIUtils.closeModal();
+            UIUtils.toast(ids.length + '건을 삭제했습니다.', 'success');
+            const el = document.getElementById('contentArea');
+            if (el) render(el);
+        } catch (e) {
+            UIUtils.toast('삭제 실패: ' + (e && e.message ? e.message : e), 'error');
+        }
     }
 
     function _colorAlias(c) {
@@ -307,13 +384,14 @@ var ReworkWipModule = (function () {
      * 사출창고 「현장 입고 부족」에서 IL 등 리워크 투입품의 현재고로 쓴다.
      * 재공 쪽 품명이 "IL BLACK"처럼 합쳐진 경우도 매칭한다.
      */
-    function getStockQty(carModel, partName, color) {
+    function getStockQty(carModel, partName, color, excludeId) {
         const wantCar = String(carModel || '').trim();
         const wantPart = String(partName || '').trim();
         const wantColor = String(color || '').trim();
         const combined = (wantPart + (wantColor ? ' ' + wantColor : '')).trim();
         let total = 0;
         _getAll().forEach(function (r) {
+            if (excludeId && r.id === excludeId) return;
             const rCar = String(r.carModel || '').trim();
             const rPart = String(r.partName || '').trim();
             const rColor = String(r.color || '').trim();
@@ -331,6 +409,51 @@ var ReworkWipModule = (function () {
             else total -= Number(r.qty) || 0;
         });
         return Math.max(0, total);
+    }
+
+    /**
+     * 차종·사출명·컬러 재공 재고를 사출LOT별로 나눈 목록 (잔량 > 0).
+     * 도장 「잔여 재공품 사용」에서 재공 입고 이력(사출LOT·수입검사일)을 그대로 골라 쓰기 위함.
+     * LOT이 없는 출고분은 오래된 LOT부터 차감한다.
+     */
+    function getStockLots(carModel, partName, color) {
+        const wantCar = String(carModel || '').trim();
+        const wantPart = String(partName || '').trim();
+        const rows = _getAll().filter(function (r) {
+            const rCar = String(r.carModel || '').trim();
+            if (wantCar && rCar && rCar !== wantCar) return false;
+            if (!_partsMatch(String(r.partName || '').trim(), wantPart, wantCar)) return false;
+            const rColor = String(r.color || '').trim();
+            return !(color && rColor && !_sameStockColor(wantCar, wantPart, color, rColor));
+        }).sort(function (a, b) { return String(a.date || '').localeCompare(String(b.date || '')); });
+
+        const lots = [];
+        const byKey = {};
+        let unlotOut = 0;
+        rows.forEach(function (r) {
+            const f = _lotFieldsOf(r);
+            const q = Number(r.qty) || 0;
+            const key = f.injLot + '|' + f.inspDate;
+            if (r.type === '입고') {
+                if (!byKey[key]) {
+                    byKey[key] = { injLot: f.injLot, inspDate: f.inspDate, paintLot: f.paintLot,
+                        date: String(r.date || '').slice(0, 10), reworkType: r.reworkType || '', qty: 0 };
+                    lots.push(byKey[key]);
+                }
+                byKey[key].qty += q;
+            } else if (byKey[key]) {
+                byKey[key].qty -= q;
+            } else {
+                unlotOut += q;
+            }
+        });
+        lots.forEach(function (l) {
+            if (unlotOut <= 0 || l.qty <= 0) return;
+            const t = Math.min(l.qty, unlotOut);
+            l.qty -= t;
+            unlotOut -= t;
+        });
+        return lots.filter(function (l) { return l.qty > 0; });
     }
 
     function _summaryCard(title, value, icon, color) {
@@ -388,12 +511,19 @@ var ReworkWipModule = (function () {
             ${typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-rework-wip') : ''}
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
               <div>
-                <h3 style="margin:0;font-size:1.1rem;font-weight:800;">재사용 자재</h3>
+                <h3 style="margin:0;font-size:1.1rem;font-weight:800;">잔여 재공품</h3>
                 <div style="font-size:0.8rem;color:var(--text-muted);margin-top:4px;">도장 외관검사 리워크수 → 재공 입고 · 수동 출고로 재고 관리 · LOT은 사출·수입검사일·도장으로 구분</div>
               </div>
-              <button class="btn btn-primary btn-sm" onclick="ReworkWipModule.openAddModal()">
-                <span class="material-symbols-outlined" style="font-size:16px;">add</span> 입출고 등록
-              </button>
+              <div style="display:flex;gap:8px;align-items:center;">
+                ${_negativeItems(records).length
+                  ? `<button class="btn btn-sm" style="background:#fee2e2;color:#b91c1c;border:1px solid #fecaca;" onclick="ReworkWipModule.openNegativeCleanup()">
+                        <span class="material-symbols-outlined" style="font-size:16px;vertical-align:-3px;">warning</span> 마이너스 재고 정리 (${_negativeItems(records).length})
+                     </button>`
+                  : ''}
+                <button class="btn btn-primary btn-sm" onclick="ReworkWipModule.openAddModal()">
+                  <span class="material-symbols-outlined" style="font-size:16px;">add</span> 입출고 등록
+                </button>
+              </div>
             </div>
 
           <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:20px;">
@@ -404,17 +534,19 @@ var ReworkWipModule = (function () {
 
           <div class="section-card" style="margin-bottom:20px;">
             <div style="padding:16px 20px;border-bottom:1px solid var(--border-color);font-weight:700;font-size:.97rem;">
-              사출명별 재사용 자재 현황
+              사출명별 잔여 재공품 현황
             </div>
             <div style="padding:16px 20px;">
               ${stock.length === 0
-                ? '<p style="color:var(--text-muted);text-align:center;padding:24px 0;">등록된 재사용 자재가 없습니다.</p>'
+                ? '<p style="color:var(--text-muted);text-align:center;padding:24px 0;">등록된 잔여 재공품이 없습니다.</p>'
                 : `<table class="data-table data-table--content" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:.9rem;">
                     <thead>
                       <tr style="background:var(--bg-secondary);text-align:left;">
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">차종</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출명</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출 컬러</th>
+                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출LOT</th>
+                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">수입검사일</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);text-align:right;white-space:nowrap;">재공수량(EA)</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">상태</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">작업</th>
@@ -422,10 +554,19 @@ var ReworkWipModule = (function () {
                     </thead>
                     <tbody>
                       ${stock.map(function (s) {
+                        const lotList = getStockLots(s.carModel, s.partName, s.color);
+                        const lotCellHtml = function (pick) {
+                            const vals = lotList.map(pick).filter(Boolean);
+                            return vals.length
+                                ? vals.map(function (v) { return '<div style="font-family:monospace;">' + _esc(v) + '</div>'; }).join('')
+                                : '<span style="color:var(--text-muted);">-</span>';
+                        };
                         return `<tr style="border-top:1px solid var(--border-color);">
                           <td style="padding:9px 12px;white-space:nowrap;">${_esc(s.carModel || '-')}</td>
                           <td style="padding:9px 12px;font-weight:600;white-space:nowrap;">${_esc(s.partName)}</td>
                           <td style="padding:9px 12px;white-space:nowrap;">${_esc(s.color || '-')}</td>
+                          <td style="padding:9px 12px;white-space:nowrap;font-weight:700;">${lotCellHtml(function (l) { return l.injLot; })}</td>
+                          <td style="padding:9px 12px;white-space:nowrap;">${lotCellHtml(function (l) { return l.inspDate; })}</td>
                           <td style="padding:9px 12px;text-align:right;font-weight:700;color:${s.qty > 0 ? '#ea580c' : s.qty < 0 ? '#dc2626' : 'var(--text-muted)'};">${_fmt(s.qty)}</td>
                           <td style="padding:9px 12px;white-space:nowrap;">
                             <span style="padding:3px 10px;border-radius:20px;font-size:.78rem;font-weight:600;
@@ -472,7 +613,7 @@ var ReworkWipModule = (function () {
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">사출 컬러</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);text-align:right;white-space:nowrap;">수량(EA)</th>
                         ${_lotThHtml('8px 12px')}
-                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">리워크 종류</th>
+                        <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">재공 발생 종류</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">출처</th>
                         <th style="padding:8px 12px;font-weight:600;color:var(--text-secondary);">비고</th>
                         <th style="padding:8px 12px;"></th>
@@ -698,7 +839,7 @@ var ReworkWipModule = (function () {
             </select>
           </div>
           <div>
-            <label class="form-label">리워크 종류</label>
+            <label class="form-label">재공 발생 종류</label>
             <select id="rwReworkType" class="form-input">
               <option value="">-- 선택 --</option>
               ${REWORK_TYPES.map(function (t) {
@@ -717,7 +858,7 @@ var ReworkWipModule = (function () {
     }
 
     function openAddModal() {
-        UIUtils.showModal('재사용 자재 입출고 등록', _formHtml(), `
+        UIUtils.showModal('잔여 재공품 입출고 등록', _formHtml(), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ReworkWipModule.saveRecord(null)">저장</button>
         `);
@@ -790,11 +931,12 @@ var ReworkWipModule = (function () {
 
     /** 위 조회창에서 행 클릭 시 호출 — 폼의 사출LOT·수입검사일 입력칸을 채운다 */
     function _pickInjLot(lotNo, dateOnly) {
+        // 조회창을 닫으면 등록 폼이 스냅샷으로 복원(DOM 재생성)되므로, 반드시 닫은 뒤에 값을 채운다.
+        UIUtils.closeModal();
         const lotEl = document.getElementById('rwInjLot');
         const dateEl = document.getElementById('rwInspDate');
         if (lotEl) lotEl.value = lotNo;
         if (dateEl) dateEl.value = dateOnly;
-        UIUtils.closeModal();
         UIUtils.toast('사출LOT · 수입검사일을 채웠습니다.', 'success');
     }
 
@@ -806,7 +948,7 @@ var ReworkWipModule = (function () {
         _reopenDetailAfterSave = null;
         const rec = _getAll().find(function (r) { return r.id === id; });
         if (!rec) return;
-        UIUtils.showModal('재사용 자재 수정', _formHtml(rec), `
+        UIUtils.showModal('잔여 재공품 수정', _formHtml(rec), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ReworkWipModule.saveRecord('${id}')">저장</button>
         `);
@@ -817,13 +959,13 @@ var ReworkWipModule = (function () {
         _reopenDetailAfterSave = { carModel: carModel, partName: partName, color: color };
         const rec = _getAll().find(function (r) { return r.id === id; });
         if (!rec) return;
-        UIUtils.showModal('재사용 자재 수정', _formHtml(rec), `
+        UIUtils.showModal('잔여 재공품 수정', _formHtml(rec), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ReworkWipModule.saveRecord('${id}')">저장</button>
         `);
     }
 
-    /** 리워크 재공 입출고 등록(신규 건) 시 생산관리자에게 통보 — 재사용 자재 흐름을
+    /** 리워크 재공 입출고 등록(신규 건) 시 생산관리자에게 통보 — 잔여 재공품 흐름을
      *  생산관리자가 화면을 직접 열어보지 않아도 실시간으로 파악할 수 있게 한다. */
     function _notifyProdManagerOfRework(rec) {
         if (typeof AuthModule === 'undefined' || typeof AuthModule.sendInternalMessage !== 'function') return;
@@ -832,15 +974,15 @@ var ReworkWipModule = (function () {
             AuthModule.sendInternalMessage({
                 targetType: 'role',
                 targetIds: ['prod_manager'],
-                title: '재사용 자재 ' + rec.type + ' 등록 — ' + rec.partName,
+                title: '잔여 재공품 ' + rec.type + ' 등록 — ' + rec.partName,
                 body: [
-                    '재사용 자재가 ' + rec.type + ' 등록되었습니다.',
+                    '잔여 재공품이 ' + rec.type + ' 등록되었습니다.',
                     '',
                     '일자: ' + (rec.date || '-'),
                     '차종: ' + (rec.carModel || '-'),
                     '사출명: ' + (rec.partName || '-') + (rec.color ? ' (' + rec.color + ')' : ''),
                     '수량: ' + _fmt(rec.qty) + ' EA',
-                    rec.reworkType ? ('리워크 종류: ' + rec.reworkType) : '',
+                    rec.reworkType ? ('재공 발생 종류: ' + rec.reworkType) : '',
                     rec.location ? ('보관위치: ' + rec.location) : '',
                     lots.injLot ? ('사출LOT: ' + lots.injLot) : '',
                     lots.inspDate ? ('수입검사일: ' + lots.inspDate) : '',
@@ -873,6 +1015,13 @@ var ReworkWipModule = (function () {
         }
 
         const existing = id ? _getAll().find(function (r) { return r.id === id; }) : null;
+        // 재공 재고는 마이너스가 될 수 없다 — 이 건을 반영한 뒤 재고가 0 미만이면 저장하지 않는다.
+        const baseQty = getStockQty(carModel, partName, color, id || '');
+        const afterQty = baseQty + (type === '입고' ? qty : -qty);
+        if (afterQty < 0) {
+            UIUtils.toast('재공 재고(' + _fmt(baseQty) + ' EA)보다 많이 출고할 수 없습니다.', 'error');
+            return;
+        }
         const rec = {
             date, type, carModel, partName, color, qty, location, note, reworkType,
             updatedAt: new Date().toISOString()
@@ -920,7 +1069,7 @@ var ReworkWipModule = (function () {
         }
     }
 
-    // ── 재사용 자재 → 도장현장 출고 ──────────────────────────────
+    // ── 잔여 재공품 → 도장현장 출고 ──────────────────────────────
     // 재공품 재고(WIP_STORE)에서 출고로 차감한다.
     // 도장현장 입고는 자동 확정하지 않는다 — 해당 라인 「현장 사출 입고」에서
     // 입고 처리를 해야 투입 LOT으로 쓸 수 있다(사출 창고 생산출고와 동일).
@@ -952,7 +1101,7 @@ var ReworkWipModule = (function () {
         const max = Math.max(0, Number(availableQty) || 0);
         if (max <= 0) { UIUtils.toast('출고할 재공 재고가 없습니다.', 'warning'); return; }
         const defs = _defaultLotsForStock(carModel, partName, color);
-        UIUtils.showModal('재사용 자재 → 도장현장 출고',
+        UIUtils.showModal('잔여 재공품 → 도장현장 출고',
             `<div style="padding:4px 0;">
                 <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.85rem;line-height:1.6;">
                     <div><strong>${_esc(carModel || '-')} · ${_esc(partName)}</strong>${color ? ' · ' + _esc(color) : ''}</div>
@@ -1030,7 +1179,7 @@ var ReworkWipModule = (function () {
             injLot = 'RST' + Date.now().toString().slice(-8);
             lotFields.injLot = injLot;
         }
-        const note = String((noteEl && noteEl.value) || '').trim() || '재사용 자재 도장현장 출고';
+        const note = String((noteEl && noteEl.value) || '').trim() || '잔여 재공품 도장현장 출고';
 
         // 계보 승계 — 입고 원본 trace + 폼에서 고친 LOT를 합친다
         const defs = _defaultLotsForStock(carModel, partName, color);
@@ -1082,7 +1231,7 @@ var ReworkWipModule = (function () {
         return wantInj;
     }
 
-    /** 도장 작업 실적 입력 화면에서 "재사용 자재 사용"을 적용했을 때 호출 — 별도 출고 모달
+    /** 도장 작업 실적 입력 화면에서 "잔여 재공품 사용"을 적용했을 때 호출 — 별도 출고 모달
      *  없이 즉시 재공 재고를 차감한다. 재공 재고가 모자라도 막지 않는다(부품별 리워크 재공
      *  현황 표에 음수/마이너스로 표시되어 리워크 담당자에게 출고가 밀렸다는 신호가 된다 —
      *  기존 표시 로직 그대로 재사용). 도장현장 입고 확정(현장 입고 처리)은 호출한 쪽에서
@@ -1093,7 +1242,9 @@ var ReworkWipModule = (function () {
         const carModel = String(opts.carModel || '').trim();
         const partName = _toInjPartName(carModel, opts.partName) || String(opts.partName || '').trim();
         const color = _resolveStockColor(carModel, partName, String(opts.color || '').trim());
-        const qty = Math.max(0, Math.floor(Number(opts.qty) || 0));
+        const wantQty = Math.max(0, Math.floor(Number(opts.qty) || 0));
+        // 재공 재고를 넘겨 출고하지 않는다(마이너스 방지)
+        const qty = Math.min(wantQty, getStockQty(carModel, partName, color));
         if (!partName || qty <= 0) return null;
         const line = _normDispatchLine(opts.line || '도장-A');
 
@@ -1107,7 +1258,7 @@ var ReworkWipModule = (function () {
             // submitDispatch와 동일한 RST 접두어 규칙 — 사출 LOT 형식(YYMMDD)과 겹치지 않게.
             lotFields.injLot = 'RST' + Date.now().toString().slice(-8);
         }
-        const note = String(opts.note || '').trim() || '도장 실적 입력 — 재사용 자재 사용';
+        const note = String(opts.note || '').trim() || '도장 실적 입력 — 잔여 재공품 사용';
         const outRec = {
             date: _today(),
             type: '출고',
@@ -1125,6 +1276,77 @@ var ReworkWipModule = (function () {
         const el = document.getElementById('contentArea');
         if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
         return rec;
+    }
+
+    /**
+     * 도장 실적 저장 시 「잔여 재공품 사용」으로 잡은 LOT만큼 재공 재고를 차감한다.
+     * 실적 id(refWorkId)로 묶어 두므로 수정 저장 때는 기존 차감을 지우고 다시 만들고(중복 차감 방지),
+     * 실적 삭제 때는 restoreForWork로 되돌린다.
+     * work.lots 중 lotSource가 'site_rework'(또는 optionKey가 'rework:')인 행만 대상이다.
+     */
+    async function deductForWork(work) {
+        if (!work || !work.id) return 0;
+        await restoreForWork(work.id, true);
+        const lots = (Array.isArray(work.lots) ? work.lots : []).filter(function (l) {
+            return l && Number(l.qty) > 0 &&
+                (l.lotSource === 'site_rework' || String(l.optionKey || '').indexOf('rework:') === 0);
+        });
+        if (!lots.length) return 0;
+        const carModel = String(work.carModel || '').trim();
+        let total = 0;
+        for (let i = 0; i < lots.length; i++) {
+            const l = lots[i];
+            const rawPart = String(l.partName || String(work.injPartName || '').split(',')[0] || work.partName || '').trim();
+            const partName = _toInjPartName(carModel, rawPart) || rawPart;
+            const color = _resolveStockColor(carModel, partName,
+                String(l.color || String(work.injColor || '').split(',')[0] || work.color || '').trim());
+            const injLot = String(l.lotNo || '').trim();
+            // 재공 재고를 넘겨 차감하지 않는다(마이너스 방지) — 앞 행에서 이미 뺀 만큼 반영
+            const qty = Math.min(Math.floor(Number(l.qty) || 0), getStockQty(carModel, partName, color));
+            if (qty <= 0) continue;
+            // 같은 사출LOT의 입고 이력에서 수입검사일·도장LOT 계보를 이어받는다
+            const src = getStockLots(carModel, partName, color).find(function (s) { return s.injLot === injLot; });
+            const defs = _defaultLotsForStock(carModel, partName, color);
+            const outRec = {
+                date: String(work.date || _today()).slice(0, 10),
+                type: '출고',
+                carModel, partName, color,
+                qty,
+                line: work.line || '',
+                paintLine: work.line || '',
+                note: '도장 실적 저장 — 잔여 재공품 사용' + (work.line ? ' (' + work.line + ')' : ''),
+                source: 'painting_work_use',
+                refWorkId: work.id,
+                createdAt: new Date().toISOString()
+            };
+            _applyLotFieldsToRec(outRec, {
+                injLot: injLot,
+                inspDate: src ? src.inspDate : '',
+                paintLot: src ? src.paintLot : ''
+            }, src ? undefined : defs.trace);
+            await Storage.add(WIP_STORE, outRec);
+            total += qty;
+        }
+        const el = document.getElementById('contentArea');
+        if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
+        return total;
+    }
+
+    /** 실적 삭제·재저장 시 그 실적이 차감했던 재공 출고를 지워 재고를 되돌린다. */
+    async function restoreForWork(workId, silent) {
+        const id = String(workId || '');
+        if (!id) return 0;
+        const targets = _getAll().filter(function (r) {
+            return r && r.type === '출고' && r.source === 'painting_work_use' && String(r.refWorkId || '') === id;
+        });
+        for (let i = 0; i < targets.length; i++) {
+            await Storage.remove(WIP_STORE, targets[i].id);
+        }
+        if (!silent) {
+            const el = document.getElementById('contentArea');
+            if (el && document.querySelector('[data-rework-wip-page]')) { try { render(el); } catch (e) {} }
+        }
+        return targets.length;
     }
 
     /** 도장현장 반납(사출 창고 물류담당자의 「입고 처리」)에서 호출 — 리워크 재공 재고를
@@ -1198,8 +1420,8 @@ var ReworkWipModule = (function () {
     }
 
     /**
-     * 도장현장 반납 입고를 재사용 자재 재고에서 제거한다.
-     * 목적지 판정이 잘못돼(사출창고 자재인데 재사용 자재로 입고) 생긴 기록을 되돌리는 용도.
+     * 도장현장 반납 입고를 잔여 재공품 재고에서 제거한다.
+     * 목적지 판정이 잘못돼(사출창고 자재인데 잔여 재공품로 입고) 생긴 기록을 되돌리는 용도.
      * refReturnId가 있으면 그 건만, 없으면 차종·품명·컬러·LOT·수량이 모두 맞는 site_return
      * 입고만 지운다 — 조건을 느슨하게 잡으면 멀쩡한 반납 입고까지 지워지므로 좁게 매칭한다.
      */
@@ -1244,7 +1466,7 @@ var ReworkWipModule = (function () {
 
     /**
      * 재공현황 「보기」 — 이 품목(차종·부품명·색상)의 재공수량을 이루는 개별 입고 건마다
-     * 사출LOT·수입검사일·도장LOT와 리워크 종류를 나열한다.
+     * 사출LOT·수입검사일·도장LOT와 재공 발생 종류를 나열한다.
      */
     function openStockDetailModal(carModel, partName, color) {
         const all = _getAll().filter(function (r) {
@@ -1256,27 +1478,31 @@ var ReworkWipModule = (function () {
         const totalQty = all.reduce(function (s, r) {
             return s + (r.type === '입고' ? (Number(r.qty) || 0) : -(Number(r.qty) || 0));
         }, 0);
-        const inboundRows = all.filter(function (r) { return r.type === '입고'; });
+        const inboundRows = all;   // 입고·출고 전체 이력 (마이너스 원인 추적용)
 
         const rowsHtml = inboundRows.length
             ? `<div style="overflow-x:auto;"><table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;font-size:.86rem;">
                 <thead>
                   <tr style="background:var(--bg-secondary);text-align:left;">
-                    <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">입고일</th>
+                    <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">일자</th>
+                    <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">구분</th>
                     <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);text-align:right;white-space:nowrap;">수량</th>
                     ${_lotThHtml('7px 10px')}
-                    <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">리워크 종류</th>
+                    <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">재공 발생 종류</th>
                     <th style="padding:7px 10px;font-weight:600;color:var(--text-secondary);white-space:nowrap;">출처</th>
                     <th style="padding:7px 10px;"></th>
                   </tr>
                 </thead>
                 <tbody>
                   ${inboundRows.map(function (r) {
-                    const src = r.source === 'painting_inspection' ? '외관검사'
-                        : (r.source === 'site_return' ? '현장반납' : (r.source || '-'));
+                    const srcNames = { painting_inspection: '외관검사', site_return: '현장반납',
+                        dispatch_to_line: '현장출고', painting_work_use: '도장실적 사용', manual: '수기등록' };
+                    const src = srcNames[r.source] || r.source || '-';
+                    const isOut = r.type === '출고';
                     return `<tr style="border-top:1px solid var(--border-color);">
                       <td style="padding:7px 10px;white-space:nowrap;">${_esc(r.date)}</td>
-                      <td style="padding:7px 10px;text-align:right;font-weight:700;white-space:nowrap;">${_fmt(r.qty)}</td>
+                      <td style="padding:7px 10px;white-space:nowrap;font-weight:700;color:${isOut ? '#dc2626' : '#16a34a'};">${_esc(r.type)}</td>
+                      <td style="padding:7px 10px;text-align:right;font-weight:700;white-space:nowrap;color:${isOut ? '#dc2626' : 'inherit'};">${isOut ? '-' : ''}${_fmt(r.qty)}</td>
                       ${_lotTdHtml(r, '7px 10px')}
                       <td style="padding:7px 10px;white-space:nowrap;">${_reworkTypeBadge(r.reworkType)}</td>
                       <td style="padding:7px 10px;font-size:.8rem;color:var(--text-muted);white-space:nowrap;">${_esc(src)}</td>
@@ -1294,7 +1520,7 @@ var ReworkWipModule = (function () {
             `<div style="padding:4px 0;">
                 <div style="padding:10px 12px;background:var(--bg-secondary);border-radius:8px;font-size:0.86rem;margin-bottom:12px;">
                     현재 재공수량 <strong style="color:${totalQty > 0 ? '#ea580c' : 'var(--text-muted)'};">${_fmt(totalQty)} EA</strong>
-                    · 입고 이력 ${inboundRows.length}건
+                    · 입출고 이력 ${inboundRows.length}건
                 </div>
                 ${rowsHtml}
             </div>`,
@@ -1354,12 +1580,17 @@ var ReworkWipModule = (function () {
         openDispatchModal,
         submitDispatch,
         dispatchFromPaintingWork,
+        deductForWork,
+        openNegativeCleanup,
+        applyNegativeCleanup,
+        restoreForWork,
         receiveSiteReturn,
         removeSiteReturnReceipt,
         findSiteReturnReceipt,
         openStockDetailModal,
         addFromPaintingInspection,
         getStockQty,
+        getStockLots,
         toInjPartName: _toInjPartName,
         partsMatch: _partsMatch
     };

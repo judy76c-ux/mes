@@ -383,7 +383,7 @@ var PaintingInputModule = (function () {
         return false;
     }
 
-    /** 재사용 자재 → 도장현장으로 출고된 LOT 번호 집합.
+    /** 잔여 재공품 → 도장현장으로 출고된 LOT 번호 집합.
      *  현장 입고 기록의 isReworkInbound 플래그는 이 기능이 생긴 뒤 확인된 건에만 붙어 있어,
      *  그전에 입고 처리된 건이나 자동 입고 경로로 들어온 건은 리워크인데도 플래그가 없다.
      *  실제 출고 원장(REWORK_WIP)의 LOT과 대조해 그런 건까지 리워크로 인식한다. */
@@ -409,21 +409,21 @@ var PaintingInputModule = (function () {
 
     function _isReworkInboundRecord(r, lotSet) {
         if (r.isReworkInbound || r.refReworkOutId) return true;
-        if (/리워크|재사용 자재/.test(String(r.source || ''))) return true;
+        if (/리워크|잔여 재공품/.test(String(r.source || ''))) return true;
         var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
         return lots.some(function (l) { return lotSet[String((l && l.lotNo) || '').trim()]; });
     }
 
-    /** 이 입고 기록이 재사용 자재에서 온 것인지 — 화면 배지 표시용(painting.js). */
+    /** 이 입고 기록이 잔여 재공품에서 온 것인지 — 화면 배지 표시용(painting.js). */
     function isReworkSiteInbound(record) {
         if (!record) return false;
         if (record.isReworkInbound || record.refReworkOutId) return true;
-        if (/리워크|재사용 자재/.test(String(record.source || ''))) return true;
+        if (/리워크|잔여 재공품/.test(String(record.source || ''))) return true;
         var lotSet = _reworkDispatchedLotSet(record.carModel, record.partName, record.color);
         return _isReworkInboundRecord(record, lotSet);
     }
 
-    /** 재사용 자재 → 도장현장 경로로 실제 입고 확인(현장 입고 처리)된 뒤 아직 생산에
+    /** 잔여 재공품 → 도장현장 경로로 실제 입고 확인(현장 입고 처리)된 뒤 아직 생산에
      *  소진되지 않은 잔량(도장-A + 도장-B 합산). IL 등 리워크 투입품은 재공품 재고에서는
      *  출고돼 사라졌지만 도장현장에는 이미 도착·확인돼 있는 구간이 있는데, 사출 창고 「현장
      *  입고 부족」 판정이 재공품 재고(ReworkWipModule.getStockQty)만 보면 이 구간을 놓쳐
@@ -720,7 +720,7 @@ var PaintingInputModule = (function () {
             quantity: ctx.qty,
             shipQty: ctx.shipQty,
             unit: 'EA',
-            source: ctx.isRework ? '재사용 자재 출고' : '사출 창고 생산출고',
+            source: ctx.isRework ? '잔여 재공품 출고' : '사출 창고 생산출고',
             refOutId: ctx.isRework ? '' : (outRec.id || ''),
             refReworkOutId: ctx.isRework ? (outRec.id || '') : undefined,
             siteReceived: true,
@@ -832,7 +832,7 @@ var PaintingInputModule = (function () {
             line: line,
             isReworkDispatch: true,
             outgoingType: '리워크출고',
-            source: '재사용 자재 출고'
+            source: '잔여 재공품 출고'
         });
     }
 
@@ -1095,7 +1095,7 @@ var PaintingInputModule = (function () {
         }
         const hasMultiLot = outLots.length > 1;
         const srcHint = resolved.isRework
-            ? '<div style="margin-top:6px;font-size:0.78rem;color:#7c3aed;font-weight:700;">재사용 자재 출고 — 현장 입고 확인 후 투입 가능</div>'
+            ? '<div style="margin-top:6px;font-size:0.78rem;color:#7c3aed;font-weight:700;">잔여 재공품 출고 — 현장 입고 확인 후 투입 가능</div>'
             : '';
 
         // LOT이 여러 건이면 실수량도 LOT별로 따로 확인해야 한다 — 총량 한 칸만 고치면
@@ -2284,7 +2284,7 @@ var PaintingInputModule = (function () {
             const inspDateHtml = _inspDateCellHtml(r, lotNo, inspMap);
             const isAutoReceived = !!(recv && recv.isAutoReceived);
             const reworkTag = r.isReworkDispatch
-                ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,0.12);color:#7c3aed;">재사용 자재</span>'
+                ? '<span style="margin-left:4px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,0.12);color:#7c3aed;">잔여 재공품</span>'
                 : '';
             const statusHtml = r.received
                 ? '<span style="font-size:0.72rem;font-weight:700;padding:2px 8px;border-radius:999px;background:rgba(22,163,74,0.12);color:#16a34a;">입고완료</span>'
@@ -2305,7 +2305,7 @@ var PaintingInputModule = (function () {
             const reworkReturnQty = reworkReturnLots.reduce(function (s, l) { return s + l.qty; }, 0);
             const reworkReturnBtn = (r.received && r.isReworkDispatch && reworkReturnQty > 0 && canWrite)
                 ? `<button type="button" class="btn btn-sm btn-outline" style="padding:2px 8px;font-size:0.72rem;white-space:nowrap;color:#7c3aed;border-color:#c4b5fd;"
-                        title="재사용 자재으로 반납 — 현장 잔량을 재공 재고로 되돌립니다"
+                        title="잔여 재공품으로 반납 — 현장 잔량을 재공 재고로 되돌립니다"
                         onclick="PaintingInputModule.openReworkInboundReturnModal('${_esc(r.id)}','${_esc(want)}')">
                         <span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">undo</span> 반납
                    </button>`
@@ -3280,7 +3280,7 @@ var PaintingInputModule = (function () {
     // 도장현장 → 사출창고 자재 반납 ("재입고"가 아니라 "반납" — 도장현장에서 처리하는 즉시
     // 이 스토어(현장 재고)에서는 바로 빠지지만, 사출창고 재고로 정식 편입되는 건 사출창고
     // 물류담당자가 실물을 확인하고 「입고 처리」할 때뿐이다. 그 전까지는 "반납 대기" 상태.)
-    // 리워크 입고 반납은 사출창고가 아니라 재사용 자재으로 즉시 되돌린다.
+    // 리워크 입고 반납은 사출창고가 아니라 잔여 재공품으로 즉시 되돌린다.
     // ──────────────────────────────────────────────
 
     /** 리워크 입고 건에서 아직 현장(투입·반납)으로 안 빠진 LOT 잔량 */
@@ -3321,18 +3321,18 @@ var PaintingInputModule = (function () {
     /**
      * 반납 목적지 판정 — 이 자재가 **실제로 어디서 나왔는지**로 정한다.
      *
-     * 예전에는 품명이 'IL'이면 무조건 재사용 자재로 보냈다(_isReworkSourcedPart 이름 매칭).
+     * 예전에는 품명이 'IL'이면 무조건 잔여 재공품로 보냈다(_isReworkSourcedPart 이름 매칭).
      * 그런데 같은 IL이라도 사출창고 생산출고로 현장에 온 물량이 있다 — 그걸 반납하면
-     * 사출창고에서 나간 재고가 재사용 자재로 들어가 버려, 사출창고 재고는 영영 복구되지
+     * 사출창고에서 나간 재고가 잔여 재공품로 들어가 버려, 사출창고 재고는 영영 복구되지
      * 않는다(사용자 보고: T1XX·IL·BLACK 4,500 EA 반납했는데 창고 입고 안 됨).
      *
      * 그래서 품명은 **증거가 하나도 없을 때의 마지막 폴백**으로만 쓴다.
      * 판정 근거 순서:
-     *   ① 리워크 입고 반납 플래그(refReworkOutId 등) → 재사용 자재
-     *   ② 반납 LOT을 공급한 현장입고 기록이 리워크 경로(refReworkOutId·source) → 재사용 자재
+     *   ① 리워크 입고 반납 플래그(refReworkOutId 등) → 잔여 재공품
+     *   ② 반납 LOT을 공급한 현장입고 기록이 리워크 경로(refReworkOutId·source) → 잔여 재공품
      *   ③ 반납 LOT을 공급한 현장입고 기록이 사출창고 생산출고(refOutId) → 사출창고
-     *   ④ 리워크 출고 LOT 집합에 느슨하게 걸림 → 재사용 자재
-     *   ⑤ 품명이 IL 계열 → 재사용 자재 (근거 없음, 이름 추정)
+     *   ④ 리워크 출고 LOT 집합에 느슨하게 걸림 → 잔여 재공품
+     *   ⑤ 품명이 IL 계열 → 잔여 재공품 (근거 없음, 이름 추정)
      *   ⑥ 그 외 → 사출창고
      *
      * @returns {{dest:'rework'|'injection', reason:string, evidence:boolean}}
@@ -3368,9 +3368,9 @@ var PaintingInputModule = (function () {
         // ② 리워크 경로로 현장에 들어온 LOT인가 (강한 증거: 참조 id·출처 문자열)
         if (suppliedBy(function (r) {
             return !!(r.isReworkInbound || r.refReworkOutId)
-                || /리워크|재사용 자재/.test(String(r.source || ''));
+                || /리워크|잔여 재공품/.test(String(r.source || ''));
         })) {
-            return { dest: 'rework', reason: '이 LOT은 재사용 자재에서 현장으로 입고됨', evidence: true };
+            return { dest: 'rework', reason: '이 LOT은 잔여 재공품에서 현장으로 입고됨', evidence: true };
         }
 
         // ③ 사출창고 생산출고로 현장에 들어온 LOT인가 (refOutId는 사출창고 경로에만 붙는다)
@@ -3382,7 +3382,7 @@ var PaintingInputModule = (function () {
         const looseLotSet = _reworkDispatchedLotSet(car, part, opts.color);
         if (Object.keys(looseLotSet).length
             && Object.keys(lotSet).some(function (n) { return looseLotSet[n]; })) {
-            return { dest: 'rework', reason: '반납 LOT이 재사용 자재 출고 LOT과 일치', evidence: true };
+            return { dest: 'rework', reason: '반납 LOT이 잔여 재공품 출고 LOT과 일치', evidence: true };
         }
 
         // ⑤ 근거가 없을 때만 품명으로 추정한다.
@@ -3439,9 +3439,9 @@ var PaintingInputModule = (function () {
                 <div style="padding:10px 12px;background:rgba(124,58,237,.06);border:1px solid rgba(124,58,237,.22);border-radius:8px;font-size:0.85rem;line-height:1.6;">
                     <div><strong>${_esc(ship.carModel || '-')} · ${_esc(ship.partName || '-')}</strong>
                         ${ship.color ? ' · ' + _esc(ship.color) : ''}
-                        <span style="margin-left:6px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">재사용 자재</span>
+                        <span style="margin-left:6px;font-size:0.68rem;font-weight:700;padding:1px 6px;border-radius:999px;background:rgba(124,58,237,.12);color:#7c3aed;">잔여 재공품</span>
                     </div>
-                    <div style="color:var(--text-muted);margin-top:2px;">현장 잔량 <strong style="color:#7c3aed;">${_fmt(total)} EA</strong>를 재사용 자재으로 되돌립니다. 사출 창고 재고로는 들어가지 않습니다.</div>
+                    <div style="color:var(--text-muted);margin-top:2px;">현장 잔량 <strong style="color:#7c3aed;">${_fmt(total)} EA</strong>를 잔여 재공품으로 되돌립니다. 사출 창고 재고로는 들어가지 않습니다.</div>
                 </div>
                 <div class="data-table-wrapper" style="margin-top:12px;">
                     <table class="data-table data-table--content" style="width:max-content;table-layout:auto;border-collapse:collapse;">
@@ -3502,7 +3502,7 @@ var PaintingInputModule = (function () {
         const ship = ctx.ship;
         const recv = ship.receiveRec || {};
         if (typeof ReworkWipModule === 'undefined' || typeof ReworkWipModule.receiveSiteReturn !== 'function') {
-            UIUtils.toast('재사용 자재 모듈을 사용할 수 없습니다.', 'error');
+            UIUtils.toast('잔여 재공품 모듈을 사용할 수 없습니다.', 'error');
             return;
         }
         let returnRec = null;
@@ -3538,7 +3538,7 @@ var PaintingInputModule = (function () {
             _pendingReworkInboundReturn = null;
             UIUtils.closeModal();
             const total = lots.reduce(function (s, l) { return s + l.qty; }, 0);
-            UIUtils.toast(_fmt(total) + ' EA를 재사용 자재으로 반납했습니다.', 'success');
+            UIUtils.toast(_fmt(total) + ' EA를 잔여 재공품으로 반납했습니다.', 'success');
             _refreshInboundViews();
         } catch (e) {
             if (!wipRestored && returnRec && returnRec.id) {
@@ -3572,7 +3572,7 @@ var PaintingInputModule = (function () {
                 '컬러: ' + (rec.color || '-'),
                 'LOT: ' + (lotsTxt || '-'),
                 '합계수량: ' + UIUtils.formatNumber(rec.quantity) + ' EA',
-                rec.isReworkReturn ? '구분: 재사용 자재' : '',
+                rec.isReworkReturn ? '구분: 잔여 재공품' : '',
                 '반납 사유: ' + (rec.returnReason || '-'),
                 '반납자: ' + (rec.returnedBy || '-')
             ].filter(Boolean).join('\n');
