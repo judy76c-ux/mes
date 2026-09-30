@@ -1839,6 +1839,8 @@ var SalesDeliveryPlanModule = (function() {
         const coveredUntil = row.finishedCoverage?.until || '';
         const isStockCovered = !!coveredUntil && day >= UIUtils.today() && day <= coveredUntil;
         const coverageClass = isStockCovered ? 'sdp-stock-covered' : '';
+        const isDone = plan > 0 && delivered >= plan;   // 계획 수량을 모두 납품
+        const doneClass = isDone ? 'sdp-plan-done' : '';
         return `
             <td onclick="SalesDeliveryPlanModule.handleDayCellClick(event,'${_js(row.key)}','${day}')"
                 draggable="${plan > 0 ? 'true' : 'false'}"
@@ -1848,10 +1850,15 @@ var SalesDeliveryPlanModule = (function() {
                 ondrop="SalesDeliveryPlanModule.dropPlan(event,'${_js(row.key)}','${day}')"
                 ondragend="SalesDeliveryPlanModule.endPlanDrag(event)"
                 title="${isStockCovered ? '현재 완제품 재고로 납품 가능한 구간' : '클릭해서 납품 계획 수량 입력 / 드래그해서 같은 품목 날짜로 이동'}"
-                class="${info.className} sdp-plan-day-cell ${coverageClass} ${plan > 0 ? 'sdp-plan-draggable' : ''}"
+                class="${info.className} sdp-plan-day-cell ${coverageClass} ${doneClass} ${plan > 0 ? 'sdp-plan-draggable' : ''}"
                 style="min-width:${colW};max-width:${colW};text-align:center;font-size:10px;cursor:pointer;padding:3px 1px;${borderStyle}">
-                ${plan ? `<div style="font-weight:400;">${_fmt(plan)}</div>` : ''}
-                ${delivered ? `<div style="color:var(--accent-green);font-weight:400;">납 ${_fmt(delivered)}</div>` : ''}
+                ${plan ? `<div style="font-weight:${isDone ? 600 : 400};">${_fmt(plan)}</div>` : ''}
+                ${isDone
+                    ? `<div class="sdp-done-badge"><span class="material-symbols-outlined">check_circle</span>납품완료</div>`
+                    : (delivered
+                        ? `<div style="color:var(--accent-green);font-weight:600;">납 ${_fmt(delivered)}</div>` +
+                          (plan > 0 ? `<div class="sdp-progress" title="납품 ${_fmt(delivered)} / 계획 ${_fmt(plan)}"><span style="width:${Math.min(100, Math.round(delivered / plan * 100))}%;"></span></div>` : '')
+                        : '')}
             </td>
         `;
     }

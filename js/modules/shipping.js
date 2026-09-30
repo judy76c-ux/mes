@@ -4907,6 +4907,7 @@ const ProductWarehouseModule = (function() {
                 ${ProdAppleMenu.card({ label: '보관창고 레이아웃', subtitle: '완제품·소재 배치도', icon: 'map', accent: '#06b6d4', onClick: 'ProductWarehouseModule.openLayout()' })}
                 ${ProdAppleMenu.card({ label: '수동 입고', subtitle: '완제품 창고 입고', icon: 'move_to_inbox', accent: '#10b981', onClick: 'ProductWarehouseModule.openManualInModal()' })}
                 ${ProdAppleMenu.card({ label: '수동 출고', subtitle: '완제품 창고 출고', icon: 'outbox', accent: '#f59e0b', onClick: 'ProductWarehouseModule.openManualOutModal()' })}
+                ${ProdAppleMenu.card({ label: '재고 실사 반영', subtitle: '엑셀 붙여넣기로 재고 맞춤', icon: 'fact_check', accent: '#8b5cf6', onClick: 'ProductWarehouseModule.openAuditModal()' })}
             </div>`;
 
         container.innerHTML = `
@@ -7866,6 +7867,299 @@ const ProductWarehouseModule = (function() {
         _showBulkSaveResult(resultRows, date);
     }
 
+    // ── 재고 실사 반영 (엑셀 복사·붙여넣기) ─────────────────────────────
+    // 실사 재고를 붙여넣으면, 시스템 재고와의 차이를 기록으로 맞춘다.
+    //  · 시스템 > 실사: 차이만큼 「출고」 — 도장일자가 오래된 LOT부터 빼서 최근 LOT이 남는다.
+    //  · 시스템 < 실사: (선택) 「입고」 보정.
+    // 기존 「일괄 등록/수정」과 달리 기존 기록·LOT을 지우지 않고 차이만 추가 기록한다(되돌리기 가능).
+    const AUDIT_SRC_OUT = '재고실사 조정(미출고분 출고 처리)';
+    const AUDIT_SRC_IN = '재고실사 조정(입고 보정)';
+    let _auditPlan = [];
+
+    function _auditNorm(v) {
+        return _normalizeText(v).replace(/\s+/g, '').toUpperCase();
+    }
+
+    function _auditKeyOf(r) {
+        return [_auditNorm(r.carModel), _auditNorm(r.partName), _auditNorm(r.color)].join('||');
+    }
+
+    function _auditGroups() {
+        const groups = {};
+        (Storage.getAll(STORE) || []).forEach(r => {
+            const key = _auditKeyOf(r);
+            if (!key.replace(/\|/g, '')) return;
+            if (!groups[key]) {
+                groups[key] = { key, carModel: r.carModel || '', partName: r.partName || '', color: r.color || '', records: [], balance: 0 };
+            }
+            const qty = Number(r.quantity) || 0;
+            groups[key].records.push(r);
+            groups[key].balance += r.type === '출고' ? -qty : qty;
+        });
+        return groups;
+    }
+
+    // 도장일자 오름차순(오래된 LOT 먼저) LOT별 잔량
+    function _auditLots(records) {
+        const map = {};
+        records.forEach(r => {
+            const paintingDate = r.paintingDate || r.date || '';
+            const color = r.color || '';
+            const lotNo = r.lotNo || '';
+            const k = `${paintingDate}||${color}||${lotNo}`;
+            if (!map[k]) map[k] = { paintingDate: r.paintingDate || '', sortDate: paintingDate, color, lotNo, balance: 0 };
+            const qty = Number(r.quantity) || 0;
+            map[k].balance += r.type === '출고' ? -qty : qty;
+        });
+        return Object.values(map)
+            .filter(l => l.balance > 0)
+            .sort((a, b) => String(a.sortDate).localeCompare(String(b.sortDate)) || String(a.lotNo).localeCompare(String(b.lotNo)));
+    }
+
+    function _auditBatches() {
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(r => {
+            if (!r.auditBatchId) return;
+            const b = map[r.auditBatchId] || (map[r.auditBatchId] = { id: r.auditBatchId, date: r.date || '', count: 0, outQty: 0, inQty: 0, createdAt: r.createdAt || '' });
+            b.count += 1;
+            const q = Number(r.quantity) || 0;
+            if (r.type === '출고') b.outQty += q; else b.inQty += q;
+        });
+        return Object.values(map).sort((a, b) => String(b.createdAt || b.date).localeCompare(String(a.createdAt || a.date)));
+    }
+
+    function _auditHistoryHtml() {
+        const batches = _auditBatches();
+        if (!batches.length) return '';
+        return `
+            <div style="margin-top:18px;padding-top:12px;border-top:1px solid var(--border-color);">
+                <div style="font-weight:700;font-size:0.85rem;margin-bottom:6px;">실사 반영 이력</div>
+                <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                    <thead><tr style="color:var(--text-muted);text-align:left;">
+                        <th style="padding:4px 8px;">기준일</th><th style="padding:4px 8px;text-align:right;">기록 건수</th>
+                        <th style="padding:4px 8px;text-align:right;">출고 합계</th><th style="padding:4px 8px;text-align:right;">입고 합계</th><th></th>
+                    </tr></thead>
+                    <tbody>${batches.map(b => `
+                        <tr style="border-top:1px solid var(--border-color);">
+                            <td style="padding:5px 8px;">${_escapeHtml(b.date)}</td>
+                            <td style="padding:5px 8px;text-align:right;">${UIUtils.formatNumber(b.count)}</td>
+                            <td style="padding:5px 8px;text-align:right;color:var(--accent-red);">${UIUtils.formatNumber(b.outQty)}</td>
+                            <td style="padding:5px 8px;text-align:right;color:var(--accent-green);">${UIUtils.formatNumber(b.inQty)}</td>
+                            <td style="padding:5px 8px;text-align:right;"><button class="btn btn-sm btn-outline" onclick="ProductWarehouseModule._auditRevert('${_escapeHtml(b.id)}')">되돌리기</button></td>
+                        </tr>`).join('')}</tbody>
+                </table>
+            </div>`;
+    }
+
+    function openAuditModal() {
+        _requireBulkAdmin(() => {
+            _auditPlan = [];
+            UIUtils.showModal('재고 실사 반영', `
+                <div style="margin-bottom:10px;padding:10px 14px;background:rgba(59,130,246,0.07);border:1px solid rgba(59,130,246,0.25);
+                            border-radius:8px;font-size:0.82rem;color:var(--text-secondary);line-height:1.7;">
+                    <b style="color:var(--accent-blue);">사용 방법</b><br>
+                    엑셀에서 <b>차종 / 품명 / 컬러 / 재고</b> 4열을 복사(Ctrl+C) → 아래에 붙여넣기(Ctrl+V) → <b>미리보기</b> → <b>실사 반영</b><br>
+                    <span style="font-size:0.78rem;color:var(--text-muted);">
+                    • 실사 재고보다 시스템 재고가 많으면 그 차이를 <b>출고 처리</b>합니다. <b>도장일자가 오래된 LOT부터</b> 빼서 최근 LOT이 남습니다.<br>
+                    • <b>-</b> 또는 빈 재고는 0(전량 출고)으로 봅니다. 기존 기록은 지우지 않고 차이만 추가 기록하며, 아래 이력에서 <b>되돌리기</b>할 수 있습니다.<br>
+                    • 추후 실사 때도 같은 방법으로 다시 등록하면 됩니다.
+                    </span>
+                </div>
+                <div class="form-row" style="margin-bottom:10px;">
+                    <div class="form-group">
+                        <label class="form-label">기준일자</label>
+                        <input type="date" class="form-input" id="auditDate" value="${UIUtils.today()}">
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <label style="font-size:0.82rem;display:flex;align-items:center;gap:6px;cursor:pointer;">
+                            <input type="checkbox" id="auditAllowIn" checked> 실사가 더 많으면 입고로 보정
+                        </label>
+                        <label style="font-size:0.82rem;display:flex;align-items:center;gap:6px;cursor:pointer;margin-top:4px;">
+                            <input type="checkbox" id="auditZeroMissing"> 붙여넣은 목록에 없는 품목은 0으로(전량 출고)
+                        </label>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
+                        <button class="btn btn-outline" onclick="ProductWarehouseModule._auditParse()">
+                            <span class="material-symbols-outlined">preview</span> 미리보기
+                        </button>
+                    </div>
+                </div>
+                <textarea id="auditPasteArea" class="form-textarea" placeholder="엑셀에서 복사한 내용을 여기에 붙여넣으세요 (Ctrl+V)"
+                    style="height:150px;font-family:monospace;font-size:0.78rem;resize:vertical;"
+                    oninput="document.getElementById('auditPreviewWrap').innerHTML='';var b=document.getElementById('auditApplyBtn');if(b)b.disabled=true;"></textarea>
+                <div id="auditPreviewWrap" style="margin-top:12px;"></div>
+                <div id="auditHistoryWrap">${_auditHistoryHtml()}</div>
+            `, `
+                <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
+                <button class="btn btn-primary" id="auditApplyBtn" disabled onclick="ProductWarehouseModule._auditApply()">
+                    <span class="material-symbols-outlined">fact_check</span> 실사 반영
+                </button>
+            `, 'xl');
+        });
+    }
+
+    function _auditParse() {
+        const raw = (document.getElementById('auditPasteArea') || {}).value || '';
+        const wrap = document.getElementById('auditPreviewWrap');
+        const applyBtn = document.getElementById('auditApplyBtn');
+        if (!wrap) return;
+        const allowIn = !!(document.getElementById('auditAllowIn') || {}).checked;
+        const zeroMissing = !!(document.getElementById('auditZeroMissing') || {}).checked;
+        const parsed = _parseBulkRows(raw);
+        _auditPlan = [];
+        if (applyBtn) applyBtn.disabled = true;
+        if (!parsed.length) {
+            wrap.innerHTML = '<p style="color:var(--accent-red);font-size:0.83rem;">인식된 행이 없습니다. 차종/품명/컬러/재고 4열을 붙여넣었는지 확인하세요.</p>';
+            return;
+        }
+        const dupCounts = _bulkDuplicateCounts(parsed);
+        const dupLabels = _bulkDuplicateLabels(parsed, dupCounts);
+        const groups = _auditGroups();
+        const used = new Set();
+        parsed.forEach(r => {
+            const key = _auditKeyOf(r);
+            used.add(key);
+            const g = groups[key];
+            const current = g ? g.balance : 0;
+            _auditPlan.push({
+                key,
+                carModel: g ? g.carModel : r.carModel,
+                partName: g ? g.partName : r.partName,
+                color: g ? g.color : r.color,
+                current,
+                target: Math.max(0, Math.round(Number(r.quantity) || 0)),
+                group: g || null,
+                fromList: true
+            });
+        });
+        if (zeroMissing) {
+            Object.values(groups).forEach(g => {
+                if (used.has(g.key) || g.balance <= 0) return;
+                _auditPlan.push({ key: g.key, carModel: g.carModel, partName: g.partName, color: g.color, current: g.balance, target: 0, group: g, fromList: false });
+            });
+        }
+        const missing = Object.values(groups).filter(g => !used.has(g.key) && g.balance > 0);
+
+        let outItems = 0, outQty = 0, inItems = 0, inQty = 0, same = 0, unmatched = 0;
+        const rowsHtml = _auditPlan.map(p => {
+            const diff = p.target - p.current;
+            let action, color;
+            if (diff < 0) { action = `출고 ${UIUtils.formatNumber(-diff)}`; color = 'var(--accent-red)'; outItems++; outQty += -diff; }
+            else if (diff > 0) {
+                if (allowIn) { action = `입고 +${UIUtils.formatNumber(diff)}`; color = 'var(--accent-green)'; inItems++; inQty += diff; }
+                else { action = `실사가 많음 (+${UIUtils.formatNumber(diff)}) · 미반영`; color = '#d97706'; }
+            } else { action = '일치'; color = 'var(--text-muted)'; same++; }
+            if (!p.group) unmatched++;
+            return `<tr style="border-top:1px solid var(--border-color);${p.group ? '' : 'background:rgba(245,158,11,0.08);'}">
+                <td style="padding:5px 8px;">${_escapeHtml(p.carModel)}</td>
+                <td style="padding:5px 8px;">${_escapeHtml(p.partName)}${p.group ? '' : ' <span style="font-size:0.68rem;color:#d97706;">(시스템에 없음)</span>'}</td>
+                <td style="padding:5px 8px;">${_escapeHtml(p.color || '-')}</td>
+                <td style="padding:5px 8px;text-align:right;color:var(--text-muted);">${UIUtils.formatNumber(p.current)}</td>
+                <td style="padding:5px 8px;text-align:right;font-weight:700;">${UIUtils.formatNumber(p.target)}</td>
+                <td style="padding:5px 8px;text-align:right;font-weight:700;color:${color};">${action}</td>
+            </tr>`;
+        }).join('');
+
+        wrap.innerHTML = `
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:8px;font-size:0.84rem;">
+                <span><b>${parsed.length}</b>건 인식</span>
+                <span style="color:var(--accent-red);">출고 <b>${outItems}</b>건 / ${UIUtils.formatNumber(outQty)} EA</span>
+                <span style="color:var(--accent-green);">입고 보정 <b>${inItems}</b>건 / ${UIUtils.formatNumber(inQty)} EA</span>
+                <span style="color:var(--text-muted);">일치 ${same}건</span>
+                ${unmatched ? `<span style="color:#d97706;">시스템에 없는 품목 ${unmatched}건</span>` : ''}
+            </div>
+            ${dupLabels.length ? `<div style="margin-bottom:8px;padding:8px 10px;border:1px solid rgba(239,68,68,0.35);border-radius:6px;background:rgba(239,68,68,0.06);color:var(--accent-red);font-size:0.8rem;">
+                <b>중복 품목 ${dupLabels.length}개</b> — 같은 차종+품명+컬러가 여러 번 있습니다. 엑셀에서 정리한 뒤 다시 붙여넣으세요.
+                <div style="color:var(--text-secondary);">${dupLabels.slice(0, 5).map(_escapeHtml).join('<br>')}</div></div>` : ''}
+            ${(!zeroMissing && missing.length) ? `<div style="margin-bottom:8px;font-size:0.78rem;color:var(--text-muted);">※ 붙여넣은 목록에 없는 재고 품목 ${missing.length}개는 변경하지 않습니다.</div>` : ''}
+            <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border-color);border-radius:6px;">
+                <table style="width:100%;border-collapse:collapse;font-size:0.8rem;">
+                    <thead style="position:sticky;top:0;background:var(--bg-secondary);z-index:1;"><tr style="text-align:left;color:var(--text-muted);">
+                        <th style="padding:5px 8px;">차종</th><th style="padding:5px 8px;">품명</th><th style="padding:5px 8px;">컬러</th>
+                        <th style="padding:5px 8px;text-align:right;">시스템 재고</th><th style="padding:5px 8px;text-align:right;">실사 재고</th>
+                        <th style="padding:5px 8px;text-align:right;">조치</th></tr></thead>
+                    <tbody>${rowsHtml}</tbody>
+                </table>
+            </div>`;
+        if (applyBtn) applyBtn.disabled = !!dupLabels.length || (outItems + inItems === 0);
+    }
+
+    async function _auditApply() {
+        if (!_canWriteProductWarehouse()) { UIUtils.toast('제품 창고 입력 권한이 없습니다.', 'warning'); return; }
+        if (!_auditPlan.length) { UIUtils.toast('먼저 미리보기를 해 주세요.', 'warning'); return; }
+        const date = (document.getElementById('auditDate') || {}).value || UIUtils.today();
+        const allowIn = !!(document.getElementById('auditAllowIn') || {}).checked;
+        const todo = _auditPlan.filter(p => (p.target - p.current) < 0 || ((p.target - p.current) > 0 && allowIn));
+        if (!todo.length) { UIUtils.toast('반영할 차이가 없습니다.', 'info'); return; }
+        const outTotal = todo.reduce((s, p) => s + Math.max(0, p.current - p.target), 0);
+        const inTotal = todo.reduce((s, p) => s + Math.max(0, p.target - p.current), 0);
+        if (!confirm(`기준일 ${date}\n출고 처리 ${UIUtils.formatNumber(outTotal)} EA / 입고 보정 ${UIUtils.formatNumber(inTotal)} EA\n\n실사 재고에 맞춰 반영합니다. (이력에서 되돌릴 수 있습니다)\n계속하시겠습니까?`)) return;
+
+        const batchId = 'AUD' + Date.now().toString(36);
+        const nowIso = new Date().toISOString();
+        const applyBtn = document.getElementById('auditApplyBtn');
+        if (applyBtn) applyBtn.disabled = true;
+        let outCount = 0, inCount = 0;
+        try {
+            for (const p of todo) {
+                const diff = p.target - p.current;
+                if (diff < 0) {
+                    let remaining = -diff;
+                    const lots = _auditLots(p.group ? p.group.records : []);
+                    for (const lot of lots) {
+                        if (remaining <= 0) break;
+                        const take = Math.min(lot.balance, remaining);
+                        if (take <= 0) continue;
+                        await Storage.add(STORE, {
+                            date, type: '출고', carModel: p.carModel, partName: p.partName, color: lot.color || p.color || '',
+                            paintingDate: lot.paintingDate || '', lotNo: lot.lotNo || '', quantity: take,
+                            source: AUDIT_SRC_OUT, auditBatchId: batchId, createdAt: nowIso
+                        });
+                        remaining -= take;
+                        outCount++;
+                    }
+                } else {
+                    await Storage.add(STORE, {
+                        date, type: '입고', carModel: p.carModel, partName: p.partName, color: p.color || '',
+                        paintingDate: '', lotNo: '', quantity: diff,
+                        source: AUDIT_SRC_IN, auditBatchId: batchId, createdAt: nowIso
+                    });
+                    inCount++;
+                }
+            }
+        } catch (e) {
+            console.error('[ProductWarehouse] 재고 실사 반영 실패:', e);
+            UIUtils.toast('실사 반영 중 오류가 발생했습니다. 일부만 반영됐을 수 있으니 이력에서 확인/되돌리기 하세요.', 'error');
+            const hw = document.getElementById('auditHistoryWrap');
+            if (hw) hw.innerHTML = _auditHistoryHtml();
+            return;
+        }
+        _auditPlan = [];
+        // 실제로 저장됐는지 저장소에서 다시 세어 확인한 뒤 메시지를 보이고 창을 닫는다.
+        const saved = (Storage.getAll(STORE) || []).filter(r => r.auditBatchId === batchId);
+        const savedOut = saved.filter(r => r.type === '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+        const savedIn = saved.filter(r => r.type !== '출고').reduce((s, r) => s + (Number(r.quantity) || 0), 0);
+        if (!saved.length) {
+            UIUtils.toast('실사 반영 결과를 확인하지 못했습니다. 재고 현황을 확인해 주세요.', 'warning');
+            return;
+        }
+        UIUtils.toast(`실사 반영 완료 — 출고 ${UIUtils.formatNumber(savedOut)} EA (${outCount}건), 입고 보정 ${UIUtils.formatNumber(savedIn)} EA (${inCount}건) 저장되었습니다.`, 'success');
+        UIUtils.closeModal();
+        try { loadData(); } catch (e) { /* 화면 갱신 실패는 무시 */ }
+    }
+
+    async function _auditRevert(batchId) {
+        if (!_canWriteProductWarehouse()) { UIUtils.toast('제품 창고 입력 권한이 없습니다.', 'warning'); return; }
+        const rows = (Storage.getAll(STORE) || []).filter(r => r.auditBatchId === batchId);
+        if (!rows.length) { UIUtils.toast('되돌릴 기록이 없습니다.', 'info'); return; }
+        if (!confirm(`이 실사 반영 기록 ${rows.length}건을 삭제해 재고를 이전 상태로 되돌립니다.\n계속하시겠습니까?`)) return;
+        for (const r of rows) await Storage.remove(STORE, r.id);
+        UIUtils.toast(`${rows.length}건을 되돌렸습니다.`, 'success');
+        const hw = document.getElementById('auditHistoryWrap');
+        if (hw) hw.innerHTML = _auditHistoryHtml();
+        try { loadData(); } catch (e) { /* 화면 갱신 실패는 무시 */ }
+    }
+
     function openAddModal() {
         _requireProductAdmin(() => {
             UIUtils.showModal('현재고 등록과 수정', _stockAdjustHtml(), `
@@ -8067,6 +8361,10 @@ const ProductWarehouseModule = (function() {
         openLayout,
         openManualInModal,
         openManualOutModal,
+        openAuditModal,
+        _auditParse,
+        _auditApply,
+        _auditRevert,
         _onManualInCarChange,
         _onManualInPartChange,
         saveManualIn,

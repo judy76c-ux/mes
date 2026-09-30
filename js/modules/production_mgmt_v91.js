@@ -20506,6 +20506,7 @@ var ProdQualityModule = (function() {
                                         <th style="text-align:right;white-space:nowrap;padding:8px 10px;">산출수량</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">기준 양식</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">DATA</th>
+                                        <th style="white-space:nowrap;padding:8px 10px;">입력항목</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">초중종물 사진</th>
                                         <th style="white-space:nowrap;padding:8px 10px;">작업</th>
                                     </tr>
@@ -22072,6 +22073,21 @@ var ProdQualityModule = (function() {
         return null;
     }
 
+    function _measureCompletion(issue, record) {
+        const sourceItems = (issue && Array.isArray(issue.items) ? issue.items : []).filter(it => it && it.selected !== false);
+        const total = sourceItems.length;
+        if (!total || !record) return { entered: 0, total };
+        const saved = Array.isArray(record.items) ? record.items : [];
+        const byKey = new Map(saved.map(it => [String(it.key || ''), it]));
+        let entered = 0;
+        sourceItems.forEach(it => {
+            const row = byKey.get(String(it.key || ''));
+            const values = row && row.values ? row.values : {};
+            if (Object.values(values).some(v => v !== '' && v !== null && v !== undefined)) entered += 1;
+        });
+        return { entered, total };
+    }
+
     function _issueHasMeasureData(issue, recordMap) {
         if (!issue) return false;
         const map = recordMap || _measureRecordMap();
@@ -22739,11 +22755,11 @@ var ProdQualityModule = (function() {
                         ? `<span class="badge badge-info">${(tmpl.items || []).length}항목</span>`
                         : `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openTemplateModal('${_js(w.carModel || '')}','${_js(w.color || '')}')">항목설정필요</button>`));
 
+            const completion = issue ? _measureCompletion(issue, record) : { entered: 0, total: 0 };
             const dataCell = !issue
                 ? '<span class="badge badge-secondary">-</span>'
-                : (record
-                    ? '<span class="badge badge-success">입력완료</span>'
-                    : '<span class="badge badge-secondary">미입력</span>');
+                : `<span class="badge ${completion.total > 0 && completion.entered >= completion.total ? 'badge-success' : 'badge-secondary'}">${completion.total > 0 && completion.entered >= completion.total ? '입력완료' : '미입력'}</span>`;
+            const countCell = `<strong>${completion.entered}/${completion.total}</strong>`;
 
             const printBtn = issue
                 ? `<button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(issue.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>`
@@ -22781,6 +22797,7 @@ var ProdQualityModule = (function() {
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(w.productionQty || 0)}${waitingHint}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${statusCell}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${dataCell}</td>
+                     <td style="white-space:nowrap;padding:8px 10px;text-align:center;">${countCell}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${issue ? _pqPhotoThumbCell(record, issue.id) : '<span style="font-size:0.75rem;color:var(--text-muted);">—</span>'}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${printBtn}${dataBtn ? ' ' + dataBtn : ''}${delBtn ? ' ' + delBtn : ''}</td>
                 </tr>`
@@ -22811,9 +22828,9 @@ var ProdQualityModule = (function() {
             const statusCell = printed
                 ? `<span class="badge badge-success" title="인쇄 완료">● 발행 완료</span><div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">${_esc(_fmtPrintedAt(d.printedAt))}</div>`
                 : '<span class="badge badge-warning">인쇄 대기</span>';
-            const dataCell = record
-                ? '<span class="badge badge-success">입력완료</span>'
-                : '<span class="badge badge-secondary">미입력</span>';
+            const completion = _measureCompletion(d, record);
+            const dataCell = `<span class="badge ${completion.total > 0 && completion.entered >= completion.total ? 'badge-success' : 'badge-secondary'}">${completion.total > 0 && completion.entered >= completion.total ? '입력완료' : '미입력'}</span>`;
+            const countCell = `<strong>${completion.entered}/${completion.total}</strong>`;
             const dataBtn = record
                 ? `<button class="btn btn-sm btn-outline" onclick="ProdQualityModule.openDataView('${_js(d.id)}')">DATA 보기</button>`
                 : `<button class="btn btn-sm btn-primary" onclick="ProdQualityModule.openDataModal('${_js(d.id)}')">DATA 입력</button>`;
@@ -22837,6 +22854,7 @@ var ProdQualityModule = (function() {
                     <td style="text-align:right;white-space:nowrap;padding:8px 10px;">${UIUtils.formatNumber(d.productionQty || 0)}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${statusCell}<div style="font-size:0.7rem;color:var(--text-muted);margin-top:2px;">항목 ${(d.items || []).length}</div></td>
                     <td style="white-space:nowrap;padding:8px 10px;">${dataCell}</td>
+                     <td style="white-space:nowrap;padding:8px 10px;text-align:center;">${countCell}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">${_pqPhotoThumbCell(record, d.id)}</td>
                     <td style="white-space:nowrap;padding:8px 10px;">
                         <button class="btn btn-sm ${printed ? 'btn-outline' : 'btn-primary'}" onclick="ProdQualityModule.printIssue('${_js(d.id)}')">${printed ? '재인쇄' : '인쇄물 발행'}</button>
@@ -23819,8 +23837,31 @@ var ProdQualityModule = (function() {
                 _normText(t.paintProcess || '') === proc
             ) || null;
         }
-        const items = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
+        const availablePresets = (Storage.getAll(STORE) || []).filter(p => p && p._docKind === PRESET_KIND);
+        const linkedPreset = tmpl && tmpl.presetId
+            ? availablePresets.find(p => p.id === tmpl.presetId) || null
+            : null;
+        const templateItems = tmpl && Array.isArray(tmpl.items) && tmpl.items.length
             ? _normalizeQualityItems(tmpl.items.map(item => ({ ...item })))
+            : [];
+        // 구형 품목 템플릿 중 presetId가 비어 있어도 관리항목 구성이 프리셋과
+        // 유일하게 일치하면, 품목별 기준값은 유지하고 행 순서만 프리셋을 따른다.
+        // 키 구성이 같은 프리셋이 둘 이상이면 임의 선택하지 않는다.
+        const keySignature = items => (items || []).map(item => String(item.key || '')).filter(Boolean).sort().join('|');
+        const templateSignature = keySignature(templateItems);
+        const matchingPresets = !linkedPreset && templateSignature
+            ? availablePresets.filter(p => keySignature(_normalizeQualityItems(p.items || [])) === templateSignature)
+            : [];
+        if (matchingPresets.length === 1) {
+            const order = new Map(_normalizeQualityItems(matchingPresets[0].items || []).map((item, idx) => [String(item.key || ''), idx]));
+            templateItems.sort((a, b) => (order.get(String(a.key || '')) ?? 9999) - (order.get(String(b.key || '')) ?? 9999));
+            return templateItems.map(item => _normalizeItemForEdit({ ...item }));
+        }
+        const sourceItems = linkedPreset && Array.isArray(linkedPreset.items) && linkedPreset.items.length
+            ? linkedPreset.items
+            : templateItems;
+        const items = sourceItems.length
+            ? _normalizeQualityItems(sourceItems.map(item => ({ ...item })))
             : [];
         if (items.length) return items.map(item => _normalizeItemForEdit({ ...item }));
         return fallbackToMaster
@@ -24844,12 +24885,12 @@ var ProdQualityModule = (function() {
         const allDocs = Storage.getAll(STORE) || [];
 
         const syncItems = (items = []) =>
-            _sortItemsByMaster(items
+            _keepItemOrder(items
                 .filter(i => masterKeySet.has(i.key))
                 .map(i => {
                     const m = masterByKey[i.key];
                     return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType, specMode: m.specMode || _specModeOf(m) };
-                }), newMasterItems);
+                }));
 
         const presets   = allDocs.filter(d => d._docKind === PRESET_KIND);
         const templates = allDocs.filter(d => d._docKind === TEMPLATE_KIND);
@@ -25141,7 +25182,8 @@ var ProdQualityModule = (function() {
         const rawPresetItems = preset && preset.items && preset.items.length
             ? preset.items
             : (isNewPreset ? [] : _masterItems().map(i => ({ ...i, selected: true })));
-        const items = _sortItemsByMaster(rawPresetItems);
+        // 프리셋에 저장된 배열 순서를 편집/보기 화면에서도 유지한다.
+        const items = _keepItemOrder(rawPresetItems);
         const pickerOptions = _presetPickerOptions(items);
         const modalTitle = viewOnly
             ? `프리셋 보기 — ${preset ? preset.name : ''}`
@@ -25553,7 +25595,8 @@ var ProdQualityModule = (function() {
 
         if (!items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
 
-        const sortedItems = _sortItemsByMaster(items);
+        // 프리셋 편집 화면의 드래그 순서를 그대로 저장한다.
+        const sortedItems = items;
         if (presetId) {
             await Storage.update(STORE, presetId, { _docKind: PRESET_KIND, name, items: sortedItems, updatedAt: UIUtils.now() });
             UIUtils.toast(`"${name}" 프레셋이 수정됐습니다.`, 'success');
@@ -25561,7 +25604,7 @@ var ProdQualityModule = (function() {
             await Storage.add(STORE, { _docKind: PRESET_KIND, name, items: sortedItems, createdAt: UIUtils.now() });
             UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
         }
-        openPresetMgmtModal(); // 목록으로 돌아가기
+        UIUtils.closeModal();
     }
 
     // ── 프레셋 적용 ────────────────────────────────────────────────────────
@@ -25569,7 +25612,8 @@ var ProdQualityModule = (function() {
         // 사용자 저장 프레셋 적용
         const userPreset = (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === presetId);
         if (!userPreset) { UIUtils.toast('프레셋을 찾을 수 없습니다.', 'error'); return; }
-        const items = _sortItemsByMaster((userPreset.items || []).map(i => ({ ...i, selected: true })));
+        // 저장된 프리셋 배열 순서를 그대로 적용한다.
+        const items = (userPreset.items || []).map(i => ({ ...i, selected: true }));
 
         // 관리항목 테이블에 반영
         const body = document.getElementById('pqTemplateItemsBody');
@@ -25656,7 +25700,7 @@ var ProdQualityModule = (function() {
         const carModel = document.getElementById('pqTplCarModel')?.value || '';
         if (!carModel) { UIUtils.toast('차종을 선택하세요.', 'warning'); return; }
         const color = document.getElementById('pqTplColor')?.value || '';
-        const items = _sortItemsByMaster([...document.querySelectorAll('.pq-template-item-row')].map(row => ({
+        const items = _keepItemOrder([...document.querySelectorAll('.pq-template-item-row')].map(row => ({
             key: row.querySelector('.pq-tpl-key')?.value || Storage.generateId(),
             label: row.querySelector('.pq-tpl-label')?.value.trim() || '',
             spec: row.querySelector('.pq-tpl-spec')?.value.trim() || '',
@@ -25872,9 +25916,9 @@ var ProdQualityModule = (function() {
         // ✓ 작업시간 기준(4hr 규정)을 우선 적용 — 예전에 발행된 기준 양식(저장된 d.types)도
         //   재인쇄할 때마다 항상 최신 규정으로 자동 판정한다. 시간 정보 자체가 없을 때만 저장값을 쓴다.
         const workHoursForTypes = Number(d.workHours) || Number(_durationHours(d.startTime || '', d.endTime || '')) || 0;
-        const typeHeaders = workHoursForTypes > 0
-            ? _typesForWorkHours(workHoursForTypes)
-            : (d.types && d.types.length ? d.types : ['초물', '중물', '종물']);
+        // 작업시간이 없거나 4시간 이하면 초물·종물만 체크한다.
+        // 저장 당시 d.types에 초·중·종이 남아 있어도 최신 작업시간 규정을 우선한다.
+        const typeHeaders = _typesForWorkHours(workHoursForTypes);
         const selectedTypes = new Set(typeHeaders);
         const measureCellMode = item => {
             const label = `${item.label || ''} ${item.method || ''}`;
@@ -25914,15 +25958,15 @@ var ProdQualityModule = (function() {
                 return `${sign}${normalized}`;
             };
             if (_isColorSpecItem(item)) {
-                return `<td class="spec-upper">${_esc(colorSigned(upperSpec, '+'))}</td><td class="spec-lower">${_esc(colorSigned(lowerSpec, '-'))}</td>`;
+                return `<td class="spec-text color-spec">${_esc(colorSigned(upperSpec, '+'))} / ${_esc(colorSigned(lowerSpec, '-'))}</td>`;
             }
             if (_isFilmSpecItem(item)) {
                 const rangeText = (upperSpec || lowerSpec)
                     ? `${lowerSpec || ''} ~ ${upperSpec || ''} ${item.unit || ''}`.trim()
                     : (spec || `      ~       ${item.unit || ''}`.trim());
-                return `<td class="spec-upper">&nbsp;</td><td class="spec-lower film-range-spec">${_esc(rangeText)}</td>`;
+                return `<td class="spec-text film-range-spec">${_esc(rangeText)}</td>`;
             }
-            return `<td class="spec-text" colspan="2">${_esc(spec || '기준에 준할 것')}</td>`;
+            return `<td class="spec-text">${_esc(spec || '기준에 준할 것')}</td>`;
         };
         const renderMeasureCell = (item, type) => {
             // ✓ 이번 LOT 기준(초/중/종)에 포함되지 않은 열은 측정란 자체를 감춘다
@@ -25970,9 +26014,14 @@ var ProdQualityModule = (function() {
                 _isGlossSpecItem(item) ? 'gloss-row' : '',
                 _isFilmSpecItem(item) ? 'film-row' : ''
             ].filter(Boolean).join(' ');
+            const isFirstColorRow = info.groupKey === 'color' && (idx === 0 || displayInfos[idx - 1].groupKey !== 'color');
+            const isColorContinuation = info.groupKey === 'color' && !isFirstColorRow;
+            const checkCellHtml = isColorContinuation
+                ? ''
+                : `<td class="check-cell"${isFirstColorRow ? ` rowspan="${groupRowspans[idx]}"` : ''}><span class="check-box"></span></td>`;
             return `
                 <tr class="${rowClass}" data-row-label="${_esc((info.groupLabel || '').replace(/<[^>]*>/g, '') + (info.detailHtml ? ' ' + info.detailHtml.replace(/<[^>]*>/g, ' ') : ''))}">
-                    <td class="check-cell"><span class="check-box"></span></td>
+                    ${checkCellHtml}
                     ${groupCellHtml}
                     <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
                     ${specCells(item)}
@@ -25985,7 +26034,9 @@ var ProdQualityModule = (function() {
         }).join('');
         const dateLot = `${_esc(d.date || '')}${d.lotNo ? `<br><span>${_esc(d.lotNo)}</span>` : ''}`;
         const logoSrc = new URL('assets/kc-logo.png', window.location.href).href;
-        const presetKey = [d.line || '', d.carModel || '', d.partName || '', d.presetName || d.preset || d.color || ''].map(v => _normText(v)).join('|');
+        // 행 높이는 차종·품목별이 아니라 C/S 프리셋별로 공통 적용한다.
+        // presetId를 우선 사용하고, 구형 발행자료는 presetName/색상으로 대체한다.
+        const presetKey = 'preset:' + _normText(d.presetId || d.presetName || d.preset || d.color || d.partName || 'default');
         return `
 <div class="print-page" data-preset-key="${_esc(presetKey)}">
   <div class="sheet">
@@ -26024,19 +26075,19 @@ var ProdQualityModule = (function() {
     </div>
     <table class="main">
     <colgroup>
-      <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:8%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:10%">
+       <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:17%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%">
     </colgroup>
     <thead>
       <tr>
         <th rowspan="2" class="check-head">검사<br>여부</th>
         <th rowspan="2" colspan="2">관리 항목</th>
-        <th colspan="2">관리 규격</th>
+         <th>관리 규격</th>
         <th rowspan="2">점검 방법</th>
         <th colspan="3" class="measure-head">측정 ( 측정값 / 결과 작성)</th>
         <th rowspan="2">판&nbsp;&nbsp;정</th>
       </tr>
       <tr class="subhead">
-        <th class="spec-head-upper">상</th><th class="spec-head-lower">하</th>
+         <th>기준</th>
         ${lotHead('초물', 'IP')}
         ${lotHead('중물', 'MP')}
         ${lotHead('종물', 'FP')}
@@ -26361,13 +26412,11 @@ function fitOnePage() {
     const main = page.querySelector('.main');
     const tbody = main ? main.tBodies[0] : null;
     const rows = tbody ? Array.from(tbody.rows || []) : [];
-    // 항목이 많으면 한 장에 억지로 축소하지 않고 전체 행을 그대로 표시한다.
-    // 인쇄 시 브라우저가 다음 페이지로 이어서 출력하므로 항목 누락을 방지한다.
-    if (rows.length > 10) {
-      page.style.height = 'auto';
-      sheet.style.height = 'auto';
-      if (main) { main.style.height = 'auto'; main.style.minHeight = ''; }
-      return;
+    const cols = main ? Array.from(main.querySelectorAll('colgroup col')) : [];
+    if (cols.length) {
+      const widths = cols.map(col => parseFloat(col.style.width) || 0);
+      const widthTotal = widths.reduce((sum, width) => sum + width, 0);
+      if (widthTotal > 0) cols.forEach((col, idx) => { col.style.width = (widths[idx] * 100 / widthTotal).toFixed(4) + '%'; });
     }
     const mm = (v) => Math.round(v * 96 / 25.4);
     sheet.style.transform = '';
@@ -26401,23 +26450,27 @@ function fitOnePage() {
       const bodyTarget = Math.max(100, availableMainH - headH);
       const naturalHeights = rows.map(row => Math.max(28, row.getBoundingClientRect().height));
       const naturalBody = naturalHeights.reduce((s, h) => s + h, 0) || (rows.length * 40);
-      const scaleY = bodyTarget / naturalBody;
-      const minRow = rows.length <= 4 ? 48 : (rows.length <= 6 ? 36 : 28);
+      const savedHeights = rows.map((row, idx) => Number(window.__adminRowHeights && window.__adminRowHeights[idx]) || 0);
+      const savedBody = savedHeights.reduce((sum, h) => sum + h, 0);
+      const heightSource = savedBody > 0 ? savedHeights.map((h, idx) => h || naturalHeights[idx]) : naturalHeights;
+      const sourceBody = heightSource.reduce((sum, h) => sum + h, 0) || naturalBody;
+      // 모든 항목을 인쇄 가능 높이에 맞춘다. 짧은 표는 여백을 행에 배분하고,
+      // 긴 표나 저장된 고정 높이는 비례 축소해 첫 페이지 안에 넣는다.
+      const scaleY = bodyTarget / sourceBody;
       main.style.height = availableMainH + 'px';
       let used = 0;
-       rows.forEach((row, idx) => {
-         const customHeight = window.__adminRowHeights && window.__adminRowHeights[idx];
-         let h = customHeight || Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
-         if (!customHeight && idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
+      rows.forEach((row, idx) => {
+         let h = Math.max(1, Math.floor(heightSource[idx] * scaleY));
+         if (idx === rows.length - 1) h = Math.max(1, bodyTarget - used);
         used += h;
         row.style.height = h + 'px';
         Array.from(row.cells || []).forEach(cell => {
           cell.style.height = h + 'px';
           cell.style.minHeight = h + 'px';
-        });
+      });
         row.querySelectorAll('.measure-cell span').forEach(box => {
-          const boxH = Math.max(22, Math.floor(h * 0.68));
-          const boxW = Math.max(42, Math.min(Math.floor(h * 0.95), Math.floor(pageW * 0.08)));
+          const boxH = Math.max(10, Math.floor(h * 0.68));
+          const boxW = Math.max(24, Math.min(Math.floor(h * 0.95), Math.floor(pageW * 0.08)));
           box.style.height = boxH + 'px';
           box.style.minHeight = boxH + 'px';
           box.style.width = boxW + 'px';
