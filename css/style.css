@@ -1904,6 +1904,37 @@ input[type="time"] {
     background: rgba(239, 68, 68, 0.18) !important;
 }
 
+/* 좌측 고정(sticky) 열은 반투명 색이면 가로 스크롤 때 뒤로 지나가는 날짜 칸이 비쳐 겹쳐 보인다.
+   → 흰 바탕(불투명) 위에 상태 색을 그라데이션 레이어로 얹는다. (위 규칙보다 뒤에 두어 덮어쓴다) */
+.sdp-status-table tbody td:nth-child(-n + 6) {
+    background-color: #fff !important;
+}
+
+.sdp-status-table tbody tr:hover td:nth-child(-n + 6) {
+    background-color: #fff !important;
+    background-image: linear-gradient(rgba(59, 130, 246, 0.055), rgba(59, 130, 246, 0.055)) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-available td:nth-child(-n + 6) {
+    background-color: #fff !important;
+    background-image: linear-gradient(rgba(16, 185, 129, 0.18), rgba(16, 185, 129, 0.18)) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-postprocess td:nth-child(-n + 6) {
+    background-color: #fff !important;
+    background-image: linear-gradient(rgba(250, 204, 21, 0.24), rgba(250, 204, 21, 0.24)) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-paint-needed td:nth-child(-n + 6) {
+    background-color: #fff !important;
+    background-image: linear-gradient(rgba(59, 130, 246, 0.17), rgba(59, 130, 246, 0.17)) !important;
+}
+
+.sdp-status-table tbody tr.sdp-state-injection-short td:nth-child(-n + 6) {
+    background-color: #fff !important;
+    background-image: linear-gradient(rgba(239, 68, 68, 0.18), rgba(239, 68, 68, 0.18)) !important;
+}
+
 .sdp-status-badge {
     display: inline-block;
     margin-left: 4px;

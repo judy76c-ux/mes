@@ -25878,7 +25878,7 @@ var ProdQualityModule = (function() {
         const selectedTypes = new Set(typeHeaders);
         const measureCellMode = item => {
             const label = `${item.label || ''} ${item.method || ''}`;
-            if (_isFilmSpecItem(item) || /도막|두께|film/i.test(label)) return { type: 'box', text: 'Film' };
+            if (_isFilmSpecItem(item) || /도막|두께|film/i.test(label)) return { type: 'film', text: 'Film' };
             if (/부착|cross|cut|tape/i.test(label)) return { type: 'box', text: 'Tape' };
             if (_isColorSpecItem(item) || _isGlossSpecItem(item) || /색차|광택|△L|△a|△b/i.test(label)) {
                 return { type: 'blank', text: '' };
@@ -25930,6 +25930,9 @@ var ProdQualityModule = (function() {
                 return `<td class="measure-cell blank" style="color:#94a3b8;font-weight:900;">/</td>`;
             }
             const mode = measureCellMode(item);
+            if (mode.type === 'film') {
+                return `<td class="measure-cell film-measure-cell"><span class="film-box">${_esc(mode.text)}</span><span class="film-value-line"><span class="film-value-space"></span><span class="film-unit">㎛</span></span></td>`;
+            }
             if (mode.type === 'box') {
                 return `<td class="measure-cell"><span>${_esc(mode.text)}</span></td>`;
             }
@@ -25968,7 +25971,7 @@ var ProdQualityModule = (function() {
                 _isFilmSpecItem(item) ? 'film-row' : ''
             ].filter(Boolean).join(' ');
             return `
-                <tr class="${rowClass}">
+                <tr class="${rowClass}" data-row-label="${_esc((info.groupLabel || '').replace(/<[^>]*>/g, '') + (info.detailHtml ? ' ' + info.detailHtml.replace(/<[^>]*>/g, ' ') : ''))}">
                     <td class="check-cell"><span class="check-box"></span></td>
                     ${groupCellHtml}
                     <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
@@ -25982,8 +25985,9 @@ var ProdQualityModule = (function() {
         }).join('');
         const dateLot = `${_esc(d.date || '')}${d.lotNo ? `<br><span>${_esc(d.lotNo)}</span>` : ''}`;
         const logoSrc = new URL('assets/kc-logo.png', window.location.href).href;
+        const presetKey = [d.line || '', d.carModel || '', d.partName || '', d.presetName || d.preset || d.color || ''].map(v => _normText(v)).join('|');
         return `
-<div class="print-page">
+<div class="print-page" data-preset-key="${_esc(presetKey)}">
   <div class="sheet">
     <div class="title-row">
       <div class="title-logo"><img src="${_esc(logoSrc)}" alt="KC 케미칼"></div>
@@ -26219,9 +26223,28 @@ var ProdQualityModule = (function() {
         printIssues(toPrint, { win: win });
     }
 
+    const PRINT_ROW_HEIGHT_STORE = 'prod_quality_print_row_heights';
+    function _printRowHeightKey(parts) { return (parts || []).map(v => _normText(v || '')).join('|'); }
+    async function savePrintRowHeights(key, heights) {
+        if (!key) return false;
+        const rows = Storage.getAll(DB.STORES.CONFIG) || [];
+        const old = rows.find(r => r.key === PRINT_ROW_HEIGHT_STORE && r.presetKey === key);
+        const payload = { key: PRINT_ROW_HEIGHT_STORE, presetKey: key, heights: heights || {}, updatedAt: new Date().toISOString() };
+        if (old) await Storage.update(DB.STORES.CONFIG, old.id, payload);
+        else await Storage.add(DB.STORES.CONFIG, payload);
+        return true;
+    }
+    function getPrintRowHeights(key) {
+        const row = (Storage.getAll(DB.STORES.CONFIG) || []).find(r => r.key === PRINT_ROW_HEIGHT_STORE && r.presetKey === key);
+        return row && row.heights ? row.heights : {};
+    }
+
     function _openQualityPrintWindow(pages, existingWin) {
         const issueIds = (pages || []).map(function(p) { return p.id; }).filter(Boolean);
         const multi = pages.length > 1;
+        const currentUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser)
+            ? (AuthModule.getCurrentUser() || {}) : {};
+        const isAdminPrint = currentUser.role === 'admin';
         const html = `<!doctype html><html class="${multi ? 'print-multi' : ''}"><head><meta charset="utf-8"><title>초중종물 C/S</title>
 <style>
 *{box-sizing:border-box}
@@ -26231,8 +26254,8 @@ body{font-family:Arial,'Malgun Gothic',sans-serif;color:#111827;background:#eef2
 .print-btn{padding:8px 14px;border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:6px;cursor:pointer;font-weight:700}
 .print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
-.print-page{width:283mm;height:200mm;margin:18px auto;overflow:hidden;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
-.sheet{width:100%;height:100%;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid}
+ .print-page{width:283mm;min-height:200mm;height:auto;margin:18px auto;overflow:visible;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
+ .sheet{width:100%;min-height:200mm;height:auto;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:visible;page-break-inside:avoid}
 .title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:12mm;margin-bottom:1.5mm;border:1.6px solid #111827;background:#fff;flex:0 0 auto}
 .title-logo{position:absolute;left:3mm;top:50%;transform:translateY(-50%);width:46mm;height:10mm;display:flex;align-items:center;justify-content:flex-start;background:#fff}
 .title-logo img{display:block;max-width:100%;max-height:9.5mm;object-fit:contain}
@@ -26246,7 +26269,8 @@ table{border-collapse:collapse;width:100%}
 .meta td,.sign td{font-weight:700;color:#111827}
 .meta .ko{display:block;font-size:11px}.meta .en{display:block;font-size:8px;color:#475569}
 .sign td{height:8mm;background:#fff}
-.main{table-layout:fixed;border:1.6px solid #111827;flex:1 1 auto;height:100%;width:100%}
+ .main{table-layout:fixed;border:1.6px solid #111827;flex:1 1 auto;height:100%;width:100%;min-width:100%;max-width:100%}
+ .main col{width:auto}
 .main th,.main td{border:1px solid #111827;text-align:center;vertical-align:middle;padding:2px 2px;font-size:12px}
 .main th{background:#e8eef6;font-weight:900;color:#0f172a}
 .subhead th{background:#f8fafc;font-weight:900}
@@ -26272,6 +26296,11 @@ table{border-collapse:collapse;width:100%}
 .type-check.checked{color:#334155}
 .measure-cell{height:auto}
 .measure-cell span{display:inline-flex;width:78%;max-width:96px;height:70%;min-height:18mm;border:1.2px dashed #64748b;background:#fdfefe;align-items:center;justify-content:center;color:#7aa332;font-size:20px}
+.film-measure-cell{padding:1px 2px!important}
+.film-measure-cell .film-box{display:flex;width:78%;max-width:96px;height:auto;min-height:12mm;border:1.2px dashed #64748b;background:#fdfefe;align-items:center;justify-content:center;color:#7aa332;font-size:18px}
+.film-measure-cell .film-value-line{display:flex;width:78%;max-width:96px;height:5mm;min-height:0;border:0;background:transparent;align-items:flex-end;justify-content:center;gap:2px;color:#111827;font-size:9px}
+.film-measure-cell .film-value-space{display:inline-block;width:42px;height:4mm;min-height:0;border:0;border-bottom:1px solid #111827;background:#fff}
+.film-measure-cell .film-unit{display:inline!important;width:auto!important;height:auto!important;min-height:0!important;border:0!important;background:transparent!important;color:#111827!important;font-size:9px!important}
 .measure-cell.blank{background:#fff}
 .judge-cell{font-size:13px;color:#5f6b75}
 .main tr.color-row td{padding-top:1px;padding-bottom:1px}
@@ -26282,17 +26311,26 @@ table{border-collapse:collapse;width:100%}
 .main tr.color-row .spec-upper,.main tr.color-row .spec-lower{font-size:16px;line-height:1.1;font-weight:900}
 .main tr.color-row .method-cell,.main tr.color-row .judge-cell{font-size:10px}
 .main tr.color-row .measure-cell span{min-height:10mm;width:72%;font-size:0}
+.main tr.color-row td{padding-top:0!important;padding-bottom:0!important}
+.main tr.color-row .item-detail{font-size:10px;line-height:.95}
+.main tr.color-row .item-sub-en,.main tr.color-row .item-target{font-size:7px;line-height:.95}
+.admin-row-px{display:${isAdminPrint ? 'inline-block' : 'none'};margin-left:4px;color:#64748b;font-size:10px;font-weight:700}
+.row-height-control{display:${isAdminPrint ? 'inline-flex' : 'none'};align-items:center;gap:3px;color:#334155;font-size:11px;font-weight:700}
+.row-height-control input{width:58px;padding:3px 4px;border:1px solid #94a3b8;border-radius:4px;font-size:11px}
+.row-height-control button{padding:3px 7px;border:1px solid #2563eb;background:#eff6ff;color:#1d4ed8;border-radius:4px;font-size:11px;font-weight:700;cursor:pointer}
 @media print{
   @page{size:A4 landscape;margin:5mm 7mm}
   html,body{width:283mm;height:200mm;overflow:hidden;background:#fff!important;color:#000}
   body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .print-toolbar{display:none!important}
-  .print-page{width:283mm;height:200mm;margin:0;overflow:hidden;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
-  .sheet{width:283mm;height:200mm;max-width:none;min-height:0;overflow:hidden;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
+   .print-page{width:283mm;min-height:200mm;height:auto;margin:0;overflow:visible;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
+   .sheet{width:283mm;min-height:200mm;height:auto;max-width:none;overflow:visible;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
   .title-row,.top-grid,.cycle-note{flex:0 0 auto}
-  .main{flex:1 1 auto;height:100%;width:100%}
+   .main{flex:0 0 auto;height:auto;width:100%;min-width:100%;max-width:100%}
   .measure-cell{height:auto;min-height:0}
   .measure-cell span{min-height:0}
+  .film-measure-cell .film-box{min-height:0}
+  .admin-row-px{display:none!important}
   html.print-multi,body.print-multi{width:auto!important;height:auto!important;overflow:visible!important}
   body.print-multi .print-page{page-break-after:always;break-after:page;margin:0}
   body.print-multi .print-page:last-child{page-break-after:auto;break-after:auto}
@@ -26300,6 +26338,7 @@ table{border-collapse:collapse;width:100%}
 </style></head><body class="${multi ? 'print-multi' : ''}">
 <div class="print-toolbar">
   <span>클릭해서 수정 후 인쇄물 발행${multi ? ' (' + pages.length + '건)' : ''}</span>
+  ${isAdminPrint ? '<label class="row-height-control">적용 행 <select id="adminRowTarget"><option value="all">전체</option></select> 높이 <input id="adminRowHeight" type="number" min="20" max="180" step="1" placeholder="자동"> px <button type="button" onclick="applyAdminRowHeight()">적용</button></label>' : ''}
   <button class="print-btn" onclick="window.print()">인쇄물 발행</button>
   <button class="print-close-btn" onclick="window.close()">창 닫기</button>
 </div>
@@ -26322,6 +26361,14 @@ function fitOnePage() {
     const main = page.querySelector('.main');
     const tbody = main ? main.tBodies[0] : null;
     const rows = tbody ? Array.from(tbody.rows || []) : [];
+    // 항목이 많으면 한 장에 억지로 축소하지 않고 전체 행을 그대로 표시한다.
+    // 인쇄 시 브라우저가 다음 페이지로 이어서 출력하므로 항목 누락을 방지한다.
+    if (rows.length > 10) {
+      page.style.height = 'auto';
+      sheet.style.height = 'auto';
+      if (main) { main.style.height = 'auto'; main.style.minHeight = ''; }
+      return;
+    }
     const mm = (v) => Math.round(v * 96 / 25.4);
     sheet.style.transform = '';
     sheet.style.transformOrigin = '';
@@ -26358,9 +26405,10 @@ function fitOnePage() {
       const minRow = rows.length <= 4 ? 48 : (rows.length <= 6 ? 36 : 28);
       main.style.height = availableMainH + 'px';
       let used = 0;
-      rows.forEach((row, idx) => {
-        let h = Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
-        if (idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
+       rows.forEach((row, idx) => {
+         const customHeight = window.__adminRowHeights && window.__adminRowHeights[idx];
+         let h = customHeight || Math.max(minRow, Math.floor(naturalHeights[idx] * scaleY));
+         if (!customHeight && idx === rows.length - 1) h = Math.max(minRow, bodyTarget - used);
         used += h;
         row.style.height = h + 'px';
         Array.from(row.cells || []).forEach(cell => {
@@ -26378,6 +26426,7 @@ function fitOnePage() {
           }
         });
       });
+      updateAdminRowTargetLabels();
     }
     void sheet.offsetHeight;
     const sheetW = sheet.scrollWidth || pageW;
@@ -26389,8 +26438,58 @@ function fitOnePage() {
     }
   });
 }
+function applyAdminRowHeight() {
+  const input = document.getElementById('adminRowHeight');
+  const target = document.getElementById('adminRowTarget');
+  const value = input ? parseInt(input.value, 10) : NaN;
+  window.__adminRowHeights = window.__adminRowHeights || {};
+  const height = Number.isFinite(value) ? Math.max(20, Math.min(180, value)) : 0;
+  if (target && target.value === 'all') {
+    document.querySelectorAll('.main tbody tr').forEach((row, idx) => {
+      if (height) window.__adminRowHeights[idx] = height;
+      else delete window.__adminRowHeights[idx];
+    });
+  } else if (target) {
+    if (height) window.__adminRowHeights[Number(target.value)] = height;
+    else delete window.__adminRowHeights[Number(target.value)];
+  }
+  if (window.opener && window.opener.ProdQualityModule && window.opener.ProdQualityModule.savePrintRowHeights) {
+    document.querySelectorAll('.print-page').forEach(page => {
+      const key = page.getAttribute('data-preset-key');
+      if (key) window.opener.ProdQualityModule.savePrintRowHeights(key, window.__adminRowHeights || {});
+    });
+  }
+  fitOnePage();
+}
+function loadAdminSavedHeights() {
+  if (!window.opener || !window.opener.ProdQualityModule || !window.opener.ProdQualityModule.getPrintRowHeights) return;
+  const first = document.querySelector('.print-page');
+  const key = first && first.getAttribute('data-preset-key');
+  if (!key) return;
+  window.__adminRowHeights = window.opener.ProdQualityModule.getPrintRowHeights(key) || {};
+}
+function initAdminRowTargets() {
+  const select = document.getElementById('adminRowTarget');
+  if (!select) return;
+  document.querySelectorAll('.main tbody tr').forEach((row, idx) => {
+    const option = document.createElement('option');
+    option.value = idx;
+    option.textContent = (idx + 1) + '행 ' + ((row.getAttribute('data-row-label') || '').replace(/\s+/g, ' ').trim()) + ' (' + Math.round(row.getBoundingClientRect().height) + 'px)';
+    select.appendChild(option);
+  });
+}
+function updateAdminRowTargetLabels() {
+  const select = document.getElementById('adminRowTarget');
+  if (!select) return;
+  Array.from(document.querySelectorAll('.main tbody tr')).forEach((row, idx) => {
+    const option = select.querySelector('option[value="' + idx + '"]');
+    if (!option) return;
+    const label = (row.getAttribute('data-row-label') || '').replace(/\s+/g, ' ').trim();
+    option.textContent = (idx + 1) + '행 ' + label + ' (' + Math.round(row.getBoundingClientRect().height) + 'px)';
+  });
+}
 window.addEventListener('beforeprint', fitOnePage);
-window.addEventListener('load', () => setTimeout(fitOnePage, 60));
+window.addEventListener('load', () => { loadAdminSavedHeights(); initAdminRowTargets(); setTimeout(fitOnePage, 60); });
 window.addEventListener('resize', () => setTimeout(fitOnePage, 40));
 window.addEventListener('afterprint', () => {
   const ids = ${JSON.stringify(issueIds)};
@@ -26488,6 +26587,8 @@ window.addEventListener('afterprint', () => {
         ,_checkAllSameColor
         ,applyPresetToSpec
         ,previewSpecPrint
+        ,savePrintRowHeights
+        ,getPrintRowHeights
         ,toggleSameColorPanel
         ,_updateSameColorCount
         ,applySameColorTemplateToSpec
