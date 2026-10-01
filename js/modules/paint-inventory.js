@@ -77,13 +77,51 @@ const PaintInventoryModule = (function() {
         return { mfgDate, expDate };
     }
 
-    // 도료 LOT별 잔량(개) — 제조 LOT 오름차순(선입선출 순, 오래된 것 먼저) 정렬
+    // 도료 LOT별 잔량(개) + 제조일 — 선입선출(FIFO)은 입고 순서가 아니라 **제조일** 기준.
+    // 제조일 오름차순(오래 전에 만든 것 먼저), 제조일을 모르는 LOT은 뒤로.
+    function _paintLotMfgMap(matId) {
+        const materials = Storage.getAll(MATERIALS_STORE) || [];
+        const mat = materials.find(m => m.id === matId);
+        const map = {};
+        (Storage.getAll(STORE) || []).forEach(d => {
+            if (d.materialId !== matId) return;
+            const key = InvCalc.paintLotKey(d);
+            const mfg = _resolveLotDates(d, mat).mfgDate || '';
+            if (mfg && (!map[key] || mfg < map[key])) map[key] = mfg;
+        });
+        return map;
+    }
+
+    function _lotMfgDate(key, mfgMap) {
+        return (mfgMap && mfgMap[key]) || _dateFromProdLot(key) || '';
+    }
+
     function _activePaintLots(matId) {
         const qtyMap = InvCalc.paintBalance(Storage.getAll(STORE) || [], matId).lots;
+        const mfgMap = _paintLotMfgMap(matId);
         return Object.entries(qtyMap)
             .filter(([, qty]) => qty > 0)
-            .map(([prodLot, qty]) => ({ prodLot, qty }))
-            .sort((a, b) => a.prodLot.localeCompare(b.prodLot));
+            .map(([prodLot, qty]) => ({ prodLot, qty, mfgDate: _lotMfgDate(prodLot, mfgMap) }))
+            .sort((a, b) => {
+                if (a.mfgDate && b.mfgDate && a.mfgDate !== b.mfgDate) return a.mfgDate.localeCompare(b.mfgDate);
+                if (a.mfgDate && !b.mfgDate) return -1;
+                if (!a.mfgDate && b.mfgDate) return 1;
+                return a.prodLot.localeCompare(b.prodLot);
+            });
+    }
+
+    /** 선택 LOT보다 제조일이 빠른 재고 LOT(가장 오래된 것) — 없으면 null */
+    function _olderMfgLot(matId, selectedKey) {
+        const lots = _activePaintLots(matId);
+        const cur = lots.find(l => l.prodLot === selectedKey);
+        const curMfg = cur ? cur.mfgDate : _lotMfgDate(selectedKey, _paintLotMfgMap(matId));
+        if (!curMfg) return null;
+        const older = lots.find(l => l.prodLot !== selectedKey && l.mfgDate && l.mfgDate < curMfg);
+        return older ? { prodLot: older.prodLot, mfgDate: older.mfgDate, curMfg: curMfg } : null;
+    }
+
+    function _fifoMfgWarnText(selectedLot, older) {
+        return `이 LOT(${_escapeHtml(selectedLot)}, 제조 ${_escapeHtml(older.curMfg)})보다 <strong>제조일이 빠른 LOT(${_escapeHtml(older.prodLot)}, 제조 ${_escapeHtml(older.mfgDate)})</strong>의 재고가 남아 있습니다.<br>선입선출을 위해 제조일이 빠른 LOT부터 출고하는 것을 권장합니다.`;
     }
 
     function _historyCard(tab) {
@@ -1477,17 +1515,16 @@ const PaintInventoryModule = (function() {
         const qtyMax   = Number(currentQty) || 0;
         const lotLabel = prodLot || lotNo || '-';
 
-        // 선입선출(FIFO) 안내 — 이 LOT보다 먼저 입고된 LOT의 재고가 남아 있으면 경고
-        const activeLots = _activePaintLots(matId);
-        const oldestLot = activeLots.length ? activeLots[0].prodLot : '';
-        const currentKey = prodLot || lotNo || '__';
-        const fifoWarningHtml = (oldestLot && currentKey !== oldestLot)
+        // 선입선출(FIFO) 안내 — 이 LOT보다 제조일이 빠른 LOT의 재고가 남아 있으면 경고
+        const currentKey = prodLot || lotNo || '무표기';
+        const olderLot = _olderMfgLot(matId, currentKey);
+        const fifoWarningHtml = olderLot
             ? `<div style="margin-bottom:12px;padding:10px 14px;background:rgba(255,152,0,0.1);border:1px solid var(--accent-orange);border-radius:8px;color:var(--accent-orange);font-size:0.85rem;">
                 <div style="display:flex;align-items:center;gap:8px;">
                     <span class="material-symbols-outlined" style="font-size:18px;">warning</span>
                     <strong>선입선출(FIFO) 경고</strong>
                 </div>
-                <p style="margin:5px 0 0 26px;">이 LOT(${_escapeHtml(lotLabel)})보다 먼저 입고된 <strong>LOT(${_escapeHtml(oldestLot)})</strong>의 재고가 남아 있습니다.<br>선입선출을 위해 먼저 입고된 LOT부터 출고하는 것을 권장합니다.</p>
+                <p style="margin:5px 0 0 26px;">${_fifoMfgWarnText(lotLabel, olderLot)}</p>
               </div>`
             : '';
 
@@ -2778,16 +2815,13 @@ const PaintInventoryModule = (function() {
             return;
         }
 
-        // 선입선출 체크
-        const options = Array.from(lotSelect.options)
-            .map(opt => opt.value)
-            .filter(val => val !== "");
+        // 선입선출 체크 — 제조일 기준
+        const matId = (document.getElementById('addPaintInvMaterial') || {}).value || '';
+        const older = matId ? _olderMfgLot(matId, selectedLot) : null;
 
-        const oldestLot = options.sort()[0];
-
-        if (selectedLot !== oldestLot) {
+        if (older) {
             warningArea.style.display = 'block';
-            warningMsg.innerHTML = `현재 선택하신 LOT(${selectedLot})보다 먼저 입고된 <strong>LOT(${oldestLot})</strong> 가 있습니다.<br>선입선출을 위해 이점 유의하시기 바랍니다.`;
+            warningMsg.innerHTML = _fifoMfgWarnText(selectedLot, older);
         } else {
             warningArea.style.display = 'none';
         }
@@ -3662,12 +3696,13 @@ const PaintInventoryModule = (function() {
             return;
         }
 
-        const options = Array.from(lotSelect.options).map(opt => opt.value).filter(val => val !== "");
-        const oldestLot = options.sort()[0];
+        // 선입선출 체크 — 제조일 기준
+        const matId = (document.getElementById('editPaintInvMaterial') || {}).value || '';
+        const older = matId ? _olderMfgLot(matId, selectedLot) : null;
 
-        if (selectedLot !== oldestLot) {
+        if (older) {
             warningArea.style.display = 'block';
-            warningMsg.innerHTML = `현재 선택하신 LOT(${selectedLot})보다 먼저 입고된 <strong>LOT(${oldestLot})</strong> 가 있습니다.<br>선입선출을 위해 이점 유의하시기 바랍니다.`;
+            warningMsg.innerHTML = _fifoMfgWarnText(selectedLot, older);
         } else {
             warningArea.style.display = 'none';
         }
