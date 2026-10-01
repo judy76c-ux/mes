@@ -2746,7 +2746,7 @@ const PaintingWorkModule = (function() {
         var manualHtml = isAdmin
             ? ('<div style="margin-top:14px;padding:12px;border-radius:8px;border:1px solid rgba(37,99,235,.25);background:rgba(37,99,235,.04);">' +
                 '<div style="font-size:0.82rem;font-weight:700;color:var(--accent-blue);margin-bottom:8px;">관리자 수기 입고 (지난 실적 보정)</div>' +
-                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px;line-height:1.45;">창고 출고가 없어도 계획일 기준으로 현장 입고를 등록할 수 있습니다. 이후 실적 입력 시 이 LOT이 사용됩니다.</div>' +
+                '<div style="font-size:0.75rem;color:var(--text-muted);margin-bottom:10px;line-height:1.45;">창고 출고가 없어도 계획일 기준으로 현장 입고를 등록할 수 있습니다. 이후 실적 입력 시 이 LOT이 사용됩니다. 사출LOT은 필수입니다(무표기 등록 불가). 위 「미입고 출고」나 「기존 현장 입고」에 실제 입고가 있으면 수기 입고 대신 그 건을 사용하세요.</div>' +
                 '<input type="hidden" id="pwPastInPlanId" value="' + _pwEsc(plan.id) + '">' +
                 '<input type="hidden" id="pwPastInLine" value="' + _pwEsc(line) + '">' +
                 '<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">' +
@@ -2765,7 +2765,7 @@ const PaintingWorkModule = (function() {
                     '<select class="form-input" id="pwPastInColor">' +
                     (plan.carModel && injPart ? _injSelectOpts(colors, plan.color || '', '-- 선택 --') : '<option value="">-- 사출명 먼저 선택 --</option>') +
                     '</select></div>' +
-                    '<div><label class="form-label">사출LOT</label>' +
+                    '<div><label class="form-label">사출LOT *</label>' +
                     '<input type="text" class="form-input" id="pwPastInLot" placeholder="예: 260811" style="font-family:monospace;"></div>' +
                     '<div style="grid-column:1/-1;"><label class="form-label">비고</label>' +
                     '<input type="text" class="form-input" id="pwPastInNote" placeholder="지난 실적 소재입고 보정"></div>' +
@@ -2880,6 +2880,13 @@ const PaintingWorkModule = (function() {
         var note = ((document.getElementById('pwPastInNote') || {}).value || '').trim();
         if (!carModel || !partName || !useDate || !(qty > 0)) {
             UIUtils.toast('차종, 사출명, 사용일, 수량은 필수입니다.', 'warning');
+            return;
+        }
+        // LOT 없이 등록하면 '무표기' LOT이 생겨 실적·추적에서 실제 사출 LOT과 끊긴다.
+        if (!lotNo || lotNo === '무표기') {
+            UIUtils.toast('사출LOT을 입력하세요. (무표기로는 등록할 수 없습니다)', 'warning');
+            var lotEl = document.getElementById('pwPastInLot');
+            if (lotEl) lotEl.focus();
             return;
         }
         try {

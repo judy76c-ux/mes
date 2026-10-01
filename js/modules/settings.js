@@ -5451,16 +5451,12 @@ const SettingsModule = (function() {
             <div class="form-group">
                 <label class="form-label">예시 사진 <span style="color:var(--text-muted);font-weight:400;">(선택 · 여러 장)</span></label>
                 <div id="defectImageGrid" style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;"></div>
+                <!-- 예시 사진은 클립보드 붙여넣기(Ctrl+V)로만 등록한다 — 파일 선택·드래그 드롭 없음 -->
                 <div id="defectImageZone"
                      tabindex="0"
-                     style="border:2px dashed var(--border-color);border-radius:8px;padding:14px;text-align:center;cursor:pointer;transition:border-color .2s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;outline:none;"
-                     onclick="document.getElementById('defectImageFile').click()"
-                     ondragover="event.preventDefault();this.style.borderColor='#2563eb'"
-                     ondragleave="this.style.borderColor='var(--border-color)'"
-                     ondrop="SettingsModule._handleDefectImageDrop(event)">
-                    <span class="material-symbols-outlined" style="font-size:26px;color:var(--text-muted);">add_photo_alternate</span>
-                    <span style="font-size:0.8rem;color:var(--text-muted);">클릭 또는 <b>Ctrl+V</b> 붙여넣기 · 드래그 드롭</span>
-                    <input type="file" id="defectImageFile" accept="image/*" multiple style="display:none;" onchange="SettingsModule._handleDefectImageFile(event)">
+                     style="border:2px dashed var(--border-color);border-radius:8px;padding:14px;text-align:center;cursor:default;transition:border-color .2s;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:4px;outline:none;">
+                    <span class="material-symbols-outlined" style="font-size:26px;color:var(--text-muted);">content_paste</span>
+                    <span style="font-size:0.8rem;color:var(--text-muted);">이미지를 복사한 뒤 <b>Ctrl+V</b>로 붙여넣기</span>
                 </div>
             </div>
         `, `
@@ -5801,19 +5797,6 @@ const SettingsModule = (function() {
             reader.onload = ev => { urls[i] = ev.target.result; done++; if (done === files.length) callback(urls.filter(Boolean)); };
             reader.readAsDataURL(file);
         });
-    }
-
-    function _handleDefectImageFile(e) {
-        const files = e.target.files;
-        _readFilesAsDataUrl(files, urls => _addDefectImages(urls));
-        e.target.value = '';
-    }
-
-    function _handleDefectImageDrop(e) {
-        e.preventDefault();
-        const zone = document.getElementById('defectImageZone');
-        if (zone) zone.style.borderColor = 'var(--border-color)';
-        _readFilesAsDataUrl(e.dataTransfer && e.dataTransfer.files, urls => _addDefectImages(urls));
     }
 
     function _initDefectImagePaste(initialImages) {
@@ -14032,8 +14015,6 @@ const SettingsModule = (function() {
         _paintInlineConfirm,
         _confirmBulkFixPaintRef,
         _removeDefectImage,
-        _handleDefectImageFile,
-        _handleDefectImageDrop,
         _initDefectImagePaste,
         openAddPaintModal,
         savePaint,

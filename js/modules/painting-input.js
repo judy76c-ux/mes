@@ -3832,9 +3832,14 @@ var PaintingInputModule = (function () {
         const color = String(payload.color || '').trim();
         const useDate = String(payload.useDate || '').slice(0, 10);
         const qty = Math.max(0, Math.floor(Number(payload.quantity) || 0));
-        const lotNo = String(payload.lotNo || '').trim() || '무표기';
+        const lotNo = String(payload.lotNo || '').trim();
         if (!line || !carModel || !partName || !useDate || qty < 1) {
             UIUtils.toast('라인, 차종, 사출명, 사용일, 수량은 필수입니다.', 'warning');
+            return null;
+        }
+        // 무표기 LOT 금지 — 실적 투입·LOT 추적이 실제 사출 LOT과 끊긴다.
+        if (!lotNo || lotNo === '무표기') {
+            UIUtils.toast('사출LOT을 입력하세요. (무표기로는 등록할 수 없습니다)', 'warning');
             return null;
         }
         const nowTime = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ')).slice(11, 16);

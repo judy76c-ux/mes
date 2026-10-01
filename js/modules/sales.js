@@ -5301,6 +5301,7 @@ var SalesTodayShipmentModule = (function () {
                 const price = _unitPriceFor(base.carModel, base.partName, base.color);
                 const carArg = _js(base.carModel || '');
                 const partArg = _js(base.partName || '');
+                const colorArg = _js(base.color || '');
                 let out = '';
 
                 if (!it.records.length) {
@@ -5318,7 +5319,7 @@ var SalesTodayShipmentModule = (function () {
                         <td style="text-align:right;color:var(--text-muted);" title="계획 기준 예상 금액">${price ? '(' + _won(plan * price) + ')' : '-'}</td>
                         <td><span style="font-size:0.72rem;color:#d97706;font-weight:600;">영업계획</span></td>
                         <td style="text-align:center;white-space:nowrap;">
-                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">출하 완료</button>
+                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain},'${colorArg}')">출하 완료</button>
                         </td>
                     </tr>`;
                 }
@@ -5355,7 +5356,7 @@ var SalesTodayShipmentModule = (function () {
                         <td style="text-align:right;font-weight:600;color:var(--accent-red);">${UIUtils.formatNumber(remain)}</td>
                         <td colspan="3"></td>
                         <td style="text-align:center;">
-                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain})">추가 출하</button>
+                            <button class="btn btn-sm btn-primary" onclick="SalesTodayShipmentModule.openFormForPlan('${carArg}','${partArg}',${remain},'${colorArg}')">추가 출하</button>
                         </td>
                     </tr>`;
                 }
@@ -5448,10 +5449,18 @@ var SalesTodayShipmentModule = (function () {
             </div>`).join('')}`;
     }
 
-    /** 영업계획 행 → 출하 완료 폼 (차종·품명·수량 자동 채움, LOT은 선입선출 1순위) */
-    function openFormForPlan(carModel, partName, qty) {
-        _prefill = { carModel: carModel || '', partName: partName || '', qty: Number(qty) || 0 };
+    /** 영업계획 행 → 출하 완료 폼 (차종·품명·컬러·계획수량 자동 채움, LOT은 선입선출 1순위) */
+    function openFormForPlan(carModel, partName, qty, color) {
+        _prefill = { carModel: carModel || '', partName: partName || '', qty: Number(qty) || 0, color: color || '' };
         openForm('');
+    }
+
+    /** 계획 컬러와 같은 LOT만 — 해당 컬러 LOT이 하나도 없으면 전체(컬러 미기록 재고 대비) */
+    function _lotsForColor(lots, color) {
+        if (!color) return lots;
+        const want = _normKey(color);
+        const hit = lots.filter(l => !l.color || _normKey(l.color) === want);
+        return hit.length ? hit : lots;
     }
 
     function openForm(id) {
@@ -5461,18 +5470,29 @@ var SalesTodayShipmentModule = (function () {
         const ignoreId = id || '';
         const car = rec ? (rec.carModel || '') : (pre ? pre.carModel : '');
         const part = rec ? (rec.partName || '') : (pre ? pre.partName : '');
-        const lots = (car && part) ? _getLotBalances(car, part, ignoreId) : [];
+        const lots = (car && part) ? _lotsForColor(_getLotBalances(car, part, ignoreId), pre ? pre.color : '') : [];
         // 계획에서 넘어온 경우 재고 LOT 중 선입선출 1순위를 미리 고른다.
         const lotKey = rec
             ? _lotKey({ paintingDate: rec.paintingDate || '미표기', color: rec.color || '', lotNo: rec.lotNo || '' })
             : (pre && lots.length ? _lotKey(lots[0]) : '');
         const selectedLot = lots.find(l => _lotKey(l) === lotKey);
         const maxQty = selectedLot ? selectedLot.balance : 0;
-        const preQty = (pre && selectedLot) ? Math.min(pre.qty || selectedLot.balance, selectedLot.balance) : 0;
-        const preCustomer = pre ? _customerFor(car, part, selectedLot ? selectedLot.color : '') : '';
+        // 계획 수량을 기본값으로 — 선택 LOT 가용분을 넘으면 가용분까지만(나머지는 다음 LOT으로 추가 출하)
+        const prePlanQty = pre ? (Number(pre.qty) || 0) : 0;
+        const preQty = pre ? (selectedLot ? Math.min(prePlanQty || selectedLot.balance, selectedLot.balance) : prePlanQty) : 0;
+        const preColor = pre ? ((selectedLot && selectedLot.color) || pre.color || '') : '';
+        const preCustomer = pre ? _customerFor(car, part, preColor) : '';
 
-        const carOpts = _opts(_carsFromStock(ignoreId), car, '-- 차종 선택 --');
-        const partOpts = car ? _opts(_partsFromStock(car, ignoreId), part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        // 계획 품목은 재고가 없어도 차종·품명이 선택된 상태로 보여 준다(재고 0이면 LOT 없음 안내).
+        const carList = _carsFromStock(ignoreId);
+        if (car && carList.indexOf(car) < 0) carList.push(car);
+        const partList = car ? _partsFromStock(car, ignoreId) : [];
+        if (part && partList.indexOf(part) < 0) partList.push(part);
+        const carOpts = _opts(carList, car, '-- 차종 선택 --');
+        const partOpts = car ? _opts(partList, part, '-- 품명 선택 --') : '<option value="">← 차종 먼저 선택</option>';
+        const qtyHint = maxQty
+            ? `가용 재고: ${UIUtils.formatNumber(maxQty)} EA` + (prePlanQty > maxQty ? ` · 계획 ${UIUtils.formatNumber(prePlanQty)} EA 중 나머지는 다음 LOT으로 추가 출하` : '')
+            : (pre && car && part ? '완제품 창고에 이 품목 재고가 없습니다.' : 'LOT를 선택하세요.');
         const lotOpts = (car && part) ? _lotOpts(lots, lotKey, '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
 
         UIUtils.showModal(rec ? '금일 출하 완료 수정' : '금일 출하 완료', `
@@ -5495,10 +5515,10 @@ var SalesTodayShipmentModule = (function () {
             </div>
             <div class="form-row">
                 <div class="form-group"><label class="form-label">컬러</label>
-                    <input class="form-input" id="tsColor" value="${rec ? _esc(rec.color || '') : (selectedLot ? _esc(selectedLot.color || '') : '')}" readonly style="background:var(--bg-secondary);"></div>
+                    <input class="form-input" id="tsColor" value="${rec ? _esc(rec.color || '') : _esc(preColor || (selectedLot ? selectedLot.color || '' : ''))}" readonly style="background:var(--bg-secondary);"></div>
                 <div class="form-group"><label class="form-label">수량 <span style="color:var(--accent-red)">*</span></label>
                     <input type="number" class="form-input" id="tsQty" min="1" max="${maxQty || ''}" value="${rec ? _esc(rec.qty || '') : (preQty || '')}" placeholder="출하 수량">
-                    <div id="tsQtyHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${maxQty ? `가용 재고: ${UIUtils.formatNumber(maxQty)} EA` : 'LOT를 선택하세요.'}</div></div>
+                    <div id="tsQtyHint" style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;">${qtyHint}</div></div>
                 <div class="form-group" style="flex:2;"><label class="form-label">비고</label>
                     <input class="form-input" id="tsNote" value="${rec ? _esc(rec.note || '') : ''}" placeholder="특이사항"></div>
             </div>
@@ -5510,6 +5530,8 @@ var SalesTodayShipmentModule = (function () {
                 <div id="tsLotPanel" style="padding:10px 12px;background:var(--bg-primary);max-height:180px;overflow-y:auto;"></div>
             </div>
             <input type="hidden" id="tsEditId" value="${_esc(id || '')}">
+            <input type="hidden" id="tsPlanQty" value="${prePlanQty || ''}">
+            <input type="hidden" id="tsPlanColor" value="${_esc(pre ? pre.color || '' : '')}">
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="SalesTodayShipmentModule.saveForm('${id || ''}')">${rec ? '저장' : '출하 완료'}</button>
@@ -5539,13 +5561,17 @@ var SalesTodayShipmentModule = (function () {
         const colorEl = document.getElementById('tsColor');
         const qtyEl = document.getElementById('tsQty');
         const hintEl = document.getElementById('tsQtyHint');
-        const lots = (car && part) ? _getLotBalances(car, part, editId || '') : [];
-        if (lotEl) lotEl.innerHTML = (car && part) ? _lotOpts(lots, '', '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
+        const planColor = document.getElementById('tsPlanColor')?.value || '';
+        const lots = (car && part) ? _lotsForColor(_getLotBalances(car, part, editId || ''), planColor) : [];
+        // 선입선출(FIFO): 가장 오래된 도장일 LOT을 기본 선택
+        const fifoKey = lots.length ? _lotKey(lots[0]) : '';
+        if (lotEl) lotEl.innerHTML = (car && part) ? _lotOpts(lots, fifoKey, '-- LOT 선택 --') : '<option value="">← 품명 먼저 선택</option>';
         if (colorEl) colorEl.value = '';
         if (qtyEl) { qtyEl.value = ''; qtyEl.max = ''; }
-        if (hintEl) hintEl.textContent = 'LOT를 선택하세요.';
+        if (hintEl) hintEl.textContent = (car && part && !lots.length) ? '완제품 창고에 이 품목 재고가 없습니다.' : 'LOT를 선택하세요.';
         _autofillCustomer();
         _renderLotPanel(car, part, editId || '');
+        if (fifoKey) onLotChange(editId);
     }
 
     function onLotChange(editId) {
@@ -5560,7 +5586,9 @@ var SalesTodayShipmentModule = (function () {
         if (colorEl) colorEl.value = lot ? (lot.color || '') : '';
         if (qtyEl && lot) {
             qtyEl.max = lot.balance;
-            if (!qtyEl.value || Number(qtyEl.value) > lot.balance) qtyEl.value = lot.balance;
+            const planQty = Number(document.getElementById('tsPlanQty')?.value) || 0;
+            if (planQty > 0) qtyEl.value = Math.min(planQty, lot.balance);
+            else if (!qtyEl.value || Number(qtyEl.value) > lot.balance) qtyEl.value = lot.balance;
         }
         if (hintEl) hintEl.textContent = lot ? `가용 재고: ${UIUtils.formatNumber(lot.balance)} EA` : 'LOT를 선택하세요.';
         _autofillCustomer();
