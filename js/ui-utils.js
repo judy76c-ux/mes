@@ -78,6 +78,16 @@ const UIUtils = (function () {
     }
 
     // ── 숫자 포맷 ─────────────────────────────────────────────────────────
+    /** 차종 표기 정규화 — 'GOLF_7' / 'GOLF-7' / 'golf 7' 을 같은 차종으로 본다.
+     *  (제품·계획은 GOLF_7, 사출 자재·창고는 GOLF-7 처럼 마스터마다 표기가 달라 입고 연결이 끊김) */
+    function normCarModel(v) {
+        return String(v == null ? '' : v).toUpperCase().replace(/[\s_\-]+/g, '');
+    }
+
+    function sameCarModel(a, b) {
+        return normCarModel(a) === normCarModel(b);
+    }
+
     function formatNumber(n) {
         if (n == null || n === '') return '-';
         const num = Number(n);
@@ -906,6 +916,8 @@ const UIUtils = (function () {
         monthAgo,
         daysAgo,
         formatNumber,
+        normCarModel,
+        sameCarModel,
         toInputNumber,
         sanitizeNumberInputs,
         toast,

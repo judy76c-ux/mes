@@ -2721,7 +2721,7 @@ const ProductionPlanModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">제품명 (품명)</label>
+                    <label class="form-label">제품명 (품명) <span style="color:var(--accent-red)">*</span></label>
                     <select class="form-select" id="sPart" onchange="ProductionPlanModule.updateDropdowns('part', '${line}')" ${isColorFirst && !colorValue ? 'disabled' : ''}>
                         <option value="">${isColorFirst && !colorValue ? '도장 컬러를 먼저 선택하세요' : '선택'}</option>
                         ${parts.map(p => `<option value="${p}" ${p === partValue ? 'selected' : ''}>${p}</option>`).join('')}
@@ -2957,6 +2957,13 @@ const ProductionPlanModule = (function() {
             UIUtils.toast('도장 컬러를 선택하세요.', 'warning');
             const colorEl = document.getElementById('sColor');
             if (colorEl) colorEl.focus();
+            return;
+        }
+        // 품명이 비면 현장 입고·실적·사출 재고와 연결되지 않는다(실적 입력이 「소재입고 필요」로 막힘).
+        if (!partName) {
+            UIUtils.toast('제품명(품명)을 선택하세요.', 'warning');
+            const partEl = document.getElementById('sPart');
+            if (partEl) partEl.focus();
             return;
         }
 

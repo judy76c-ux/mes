@@ -162,7 +162,7 @@ var PaintingInputModule = (function () {
         const col = String(color || '').trim();
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         let candidates = materials.filter(function (m) {
-            return String(m.carModel || '').trim() === car
+            return UIUtils.sameCarModel(m.carModel, car)
                 && String(m.injPartName || m.partName || '').trim() === part;
         });
         if (col) {
@@ -292,7 +292,7 @@ var PaintingInputModule = (function () {
             // carModel 없이 injPartName만 걸러내면, 같은 사출명을 쓰는 다른 차종의 LOT까지
             // 이 차종 작업의 "현장 두입 LOT 선택"에 섞여 들어온다 — 실제로 이 사고가 있었다
             // (① 창고→도장현장 입고 표는 LOT 1개인데 ②LOT 드롭다운엔 무관한 LOT이 더 보임).
-            if (carModel && String(r.carModel || '') !== String(carModel)) return;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return;
             const key = [r.carModel || '', r.partName || '', r.color || ''].join('||');
             if (!byProduct[key]) byProduct[key] = [];
             byProduct[key].push(r);
@@ -334,7 +334,7 @@ var PaintingInputModule = (function () {
     function getLotsByCarPart(line, carModel, partName) {
         const want = _normLine(line);
         const records = _recordsForLine(want).filter(function (r) {
-            if (carModel && String(r.carModel || '') !== String(carModel)) return false;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
             if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
             return true;
         });
@@ -393,7 +393,7 @@ var PaintingInputModule = (function () {
         (Storage.getAll(DB.STORES.REWORK_WIP) || []).forEach(function (r) {
             if (!r || String(r.type || '') !== '출고') return;
             if (String(r.source || '') !== 'dispatch_to_line') return;
-            if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return;
             if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return;
             if (color && !_colorLooseMatch(r.color, color)) return;
             var lots = (Array.isArray(r.lots) && r.lots.length) ? r.lots : [];
@@ -435,7 +435,7 @@ var PaintingInputModule = (function () {
         var total = 0;
         lines.forEach(function (line) {
             var records = _recordsForLine(line).filter(function (r) {
-                    if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return false;
+                    if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
                     if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
                 if (color && !_colorLooseMatch(r.color, color)) return false;
                 // 입고는 리워크 경로 건만, 출고(생산 투입·반납)는 전부 차감 대상으로 본다.
@@ -459,7 +459,7 @@ var PaintingInputModule = (function () {
             lines.forEach(function (want) {
                 (_recordsForLine(want) || []).forEach(function (r) {
                     if (!r) return;
-                    if (carModel && String(r.carModel || '').trim() !== String(carModel).trim()) return;
+                    if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return;
                     if (injPartName && !_partNamesMatch(r.partName, injPartName, carModel || r.carModel)) return;
                     if (useColor && color) {
                         if (!r.color || !_colorLooseMatch(r.color, color)) return;
@@ -499,7 +499,7 @@ var PaintingInputModule = (function () {
         const want = _normLine(line);
         const records = _recordsForLine(want).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
-            if (carModel && String(r.carModel || '') !== String(carModel)) return false;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
             if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return false;
             return true;
         });
@@ -537,7 +537,7 @@ var PaintingInputModule = (function () {
         let received = 0;
         let consumed = 0;
         _recordsForLine(want).forEach(function (r) {
-            if (carModel && String(r.carModel || '') !== String(carModel)) return;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return;
             if (partName && !_partNamesMatch(r.partName, partName, carModel || r.carModel)) return;
             if (since && String(r.date || '').slice(0, 10) < since) return;
             const es = (Array.isArray(r.lots) && r.lots.length)
@@ -964,7 +964,7 @@ var PaintingInputModule = (function () {
             if (_normLine(r.paintLine || r.line) !== want) return false;
             const day = String(r.date || '').slice(0, 10);
             if (!day || day < start || day > end) return false;
-            if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
+            if (opts.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
             if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
             if (_findReceiveByOutId(r.id)) return false;
             return true;
@@ -981,7 +981,7 @@ var PaintingInputModule = (function () {
                 if (rLine !== want) return false;
                 const day = String(r.date || '').slice(0, 10);
                 if (!day || day < start || day > end) return false;
-                if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
+                if (opts.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
                 if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
                 if (_findReceiveByReworkOutId(r.id)) return false;
                 return true;
@@ -1001,7 +1001,7 @@ var PaintingInputModule = (function () {
         const want = _normLine(line);
         return (_recordsForLine(want) || []).some(function (r) {
             if (String(r.type || '') !== '입고') return false;
-            if (opts.carModel && String(r.carModel || '') !== String(opts.carModel)) return false;
+            if (opts.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
             if (opts.partName && !_partNamesMatch(r.partName, opts.partName, opts.carModel || r.carModel)) return false;
             return true;
         });
@@ -1370,7 +1370,7 @@ var PaintingInputModule = (function () {
             if (inj) names[inj] = true;
             (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
                 if (!m || !m.injPartName) return;
-                if (matchCarModel && carModel && m.carModel && m.carModel !== carModel) return;
+                if (matchCarModel && carModel && m.carModel && !UIUtils.sameCarModel(m.carModel, carModel)) return;
                 if (String(m.injPartName).trim() !== inj) return;
                 const mfg1 = String(m.mfgProductName || '').trim();
                 const mfg2 = String(m.mfgProductName2 || '').trim();
@@ -1401,7 +1401,7 @@ var PaintingInputModule = (function () {
         const collect = function (matchCarModel) {
             (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
                 if (!m || !m.injPartName) return;
-                if (matchCarModel && carModel && m.carModel && m.carModel !== carModel) return;
+                if (matchCarModel && carModel && m.carModel && !UIUtils.sameCarModel(m.carModel, carModel)) return;
                 const mfg1 = String(m.mfgProductName || '').trim();
                 const mfg2 = String(m.mfgProductName2 || '').trim();
                 if (mfg1 !== part && mfg2 !== part) return;
@@ -1493,7 +1493,7 @@ var PaintingInputModule = (function () {
         // 불일치해 매칭이 통째로 실패한다(계획수량 "—" 표시 원인). carModel+제품명 매핑으로
         // 이미 충분히 좁혀지므로 컬러는 비교하지 않는다.
         const matched = plans.filter(function (p) {
-            if (car && p.carModel && p.carModel !== car) return false;
+            if (car && p.carModel && !UIUtils.sameCarModel(p.carModel, car)) return false;
             const pPart = String(p.partName || '').trim();
             if (!pPart) return true;
             // ① 역매핑: 사출명 → 계획 품명
@@ -1514,7 +1514,7 @@ var PaintingInputModule = (function () {
         // ③ 같은 차종·라인에 유효 계획이 1건뿐이면 그 계획으로 폴백
         //    (사출자재 마스터 미등록이어도 헤더 계획합계와 행 계획수량이 어긋나지 않게)
         const sameCar = plans.filter(function (p) {
-            return !car || !p.carModel || String(p.carModel).trim() === car;
+            return !car || !p.carModel || UIUtils.sameCarModel(p.carModel, car);
         });
         if (sameCar.length === 1) return sameCar;
         return [];
@@ -1601,7 +1601,7 @@ var PaintingInputModule = (function () {
                 return p && String(p.date || '').slice(0, 10) === today;
             });
             const sameLine = allTodayPlans.filter(function (p) { return _normLine(p.line) === want; });
-            const sameLineCar = sameLine.filter(function (p) { return String(p.carModel || '').trim() === String(record.carModel || '').trim(); });
+            const sameLineCar = sameLine.filter(function (p) { return UIUtils.sameCarModel(p.carModel, record.carModel); });
             const productNames = _resolveProductNamesFromInjPart(record.carModel, record.partName);
             const planPartsToday = sameLineCar.map(function (p) { return p.partName || '-'; }).join(', ') || '(없음)';
             return '오늘(' + today + ')·' + want + ' 계획 ' + allTodayPlans.length + '건 중 같은 라인 ' + sameLine.length + '건, 같은 차종(' + (record.carModel || '-') + ') ' + sameLineCar.length + '건. ' +
@@ -1732,7 +1732,7 @@ var PaintingInputModule = (function () {
             const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
             mats.forEach(function (m) {
                 if (!m || !m.injPartName) return;
-                if (opts.carModel && m.carModel && m.carModel !== opts.carModel) return;
+                if (opts.carModel && m.carModel && !UIUtils.sameCarModel(m.carModel, opts.carModel)) return;
                 const mfg1 = String(m.mfgProductName || '').trim();
                 const mfg2 = String(m.mfgProductName2 || '').trim();
                 if (opts.partName && (mfg1 === opts.partName || mfg2 === opts.partName)) {
@@ -1805,7 +1805,7 @@ var PaintingInputModule = (function () {
         (_recordsForLine(want) || []).forEach(function (r) {
             if (!r || String(r.type || '') !== '입고') return;
             if (_inboundIssuedDay(r) !== day) return;
-            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
+            if (opts.carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return;
             if (requirePartMatch) {
                 const rPart = String(r.partName || '').trim();
                 if (!rPart || !injNames[rPart]) return;
@@ -1827,7 +1827,7 @@ var PaintingInputModule = (function () {
                 if (!w || String(w.id) === String(work.id)) return;
                 if (String(w.date || '').slice(0, 10) !== day) return;
                 if (_normLine(w.line || '') !== want) return;
-                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return;
+                if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return;
                 const wantPart = String(work.partName || '').trim();
                 if (wantPart) {
                     if (String(w.partName || '').trim() !== wantPart) return;
@@ -1888,7 +1888,7 @@ var PaintingInputModule = (function () {
         const seenOut = {};
         (_recordsForLine(want) || []).forEach(function (r) {
             if (!r || String(r.type || '') !== '입고') return;
-            if (String(r.carModel || '').trim() !== car) return;
+            if (!UIUtils.sameCarModel(r.carModel, car)) return;
             if (String(r.partName || '').trim() !== part) return;
             const inDay = _inboundIssuedDay(r);
             if (returnDay && inDay && inDay > returnDay) return;
@@ -1913,7 +1913,7 @@ var PaintingInputModule = (function () {
             (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
                 if (!w) return;
                 if (_normLine(w.line || '') !== want) return;
-                if (String(w.carModel || '').trim() !== car) return;
+                if (!UIUtils.sameCarModel(w.carModel, car)) return;
                 const wDay = String(w.date || '').slice(0, 10);
                 if (returnDay && wDay && wDay > returnDay) return;
                 const injNames = _injNamesFromWorkOpts({
@@ -2511,7 +2511,7 @@ var PaintingInputModule = (function () {
         return (_recordsForLine(want) || []).some(function (r) {
             if (!r || String(r.type || '') === '입고') return false;
             if (!/작업 투입/.test(String(r.source || ''))) return false;
-            if (carModel && r.carModel && String(r.carModel) !== String(carModel)) return false;
+            if (carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
             if (partName && r.partName && String(r.partName) !== String(partName)) return false;
             const rows = (r.lots && r.lots.length) ? r.lots : (r.lotNo ? [{ lotNo: r.lotNo }] : []);
             return rows.some(function (l) { return String(l.lotNo || '').trim() === lot; });
@@ -2679,7 +2679,7 @@ var PaintingInputModule = (function () {
             const sameDayCarLine = (_recordsForLine(want) || []).filter(function (r) {
                 if (String(r.type || '') !== '입고') return false;
                 if (_inboundIssuedDay(r) !== day) return false;
-                if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
+                if (opts.carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
                 return true;
             });
             const availLots = [];
@@ -2711,7 +2711,7 @@ var PaintingInputModule = (function () {
                     const mats = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
                     mats.forEach(function (m) {
                         if (!m || !m.injPartName) return;
-                        if (opts.carModel && m.carModel && m.carModel !== opts.carModel) return;
+                        if (opts.carModel && m.carModel && !UIUtils.sameCarModel(m.carModel, opts.carModel)) return;
                         const mfg1 = String(m.mfgProductName || '').trim();
                         const mfg2 = String(m.mfgProductName2 || '').trim();
                         if (opts.partName && (mfg1 === opts.partName || mfg2 === opts.partName)) {
@@ -2838,7 +2838,7 @@ var PaintingInputModule = (function () {
                 if (!w || String(w.id) === String(opts.workId)) return false;
                 if (String(w.date || '').slice(0, 10) !== day) return false;
                 if (_normLine(w.line || '') !== want) return false;
-                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return false;
+                if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return false;
                 const wantPart = String(opts.partName || '').trim();
                 if (wantPart) return String(w.partName || '').trim() === wantPart;
                 const wPart = String(w.injPartName || w.partName || '').trim();
@@ -2872,7 +2872,7 @@ var PaintingInputModule = (function () {
             // 폴백 기준으로 쓴다 — hasLots인데 형제가 없는 경우(투입 LOT과 다른 LOT을 반납한
             // 케이스)까지 당일로 묶으면, 반납이 다음날 처리될 때 다시 0으로 빠진다.
             if (!hasLots && String(r.date || '').slice(0, 10) !== day) return;
-            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return;
+            if (opts.carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return;
 
             const rLots = Array.isArray(r.lots) && r.lots.length
                 ? r.lots
@@ -2924,7 +2924,7 @@ var PaintingInputModule = (function () {
         const dayRecords = (_recordsForLine(want) || []).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
             if (_inboundIssuedDay(r) !== day) return false;
-            if (opts.carModel && r.carModel && r.carModel !== opts.carModel) return false;
+            if (opts.carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
             return true;
         });
 
@@ -2967,7 +2967,7 @@ var PaintingInputModule = (function () {
                 if (!w || (opts.workId && String(w.id) === String(opts.workId))) return false;
                 if (String(w.date || '').slice(0, 10) !== day) return false;
                 if (_normLine(w.line || '') !== want) return false;
-                if (opts.carModel && w.carModel && w.carModel !== opts.carModel) return false;
+                if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return false;
                 const wantPart = String(opts.partName || '').trim();
                 if (wantPart) return String(w.partName || '').trim() === wantPart;
                 const wPart = String(w.injPartName || w.partName || '').trim();
@@ -3127,7 +3127,7 @@ var PaintingInputModule = (function () {
             if (_normLine(w.line) !== want) return false;
             if (plan) {
                 if (w.planId && w.planId === plan.id) return true;
-                if (w.carModel === plan.carModel && w.partName === plan.partName) return true;
+                if (UIUtils.sameCarModel(w.carModel, plan.carModel) && w.partName === plan.partName) return true;
                 return false;
             }
             // 계획 미선택: 이 분출 자재와 LOT/품명 매칭되는 실적
@@ -3141,7 +3141,7 @@ var PaintingInputModule = (function () {
                 lotNo: w.lotNo,
                 injPartName: w.injPartName
             });
-            return issued > 0 || (recv.carModel && w.carModel === recv.carModel);
+            return issued > 0 || (recv.carModel && UIUtils.sameCarModel(w.carModel, recv.carModel));
         });
 
         const dayIssuedAll = getIssuedQtyForWork(want, {
@@ -3355,7 +3355,7 @@ var PaintingInputModule = (function () {
         function suppliedBy(pred) {
             return (_recordsForLine(want) || []).some(function (r) {
                 if (String(r.type || '') !== '입고') return false;
-                if (car && String(r.carModel || '').trim() !== car) return false;
+                if (car && !UIUtils.sameCarModel(r.carModel, car)) return false;
                 if (part && !_partNamesMatch(r.partName, part, car)) return false;
                 const lots = (Array.isArray(r.lots) && r.lots.length)
                     ? r.lots
@@ -3629,7 +3629,7 @@ var PaintingInputModule = (function () {
                 const r = rows[i];
                 if (!r || !r.color) continue;
                 if (isInbound && String(r.type || '') === '출고') continue;
-                if (car && r.carModel && String(r.carModel).trim() !== car) continue;
+                if (car && r.carModel && !UIUtils.sameCarModel(r.carModel, car)) continue;
                 if (part && !_partNamesMatch(r.partName, part, car)) continue;
                 const list = (r.lots && r.lots.length)
                     ? r.lots
@@ -3651,7 +3651,7 @@ var PaintingInputModule = (function () {
             const colors = {};
             (Storage.getAll(DB.STORES.INJECTION_MATERIALS) || []).forEach(function (m) {
                 if (!m || !m.injColor) return;
-                if (car && m.carModel && String(m.carModel).trim() !== car) return;
+                if (car && m.carModel && !UIUtils.sameCarModel(m.carModel, car)) return;
                 if (!_partNamesMatch(m.injPartName, part, car)) return;
                 String(m.injColor).split(/[,，、\/]/).forEach(function (c) {
                     const v = c.trim();

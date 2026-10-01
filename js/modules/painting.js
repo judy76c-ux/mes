@@ -2964,14 +2964,14 @@ const PaintingWorkModule = (function() {
             var products = Storage.getAll(DB.STORES.PRODUCTS) || [];
             var prod = products.find(function (p) {
                 if (!p || String(p.partName || '').trim() !== plan) return false;
-                return !car || !p.carModel || String(p.carModel).trim() === car;
+                return !car || !p.carModel || UIUtils.sameCarModel(p.carModel, car);
             });
             if (prod && prod.id) prodId = prod.id;
         } catch (eProd) { /* ignore */ }
         try {
             (Storage.getAll(INJECTMAT_STORE) || []).forEach(function (m) {
                 if (!m || !m.injPartName) return;
-                if (car && m.carModel && String(m.carModel).trim() !== car) return;
+                if (car && m.carModel && !UIUtils.sameCarModel(m.carModel, car)) return;
                 var inj = String(m.injPartName).trim();
                 var linked = false;
                 if (prodId && Array.isArray(m.productIds) && m.productIds.indexOf(prodId) >= 0) linked = true;
@@ -3007,7 +3007,7 @@ const PaintingWorkModule = (function() {
         try {
             (Storage.getAll(STORE) || []).forEach(function (w) {
                 if (!w) return;
-                if (car && String(w.carModel || '').trim() !== car) return;
+                if (car && !UIUtils.sameCarModel(w.carModel, car)) return;
                 if (String(w.partName || '').trim() !== plan) return;
                 if (_histOk(w.injPartName)) names[String(w.injPartName).trim()] = true;
                 (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
@@ -3193,7 +3193,7 @@ const PaintingWorkModule = (function() {
         (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).forEach(function (r) {
             if (String(r.type || '') !== '입고') return;
             if (_inboundLineOf(r) !== lineKey) return;
-            if (String(r.carModel || '').trim() !== car) return;
+            if (!UIUtils.sameCarModel(r.carModel, car)) return;
             if (!_inboundDayHits(r, dayStr)) return;
             var p = String(r.partName || '').trim();
             if (!p || seen[p]) return;
@@ -3300,7 +3300,7 @@ const PaintingWorkModule = (function() {
         var hit = (Storage.getAll(DB.STORES.PAINTING_INPUT_INVENTORY) || []).some(function (r) {
             if (!r || String(r.type || '') !== '입고') return false;
             if (_resolvePaintLine(r.line || r.paintLine) !== line) return false;
-            if (carModel && String(r.carModel || '').trim() !== carModel) return false;
+            if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
             if (!_partMatchesInbound(r.partName)) return false;
             return _dayHitsPlan(r);
         });
@@ -3316,7 +3316,7 @@ const PaintingWorkModule = (function() {
                 var ships = PaintingInputModule.listTodayWarehouseShipments(line, dayStr) || [];
                 var receivedForModel = ships.filter(function (r) {
                     if (!r || !r.received) return false;
-                    if (carModel && String(r.carModel || '').trim() !== carModel) return false;
+                    if (carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
                     return true;
                 });
                 if (!receivedForModel.length) return false;
