@@ -21203,10 +21203,11 @@ var ProdQualityModule = (function() {
         const allProducts = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const product = allProducts.find(p => p.id === productId);
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
-        const canEdit = _canEditQualityPreset();
+        // 품목별 기준값은 MES 관리자만 변경 가능
+        const canEdit = _isAdminUser();
         let viewOnly = String(mode || 'view').toLowerCase() !== 'edit';
         if (!viewOnly && !canEdit) {
-            UIUtils.toast('품목별 항목 기준 편집 권한이 없습니다.', 'warning');
+            UIUtils.toast('품목별 기준값은 MES 관리자만 변경할 수 있습니다.', 'warning');
             viewOnly = true;
         }
         const carModel = _normText(product.carModel);
@@ -21576,6 +21577,10 @@ var ProdQualityModule = (function() {
         const mode = document.getElementById('pqSpecMode')?.value || 'view';
         if (mode !== 'edit') {
             UIUtils.toast('보기 모드에서는 저장할 수 없습니다. 편집 버튼을 눌러주세요.', 'warning');
+            return;
+        }
+        if (!_isAdminUser()) {
+            UIUtils.toast('품목별 기준값은 MES 관리자만 변경할 수 있습니다.', 'warning');
             return;
         }
         const paintProcess = _normText(document.getElementById('pqSpecPaintProcess')?.value || '');
@@ -23863,9 +23868,18 @@ var ProdQualityModule = (function() {
             templateItems.sort((a, b) => (order.get(String(a.key || '')) ?? 9999) - (order.get(String(b.key || '')) ?? 9999));
             return templateItems.map(item => _normalizeItemForEdit({ ...item }));
         }
-        const sourceItems = linkedPreset && Array.isArray(linkedPreset.items) && linkedPreset.items.length
-            ? linkedPreset.items
-            : templateItems;
+        // 프리셋이 연결돼 있어도 기준값은 품목 템플릿에 저장된 값이 진실이다.
+        // 프리셋은 관리항목 구성·순서만 정하고, 같은 key의 품목 기준값(spec/상하한/기준값)을 덮어 씌운다.
+        // (예전엔 프리셋 항목을 그대로 써서, 프리셋 연결 품목의 기준값이 모두 빈칸으로 보였다)
+        let sourceItems = templateItems;
+        if (linkedPreset && Array.isArray(linkedPreset.items) && linkedPreset.items.length) {
+            const tmplByKey = new Map(templateItems.map(item => [String(item.key || ''), item]));
+            sourceItems = _normalizeQualityItems(linkedPreset.items.map(item => ({ ...item })))
+                .map(pi => {
+                    const ti = tmplByKey.get(String(pi.key || ''));
+                    return ti ? { ...pi, ...ti } : pi;
+                });
+        }
         const items = sourceItems.length
             ? _normalizeQualityItems(sourceItems.map(item => ({ ...item })))
             : [];

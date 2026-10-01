@@ -4892,7 +4892,31 @@ const ProductWarehouseModule = (function() {
         }
     }
 
+    // 서버(config)에 저장된 배치를 한 번 불러온다 — 다른 PC/브라우저에서도 마지막 배치 유지.
+    // 브라우저 저장값이 더 최근이면(savedAt) 그대로 둔다.
+    let _pwStockOrderRemoteLoaded = false;
+    async function _loadPwStockOrderRemote() {
+        if (_pwStockOrderRemoteLoaded) return false;
+        _pwStockOrderRemoteLoaded = true;
+        try {
+            if (typeof Storage === 'undefined' || typeof Storage.getConfigValue !== 'function') return false;
+            const remote = await Storage.getConfigValue(PW_STOCK_ORDER_KEY);
+            if (!remote || typeof remote !== 'object') return false;
+            const localEmpty = ['mass', 'as', 'dev'].every(function(sec) {
+                const o = _pwStockOrder[sec] || {};
+                return !(Array.isArray(o.cols) && o.cols.length);
+            });
+            if (!localEmpty && (Number(remote.savedAt) || 0) <= (Number(_pwStockOrder.savedAt) || 0)) return false;
+            _pwStockOrder = Object.assign(_emptyPwStockOrder(), remote);
+            try { localStorage.setItem(PW_STOCK_ORDER_KEY, JSON.stringify(_pwStockOrder)); } catch (e) {}
+            return true;
+        } catch (e) {
+            return false;
+        }
+    }
+
     function _savePwStockOrder() {
+        _pwStockOrder.savedAt = Date.now();
         try { localStorage.setItem(PW_STOCK_ORDER_KEY, JSON.stringify(_pwStockOrder)); } catch (e) {}
         try {
             if (typeof Storage !== 'undefined' && typeof Storage.setConfigValue === 'function') {
@@ -5102,6 +5126,9 @@ const ProductWarehouseModule = (function() {
     }
 
     function loadData() {
+        if (!_pwStockOrderRemoteLoaded) {
+            _loadPwStockOrderRemote().then(function(changed) { if (changed) loadData(); });
+        }
         const data = Storage.getAll(STORE);
         data.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
 
@@ -5338,8 +5365,11 @@ const ProductWarehouseModule = (function() {
         }
 
         function _layoutCols(cars, section, colCount) {
-            const savedCols = (_pwStockOrder[section] && Array.isArray(_pwStockOrder[section].cols))
-                ? _pwStockOrder[section].cols : [];
+            // 열 수(화면 폭)마다 사용자가 마지막으로 둔 배치를 따로 기억한다.
+            // 해당 열 수의 배치가 없으면 마지막 배치(cols)의 순서를 따라 다시 채운다.
+            const secOrder = _pwStockOrder[section] || {};
+            const byCount = (secOrder.byCount && Array.isArray(secOrder.byCount[colCount])) ? secOrder.byCount[colCount] : null;
+            const savedCols = byCount || (Array.isArray(secOrder.cols) ? secOrder.cols : []);
             const carSet = new Set(cars);
             if (savedCols.length === colCount) {
                 const cols = savedCols.map(function(list) {
@@ -5413,8 +5443,11 @@ const ProductWarehouseModule = (function() {
         blocksEl.querySelectorAll('.pw-stock-board').forEach(function(board) {
             const want = Number(board.dataset.cols) || 0;
             const section = board.getAttribute('data-section') || 'mass';
-            const saved = (_pwStockOrder[section] && _pwStockOrder[section].cols) || [];
-            if (saved.length !== want) _pwCaptureBoardLayout(board);
+            const secOrder = _pwStockOrder[section] || {};
+            const hasAny = (Array.isArray(secOrder.cols) && secOrder.cols.length)
+                || (secOrder.byCount && Object.keys(secOrder.byCount).length);
+            // 사용자가 배치한 적이 없을 때만 초기 배치를 기록 — 열 수가 바뀌어도 사용자 배치를 덮어쓰지 않는다.
+            if (!hasAny && want) _pwCaptureBoardLayout(board);
         });
         _scheduleFitPwStockPartNames();
     }
@@ -5540,7 +5573,10 @@ const ProductWarehouseModule = (function() {
                 return _pwCarName(card);
             }).filter(Boolean);
         });
-        _pwStockOrder[section] = { cols: cols };
+        const prev = _pwStockOrder[section] || {};
+        const byCount = Object.assign({}, prev.byCount || {});
+        byCount[cols.length] = cols;
+        _pwStockOrder[section] = { cols: cols, byCount: byCount };
         _savePwStockOrder();
     }
 
