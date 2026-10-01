@@ -5005,11 +5005,11 @@ const ProductWarehouseModule = (function() {
                 <td style="white-space:nowrap;">${_escapeHtml(d.color || '-')}</td>
                 <td style="text-align:right;white-space:nowrap;font-weight:700;color:var(--accent-green);">+${UIUtils.formatNumber(d.quantity || 0)}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
+                ${laserCell}
                 <td style="white-space:nowrap;">${_pwInjLotWithInspCell(g, d.carModel)}</td>
                 <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, true)}</td>
                 <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, false)}</td>
                 <td style="white-space:nowrap;">${_pwPaintUsageCell(g)}</td>
-                ${laserCell}
                 <td style="white-space:nowrap;font-size:0.82rem;color:var(--text-secondary);">${_escapeHtml(d.source || '-')}</td>
             </tr>`;
         }).join('')
@@ -5027,11 +5027,11 @@ const ProductWarehouseModule = (function() {
                                 <th style="white-space:nowrap;">컬러</th>
                                 <th style="text-align:right;white-space:nowrap;">수량</th>
                                 <th style="white-space:nowrap;">도장 LOT</th>
+                                ${showLaser ? '<th style="white-space:nowrap;">레이져 LOT</th>' : ''}
                                 <th style="white-space:nowrap;">사출 LOT / 수입검사일</th>
-                                <th style="white-space:nowrap;">P 도료 LOT / 수입검사일</th>
-                                <th style="white-space:nowrap;">C 도료 LOT / 수입검사일</th>
+                                <th style="white-space:nowrap;">PRIMER 도료 LOT / 수입검사일</th>
+                                <th style="white-space:nowrap;">COLOR 도료 LOT / 수입검사일</th>
                                 <th style="white-space:nowrap;">P/C 사용량</th>
-                                ${showLaser ? '<th style="white-space:nowrap;">레이져Lot</th>' : ''}
                                 <th style="white-space:nowrap;">출처</th>
                             </tr></thead>
                             <tbody>${rows}</tbody>
@@ -6907,11 +6907,11 @@ const ProductWarehouseModule = (function() {
             <tr>
                 <td style="white-space:nowrap;">${l.date || '-'}</td>
                 <td style="white-space:nowrap;">${_pwPaintWorkLink(g)}</td>
+                ${laserCell}
                 <td style="white-space:nowrap;">${_pwInjLotWithInspCell(g, car)}</td>
                 <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, true)}</td>
                 <td style="white-space:nowrap;">${_pwPaintLotWithInspBySpecCell(g, false)}</td>
                 <td style="white-space:nowrap;">${_pwPaintUsageCell(g)}</td>
-                ${laserCell}
                 <td style="text-align:right;white-space:nowrap;">
                     <span style="font-weight:600;color:var(--accent-green);">${UIUtils.formatNumber(l.qty)}</span>
                     ${adjustBtn}
@@ -6919,9 +6919,10 @@ const ProductWarehouseModule = (function() {
             </tr>`;
         }).join('');
 
-        const lotHeaders = ['입고일', '도장 LOT', '사출 LOT / 수입검사일', 'P 도료 LOT / 수입검사일', 'C 도료 LOT / 수입검사일', 'P/C 사용량']
-            .concat(showLaserCol ? ['레이져Lot'] : [])
-            .concat(['현재 수량']);
+        // 추적성 순서: 창고 입고일 → 도장 LOT → 레이져 LOT → 사출 LOT → PRIMER/COLOR 도료 LOT → 사용량 → 현재 수량
+        const lotHeaders = ['입고일', '도장 LOT']
+            .concat(showLaserCol ? ['레이져 LOT'] : [])
+            .concat(['사출 LOT / 수입검사일', 'PRIMER 도료 LOT / 수입검사일', 'COLOR 도료 LOT / 수입검사일', 'P/C 사용량', '현재 수량']);
 
         const lotSection = StockDetailUI.buildLotTableSection({
             headers: lotHeaders,
@@ -6929,7 +6930,7 @@ const ProductWarehouseModule = (function() {
             rowsHtml: lotRows
         });
         const lotHint = `<div style="font-size:0.75rem;color:var(--text-muted);margin:-4px 0 14px;line-height:1.45;">
-            도장 LOT를 기준으로 사출 LOT/수입검사, P·C 도료 LOT/수입검사일, 사용량, 레이져 LOT를 조회합니다. 항목을 클릭하면 해당 이력이 열립니다.
+            도장 LOT를 기준으로 사출 LOT/수입검사, PRIMER·COLOR 도료 LOT/수입검사일, 사용량, 레이져 LOT를 조회합니다. 항목을 클릭하면 해당 이력이 열립니다.
         </div>`;
 
         const historySection = StockDetailUI.buildInvHistorySection(records, {
