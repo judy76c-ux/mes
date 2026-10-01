@@ -281,7 +281,8 @@ var WarehouseOverviewModule = (function () {
             entries.forEach(({ lot, qty }) => {
                 if (!itemMap[key][lot]) {
                     itemMap[key][lot] = { qty: 0, firstDate: '', hadIncoming: false,
-                                          inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '' };
+                                          inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '',
+                                          outs: [], supplier: '' };
                 }
                 const e = itemMap[key][lot];
                 const d = r.date || '';
@@ -291,9 +292,12 @@ var WarehouseOverviewModule = (function () {
                     e.hadIncoming = true;
                     // 입고 기록에서만 firstDate 추적 (가장 오래된 입고일)
                     if (d && (!e.firstDate || d < e.firstDate)) e.firstDate = d;
+                    const sup = String(r.supplier || '').trim();
+                    if (sup && sup !== '-' && !e.supplier) e.supplier = sup;
                 } else {
                     e.qty -= qty;
                     e.outQty += qty;
+                    if (d) e.outs.push({ d: d, qty: qty });
                     if (d && (!e.firstOutDate || d < e.firstOutDate)) e.firstOutDate = d;
                     if (d && (!e.lastOutDate || d > e.lastOutDate)) e.lastOutDate = d;
                 }
@@ -369,9 +373,13 @@ var WarehouseOverviewModule = (function () {
                             .filter(([lot]) => lot < maxConsumedLot)
                             .map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate, inQty: v.inQty,
                                                   outQty: v.outQty, lastOutDate: v.lastOutDate })),
-                        consumedLots: newerConsumedLots.map(([lot, v]) => ({ lot, firstDate: v.firstDate, inQty: v.inQty,
-                                                  outQty: v.outQty, firstOutDate: v.firstOutDate, lastOutDate: v.lastOutDate }))
+                        consumedLots: newerConsumedLots.map(([lot, v]) => Object.assign({ lot, firstDate: v.firstDate, inQty: v.inQty,
+                                                  outQty: v.outQty, firstOutDate: v.firstOutDate, lastOutDate: v.lastOutDate,
+                                                  supplier: v.supplier },
+                                                  _fifoBlameFor(oldestV.firstDate, v))),
+                        oldSupplier: oldestV.supplier || ''
                     });
+                    fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
                 }
             }
         });
@@ -403,7 +411,7 @@ var WarehouseOverviewModule = (function () {
                     prodLot: r.prodLot || '',
                     lotNo: r.lotNo || '',
                     firstInDate: '', hadIncoming: false,
-                    inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: ''
+                    inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '', outs: []
                 };
             }
             const entry = matMap[mid][lot];
@@ -415,6 +423,7 @@ var WarehouseOverviewModule = (function () {
             if (r.type === '출고') {
                 entry.qty -= qty;
                 entry.outQty += qty;
+                if (d) entry.outs.push({ d: d, qty: qty });
                 if (d && (!entry.firstOutDate || d < entry.firstOutDate)) entry.firstOutDate = d;
                 if (d && (!entry.lastOutDate || d > entry.lastOutDate)) entry.lastOutDate = d;
             } else {
@@ -538,10 +547,13 @@ var WarehouseOverviewModule = (function () {
                             .map(([lot, v, mfg]) => ({ lot: label(lot, v), prodDate: mfg, qty: v.qty, firstDate: v.firstInDate,
                                                        inQty: v.inQty, outQty: v.outQty, lastOutDate: v.lastOutDate,
                                                        useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last })),
-                        consumedLots: newerConsumedLots.map(([lot, v, mfg]) => ({ lot: label(lot, v), prodDate: mfg, firstDate: v.firstInDate,
+                        consumedLots: newerConsumedLots.map(([lot, v, mfg]) => Object.assign({ lot: label(lot, v), prodDate: mfg, firstDate: v.firstInDate,
                                                        inQty: v.inQty, outQty: v.outQty, firstOutDate: v.firstOutDate, lastOutDate: v.lastOutDate,
-                                                       useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last }))
+                                                       useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last, supplier: supplier },
+                                                       _fifoBlameFor(oldestV.firstInDate, v))),
+                        oldSupplier: supplier
                     });
+                    fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
                 }
             }
         });
@@ -604,6 +616,87 @@ var WarehouseOverviewModule = (function () {
         return s;
     }
 
+    /* ── FIFO 귀책(원인) 판정 ─────────────────────────────────────
+     * 구 LOT(제조일/사출일 빠름) A가 남아 있는데 신 LOT B가 먼저 소진된 경우,
+     *  - A가 창고에 입고되기 전에 나간 B 수량  → 불가피 (A가 아직 없었음)
+     *  - A가 입고된 뒤에 나간 B 수량          → 당사 선입선출 미준수
+     *  - B가 A보다 먼저 납품(입고)됨           → 공급처(사출처/도료사) 납품 순서 역전
+     *    (제조일이 늦은 LOT을 먼저 보내 현장이 FIFO를 지킬 수 없는 상황을 만든 것)
+     */
+    function _fifoBlameFor(oldInDate, v) {
+        const aIn = String(oldInDate || '');
+        let beforeQty = 0, afterQty = 0;
+        (v.outs || []).forEach(function(o) {
+            if (aIn && o.d < aIn) beforeQty += Number(o.qty) || 0;
+            else afterQty += Number(o.qty) || 0;
+        });
+        const bIn = String(v.firstDate || v.firstInDate || '');
+        const aDay = aIn.slice(0, 10), bDay = bIn.slice(0, 10);
+        const inverted = !!(aDay && bDay && bDay < aDay);     // 신 LOT이 먼저 납품됨
+        const sameDelivery = !!(aDay && bDay && bDay === aDay); // 같은 날 함께 납품
+        return { beforeQty: beforeQty, afterQty: afterQty, inverted: inverted, sameDelivery: sameDelivery, oldInDate: aIn };
+    }
+
+    function _fifoBlameSummary(item) {
+        const cons = item.consumedLots || [];
+        const oursQty = cons.reduce(function(s, c) { return s + (c.afterQty || 0); }, 0);
+        const unavoidableQty = cons.reduce(function(s, c) { return s + (c.beforeQty || 0); }, 0);
+        const supplierLots = cons.filter(function(c) { return c.inverted; });
+        const suppliers = [];
+        supplierLots.forEach(function(c) { const n = c.supplier || item.oldSupplier || ''; if (n && suppliers.indexOf(n) < 0) suppliers.push(n); });
+        return { ours: oursQty > 0, oursQty: oursQty, unavoidableQty: unavoidableQty,
+                 supplier: supplierLots.length > 0, supplierLotCount: supplierLots.length, suppliers: suppliers };
+    }
+
+    function _fifoBlameBadges(item, partyLabel) {
+        const b = item.blame || {};
+        const badge = function(text, fg, bg, bd) {
+            return '<span style="font-size:0.72rem;font-weight:800;color:' + fg + ';background:' + bg + ';border:1px solid ' + bd + ';border-radius:999px;padding:2px 8px;white-space:nowrap;">' + text + '</span>';
+        };
+        const out = [];
+        if (b.supplier) out.push(badge(partyLabel + ' 귀책' + (b.suppliers && b.suppliers.length ? ' (' + _esc(b.suppliers.join(', ')) + ')' : ''), '#7c3aed', 'rgba(124,58,237,0.1)', 'rgba(124,58,237,0.35)'));
+        if (b.ours) out.push(badge('당사 귀책', '#dc2626', 'rgba(220,38,38,0.08)', 'rgba(220,38,38,0.35)'));
+        if (!out.length) out.push(badge('불가피 (구 LOT 미입고)', '#64748b', 'rgba(100,116,139,0.1)', 'rgba(100,116,139,0.35)'));
+        return out.join(' ');
+    }
+
+    function _fifoCauseCell(c, un, partyLabel) {
+        const parts = [];
+        if (c.inverted) {
+            parts.push('<span style="color:#7c3aed;font-weight:700;">' + partyLabel + ' 납품 역전</span>');
+        } else if (c.sameDelivery) {
+            parts.push('<span style="color:#b45309;font-weight:700;">동시 납품</span>');
+        }
+        if (c.beforeQty) parts.push('<span style="color:#64748b;">불가피 ' + UIUtils.formatNumber(c.beforeQty) + un + '</span>');
+        if (c.afterQty) parts.push('<span style="color:#dc2626;font-weight:700;">당사 미준수 ' + UIUtils.formatNumber(c.afterQty) + un + '</span>');
+        return parts.join('<br>') || '-';
+    }
+
+    /** 원인 규명 문장 — 신 LOT별로 언제 들어와 언제 나갔고, 그때 구 LOT이 창고에 있었는지 */
+    function _fifoCauseText(item, dateLabel, unit, partyLabel) {
+        const dl = dateLabel || '사출일';
+        const un = unit || 'EA';
+        const old = (item.oldLots || [])[0] || {};
+        const oldIn = String(old.firstDate || '').slice(0, 10);
+        const lines = (item.consumedLots || []).map(function(c) {
+            const lot = '<strong style="font-family:monospace;color:#ea580c;">' + _esc(_formatLotDisplay(c.lot)) + '</strong>';
+            const bIn = String(c.firstDate || '').slice(0, 10);
+            let t = lot + ' (' + dl + ' ' + _esc(c.prodDate || _lotProdDate(c.lot)) + ', 입고 ' + _esc(bIn) + '): ';
+            if (c.inverted) {
+                t += '<span style="color:#7c3aed;font-weight:700;">' + partyLabel + (c.supplier ? '(' + _esc(c.supplier) + ')' : '') +
+                     '가 ' + dl + '이 늦은 이 LOT을 구 LOT(' + _esc(oldIn) + ' 입고)보다 먼저 납품</span>. ';
+            } else if (c.sameDelivery) {
+                t += '구 LOT과 같은 날 함께 납품 — 창고에서 ' + dl + '을 확인해 구 LOT부터 냈어야 함. ';
+            } else {
+                t += '구 LOT이 먼저(' + _esc(oldIn) + ') 입고돼 있었음. ';
+            }
+            if (c.beforeQty) t += '구 LOT 입고 전 출고 <strong>' + UIUtils.formatNumber(c.beforeQty) + un + '</strong>는 당시 구 LOT이 없어 <strong>불가피</strong>. ';
+            if (c.afterQty) t += '<span style="color:#dc2626;">구 LOT이 창고에 있는데 출고한 <strong>' + UIUtils.formatNumber(c.afterQty) + un + '</strong>는 <strong>당사 선입선출 미준수</strong></span>.';
+            return '<li style="margin:2px 0;">' + t + '</li>';
+        }).join('');
+        return '<ul style="margin:4px 0 0 18px;padding:0;">' + lines + '</ul>';
+    }
+
     /* 사출 — FIFO 위반 */
     /** 사출 LOT(YYMMDD) → 사출일 YYYY-MM-DD */
     function _lotProdDate(lot) {
@@ -622,14 +715,15 @@ var WarehouseOverviewModule = (function () {
         return a === b ? _esc(a) : (_esc(a) + ' ~ ' + _esc(b));
     }
 
-    function _fifoLotTable(lots, type, dateLabel, showUse) {
+    function _fifoLotTable(lots, type, dateLabel, showUse, causeOpts) {
         const isOld = type === 'old';
         const color = isOld ? '#2563eb' : '#ea580c';
         const dl = dateLabel || '사출일';
         const useHead = showUse ? '<th>사용일(첫~최근)</th>' : '';
         const head = isOld
             ? '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th style="text-align:right;">출고수량</th><th>최근 출고일</th>' + useHead + '<th style="text-align:right;">잔량</th>'
-            : '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th>첫 출고일</th><th>소진일(마지막 출고)</th>' + useHead;
+            : '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th>첫 출고일</th><th>소진일(마지막 출고)</th>' + useHead +
+              (causeOpts ? '<th>원인</th>' : '');
         const body = (lots || []).map(function(l) {
             const lotCell = '<td style="font-family:monospace;font-weight:700;color:' + color + ';">' + _esc(_formatLotDisplay(l.lot)) + '</td>' +
                 '<td style="font-weight:700;">' + _fifoDate(l.prodDate || _lotProdDate(l.lot)) + '</td>';
@@ -647,7 +741,8 @@ var WarehouseOverviewModule = (function () {
                 '<td style="text-align:right;">' + UIUtils.formatNumber(l.inQty || 0) + '</td>' +
                 '<td>' + _fifoDate(l.firstOutDate) + '</td>' +
                 '<td style="font-weight:700;color:#ea580c;">' + _fifoDate(l.lastOutDate) + '</td>' +
-                (showUse ? '<td style="white-space:nowrap;">' + _fifoUseRange(l) + '</td>' : '') + '</tr>';
+                (showUse ? '<td style="white-space:nowrap;">' + _fifoUseRange(l) + '</td>' : '') +
+                (causeOpts ? '<td style="white-space:nowrap;font-size:0.74rem;line-height:1.35;">' + _fifoCauseCell(l, causeOpts.unit, causeOpts.party) + '</td>' : '') + '</tr>';
         }).join('');
         return '<table class="data-table compact" style="width:100%;font-size:0.78rem;border-collapse:collapse;">' +
             '<thead><tr>' + head + '</tr></thead><tbody>' + body + '</tbody></table>';
@@ -681,10 +776,12 @@ var WarehouseOverviewModule = (function () {
                         <strong>${_esc(d.carModel || '-')}</strong>
                         <span style="font-weight:700;">${_esc(d.partName || '-')}</span>
                         <span style="color:var(--text-muted);">${_esc(d.color || '-')}</span>
+                        <span style="display:inline-flex;gap:4px;flex-wrap:wrap;">${_fifoBlameBadges(d, '사출처')}</span>
                         <span style="margin-left:auto;font-size:0.8rem;">현재 재고 <strong>${UIUtils.formatNumber(d.qty)}</strong> EA</span>
                     </div>
                     <div style="padding:8px 12px;font-size:0.82rem;line-height:1.55;border-bottom:1px dashed var(--border-color);">
                         <span style="font-weight:800;color:#dc2626;">위반 내용</span> ${_fifoViolationText(d)}
+                        <div style="margin-top:6px;"><span style="font-weight:800;color:#7c3aed;">원인 규명</span>${_fifoCauseText(d, '사출일', ' EA', '사출처')}</div>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 12px;">
                         <div>
@@ -693,7 +790,7 @@ var WarehouseOverviewModule = (function () {
                         </div>
                         <div>
                             <div style="font-size:0.78rem;font-weight:800;color:#ea580c;margin-bottom:4px;">먼저 소진된 신 LOT (사출일 늦음)</div>
-                            ${_fifoLotTable(d.consumedLots, 'consumed')}
+                            ${_fifoLotTable(d.consumedLots, 'consumed', '사출일', false, { unit: ' EA', party: '사출처' })}
                         </div>
                     </div>
                 </div>`;
@@ -702,7 +799,8 @@ var WarehouseOverviewModule = (function () {
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
                 <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.5;">
                     선입선출(FIFO) 위반: <strong>사출일이 빠른 LOT의 재고가 남아 있는데, 사출일이 늦은 LOT이 먼저 모두 출고</strong>된 품목입니다.<br>
-                    판정 기준은 <strong>사출 LOT 일자(YYMMDD = 사출일)</strong>이며, 구 LOT이 창고에 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.
+                    판정 기준은 <strong>사출 LOT 일자(YYMMDD = 사출일)</strong>이며, 구 LOT이 창고에 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>
+                    귀책: <strong style="color:#7c3aed;">사출처</strong> = 사출일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고
                 </p>
                 <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
                     ${_inj.fifoItems.length}건
@@ -808,10 +906,12 @@ var WarehouseOverviewModule = (function () {
                         <span style="font-weight:800;color:#ea580c;">${idx + 1}</span>
                         <strong>${_esc(d.matName || '-')}</strong>
                         <span style="color:var(--text-muted);">${_esc(d.supplier || '-')}</span>
+                        <span style="display:inline-flex;gap:4px;flex-wrap:wrap;">${_fifoBlameBadges(d, '도료사')}</span>
                         <span style="margin-left:auto;font-size:0.8rem;">현재 재고 <strong>${UIUtils.formatNumber(d.qty)}</strong> 개</span>
                     </div>
                     <div style="padding:8px 12px;font-size:0.82rem;line-height:1.55;border-bottom:1px dashed var(--border-color);">
                         <span style="font-weight:800;color:#dc2626;">위반 내용</span> ${_fifoViolationText(d, '제조일', '개')}
+                        <div style="margin-top:6px;"><span style="font-weight:800;color:#7c3aed;">원인 규명</span>${_fifoCauseText(d, '제조일', '개', '도료사')}</div>
                     </div>
                     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 12px;">
                         <div>
@@ -820,7 +920,7 @@ var WarehouseOverviewModule = (function () {
                         </div>
                         <div>
                             <div style="font-size:0.78rem;font-weight:800;color:#ea580c;margin-bottom:4px;">먼저 소진된 신 LOT (제조일 늦음)</div>
-                            ${_fifoLotTable(d.consumedLots, 'consumed', '제조일', true)}
+                            ${_fifoLotTable(d.consumedLots, 'consumed', '제조일', true, { unit: '개', party: '도료사' })}
                         </div>
                     </div>
                 </div>`;
@@ -829,7 +929,8 @@ var WarehouseOverviewModule = (function () {
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
                 <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.5;">
                     선입선출(FIFO) 위반: <strong>제조일이 빠른 LOT의 재고가 남아 있는데, 제조일이 늦은 LOT이 먼저 모두 출고</strong>된 도료입니다.<br>
-                    판정 기준은 <strong>도료 제조일</strong>(입고 기록의 제조일, 없으면 제조 LOT YYMMDD)이며, 구 LOT이 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.
+                    판정 기준은 <strong>도료 제조일</strong>(입고 기록의 제조일, 없으면 제조 LOT YYMMDD)이며, 구 LOT이 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>
+                    귀책: <strong style="color:#7c3aed;">도료사</strong> = 제조일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고
                 </p>
                 <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
                     ${_paint.fifoItems.length}건
