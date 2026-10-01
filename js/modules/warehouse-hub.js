@@ -230,6 +230,17 @@ var WarehouseHubModule = (function () {
             if (!m.lastAny || d.date > m.lastAny) m.lastAny = d.date;
         });
 
+        // 수량은 도료 창고 상세와 같은 원장(InvCalc) 기준으로 덮어쓴다
+        const paintBal = InvCalc.paintBalances(txList);
+        Object.keys(matMap).forEach(mid => {
+            const bal = paintBal[mid];
+            if (!bal) return;
+            matMap[mid].stock = bal.total;
+            Object.keys(matMap[mid].lots).forEach(k => {
+                matMap[mid].lots[k].qty = bal.lots[k === '__' ? '무표기' : k] || 0;
+            });
+        });
+
         // 이름 매핑
         const matById = {};
         matList.forEach(m => matById[m.id] = m);

@@ -106,15 +106,10 @@ var PaintDemandPlanModule = (function () {
 
     /** 도료 현재 재고(캔) — PAINT_INVENTORY 기준 */
     function _paintStockByMaterial() {
+        // 도료 창고 상세와 같은 원장(InvCalc) 기준
         const stock = {};
-        (Storage.getAll(INV_STORE) || []).forEach(function (r) {
-            const id = r.materialId;
-            if (!id) return;
-            const qty = _num(r.quantity);
-            if (!stock[id]) stock[id] = 0;
-            if (r.type === '출고') stock[id] -= qty;
-            else stock[id] += qty;
-        });
+        const balances = InvCalc.paintBalances(Storage.getAll(INV_STORE) || []);
+        Object.keys(balances).forEach(function (id) { stock[id] = balances[id].total; });
         return stock;
     }
 

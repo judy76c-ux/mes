@@ -323,5 +323,50 @@ var InvCalc = (function () {
         return lotBalances(records).total;
     }
 
-    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, isStockBaseline, lotBalances, replaySteps, totalStock, UNMATCHED };
+    /** 도료 원장 LOT 키 — 제조 LOT(prodLot) 우선, 없으면 제조사 LOT, 둘 다 없으면 '무표기' */
+    function paintLotKey(rec) {
+        return String((rec && (rec.prodLot || rec.lotNo)) || '').trim() || '무표기';
+    }
+
+    /**
+     * 도료 원장(PAINT_INVENTORY) → materialId별 { total, lots:{ lotKey: qty } }.
+     * 도료 기록은 lots[] 없이 prodLot/lotNo + quantity 로 저장되므로 LOT 키를 prodLot 우선으로
+     * 맞춘 뒤 lotBalances 로 재생한다. 단순 입고−출고 합산은 보유분을 넘긴 출고까지 빼서
+     * 상세 팝업(실물 LOT 잔량)과 숫자가 어긋나므로, 도료 재고는 모두 이 함수로 계산한다.
+     * opts.excludeId: 수정 중인 기록을 빼고 계산할 때
+     */
+    function paintBalances(records, opts) {
+        const excludeId = opts && opts.excludeId;
+        const byMat = {};
+        (records || []).forEach(function (r) {
+            if (!r || !r.materialId) return;
+            if (excludeId && r.id === excludeId) return;
+            (byMat[r.materialId] = byMat[r.materialId] || []).push(r);
+        });
+        const out = {};
+        Object.keys(byMat).forEach(function (mid) {
+            const bal = lotBalances(byMat[mid].map(function (r) {
+                const key = paintLotKey(r);
+                return Object.assign({}, r, {
+                    lotNo: key,
+                    lots: key !== '무표기' ? [{ lotNo: key, qty: _num(r.quantity) }] : undefined
+                });
+            }));
+            const lots = {};
+            bal.lots.forEach(function (l) {
+                if (l.lotNo !== UNMATCHED) lots[l.lotNo] = Number(l.qty) || 0;
+            });
+            out[mid] = { total: bal.total, lots: lots, lotList: bal.lots };
+        });
+        return out;
+    }
+
+    /** 도료 1종의 { total, lots } — 원장이 없으면 0 */
+    function paintBalance(records, materialId, opts) {
+        if (!materialId) return { total: 0, lots: {}, lotList: [] };
+        const mine = (records || []).filter(function (r) { return r && r.materialId === materialId; });
+        return paintBalances(mine, opts)[materialId] || { total: 0, lots: {}, lotList: [] };
+    }
+
+    return { normDate, stampFor, recordStamp, entries, qtyOf, signedQtyOf, isQtyCorrupted, isStockBaseline, lotBalances, replaySteps, totalStock, UNMATCHED, paintLotKey, paintBalances, paintBalance };
 })();

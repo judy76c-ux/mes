@@ -1272,11 +1272,9 @@ const ProductionPlanModule = (function() {
     }
 
     // ── 도료 재고 조회 헬퍼 ──────────────────────────────────────────
-    // matId → 총 재고 수량 (입고 - 출고)
+    // matId → 총 재고 수량 (도료 창고 상세와 같은 원장(InvCalc) 기준)
     function _paintMatBalance(matId) {
-        const all = Storage.getAll(DB.STORES.PAINT_INVENTORY) || [];
-        return all.filter(i => i.materialId === matId)
-                  .reduce((s, i) => i.type === '출고' ? s - (Number(i.quantity)||0) : s + (Number(i.quantity)||0), 0);
+        return InvCalc.paintBalance(Storage.getAll(DB.STORES.PAINT_INVENTORY) || [], matId).total;
     }
 
     function _paintMatName(matId) {

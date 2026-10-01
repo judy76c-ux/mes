@@ -79,13 +79,7 @@ const PaintInventoryModule = (function() {
 
     // 도료 LOT별 잔량(개) — 제조 LOT 오름차순(선입선출 순, 오래된 것 먼저) 정렬
     function _activePaintLots(matId) {
-        const qtyMap = {};
-        (Storage.getAll(STORE) || []).forEach(d => {
-            if (d.materialId !== matId) return;
-            const key = d.prodLot || d.lotNo || '__';
-            const qty = Number(d.quantity) || 0;
-            qtyMap[key] = (qtyMap[key] || 0) + (d.type === '출고' ? -qty : qty);
-        });
+        const qtyMap = InvCalc.paintBalance(Storage.getAll(STORE) || [], matId).lots;
         return Object.entries(qtyMap)
             .filter(([, qty]) => qty > 0)
             .map(([prodLot, qty]) => ({ prodLot, qty }))
@@ -994,45 +988,51 @@ const PaintInventoryModule = (function() {
         const data      = Storage.getAll(STORE);
         const materials = Storage.getAll(MATERIALS_STORE);
 
-        // ── 재료별 순 재고 + LOT별 집계 ────────────────────────────
-        const matStock = {};  // matId -> { stock, lots: {key->{prodLot,lotNo,qty,expDate}} }
+        // ── 재료별 재고 + LOT별 잔량 ────────────────────────────────
+        // 상세 팝업·입출고 이력과 같은 원장(InvCalc FIFO)으로 계산한다.
+        // 단순 입고−출고 합산은 보유분을 넘긴 출고(자동 리셋 대상)까지 빼서
+        // 상세(LOT 잔량 2)와 현황(0)이 어긋난다.
+        const recordsByMat = {};
         data.forEach(d => {
             if (!d.materialId) return;
-            const mat = materials.find(m => m.id === d.materialId);
-            const lotDates = _resolveLotDates(d, mat);
-            if (!matStock[d.materialId]) matStock[d.materialId] = { stock: 0, lots: {} };
-            const qty = Number(d.quantity) || 0;
-            // 제조 LOT(prodLot) 우선, 없으면 제조사 표기 LOT(lotNo) 키로 구분
-            const lotKey = (d.prodLot || d.lotNo || '__');
-            if (!matStock[d.materialId].lots[lotKey]) {
-                matStock[d.materialId].lots[lotKey] = {
-                    prodLot: d.prodLot || '',
-                    lotNo:   d.lotNo   || '',
-                    qty: 0,
-                    expDate: lotDates.expDate || ''
-                };
-            }
-            if (d.type === '출고') {
-                matStock[d.materialId].stock -= qty;
-                matStock[d.materialId].lots[lotKey].qty -= qty;
-            } else {
-                matStock[d.materialId].stock += qty;
-                matStock[d.materialId].lots[lotKey].qty += qty;
-                if (lotDates.expDate && (!matStock[d.materialId].lots[lotKey].expDate ||
-                    lotDates.expDate < matStock[d.materialId].lots[lotKey].expDate)) {
-                    matStock[d.materialId].lots[lotKey].expDate = lotDates.expDate;
-                }
-            }
+            (recordsByMat[d.materialId] = recordsByMat[d.materialId] || []).push(d);
         });
 
-        // 활성 LOT 정렬 + 최소 유효기한
-        Object.keys(matStock).forEach(mid => {
-            const activeLots = Object.values(matStock[mid].lots)
-                .filter(l => l.qty > 0)
+        const matStock = {};  // matId -> { stock, activeLots:[{prodLot,lotNo,qty,expDate}], minExpDate }
+        Object.keys(recordsByMat).forEach(mid => {
+            const mat = materials.find(m => m.id === mid);
+            const records = recordsByMat[mid];
+            const balance = InvCalc.lotBalances(_toPaintInvRecords(records));
+
+            // 표시용 LOT 메타(제조 LOT/제조사 LOT/유효기한)는 입고 기록에서 승계
+            const lotMeta = {};
+            records.forEach(d => {
+                const key = String(d.prodLot || d.lotNo || '').trim() || '무표기';
+                if (!lotMeta[key]) lotMeta[key] = { prodLot: d.prodLot || '', lotNo: d.lotNo || '', expDate: '' };
+                if (d.type !== '출고') {
+                    const exp = _resolveLotDates(d, mat).expDate;
+                    if (exp && (!lotMeta[key].expDate || exp < lotMeta[key].expDate)) lotMeta[key].expDate = exp;
+                }
+            });
+
+            const activeLots = balance.lots
+                .filter(l => l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0)
+                .map(l => {
+                    const meta = lotMeta[l.lotNo] || {};
+                    return {
+                        prodLot: meta.prodLot || (l.lotNo === '무표기' ? '' : l.lotNo),
+                        lotNo:   meta.lotNo || '',
+                        qty:     Number(l.qty) || 0,
+                        expDate: meta.expDate || ''
+                    };
+                })
                 .sort((a, b) => (a.prodLot || a.lotNo).localeCompare(b.prodLot || b.lotNo));
-            matStock[mid].activeLots = activeLots;
             const withExp = activeLots.filter(l => l.expDate);
-            matStock[mid].minExpDate = withExp.length > 0 ? withExp.map(l => l.expDate).sort()[0] : null;
+            matStock[mid] = {
+                stock: balance.total,
+                activeLots: activeLots,
+                minExpDate: withExp.length > 0 ? withExp.map(l => l.expDate).sort()[0] : null
+            };
         });
 
         // ── 공급사별 그룹핑 (도료 마스터 전체, 재고 0 포함) ─────────
@@ -1621,9 +1621,8 @@ const PaintInventoryModule = (function() {
             l.materialId === matId &&
             (l.prodLot || l.lotNo) === (prodLot || lotNo)
         );
-        const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const available = stockIn - stockOut;
+        // 상세 팝업과 같은 원장(InvCalc) 잔량 기준
+        const available = InvCalc.paintBalance(allLogs, matId).lots[prodLot || lotNo || '무표기'] || 0;
 
         const diff = newQty - available;
         if (diff === 0) { UIUtils.toast('변경된 수량이 없습니다.', 'info'); return; }
@@ -1863,12 +1862,7 @@ const PaintInventoryModule = (function() {
 
     function _lotAvailableCans(materialId, prodLot) {
         if (!materialId || !prodLot) return 0;
-        const lotLogs = (Storage.getAll(STORE) || []).filter(l =>
-            l.materialId === materialId && (l.prodLot || l.lotNo) === prodLot
-        );
-        const stockIn = lotLogs.filter(l => l.type !== '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-        return Math.max(0, stockIn - stockOut);
+        return Math.max(0, InvCalc.paintBalance(Storage.getAll(STORE) || [], materialId).lots[prodLot] || 0);
     }
 
     function _outgoingListupAlreadyDone(materialId, prodLot, paintMixId) {
@@ -2743,15 +2737,12 @@ const PaintInventoryModule = (function() {
         const data = Storage.getAll(STORE);
 
         // 제조LOT(prodLot) 기준 재고 계산 (없으면 lotNo 폴백)
-        const prodLotMap = {};  // key = prodLot||lotNo → { qty, lotNo }
-        data.filter(d => d.materialId === matId).forEach(d => {
-            const key = d.prodLot || d.lotNo || '__';
-            if (!prodLotMap[key]) prodLotMap[key] = { qty: 0, lotNo: d.lotNo || '' };
-            if (d.type === '출고') prodLotMap[key].qty -= Number(d.quantity) || 0;
-            else prodLotMap[key].qty += Number(d.quantity) || 0;
-        });
+        // 상세 팝업과 같은 원장(InvCalc) 잔량 기준
+        const bal = InvCalc.paintBalance(data, matId);
+        const prodLotMap = {};  // key = prodLot||lotNo → { qty }
+        Object.entries(bal.lots).forEach(([key, qty]) => { prodLotMap[key] = { qty }; });
 
-        const totalStock = Object.values(prodLotMap).reduce((a, v) => a + v.qty, 0);
+        const totalStock = bal.total;
 
         if (stockArea) {
             stockArea.style.display = 'block';
@@ -3039,30 +3030,35 @@ const PaintInventoryModule = (function() {
 
     function _bulkCurrentStockMap(materials) {
         const map = {};
-        (Storage.getAll(STORE) || []).forEach(d => {
-            const mat = (materials || []).find(m => m.id === d.materialId);
+        const balances = InvCalc.paintBalances(Storage.getAll(STORE) || []);
+        Object.keys(balances).forEach(mid => {
+            const mat = (materials || []).find(m => m.id === mid);
             if (!mat) return;
             const key = _bulkMaterialKey(mat.supplier || '', mat.name || '');
-            if (!map[key]) map[key] = 0;
-            const qty = Number(d.quantity) || 0;
-            map[key] += d.type === '출고' ? -qty : qty;
+            map[key] = (map[key] || 0) + balances[mid].total;
         });
         return map;
     }
 
     function _bulkStockByMaterialId() {
         const map = {};
-        (Storage.getAll(STORE) || []).forEach(d => {
+        const all = Storage.getAll(STORE) || [];
+        const balances = InvCalc.paintBalances(all);
+        all.forEach(d => {
             if (!d.materialId) return;
             if (!map[d.materialId]) map[d.materialId] = { total: 0, lots: {}, carModel: '' };
-            const qty = Number(d.quantity) || 0;
-            const sign = d.type === '출고' ? -1 : 1;
-            map[d.materialId].total += sign * qty;
             if (d.carModel && !map[d.materialId].carModel) map[d.materialId].carModel = d.carModel;
-            const lot = _normalizeText(d.prodLot || d.lotNo || '');
-            if (!lot) return;
-            if (!map[d.materialId].lots[lot]) map[d.materialId].lots[lot] = 0;
-            map[d.materialId].lots[lot] += sign * qty;
+        });
+        // 수량은 상세 팝업과 같은 원장(InvCalc) 기준
+        Object.keys(map).forEach(mid => {
+            const bal = balances[mid];
+            if (!bal) return;
+            map[mid].total = bal.total;
+            Object.entries(bal.lots).forEach(([lot, qty]) => {
+                const key = _normalizeText(lot === '무표기' ? '' : lot);
+                if (!key) return;
+                map[mid].lots[key] = (map[mid].lots[key] || 0) + qty;
+            });
         });
         return map;
     }
@@ -3430,9 +3426,7 @@ const PaintInventoryModule = (function() {
                 l.materialId === data.materialId &&
                 (l.prodLot || l.lotNo) === selectedProdLot
             );
-            const stockIn  = lotLogs.filter(l => l.type === '입고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-            const stockOut = lotLogs.filter(l => l.type === '출고').reduce((s, l) => s + (Number(l.quantity) || 0), 0);
-            const available = stockIn - stockOut;
+            const available = InvCalc.paintBalance(allLogs, data.materialId).lots[selectedProdLot] || 0;
             const pending = _outListupPendingQty(data.materialId, selectedProdLot);
 
             if (data.quantity + pending > available) {
@@ -3625,15 +3619,13 @@ const PaintInventoryModule = (function() {
         const data = Storage.getAll(STORE);
 
         // 제조LOT 기준 그룹핑
+        const bal = InvCalc.paintBalance(data, matId);
         const prodLotMap = {};
-        data.filter(d => d.materialId === matId).forEach(d => {
-            const key = d.prodLot || d.lotNo || '__';
-            if (!prodLotMap[key]) prodLotMap[key] = { qty: 0, lotNo: d.lotNo || '' };
-            if (d.type === '출고') prodLotMap[key].qty -= Number(d.quantity) || 0;
-            else prodLotMap[key].qty += Number(d.quantity) || 0;
-        });
+        Object.entries(bal.lots).forEach(([key, qty]) => { prodLotMap[key] = { qty }; });
+        // 수정 중인 기록의 LOT은 잔량이 0이어도 선택지에 남긴다
+        if (targetLot && !prodLotMap[targetLot]) prodLotMap[targetLot] = { qty: 0 };
 
-        const totalStock = Object.values(prodLotMap).reduce((a, v) => a + v.qty, 0);
+        const totalStock = bal.total;
 
         if (stockArea) {
             stockArea.style.display = 'block';
@@ -3704,14 +3696,7 @@ const PaintInventoryModule = (function() {
         if (data.type === '출고') {
             const allLogs = Storage.getAll(STORE);
             const selectedProdLot = data.lotNo; // select value = prodLot
-            const otherLogs = allLogs.filter(l =>
-                l.id !== id &&
-                l.materialId === data.materialId &&
-                (l.prodLot || l.lotNo) === selectedProdLot
-            );
-            const stockIn  = otherLogs.filter(l => l.type === '입고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-            const stockOut = otherLogs.filter(l => l.type === '출고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-            const available = stockIn - stockOut;
+            const available = InvCalc.paintBalance(allLogs, data.materialId, { excludeId: id }).lots[selectedProdLot] || 0;
 
             if (data.quantity > available) {
                 checkStockLive('edit', id);
@@ -3757,16 +3742,8 @@ const PaintInventoryModule = (function() {
 
         const allLogs = Storage.getAll(STORE);
         // 수정 모드일 경우 현재 항목(currentId)을 제외하고 계산
-        // 출고 모드에서 lotNo는 실제 prodLot 값을 담고 있음 — prodLot 우선 매칭
-        const filtered = allLogs.filter(l =>
-            (currentId ? l.id !== currentId : true) &&
-            l.materialId === matId &&
-            (l.prodLot || l.lotNo) === lotNo
-        );
-
-        const stockIn = filtered.filter(l => l.type === '입고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-        const stockOut = filtered.filter(l => l.type === '출고').reduce((sum, l) => sum + (Number(l.quantity) || 0), 0);
-        const available = stockIn - stockOut;
+        // 출고 모드에서 lotNo는 실제 prodLot 값을 담고 있음 — 상세 팝업과 같은 원장(InvCalc) 잔량 기준
+        const available = InvCalc.paintBalance(allLogs, matId, { excludeId: currentId || '' }).lots[lotNo] || 0;
 
         if (qty > available) {
             if (warningArea) {
@@ -3792,14 +3769,14 @@ const PaintInventoryModule = (function() {
                     lots: []
                 };
             }
-            if (d.type === '출고') {
-                stockMap[d.materialId].qty -= Number(d.quantity) || 0;
-            } else {
-                stockMap[d.materialId].qty += Number(d.quantity) || 0;
-                if (d.lotNo && !stockMap[d.materialId].lots.includes(d.lotNo)) {
-                    stockMap[d.materialId].lots.push(d.lotNo);
-                }
+            if (d.type !== '출고' && d.lotNo && !stockMap[d.materialId].lots.includes(d.lotNo)) {
+                stockMap[d.materialId].lots.push(d.lotNo);
             }
+        });
+        // 수량은 상세 팝업과 같은 원장(InvCalc) 기준
+        const balances = InvCalc.paintBalances(data);
+        Object.keys(stockMap).forEach(mid => {
+            stockMap[mid].qty = balances[mid] ? balances[mid].total : 0;
         });
 
         // 행 데이터 구성 (구매처 → 제품명 순 정렬)

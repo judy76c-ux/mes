@@ -403,6 +403,18 @@ var WarehouseOverviewModule = (function () {
             }
         });
 
+        // LOT 수량은 도료 창고 상세와 같은 원장(InvCalc) 기준으로 덮어쓴다
+        // (단순 입고−출고 합산은 보유분을 넘긴 출고까지 빼서 상세 화면과 어긋남)
+        const paintBal = InvCalc.paintBalances(all);
+        Object.keys(matMap).forEach(mid => {
+            const bal = paintBal[mid];
+            if (!bal) return;
+            Object.keys(matMap[mid]).forEach(lot => {
+                const key = lot === '__nolot__' ? '무표기' : lot;
+                matMap[mid][lot].qty = bal.lots[key] || 0;
+            });
+        });
+
         let itemCount = 0, totalStock = 0, expiredCount = 0, expiringCount = 0, longStock = 0, fifoCount = 0;
         const expiredItems = [], expiringItems = [], longItems = [], fifoItems = [];
 

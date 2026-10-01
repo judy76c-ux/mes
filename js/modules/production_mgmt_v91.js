@@ -18508,15 +18508,21 @@ var PaintMixModule = (function() {
     function _warehouseStockByLot(materialId) {
         const map = {};
         const ids = _materialIdsByName(materialId);
-        (Storage.getAll(PAINT_INV_STORE) || [])
-            .filter(r => ids.includes(r.materialId))
-            .forEach(r => {
-                const prodLot = r.prodLot || r.lotNo || '미표기';
-                if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo || '', warehouseCans: 0 };
-                if (!map[prodLot].lotNo && r.lotNo) map[prodLot].lotNo = r.lotNo;
-                if (r.type === '출고') map[prodLot].warehouseCans -= Number(r.quantity) || 0;
-                else map[prodLot].warehouseCans += Number(r.quantity) || 0;
+        const rows = (Storage.getAll(PAINT_INV_STORE) || []).filter(r => ids.includes(r.materialId));
+        rows.forEach(r => {
+            const prodLot = r.prodLot || r.lotNo || '미표기';
+            if (!map[prodLot]) map[prodLot] = { prodLot, lotNo: r.lotNo || '', warehouseCans: 0 };
+            if (!map[prodLot].lotNo && r.lotNo) map[prodLot].lotNo = r.lotNo;
+        });
+        // 수량은 도료 창고 상세와 같은 원장(InvCalc) 기준 (도료 ID별로 재생 후 LOT별 합산)
+        const balances = InvCalc.paintBalances(rows);
+        Object.keys(balances).forEach(mid => {
+            Object.entries(balances[mid].lots).forEach(([lot, qty]) => {
+                const key = lot === '무표기' ? '미표기' : lot;
+                if (!map[key]) map[key] = { prodLot: key, lotNo: '', warehouseCans: 0 };
+                map[key].warehouseCans += qty;
             });
+        });
         return map;
     }
 
