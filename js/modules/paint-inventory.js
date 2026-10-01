@@ -1985,7 +1985,7 @@ const PaintInventoryModule = (function() {
 
         const users = (typeof AuthModule !== 'undefined' ? AuthModule.getUsers() : []) || [];
         const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
-        const TARGET_ROLES = ['prod_worker', 'logistics_worker'];
+        const TARGET_ROLES = ['paint_line_op', 'logistics_worker']; // 도장라인운영자 + 물류작업자
         const workers = users.filter(u => {
             if (u.active === false) return false;
             const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean);
@@ -2679,7 +2679,7 @@ const PaintInventoryModule = (function() {
 
     function _fillWorkerSelect(type) {
         const users = (typeof AuthModule !== 'undefined' ? AuthModule.getUsers() : []) || [];
-        const TARGET_ROLES = ['prod_worker', 'logistics_worker'];
+        const TARGET_ROLES = ['paint_line_op', 'logistics_worker']; // 도장라인운영자 + 물류작업자
         const workers = users.filter(u => {
             if (u.active === false) return false;
             const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean);

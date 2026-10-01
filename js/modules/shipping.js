@@ -5169,14 +5169,7 @@ const ProductWarehouseModule = (function() {
             return;
         }
 
-        // 차종별 그룹핑
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
-        const byCarModel = {};
-        items.forEach(i => {
-            const car = i.car || '차종 미지정';
-            if (!byCarModel[car]) byCarModel[car] = [];
-            byCarModel[car].push(i);
-        });
 
         const _normItemType = raw => {
             const t = String(raw || '').trim();
@@ -5207,29 +5200,52 @@ const ProductWarehouseModule = (function() {
             // 컬러 표기가 다르거나 비어 있어도 차종+품명이 일치하면 그 품목의 구분을 그대로 사용
             return products.find(p => _normKey(p.carModel) === car && _normKey(p.partName) === part);
         };
+        // 제품마스터에 품명이 없을 때(재고실사 붙여넣기 등으로 마스터와 다른 품명이 들어온 경우)
+        // 같은 차종의 마스터 품목구분이 한 가지뿐이면 그 구분을 따른다. (예: A3 은 전부 A/S품)
+        const _carOnlyType = {};
+        (() => {
+            const seen = {};
+            products.forEach(p => {
+                const car = _normKey(p.carModel);
+                const t = _normItemType(p.itemType);
+                if (!car || !t) return;
+                (seen[car] = seen[car] || new Set()).add(t);
+            });
+            Object.keys(seen).forEach(car => { if (seen[car].size === 1) _carOnlyType[car] = [...seen[car]][0]; });
+        })();
         const resolveItemType = i => {
             const prod = _findProduct(i);
             if (prod && prod.itemType) return _normItemType(prod.itemType);
             const text = `${i.car || ''} ${i.part || ''} ${i.color || ''}`;
             if (/(^|[^A-Z0-9])A\/?S([^A-Z0-9]|$)/i.test(text) || /애프터|서비스/.test(text)) return 'A/S';
+            const carType = _carOnlyType[_normKey(i.car)];
+            if (carType) return carType;
             return '양산품';
         };
-        items.forEach(i => { i.itemType = resolveItemType(i); });
+        items.forEach(i => {
+            i.itemType = resolveItemType(i);
+            // 제품 기초정보(제품 마스터)에 차종+품명이 없는 재고 — 품명 오기·미등록 확인용 표시
+            i.noMaster = !_findProduct(i);
+        });
 
-        const getCarSection = car => {
-            const types = (byCarModel[car] || []).map(i => i.itemType);
-            if (types.length && types.every(t => t === 'A/S')) return 'as';
-            if (types.length && types.every(t => t === '개발품')) return 'dev';
-            return 'mass';
-        };
+        // 품목 단위로 양산품 / A/S / 개발품 구역을 나눈다.
+        // 예전엔 차종 단위(A/S 품목만 있는 차종만 A/S 구역)라, 양산·A/S가 섞인 차종(A3, A8 등)은
+        // A/S 품목까지 양산품 구역에 같이 보였다. 이제 같은 차종이 양산·A/S 구역에 각각 나뉘어 나온다.
+        const _itemSection = i => i.itemType === 'A/S' ? 'as' : (i.itemType === '개발품' ? 'dev' : 'mass');
+        const bySection = { mass: {}, as: {}, dev: {} };
+        items.forEach(i => {
+            const sec = _itemSection(i);
+            const car = i.car || '차종 미지정';
+            if (!bySection[sec][car]) bySection[sec][car] = [];
+            bySection[sec][car].push(i);
+        });
+        const _carItems = (section, car) => (bySection[section] && bySection[section][car]) || [];
 
-        // 양산품 → A/S → 개발품 차종 분리
-        const sortBySize = cars => cars.sort((a, b) =>
-            (byCarModel[b].length - byCarModel[a].length) || a.localeCompare(b, 'ko'));
-        const allCars = Object.keys(byCarModel);
-        const massanCars = sortBySize(allCars.filter(car => getCarSection(car) === 'mass'));
-        const asCars     = sortBySize(allCars.filter(car => getCarSection(car) === 'as'));
-        const devCars    = sortBySize(allCars.filter(car => getCarSection(car) === 'dev'));
+        const sortBySize = (cars, section) => cars.sort((a, b) =>
+            (_carItems(section, b).length - _carItems(section, a).length) || a.localeCompare(b, 'ko'));
+        const massanCars = sortBySize(Object.keys(bySection.mass), 'mass');
+        const asCars     = sortBySize(Object.keys(bySection.as), 'as');
+        const devCars    = sortBySize(Object.keys(bySection.dev), 'dev');
 
         const _sectionStyle = section => {
             if (section === 'as') return { header: '#475569', label: 'A/S 품목' };
@@ -5240,7 +5256,7 @@ const ProductWarehouseModule = (function() {
         function renderCarBlock(car, section) {
             const style = _sectionStyle(section);
             const headerColor = style.header;
-            const group = byCarModel[car].sort((a, b) =>
+            const group = _carItems(section, car).slice().sort((a, b) =>
                 _itemTypeRank(a.itemType) - _itemTypeRank(b.itemType) ||
                 (a.part || '').localeCompare(b.part, 'ko') ||
                 (a.color || '').localeCompare(b.color, 'ko')
@@ -5264,13 +5280,16 @@ const ProductWarehouseModule = (function() {
                 const traceMark = i.traceable
                     ? '<span title="역추적 가능: 상세 모달에서 사출 LOT 수입검사일 · 사용 도료 LOT 확인됨" style="color:var(--accent-blue);font-weight:800;margin-left:2px;cursor:help;">*</span>'
                     : '';
+                const noMasterTag = i.noMaster
+                    ? '<span title="제품 기초정보(제품 마스터)에 이 차종·품명이 없습니다. 품명 오기 또는 미등록 품목입니다." style="font-size:0.72em;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:3px;padding:0 0.3em;margin-left:0.3em;vertical-align:middle;font-weight:700;cursor:help;">기초정보 없음</span>'
+                    : '';
                 return `
                 <tr onclick="ProductWarehouseModule._showHistory('${keyEnc}', event)"
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
                     onmouseout="this.style.background=''">
                     <td class="pw-col-part">
-                        <span class="pw-part-name-text" title="${_escapeHtml(i.part)}">${_escapeHtml(i.part)}${traceMark}${typeTag}</span>
+                        <span class="pw-part-name-text" title="${_escapeHtml(i.part)}">${_escapeHtml(i.part)}${traceMark}${typeTag}${noMasterTag}</span>
                     </td>
                     <td class="pw-col-short pw-col-color">${_escapeHtml(i.color || '')}</td>
                     <td class="pw-col-short pw-col-stock">
@@ -5333,7 +5352,7 @@ const ProductWarehouseModule = (function() {
                     if (used.has(car)) return;
                     const heights = cols.map(function(list) {
                         return list.reduce(function(s, name) {
-                            return s + ((byCarModel[name] || []).length || 1);
+                            return s + (_carItems(section, name).length || 1);
                         }, 0);
                     });
                     const minIdx = heights.indexOf(Math.min.apply(null, heights));
@@ -5351,7 +5370,7 @@ const ProductWarehouseModule = (function() {
             const cols = Array.from({ length: colCount }, function() { return []; });
             const heights = Array(colCount).fill(0);
             ordered.forEach(function(car) {
-                const size = (byCarModel[car] || []).length || 1;
+                const size = _carItems(section, car).length || 1;
                 const minIdx = heights.indexOf(Math.min.apply(null, heights));
                 cols[minIdx].push(car);
                 heights[minIdx] += size + 1;
