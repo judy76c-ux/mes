@@ -5200,8 +5200,14 @@ const PaintingWorkModule = (function() {
                         const d = String(r.date || '').slice(0, 10);
                         return (!start || d >= start) && (!end || d <= end);
                     };
-                    _flowIn = (_f.incomingRows || []).filter(_inRange);
-                    _flowOut = (_f.outgoingRows || []).filter(_inRange);
+                    // 레이져 후 재공품은 그 재공을 소진하는 라인(예: 도장-B) 화면에만 보인다.
+                    // 도장-A는 사출물 투입 라인이라 재공입고/재공투입이 섞이면 안 된다.
+                    const _wantLine = _resolvePaintLine(want);
+                    const _lineHit = function (r) {
+                        return !r.drainLine || _resolvePaintLine(r.drainLine) === _wantLine;
+                    };
+                    _flowIn = (_f.incomingRows || []).filter(_inRange).filter(_lineHit);
+                    _flowOut = (_f.outgoingRows || []).filter(_inRange).filter(_lineHit);
                 } catch (e) { _flowIn = []; _flowOut = []; }
             }
             const _allWipRows = _flowIn.concat(_flowOut);

@@ -6085,6 +6085,8 @@ function _num(value) {
                 date: date,
                 paintLot: lots.paintLot,
                 injLot: lots.injLot,
+                // 이 재공품을 소진하는 도장 라인(레이져→도장-B 등) — 라인별 화면에서 걸러 쓰도록 표시
+                drainLine: drainMap[prodKey],
                 key: _productKey(w.carModel || '', w.partName || '', w.color || '')
             };
             if (w.isManualOut) {
@@ -6124,6 +6126,7 @@ function _num(value) {
                 injLot: lots.injLot,
                 route: '도장 투입',
                 note: w.line || w.note || '',
+                drainLine: drainLine,
                 key: _productKey(w.carModel || '', w.partName || '', w.color || '')
             });
         });
