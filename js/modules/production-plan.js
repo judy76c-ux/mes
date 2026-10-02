@@ -2553,6 +2553,11 @@ const ProductionPlanModule = (function() {
         });
         if (lineProducts.length === 0) lineProducts = products;
         const models = UIUtils.sortCarModels(lineProducts.map(p => p.carModel), lineProducts);
+        // 차종의 제품이 모두 A/S품이면 차종 옆에 (A/S) 표시
+        const _isAsCarModel = (car, list) => {
+            const ps = (list || []).filter(p => p.carModel === car);
+            return ps.length > 0 && ps.every(p => String(p.itemType || '').indexOf('A/S') >= 0);
+        };
 
         // 도장 컬러 우선 선택은 특정 차종이 아니라 모든 도장 계획에 적용한다.
         // 그래야 paintColorA/B가 품명별로 다른 제품도 차종 선택 직후 선택할 수 있다.
@@ -2708,7 +2713,7 @@ const ProductionPlanModule = (function() {
                     <label class="form-label">차종</label>
                     <select class="form-select" id="sModel" onchange="ProductionPlanModule.updateDropdowns('model', '${line}')" autofocus>
                         <option value="">선택</option>
-                        ${models.map(m => `<option value="${m}" ${m === modelValue ? 'selected' : ''}>${m}</option>`).join('')}
+                        ${models.map(m => `<option value="${m}" ${m === modelValue ? 'selected' : ''}>${m}${_isAsCarModel(m, lineProducts) ? ' (A/S)' : ''}</option>`).join('')}
                     </select>
                 </div>
                 <div class="form-group">

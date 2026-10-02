@@ -2492,7 +2492,7 @@ const PaintingWorkModule = (function() {
             const statusHint = !hasInbound
                 ? '<span style="font-size:0.68rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">사출 입고 필요</span>'
                 : '<span style="font-size:0.68rem;font-weight:700;color:#dc2626;background:rgba(220,38,38,.1);padding:1px 6px;border-radius:8px;margin-left:4px;">미입력 실적</span>';
-            const infoStr = '<strong>' + (p.carModel || '') + '</strong><br>' +
+            const infoStr = '<strong>' + (UIUtils.carModelLabel(p.carModel) || '') + '</strong><br>' +
                 '<span style="font-size:0.75rem;color:var(--text-muted);">' + (p.partName || '') +
                 (p.color ? ' / ' + p.color : '') + '</span>' + statusHint;
             const rowAccent = '#dc2626';
@@ -2907,7 +2907,7 @@ const PaintingWorkModule = (function() {
                 if (!ack || !ack.ok) UIUtils.toast('현장 입고는 등록됐지만 사출 부족 알림 반영에 실패했습니다.', 'warning');
             }
             UIUtils.toast(UIUtils.formatNumber(appliedQty) + ' EA를 잔여 재공품에서 출고해 현장 입고했습니다.', 'success');
-            openMissingInboundForPlan(planId);
+            UIUtils.closeModal();
         } catch (e) {
             UIUtils.toast('잔여 재공품 처리 실패: ' + (e && e.message ? e.message : e), 'error');
             if (button) button.disabled = false;
@@ -3949,7 +3949,7 @@ const PaintingWorkModule = (function() {
         return '<tr style="' + rowBg + '">' +
             '<td style="' + td + 'line-height:1.3;">' + workDateHtml + '</td>' +
             '<td style="' + td + 'line-height:1.3;">' + regDate + '</td>' +
-            '<td style="' + td + 'white-space:nowrap;">' + (d.carModel || '-') + '</td>' +
+            '<td style="' + td + 'white-space:nowrap;">' + (UIUtils.carModelLabel(d.carModel) || '-') + '</td>' +
             '<td style="' + td + 'white-space:nowrap;">' + (d.partName || '-') + '</td>' +
             '<td style="' + td + 'white-space:nowrap;">' + (d.color || '-') + '</td>' +
             '<td style="' + td + 'text-align:right;white-space:nowrap;">' + planQtyHtml + '</td>' +
@@ -10800,7 +10800,7 @@ const PaintingWorkModule = (function() {
             '<div class="card-body" style="padding:12px 18px;display:flex;flex-wrap:wrap;gap:14px;align-items:center;font-size:0.9rem;">' +
             '<div><span style="font-size:0.72rem;color:var(--text-muted);">도장 작업일</span><div style="font-weight:700;">' + workDateDisplay + '</div></div>' +
             '<div><span style="font-size:0.72rem;color:var(--text-muted);">라인</span><div style="font-weight:600;">' + (d.line || '-') + '</div></div>' +
-            '<div><span style="font-size:0.72rem;color:var(--text-muted);">차종/품명</span><div style="font-weight:600;">' + (d.carModel || '') + ' / ' + (d.partName || '') + '</div></div>' +
+            '<div><span style="font-size:0.72rem;color:var(--text-muted);">차종/품명</span><div style="font-weight:600;">' + (UIUtils.carModelLabel(d.carModel) || '') + ' / ' + (d.partName || '') + '</div></div>' +
             '</div></div>' +
 
             '<div class="card">' +
@@ -13087,7 +13087,7 @@ const PaintingInspectionModule = (function() {
                 <tr${_draft ? ' style="background:rgba(245,158,11,0.06);"' : ''}>
                     <td style="line-height:1.3;white-space:nowrap;">${_workDateHtml}</td>
                     <td style="white-space:nowrap;"><span class="badge badge-info">${w.line || '-'}</span></td>
-                    <td style="white-space:nowrap;">${w.carModel || '-'}</td>
+                    <td style="white-space:nowrap;">${UIUtils.carModelLabel(w.carModel) || '-'}</td>
                     <td style="white-space:nowrap;"><strong>${w.partName || '-'}</strong>${draftBadge}</td>
                     <td style="white-space:nowrap;">${w.color || '-'}</td>
                     <td style="font-family:monospace;font-size:0.85rem;white-space:nowrap;">${lotDisplay}</td>
@@ -13108,7 +13108,7 @@ const PaintingInspectionModule = (function() {
                 <tr style="background:${PARTIAL_PARENT_BG};">
                     <td style="line-height:1.3;white-space:nowrap;font-weight:700;${partialParentTdBase}">${_workDateHtml}</td>
                     <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}"><span class="badge badge-info">${w.line || '-'}</span></td>
-                    <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}">${w.carModel || '-'}</td>
+                    <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}">${UIUtils.carModelLabel(w.carModel) || '-'}</td>
                     <td style="white-space:nowrap;font-weight:800;${partialParentTdBase}"><strong>${w.partName || '-'}</strong>${partialBadge}${draftBadge}</td>
                     <td style="white-space:nowrap;font-weight:700;${partialParentTdBase}">${w.color || '-'}</td>
                     <td style="font-family:monospace;font-size:0.85rem;white-space:nowrap;font-weight:700;${partialParentTdBase}">${lotDisplay}</td>
@@ -13387,7 +13387,7 @@ const PaintingInspectionModule = (function() {
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">시간&nbsp;<strong style="color:var(--text-primary);">${work.startTime ? (work.startTime + (work.endTime ? ' ~ ' + work.endTime : '')) : '-'}</strong></span>
                     <span style="color:var(--border);">|</span>
-                    <span style="font-size:0.75rem; color:var(--text-muted);">차종&nbsp;<strong style="color:var(--text-primary);">${work.carModel || '-'}</strong></span>
+                    <span style="font-size:0.75rem; color:var(--text-muted);">차종&nbsp;<strong style="color:var(--text-primary);">${UIUtils.carModelLabel(work.carModel) || '-'}</strong></span>
                     <span style="color:var(--border);">|</span>
                     <span style="font-size:0.75rem; color:var(--text-muted);">품명&nbsp;<strong style="color:var(--text-primary);">${work.partName || '-'}</strong></span>
                     <span style="color:var(--border);">|</span>
@@ -14251,7 +14251,7 @@ const PaintingInspectionModule = (function() {
                                     <td style="line-height:1.3;white-space:nowrap;">${_inspDateHtml}</td>
                                     <td style="line-height:1.3;white-space:nowrap;">${_workDateHtml}</td>
                                     <td style="white-space:nowrap;"><span class="badge badge-info">${(_allWorks.find(w => w.id === (i.workId || i.productId)) || {}).line || '-'}</span></td>
-                                    <td style="white-space:nowrap;">${i.carModel || '-'}</td>
+                                    <td style="white-space:nowrap;">${UIUtils.carModelLabel(i.carModel) || '-'}</td>
                                     <td style="white-space:nowrap;"><strong>${i.partName || '-'}</strong></td>
                                     <td style="white-space:nowrap;">${i.color || '-'}</td>
                                     <td style="text-align:right;white-space:nowrap;">${UIUtils.formatNumber(insp)}</td>

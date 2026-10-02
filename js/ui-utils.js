@@ -303,6 +303,7 @@ const UIUtils = (function () {
     // closeModal 시 한 단계만 닫아 이전 창(예: 생산 계획 등록)을 복원한다.
     let _modalStack = [];
     let _modalCurrentOptions = null;
+    let _childModalCurrentOptions = null;
 
     function _syncFormValuesToDom(root) {
         if (!root) return;
@@ -386,6 +387,10 @@ const UIUtils = (function () {
     }
 
     function openModal(options) {
+        if (options && typeof options === 'object' && options._storageMutationVersionAtOpen == null &&
+            typeof Storage !== 'undefined' && typeof Storage.getMutationVersion === 'function') {
+            options._storageMutationVersionAtOpen = Storage.getMutationVersion();
+        }
         const overlay = document.getElementById('modal');
         const titleEl = document.getElementById('modalTitle');
         const bodyEl  = document.getElementById('modalBody');
@@ -483,6 +488,11 @@ const UIUtils = (function () {
     /** 기본 모달(#modal)과 별도 레이어 — 생산계획 등록 창을 유지한 채 사출/도료 정보 표시 */
     function openChildModal(options) {
         options = options || {};
+        if (options._storageMutationVersionAtOpen == null &&
+            typeof Storage !== 'undefined' && typeof Storage.getMutationVersion === 'function') {
+            options._storageMutationVersionAtOpen = Storage.getMutationVersion();
+        }
+        _childModalCurrentOptions = options;
         let overlay = document.getElementById('modalChild');
         if (!overlay) {
             overlay = document.createElement('div');
@@ -560,6 +570,8 @@ const UIUtils = (function () {
     function closeChildModal() {
         const overlay = document.getElementById('modalChild');
         if (!overlay) return;
+        const closingOptions = _childModalCurrentOptions;
+        _childModalCurrentOptions = null;
         overlay.classList.remove('active');
         const container = overlay.querySelector('.modal-container');
         if (container) _resetModalPosition(container);
@@ -567,6 +579,23 @@ const UIUtils = (function () {
         const footerEl = document.getElementById('modalChildFooter');
         if (bodyEl) bodyEl.innerHTML = '';
         if (footerEl) footerEl.innerHTML = '';
+        if (!isPrimaryModalOpen()) _refreshPageAfterModalMutation(closingOptions);
+    }
+
+    function _refreshPageAfterModalMutation(options) {
+        if (!options || options._storageMutationVersionAtOpen == null ||
+            typeof Storage === 'undefined' || typeof Storage.getMutationInfoSince !== 'function') return;
+        const mutation = Storage.getMutationInfoSince(options._storageMutationVersionAtOpen);
+        if (!mutation.changed || typeof Router === 'undefined' || typeof Router.renderModule !== 'function' ||
+            typeof Router.getCurrentPage !== 'function') return;
+        const page = Router.getCurrentPage();
+        const refreshStores = (typeof Storage.refresh === 'function')
+            ? mutation.stores.map(function (store) { return Storage.refresh(store); }) : [];
+        Promise.all(refreshStores).finally(function () {
+            if (Router.getCurrentPage() !== page) return;
+            Router.renderModule(page);
+            if (typeof MesZoomFit !== 'undefined' && MesZoomFit.schedule) MesZoomFit.schedule();
+        });
     }
 
     function closeModal() {
@@ -580,6 +609,7 @@ const UIUtils = (function () {
             return;
         }
 
+        const closingOptions = _modalCurrentOptions;
         const overlay = document.getElementById('modal');
         if (overlay) {
             overlay.classList.remove('active');
@@ -598,10 +628,17 @@ const UIUtils = (function () {
         _modalCurrentOptions = null;
         _modalStack = [];
         _releaseModalBackGuard();
+        if (closingOptions && typeof closingOptions.onClose === 'function') {
+            try { closingOptions.onClose(); }
+            catch (e) { console.warn('[UIUtils] modal onClose callback failed:', e); }
+        }
+        _refreshPageAfterModalMutation(closingOptions);
     }
 
     /** 중첩 스택·자식 모달까지 모두 닫고 오버레이를 비운다 (삭제 완료 후 등) */
     function closeAllModals() {
+        const closingOptions = _modalStack.length && _modalStack[0].options
+            ? _modalStack[0].options : _modalCurrentOptions;
         try { if (isChildModalOpen()) closeChildModal(); } catch (e) { /* ignore */ }
         _modalStack = [];
         _modalCurrentOptions = null;
@@ -630,6 +667,7 @@ const UIUtils = (function () {
         if (child) child.classList.remove('active');
         // history.back() 없이 가드만 해제 — 닫기 직후 popstate로 창이 다시 보이는 경합 방지
         modalBackGuardArmed = false;
+        _refreshPageAfterModalMutation(closingOptions);
     }
 
     // ── 확인 다이얼로그 ───────────────────────────────────────────────────
@@ -738,6 +776,31 @@ const UIUtils = (function () {
         const known = masterCarModelSet();
         if (!known.size) return list;
         return list.filter(v => known.has(v));
+    }
+
+    /** 차종 표시 — 제품 기본정보에서 그 차종의 제품이 모두 A/S품이면 "차종 (A/S)" */
+    let _asCarCache = null;
+    function _asCarSet() {
+        try {
+            const prods = (typeof Storage !== 'undefined' && DB && DB.STORES) ? (Storage.getAll(DB.STORES.PRODUCTS) || []) : [];
+            const sig = prods.length;
+            if (_asCarCache && _asCarCache.sig === sig) return _asCarCache.set;
+            const by = {};
+            prods.forEach(function (p) {
+                const c = String((p && p.carModel) || '').trim();
+                if (!c) return;
+                const as = String((p && p.itemType) || '').indexOf('A/S') >= 0;
+                by[c] = (by[c] === undefined) ? as : (by[c] && as);
+            });
+            const set = new Set(Object.keys(by).filter(function (c) { return by[c]; }));
+            _asCarCache = { sig: sig, set: set };
+            return set;
+        } catch (e) { return new Set(); }
+    }
+    function carModelLabel(carModel) {
+        const c = String(carModel == null ? '' : carModel).trim();
+        if (!c) return '';
+        return _asCarSet().has(c) ? c + ' (A/S)' : c;
     }
 
     function sortCarModels(values, sourceRows) {
@@ -933,6 +996,7 @@ const UIUtils = (function () {
         confirm,
         badge,
         itemTypeBadge,
+        carModelLabel,
         sortCarModels,
         masterCarModelSet,
         filterKnownCarModels,
