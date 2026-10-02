@@ -20570,6 +20570,10 @@ var ProdQualityModule = (function() {
                         <option value="도장-A" ${savedFilters.line === '도장-A' ? 'selected' : ''}>도장-A</option>
                         <option value="도장-B" ${savedFilters.line === '도장-B' ? 'selected' : ''}>도장-B</option>
                     </select>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.validateSameColorStandards()"
+                        style="height:42px;display:inline-flex;align-items:center;gap:5px;border-color:#f59e0b;color:#b45309;">
+                        <span class="material-symbols-outlined" style="font-size:17px;">fact_check</span> 동일 컬러 기준 검증
+                    </button>
                 </div>
 
                 <div id="pqStandardsBody"></div>
@@ -21459,6 +21463,219 @@ var ProdQualityModule = (function() {
         el.style.color = sel.length ? '#d97706' : 'var(--text-muted)';
     }
 
+    // 동일 컬러 품목에서 반드시 일치해야 하는 기준 항목.
+    // 광택·부착력 등은 제품/공정 특성에 따라 달라질 수 있어 검증 대상에서 제외한다.
+    const SAME_COLOR_STANDARD_KEYS = ['color_l', 'color_a', 'color_b', 'film_under', 'film_top'];
+    const SAME_COLOR_STANDARD_LABELS = {
+        color_l: '색차 △L', color_a: '색차 △a', color_b: '색차 △b',
+        film_under: '도막두께(하도)', film_top: '도막두께(상도)'
+    };
+
+    function _sameColorCanonicalValue(value) {
+        const text = String(value ?? '').trim().replace(/[−–—]/g, '-').replace(/\s+/g, ' ');
+        if (!text) return '';
+        const number = Number(text);
+        return Number.isFinite(number) ? String(number) : text;
+    }
+
+    function _sameColorCompareKey(value) {
+        return _sameColorCanonicalValue(value).toLocaleUpperCase('ko-KR');
+    }
+
+    function _sameColorStandardSignature(items, key) {
+        const item = (items || []).find(i => String(i?.key || '') === key);
+        if (!item) return '__missing__';
+        const { upperSpec, lowerSpec } = _rangeSpecValues(item);
+        return [
+            _specModeOf(item),
+            _sameColorCanonicalValue(item.targetSpec),
+            _sameColorCanonicalValue(upperSpec),
+            _sameColorCanonicalValue(lowerSpec),
+            _sameColorCanonicalValue(item.spec)
+        ].join('|');
+    }
+
+    function _sameColorTemplateLabel(template) {
+        const line = _normText(template.paintProcess || '');
+        return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '-'}${line ? ` / ${line}` : ''}`;
+    }
+
+    /**
+     * 동일 컬러의 기준값을 비교한다.
+     * excludeTemplateIds는 현재 저장 대상처럼 새 값으로 함께 덮어쓸 템플릿이다.
+     */
+    function _findSameColorStandardConflicts(color, items, excludeTemplateIds = []) {
+        const targetColor = _normText(color);
+        if (!targetColor) return [];
+        const excluded = new Set(excludeTemplateIds.filter(Boolean));
+        const rows = _templates().filter(t =>
+            _sameColorCompareKey(t.color || '') === _sameColorCompareKey(targetColor) && !excluded.has(t.id)
+        );
+        const conflicts = [];
+        SAME_COLOR_STANDARD_KEYS.forEach(key => {
+            const wanted = _sameColorStandardSignature(items, key);
+            const different = rows.filter(t => _sameColorStandardSignature(t.items, key) !== wanted);
+            if (different.length) {
+                conflicts.push({
+                    key,
+                    label: SAME_COLOR_STANDARD_LABELS[key] || key,
+                    wanted,
+                    rows: different
+                });
+            }
+        });
+        return conflicts;
+    }
+
+    function _sameColorSignatureDisplay(signature, key = '') {
+        if (signature === '__missing__') return '항목 없음';
+        const parts = String(signature).split('|');
+        const mode = parts[0];
+        const target = parts[1] || '';
+        const upper = parts[2] || '';
+        const lower = parts[3] || '';
+        const fallback = parts[4] || '';
+        const abs = value => String(value || '').replace(/^[+\-]/, '');
+        if (mode === 'deviation') {
+            const tolerance = upper || lower ? `+${abs(upper) || '?'} / -${abs(lower) || '?'}` : '';
+            if (target && tolerance) return `기준 ${target} · ${tolerance}`;
+            if (tolerance) return tolerance;
+            return fallback || '미입력';
+        }
+        if (mode === 'range') {
+            if (upper || lower) return `하 ${lower || '?'} ~ 상 ${upper || '?'}${String(key).startsWith('film_') ? ' μm' : ''}`;
+            return fallback || '미입력';
+        }
+        return fallback || target || upper || lower || '미입력';
+    }
+
+    function _sameColorConflictHtml(color, conflicts, prefixText = '') {
+        const safeColorId = _sameColorCompareKey(color).replace(/[^A-Z0-9가-힣_-]/g, '_');
+        const rows = conflicts.map((conflict, conflictIndex) => {
+            const bySignature = new Map();
+            conflict.rows.forEach(row => {
+                const signature = _sameColorStandardSignature(row.items, conflict.key);
+                if (!bySignature.has(signature)) bySignature.set(signature, []);
+                bySignature.get(signature).push(row);
+            });
+            const differentValues = [...bySignature.entries()].map(([signature, templates], valueIndex) => {
+                const detailId = `pqSaveConflict_${safeColorId}_${conflictIndex}_${valueIndex}`;
+                return `<div style="border:1px solid #fecaca;border-radius:8px;background:#fff;overflow:hidden;">
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;">
+                        <strong style="font-size:.9rem;color:#b91c1c;">${_esc(_sameColorSignatureDisplay(signature, conflict.key))}</strong>
+                        <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
+                            style="padding:3px 8px;background:#fff7ed;border:1px solid #fca5a5;color:#991b1b;font-size:.7rem;font-weight:800;">품목 ${templates.length}개 ▾</button>
+                    </div>
+                    <div id="${detailId}" style="display:none;padding:7px 10px;border-top:1px solid #fecaca;background:#fff7ed;font-size:.76rem;color:#7f1d1d;line-height:1.65;">
+                        ${templates.map(row => `<div>• ${_esc(_sameColorTemplateLabel(row))}</div>`).join('')}
+                    </div>
+                </div>`;
+            }).join('');
+            return `<div style="padding:10px 12px;margin-bottom:10px;background:#fff;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:9px;">
+                <div style="font-weight:900;color:#7f1d1d;margin-bottom:8px;">${_esc(conflict.label)}</div>
+                <div style="display:grid;grid-template-columns:minmax(210px,.8fr) minmax(260px,1.2fr);gap:10px;align-items:start;">
+                    <div style="padding:9px 11px;background:#eff6ff;border:2px solid #2563eb;border-radius:8px;">
+                        <div style="font-size:.67rem;font-weight:800;color:#1d4ed8;margin-bottom:3px;">현재 입력값</div>
+                        <strong style="font-size:1rem;color:#1d4ed8;">${_esc(_sameColorSignatureDisplay(conflict.wanted, conflict.key))}</strong>
+                    </div>
+                    <div style="display:grid;gap:7px;">${differentValues}</div>
+                </div>
+            </div>`;
+        }).join('');
+        return `<div style="font-size:.84rem;color:#7f1d1d;margin-bottom:10px;">${prefixText || '동일 컬러 기준값이 서로 다릅니다.'}</div>
+            <div style="overflow:auto;max-height:48vh;">${rows}</div>`;
+    }
+
+    // 품목별 기준 화면에서 기존 기준 전체를 검사하는 공개 동작.
+    function validateSameColorStandards() {
+        const groups = new Map();
+        _templates().forEach(template => {
+            const color = _normText(template.color || '');
+            if (!color) return;
+            const groupKey = _sameColorCompareKey(color);
+            if (!groups.has(groupKey)) groups.set(groupKey, { label: color, templates: [] });
+            groups.get(groupKey).templates.push(template);
+        });
+
+        const mismatches = [];
+        groups.forEach(group => {
+            const templates = group.templates;
+            SAME_COLOR_STANDARD_KEYS.forEach(key => {
+                const signatures = new Map();
+                templates.forEach(template => {
+                    const signature = _sameColorStandardSignature(template.items, key);
+                    if (!signatures.has(signature)) signatures.set(signature, []);
+                    signatures.get(signature).push(template);
+                });
+                if (signatures.size > 1) {
+                    mismatches.push({ color: group.label, key, label: SAME_COLOR_STANDARD_LABELS[key] || key, signatures });
+                }
+            });
+        });
+
+        if (!mismatches.length) {
+            UIUtils.showModal('동일 컬러 기준 검증', `
+                <div style="padding:24px;text-align:center;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
+                    <span class="material-symbols-outlined" style="font-size:34px;display:block;margin-bottom:8px;">verified</span>
+                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">동일 컬러의 색차·도막 기준값이 모두 일치합니다.</span>
+                </div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'sm');
+            return;
+        }
+
+        const colorCount = new Set(mismatches.map(group => _sameColorCompareKey(group.color))).size;
+        const valueColors = [
+            { border:'#2563eb', bg:'#eff6ff', text:'#1d4ed8' },
+            { border:'#dc2626', bg:'#fef2f2', text:'#b91c1c' },
+            { border:'#d97706', bg:'#fffbeb', text:'#b45309' },
+            { border:'#7c3aed', bg:'#f5f3ff', text:'#6d28d9' }
+        ];
+        const html = mismatches.map((group, groupIndex) => {
+            const values = [...group.signatures.entries()].map(([signature, rows], valueIndex) => {
+                const tone = valueColors[valueIndex % valueColors.length];
+                const detailId = `pqSameColorConflict_${groupIndex}_${valueIndex}`;
+                const productRows = rows.map(row => {
+                    const line = _normText(row.paintProcess || '');
+                    return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
+                        <strong style="color:#334155;">${_esc(_normText(row.carModel) || '-')}</strong>
+                        <span style="color:#475569;word-break:break-word;">${_esc(_normText(row.partName) || '-')}</span>
+                        ${line ? `<span style="white-space:nowrap;padding:1px 6px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:.7rem;font-weight:700;">${_esc(line)}</span>` : '<span></span>'}
+                    </div>`;
+                }).join('');
+                return `<div style="min-width:260px;flex:1 1 300px;border:2px solid ${tone.border};border-radius:10px;background:${tone.bg};overflow:hidden;">
+                    <div style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                        <div>
+                            <div style="font-size:.68rem;font-weight:800;color:${tone.text};margin-bottom:3px;">기준 ${String.fromCharCode(65 + valueIndex)}</div>
+                            <div style="font-size:1.05rem;font-weight:900;color:${tone.text};line-height:1.35;">${_esc(_sameColorSignatureDisplay(signature, group.key))}</div>
+                        </div>
+                        <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
+                            style="flex-shrink:0;padding:4px 9px;background:#fff;border:1px solid ${tone.border};color:${tone.text};font-size:.72rem;font-weight:800;">
+                            적용 ${rows.length}개 ▾
+                        </button>
+                    </div>
+                    <div id="${detailId}" style="display:none;background:#fff;border-top:1px solid ${tone.border};max-height:210px;overflow:auto;">${productRows}</div>
+                </div>`;
+            }).join('');
+            return `<section style="margin-bottom:14px;border:1px solid #fecaca;border-left:5px solid #dc2626;border-radius:10px;background:#fff;box-shadow:0 2px 6px rgba(127,29,29,.06);overflow:hidden;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;background:#fff7ed;border-bottom:1px solid #fed7aa;">
+                    <span style="padding:3px 9px;border-radius:999px;background:#9a3412;color:#fff;font-size:.76rem;font-weight:900;">${_esc(group.color)}</span>
+                    <strong style="font-size:.93rem;color:#7f1d1d;">${_esc(group.label)}</strong>
+                    <span style="margin-left:auto;font-size:.72rem;font-weight:800;color:#dc2626;">서로 다른 기준 ${group.signatures.size}종</span>
+                </div>
+                <div style="display:flex;gap:10px;flex-wrap:wrap;padding:10px 12px;">${values}</div>
+            </section>`;
+        }).join('');
+        UIUtils.showModal('동일 컬러 기준 검증 결과', `
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;margin-bottom:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:9px;">
+                <span class="material-symbols-outlined" style="font-size:25px;color:#dc2626;">error</span>
+                <div style="flex:1;min-width:220px;">
+                    <div style="font-weight:900;color:#991b1b;">기준값이 다른 컬러 ${colorCount}개 · 문제 항목 ${mismatches.length}개</div>
+                    <div style="font-size:.76rem;color:#b91c1c;margin-top:2px;">색상별 기준 A/B를 먼저 비교하고, 적용 품목은 버튼을 눌러 확인하세요.</div>
+                </div>
+            </div>
+            <div style="max-height:62vh;overflow:auto;padding-right:4px;">${html}</div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
+    }
+
     function _getSameColorTemplateCandidates(productId, color, paintProcess = '') {
         const targetColor = _normText(color || '');
         const targetProc = _normText(paintProcess || '');
@@ -21623,6 +21840,46 @@ var ProdQualityModule = (function() {
         const matchedPreset = matchedPresetName
             ? (appliedPreset || (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === matchedPresetName))
             : null;
+
+        // 저장 전, 같은 컬러의 기존 품목과 색차/도막 기준을 비교한다.
+        // 현재 품목과 동일 컬러 동시 적용 대상은 이번 저장값으로 함께 바뀌므로 비교에서 제외한다.
+        const saveTargetIds = new Set(saveTargets.map(p => p.id).filter(Boolean));
+        const targetTemplateIds = _templates().filter(t => {
+            if (saveTargetIds.has(t.productId)) return true;
+            return saveTargets.some(p => {
+                const cm = _normText(p.carModel);
+                const pn = _normText(p.partName || '');
+                const proc = _normText(paintProcess || '');
+                const colors = [
+                    _resolveProductColor(p, proc),
+                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''),
+                    _normText(p.paintColorA || ''),
+                    _normText(p.paintColorB || '')
+                ].filter(Boolean);
+                return _normText(t.carModel) === cm
+                    && _normText(t.partName || '') === pn
+                    && (!_normText(t.paintProcess || '') || _normText(t.paintProcess || '') === proc)
+                    && (!colors.length || colors.some(c => _sameColorCompareKey(c) === _sameColorCompareKey(t.color || '')));
+            });
+        }).map(t => t.id);
+        const colorsToCheck = [...new Set(saveTargets.map(p => _resolveProductColor(p, paintProcess)).filter(Boolean))];
+        const sameColorConflicts = colorsToCheck.flatMap(color => {
+            const conflicts = _findSameColorStandardConflicts(color, items, targetTemplateIds);
+            return conflicts.length ? [{ color, conflicts }] : [];
+        });
+        if (sameColorConflicts.length) {
+            const conflictHtml = sameColorConflicts.map(group =>
+                `<div style="margin-bottom:14px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;">
+                    <div style="font-weight:800;color:#9a3412;margin-bottom:8px;">컬러 ${_esc(group.color)}</div>
+                    ${_sameColorConflictHtml(group.color, group.conflicts, '현재 입력값과 기존 동일 컬러 품목의 기준이 달라 저장을 중단했습니다.')}
+                </div>`
+            ).join('');
+            UIUtils.showModal('동일 컬러 기준 불일치', `
+                <div style="font-size:.84rem;color:#991b1b;margin-bottom:10px;">색차(△L/△a/△b)와 도막두께(하도/상도)는 동일 컬러에서 같은 기준을 사용해야 합니다. 기존 품목 기준을 확인하거나 동일 컬러 품목에 함께 적용한 뒤 다시 저장하세요.</div>
+                <div style="max-height:58vh;overflow:auto;">${conflictHtml}</div>`,
+                `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">확인</button>`, 'xl');
+            return;
+        }
 
         try {
             for (const p of saveTargets) {
@@ -26652,6 +26909,7 @@ window.addEventListener('afterprint', () => {
         ,handleQualityStandardPaste
         ,printQualityStandardPage
         ,renderStandardsCard
+        ,validateSameColorStandards
         ,onStdFilterCarChange
         ,openSpecModal
         ,saveSpecModal
