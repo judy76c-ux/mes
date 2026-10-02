@@ -2370,6 +2370,21 @@ var PaintingInputModule = (function () {
         };
     }
 
+    /** 같은 라인·차종·사출명·LOT의 현장 입고 기록 컬러(가장 최근 건). 없으면 ''. */
+    function _inboundColorForLot(line, carModel, partName, lotNo) {
+        try {
+            const recs = (_recordsForLine(line) || []).filter(function (r) {
+                if (String(r.type || '') !== '입고' || !r.color) return false;
+                if (carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, carModel)) return false;
+                if (partName && r.partName && String(r.partName).trim() !== String(partName).trim()) return false;
+                const es = (Array.isArray(r.lots) && r.lots.length) ? r.lots : [{ lotNo: r.lotNo }];
+                return es.some(function (e) { return String((e && e.lotNo) || '').trim() === lotNo; });
+            });
+            recs.sort(function (a, b) { return String(b.date || '').localeCompare(String(a.date || '')); });
+            return recs.length ? String(recs[0].color) : '';
+        } catch (e) { return ''; }
+    }
+
     /** 도장 작업 실적 등록 시 현장 투입 LOT 차감 */
     async function deductForWork(work) {
         if (!work) return;
@@ -2387,7 +2402,10 @@ var PaintingInputModule = (function () {
                 paintLine: line,
                 carModel: work.carModel || '',
                 partName: l.partName || work.injPartName || work.partName || '',
-                color: l.color || work.injColor || work.color || '',
+                // 사출 컬러가 비어 있으면 도장 제품 컬러(6PS/AZ3 등)로 떨어져 입고(WHITE)와 다른
+                // 컬러 묶음에 차감이 기록된다 → 입고는 "미사용"으로 남고 차감은 허공에 뜬다.
+                // 그래서 같은 LOT의 현장 입고 기록 컬러를 먼저 따른다.
+                color: l.color || work.injColor || _inboundColorForLot(line, work.carModel, l.partName || work.injPartName || work.partName, lotNo) || work.color || '',
                 lots: [{ lotNo: lotNo, qty: qty }],
                 lotNo: lotNo,
                 quantity: qty,
@@ -3046,8 +3064,8 @@ var PaintingInputModule = (function () {
 
         if (hasLots && siblingCount > 0) {
             const requirePartMatch = Object.keys(injNames).length > 0;
-            let total = 0;
             const seenLot = {};
+            const receivedByLot = {};
             dayRecords.forEach(function (r) {
                 const outKey = _inboundOutDedupeKey(r);
                 if (seenLot[outKey]) return;
@@ -3059,13 +3077,18 @@ var PaintingInputModule = (function () {
                 _issuedLotsOfRecord(r).forEach(function (l) {
                     const n = String(l.lotNo || '').trim();
                     if (!n || !lotSet[n]) return;
-                    // 한 LOT을 여러 실적이 나눠 썼으면(앞 계획이 쓰고 남은 분을 다음 계획이 사용),
-                    // 다른 실적이 쓴 수량은 이 실적의 현장입고가 아니다 — 그만큼 빼지 않으면
-                    // 다음 계획에서 정상 사용한 수량이 이 실적의 "유실"로 표시된다.
-                    const received = Number(l.qty) || 0;
-                    const share = Math.max(ownUsedByLot[n] || 0, received - (otherUsedByLot[n] || 0));
-                    total += Math.min(received, share);
+                    receivedByLot[n] = (receivedByLot[n] || 0) + (Number(l.qty) || 0);
                 });
+            });
+            // LOT별로 합산한 뒤 몫을 정한다(입고 건별로 나누면 같은 LOT이 두 입고에 걸친 경우
+            // 한 LOT의 사용량이 건마다 되풀이 적용된다). 한 LOT을 여러 실적이 나눠 썼으면(앞 계획이
+            // 쓰고 남은 분을 다음 계획이 사용), 다른 실적이 쓴 수량은 이 실적의 현장입고가 아니다.
+            // → 이 실적 몫 = max(내가 쓴 수량, 입고 − 다른 실적이 쓴 수량), 입고 총량 이하.
+            let total = 0;
+            Object.keys(receivedByLot).forEach(function (n) {
+                const received = receivedByLot[n];
+                const share = Math.max(ownUsedByLot[n] || 0, received - (otherUsedByLot[n] || 0));
+                total += Math.min(received, share);
             });
             return total;
         }
