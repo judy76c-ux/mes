@@ -2757,7 +2757,15 @@ const PaintInventoryModule = (function() {
         const opts = '<option value="">-- 선택 --</option>' +
             _eligibleWorkers().map(u => `<option value="${_escapeHtml(_workerName(u))}">${_escapeHtml(_workerName(u))}</option>`).join('');
         const sel = document.getElementById(type === '입고' ? 'addPaintInvReceivedBy' : 'addPaintInvIssuedBy');
-        if (sel) sel.innerHTML = opts;
+        if (sel) {
+            const keep = sel.value;
+            sel.innerHTML = opts;
+            // 로그인한 사용자를 기본 선택(목록에 있을 때만). 이미 고른 값이 있으면 유지.
+            const me = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+            const meName = String(me.displayName || me.username || '');
+            const want = keep || meName;
+            if (want && Array.prototype.some.call(sel.options, o => o.value === want)) sel.value = want;
+        }
     }
 
     // MES 관리자 전용: 입·출고자 목록의 표시 순서 편집

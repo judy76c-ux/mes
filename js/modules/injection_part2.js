@@ -1295,8 +1295,110 @@ var InjectionWarehouseModule = (function() {
             .sort(function(a, b) { return a.name.localeCompare(b.name, 'ko'); });
     }
 
+    // ── 입고자/출고자 표시 순서(MES 관리자 지정) ──
+    const INJ_ACTOR_ORDER_KEYS = { receiver: 'inj_wh_receiver_order', issuer: 'inj_wh_issuer_order' };
+    let _injActorOrder = { receiver: [], issuer: [] };
+    let _injActorOrderLoaded = false;
+
+    async function _loadInjActorOrders() {
+        try {
+            const r = await Storage.getConfigValue(INJ_ACTOR_ORDER_KEYS.receiver);
+            const i = await Storage.getConfigValue(INJ_ACTOR_ORDER_KEYS.issuer);
+            _injActorOrder = {
+                receiver: Array.isArray(r) ? r.map(String) : [],
+                issuer: Array.isArray(i) ? i.map(String) : []
+            };
+        } catch (e) { /* 순서 없이 기본 정렬 */ }
+        _injActorOrderLoaded = true;
+    }
+
+    function _applyInjActorOrder(users, kind) {
+        const order = _injActorOrder[kind] || [];
+        if (!order.length) return users;
+        const rank = function(u) { const i = order.indexOf(u.id); return i < 0 ? 1e6 : i; };
+        return users.map(function(u, i) { return { u: u, i: i }; })
+            .sort(function(a, b) { return (rank(a.u) - rank(b.u)) || (a.i - b.i); })
+            .map(function(x) { return x.u; });
+    }
+
+    function _injActorOrderBtnHtml(kind) {
+        if (!_isAdminUser()) return '';
+        return ' <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.72rem;margin-left:6px;"' +
+            ' onclick="InjectionWarehouseModule.openActorOrderEditor(\'' + kind + '\')">순서 설정</button>';
+    }
+
+    let _injOrderDraft = [];
+    let _injOrderKind = 'receiver';
+    async function openActorOrderEditor(kind) {
+        if (!_isAdminUser()) { UIUtils.toast('MES 관리자만 순서를 정할 수 있습니다.', 'warning'); return; }
+        _injOrderKind = kind === 'issuer' ? 'issuer' : 'receiver';
+        await _loadInjActorOrders();
+        const users = _injOrderKind === 'issuer' ? _getLogisticsWorkerUsers() : _getProductionWorkerUsers();
+        _injOrderDraft = users.map(function(u) { return { id: u.id, name: u.name }; });
+        const title = _injOrderKind === 'issuer' ? '출고자 표시 순서' : '입고자 표시 순서';
+        const body = '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">▲▼로 순서를 바꾸고 저장하세요.</div><div id="injActorOrderList"></div>';
+        const footer = '<button class="btn btn-secondary" onclick="UIUtils.closeChildModal ? UIUtils.closeChildModal() : UIUtils.closeModal()">취소</button>' +
+            '<button class="btn btn-primary" onclick="InjectionWarehouseModule.saveActorOrder()">저장</button>';
+        if (typeof UIUtils.showChildModal === 'function') UIUtils.showChildModal(title, body, footer, 'sm');
+        else UIUtils.showModal(title, body, footer, 'sm');
+        _renderInjActorOrderList();
+    }
+
+    function _renderInjActorOrderList() {
+        const el = document.getElementById('injActorOrderList');
+        if (!el) return;
+        el.innerHTML = _injOrderDraft.map(function(u, i) {
+            return '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-color);">' +
+                '<span style="width:22px;color:var(--text-muted);font-size:0.78rem;">' + (i + 1) + '</span>' +
+                '<span style="flex:1;font-weight:600;">' + _escapeHtml(u.name) + '</span>' +
+                '<button type="button" class="btn btn-sm btn-outline"' + (i === 0 ? ' disabled' : '') + ' onclick="InjectionWarehouseModule.moveActorOrder(' + i + ',-1)">▲</button>' +
+                '<button type="button" class="btn btn-sm btn-outline"' + (i === _injOrderDraft.length - 1 ? ' disabled' : '') + ' onclick="InjectionWarehouseModule.moveActorOrder(' + i + ',1)">▼</button>' +
+                '</div>';
+        }).join('') || '<div style="color:var(--text-muted);">대상 사용자가 없습니다.</div>';
+    }
+
+    function moveActorOrder(i, d) {
+        const j = i + d;
+        if (j < 0 || j >= _injOrderDraft.length) return;
+        const t = _injOrderDraft[i]; _injOrderDraft[i] = _injOrderDraft[j]; _injOrderDraft[j] = t;
+        _renderInjActorOrderList();
+    }
+
+    async function saveActorOrder() {
+        if (!_isAdminUser()) return;
+        const ids = _injOrderDraft.map(function(u) { return u.id; });
+        try {
+            await Storage.setConfigValue(INJ_ACTOR_ORDER_KEYS[_injOrderKind], ids);
+            _injActorOrder[_injOrderKind] = ids;
+        } catch (e) {
+            UIUtils.toast('순서 저장에 실패했습니다.', 'error');
+            return;
+        }
+        if (typeof UIUtils.closeChildModal === 'function') UIUtils.closeChildModal(); else UIUtils.closeModal();
+        _refillInjActorSelects();
+        if (document.getElementById('injOutListupIssuer') && typeof renderOutgoingListup === 'function') renderOutgoingListup();
+        UIUtils.toast('표시 순서를 저장했습니다.', 'success');
+    }
+
+    /** 열려 있는 입고자/출고자 드롭다운을 현재 순서로 다시 채우고, 선택값(없으면 로그인한 사용자)을 유지 */
+    function _refillInjActorSelects() {
+        const rcv = document.getElementById('addInvReceivedBy');
+        if (rcv) {
+            const cur = rcv.value;
+            rcv.innerHTML = '<option value="">-- 선택 --</option>' + _buildProductionWorkerOptionHtml();
+            if (cur) { _ensureActorOption(rcv); rcv.value = cur; }
+        }
+        const out = document.getElementById('addInvOutgoingBy');
+        if (out) {
+            const cur = out.value;
+            out.innerHTML = '<option value="">-- 출고자 선택 --</option>' + _buildLogisticsWorkerOptionHtml();
+            if (cur) out.value = cur;
+        }
+        if (rcv || out) _prefillActorSelect(rcv ? '입고' : '출고', true);
+    }
+
     function _getProductionWorkerUsers() {
-        return _getUsersByRoles(['prod_worker']);
+        return _applyInjActorOrder(_getUsersByRoles(['prod_worker']), 'receiver');
     }
 
     // 순서(물류작업자 → 생산관리자)대로 역할별로 묶어서 반환한다.
@@ -1311,7 +1413,7 @@ var InjectionWarehouseModule = (function() {
                 result.push(u);
             });
         });
-        return result;
+        return _applyInjActorOrder(result, 'issuer');
     }
 
     function _isValidOutgoingActor(actorId) {
@@ -2051,11 +2153,12 @@ var InjectionWarehouseModule = (function() {
         selectEl.appendChild(opt);
     }
 
-    function _prefillActorSelect(type) {
+    function _prefillActorSelect(type, keepIfSet) {
         const actorId = _getCurrentActorId();
         if (!actorId) return;
         const sel = document.getElementById(type === '입고' ? 'addInvReceivedBy' : 'addInvOutgoingBy');
         if (!sel) return;
+        if (keepIfSet && sel.value) return;
         if (type === '출고') {
             if (!_isValidOutgoingActor(actorId)) return;
         } else {
@@ -4968,6 +5071,12 @@ var InjectionWarehouseModule = (function() {
             return;
         }
 
+        if (!_injActorOrderLoaded) {
+            _injActorOrderLoaded = true;
+            _loadInjActorOrders().then(function() {
+                if (document.getElementById('injOutListupIssuer')) renderOutgoingListup();
+            });
+        }
         const defaultActorId = _injOutListupIssuerId || _getCurrentActorId();
         const issuerOpts = '<option value="">-- 출고자 선택 --</option>' +
             _getLogisticsWorkerUsers().map(function(u) {
@@ -5033,7 +5142,7 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div style="padding:12px 16px;border-top:1px solid var(--border-color);background:var(--bg-secondary);display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
                 <div class="form-group" style="margin:0;min-width:180px;flex:1 1 180px;">
-                    <label class="form-label" style="font-size:0.75rem;">출고자 <span style="color:var(--accent-red);">*</span></label>
+                    <label class="form-label" style="font-size:0.75rem;">출고자 <span style="color:var(--accent-red);">*</span>${_injActorOrderBtnHtml('issuer')}</label>
                     <select class="form-select" id="injOutListupIssuer" style="font-size:0.85rem;">${issuerOpts}</select>
                 </div>
                 <button class="btn btn-primary" onclick="InjectionWarehouseModule.confirmOutgoingListup()">
@@ -8750,7 +8859,7 @@ var InjectionWarehouseModule = (function() {
                 </div>
                 ${type === '입고' ? `
                 <div class="form-group">
-                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(임의 입고)</span></label>
+                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(임의 입고)</span>${_injActorOrderBtnHtml('receiver')}</label>
                     <select class="form-select" id="addInvReceivedBy">
                         <option value="">-- 선택 --</option>
                         ${_buildProductionWorkerOptionHtml()}
@@ -8758,7 +8867,7 @@ var InjectionWarehouseModule = (function() {
                 </div>` : `
                 <div class="form-group">
                     <label class="form-label">출고자 <span style="color:var(--accent-red)">*</span>
-                        <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(물류 담당자)</span></label>
+                        <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(물류 담당자)</span>${_injActorOrderBtnHtml('issuer')}</label>
                     <select class="form-select" id="addInvOutgoingBy">
                         <option value="">-- 출고자 선택 --</option>
                         ${_buildLogisticsWorkerOptionHtml()}
@@ -8774,6 +8883,8 @@ var InjectionWarehouseModule = (function() {
             if (!_lockedInspInbound) addInvLotRow();
             _prefillActorSelect(type);
         }, 100);
+        // 관리자가 정한 입·출고자 순서를 불러와 드롭다운에 반영(로그인한 사용자가 기본 선택)
+        _loadInjActorOrders().then(function() { _refillInjActorSelects(); });
 
         // 외주처 목록이 아직 로드 안 됐으면(외주처 관리 화면을 아직 안 연 경우) 비동기로 채워 넣는다.
         if (type === '출고' && typeof SalesOutsourcingModule !== 'undefined') {
@@ -13043,6 +13154,9 @@ var InjectionWarehouseModule = (function() {
         showReserveDetailPopup,
         openSiteInboundShortageResolve,
         confirmSiteInboundShortageResolve,
+        openActorOrderEditor,
+        moveActorOrder,
+        saveActorOrder,
         cancelReworkShortage,
         openReworkDispatchFromShortage,
         toggleSiteInboundShortageNotify,
