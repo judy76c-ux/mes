@@ -925,7 +925,7 @@ const ProductionPlanModule = (function() {
                 const isMealRunning = activeItem && activeItem.mealTimeWork && activeEndTime > slot;
                 const mealRunBanner = isMealRunning
                     ? `<span style="margin-left:12px;display:inline-flex;align-items:center;gap:4px;padding:2px 10px;background:rgba(249,115,22,0.15);border:1px solid rgba(249,115,22,0.4);border-radius:12px;font-size:0.75rem;font-weight:700;color:#ea580c;">
-                           🔄 교대 가동 중 — ${activeItem.carModel} ${activeItem.partName}
+                           🔄 교대 가동 중 — ${UIUtils.carModelLabel(activeItem.carModel)} ${activeItem.partName}
                        </span>`
                     : '';
                 const mealBg = isMealRunning ? 'background:rgba(249,115,22,0.06);' : 'background-color:#f1f5f9;';
@@ -1005,7 +1005,7 @@ const ProductionPlanModule = (function() {
                 : '';
             if (emptyNotice) emptyNoticeShown = true;
             const mergedPlanCells = mergedRowIsCovered ? '' : `
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.carModel || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${activeItem?.carModel || ''}</span>`))}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${UIUtils.carModelLabel(item.carModel) || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${UIUtils.carModelLabel(activeItem?.carModel) || ''}</span>`))}</td>
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
                     <td class="editable-cell text-right" ${trClick} ${rowSpanAttr}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
@@ -1313,6 +1313,89 @@ const ProductionPlanModule = (function() {
 
     // 계획에 필요한 도료(주제/경화제/희석제) 중 재고가 바닥난(<=0) 항목의 표시명 목록 반환
     // ※ 개당(EA) 소요량 데이터가 없어 정확한 필요량 비교는 불가 — 재고 유무만 검사
+    // 배합실 도료재고(주제 도료, kg) — PaintMixModule(제조 관리 번들, lazy)에서 가져온다.
+    // 번들이 아직 안 올라왔으면 백그라운드로 로드한 뒤 패널을 다시 그린다.
+    let _mixResidualLoadStarted = false;
+    function _mixRoomResidualKg(matId) {
+        if (typeof PaintMixModule !== 'undefined' && typeof PaintMixModule.getMixingRoomResiduals === 'function') {
+            try {
+                const g = (PaintMixModule.getMixingRoomResiduals() || [])
+                    .filter(r => r.materialId === matId)
+                    .reduce((sum, r) => sum + (Number(r.residualG) || 0), 0);
+                return g / 1000;
+            } catch (e) { return 0; }
+        }
+        if (!_mixResidualLoadStarted && typeof Router !== 'undefined' && typeof Router.ensureLazyLoaded === 'function') {
+            _mixResidualLoadStarted = true;
+            Router.ensureLazyLoaded('paint-mix').then(function () {
+                if (document.getElementById('paintStockPanel')) updatePaintStockPanel();
+            }).catch(function () { /* 배합실 재고만 생략 */ });
+        }
+        return null;
+    }
+
+    /** 도료 현재고 표 — 도료 창고 재고 + (주제 도료) 배합실 잔량. A/S 제품은 창고 재고 수치를 생략한다. */
+    function _paintStockTableHtml(validRows, isAs) {
+        const specOrder = ['Primer', 'Color', '공용'];
+        const grouped = {};
+        validRows.forEach(r => {
+            const spec = r.paintSpec || '공용';
+            if (!grouped[spec]) grouped[spec] = [];
+            grouped[spec].push(r);
+        });
+        function matCell(label, matId) {
+            if (!matId) return `<td style="padding:2px 8px;font-size:0.76rem;color:var(--text-muted);">-</td>`;
+            if (matId === '사용불필요') return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);font-style:italic;">
+                        <span style="margin-right:3px;">${label}</span>사용불필요
+                    </td>`;
+            const name = _paintMatName(matId);
+            let mixHtml = '';
+            if (label === '주제') {
+                const kg = _mixRoomResidualKg(matId);
+                if (kg === null) mixHtml = '';
+                else if (kg > 0.0005) mixHtml = `<span style="margin-left:6px;padding:0 5px;border-radius:4px;background:rgba(124,58,237,0.1);color:#7c3aed;font-weight:700;" title="배합실에 남아 있는 도료 잔량">배합실 ${(Math.round(kg * 10) / 10).toLocaleString('ko-KR')} kg</span>`;
+                else mixHtml = `<span style="margin-left:6px;color:var(--text-muted);" title="배합실 잔량 없음">배합실 0</span>`;
+            }
+            if (isAs) {
+                return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;">
+                        <span style="color:var(--text-muted);margin-right:3px;">${label}</span><span style="font-weight:600;">${name}</span>${mixHtml}
+                    </td>`;
+            }
+            const qty = _paintMatBalance(matId);
+            const qtyColor = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
+            return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"
+                        onclick="PaintInventoryModule.showPaintDetail('${matId}',{asChild:true})"
+                        onmouseover="this.style.background='rgba(99,102,241,0.1)'"
+                        onmouseout="this.style.background=''"
+                        title="클릭하여 LOT 정보 보기">
+                        <span style="color:var(--text-muted);margin-right:3px;">${label}</span><span style="font-weight:600;">${name}</span>
+                        <span style="font-weight:700;color:${qtyColor};margin-left:2px;">(${UIUtils.formatNumber(qty)})</span>${mixHtml}
+                    </td>`;
+        }
+        const specKeys = [...specOrder.filter(s => grouped[s]), ...Object.keys(grouped).filter(s => !specOrder.includes(s))];
+        const note = isAs ? `<div style="margin-bottom:4px;">${_AS_PAINT_NOTE}</div>` : '';
+        return note + `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;">` +
+            specKeys.flatMap(spec => grouped[spec].map((r, idx) => `
+                <tr style="border-top:1px solid var(--border-color);">
+                    <td style="padding:3px 8px 3px 0;font-weight:700;color:var(--text-secondary);white-space:nowrap;vertical-align:middle;min-width:48px;">${idx === 0 ? spec : ''}</td>
+                    ${matCell('주제', r.mainId)}
+                    ${matCell('경화제', r.hardId)}
+                    ${matCell('희석제', r.thinnerId)}
+                </tr>`)).join('') +
+            `</table>`;
+    }
+
+    /** A/S 제품(제품 기본정보 품목 유형 A/S품) — 유통기한이 지난 도료를 쓰는 경우가 대부분이라
+     *  도료 창고에 보관하지 않으므로 도료 현재고 확인·차단 대상에서 제외한다(사출 재고는 그대로 확인). */
+    function _isAsPlanProduct(carModel, partName) {
+        try {
+            const prods = Storage.getAll(DB.STORES.PRODUCTS) || [];
+            const p = prods.find(x => x.carModel === carModel && x.partName === partName);
+            return !!(p && String(p.itemType || '').indexOf('A/S') >= 0);
+        } catch (e) { return false; }
+    }
+    const _AS_PAINT_NOTE = '<span style="color:var(--text-muted);">A/S 제품 — 도료는 도료 창고에 보관하지 않아 창고 현재고 확인을 생략합니다. (배합실 잔량만 표시)</span>';
+
     function _getPaintShortagesForPlan(carModel, partName, color, line) {
         const rows = _getPaintRowsForProduct(carModel, partName, color, line);
         const validRows = rows.filter(r => r.mainId || r.hardId || r.thinnerId);
@@ -1353,48 +1436,7 @@ const ProductionPlanModule = (function() {
         panel.style.display = 'block';
 
         if (!lotsEl) return;
-
-        // spec 그룹별 표시: Primer / Color / 공용 각각 한 줄
-        const specOrder = ['Primer', 'Color', '공용'];
-        const grouped = {};
-        validRows.forEach(r => {
-            const spec = r.paintSpec || '공용';
-            if (!grouped[spec]) grouped[spec] = [];
-            grouped[spec].push(r);
-        });
-
-        function matCell(label, matId) {
-            if (!matId) return `<td style="padding:2px 8px;font-size:0.76rem;color:var(--text-muted);">-</td>`;
-            if (matId === '사용불필요') return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);font-style:italic;">
-                        <span style="margin-right:3px;">${label}</span>사용불필요
-                    </td>`;
-            const qty = _paintMatBalance(matId);
-            const name = _paintMatName(matId);
-            const qtyColor = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-            return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"
-                        onclick="PaintInventoryModule.showPaintDetail('${matId}',{asChild:true})"
-                        onmouseover="this.style.background='rgba(99,102,241,0.1)'"
-                        onmouseout="this.style.background=''"
-                        title="클릭하여 LOT 정보 보기">
-                        <span style="color:var(--text-muted);margin-right:3px;">${label}</span><span style="font-weight:600;">${name}</span>
-                        <span style="font-weight:700;color:${qtyColor};margin-left:2px;">(${UIUtils.formatNumber(qty)})</span>
-                    </td>`;
-        }
-
-        const specKeys = [...specOrder.filter(s => grouped[s]), ...Object.keys(grouped).filter(s => !specOrder.includes(s))];
-
-        lotsEl.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;">` +
-            specKeys.flatMap(spec => grouped[spec].map((r, idx) => `
-                <tr style="border-top:1px solid var(--border-color);">
-                    <td style="padding:3px 8px 3px 0;font-weight:700;color:var(--text-secondary);white-space:nowrap;vertical-align:middle;min-width:48px;">
-                        ${idx === 0 ? spec : ''}
-                    </td>
-                    ${matCell('주제', r.mainId)}
-                    ${matCell('경화제', r.hardId)}
-                    ${matCell('희석제', r.thinnerId)}
-                </tr>`
-            )).join('') +
-        `</table>`;
+        lotsEl.innerHTML = _paintStockTableHtml(validRows, _isAsPlanProduct(carModel, partName));
     }
 
     // ── 사출 재고 조회 헬퍼 ──────────────────────────────────────────
@@ -2670,35 +2712,7 @@ const ProductionPlanModule = (function() {
                 const _vrows = _prows.filter(r => r.mainId || r.hardId || r.thinnerId);
                 if (_vrows.length > 0) {
                     _paintDisplay = 'block';
-                    const _pso = ['Primer', 'Color', '공용'];
-                    const _pgp = {};
-                    _vrows.forEach(r => { const sp = r.paintSpec||'공용'; if (!_pgp[sp]) _pgp[sp]=[]; _pgp[sp].push(r); });
-                    const _psk = [..._pso.filter(s => _pgp[s]), ...Object.keys(_pgp).filter(s => !_pso.includes(s))];
-                    const _mc = (label, matId) => {
-                        if (!matId) return `<td style="padding:2px 8px;font-size:0.76rem;color:var(--text-muted);">-</td>`;
-                        if (matId === '사용불필요') return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);font-style:italic;">
-                            <span style="margin-right:3px;">${label}</span>사용불필요
-                        </td>`;
-                        const qty = _paintMatBalance(matId), name = _paintMatName(matId);
-                        const qc  = qty > 0 ? 'var(--accent-green)' : 'var(--accent-red)';
-                        return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;cursor:pointer;border-radius:4px;"
-                            onclick="PaintInventoryModule.showPaintDetail('${matId}',{asChild:true})"
-                            onmouseover="this.style.background='rgba(99,102,241,0.1)'"
-                            onmouseout="this.style.background=''"
-                            title="클릭하여 LOT 정보 보기">
-                            <span style="color:var(--text-muted);margin-right:3px;">${label}</span><span style="font-weight:600;">${name}</span>
-                            <span style="font-weight:700;color:${qc};margin-left:2px;">(${UIUtils.formatNumber(qty)})</span>
-                        </td>`;
-                    };
-                    _paintLotsHtml = `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;">`
-                        + _psk.flatMap(spec => _pgp[spec].map((r, idx) => `
-                            <tr style="border-top:1px solid var(--border-color);">
-                                <td style="padding:3px 8px 3px 0;font-weight:700;color:var(--text-secondary);white-space:nowrap;vertical-align:middle;min-width:48px;">${idx===0?spec:''}</td>
-                                ${_mc('주제', r.mainId)}
-                                ${_mc('경화제', r.hardId)}
-                                ${_mc('희석제', r.thinnerId)}
-                            </tr>`)).join('')
-                        + `</table>`;
+                    _paintLotsHtml = _paintStockTableHtml(_vrows, _isAsPlanProduct(modelValue, partValue));
                 }
             } catch(e) { console.error('[editSlot] paintStock pre-compute error:', e); }
         }
@@ -3057,7 +3071,7 @@ const ProductionPlanModule = (function() {
             }
 
             // 도료 재고 검사 — 필요한 주제/경화제/희석제 중 하나라도 재고가 없으면 등록 차단
-            const paintShortages = _getPaintShortagesForPlan(carModel, partName, color, line);
+            const paintShortages = _isAsPlanProduct(carModel, partName) ? [] : _getPaintShortagesForPlan(carModel, partName, color, line);
             if (paintShortages.length > 0) {
                 UIUtils.toast(
                     `도료 재고가 없어 계획을 등록할 수 없습니다: ${paintShortages.join(', ')}`
@@ -3520,7 +3534,7 @@ const ProductionPlanModule = (function() {
                     <tr class="${isOvertimeStart ? 'overtime-row' : ''}" style="background-color:${shade};height:${rowHeightPx(diffMin)}px;">
                         <td style="text-align:center;">${block.isFirst ? rowIdx++ : '-'}</td>
                         <td style="text-align:center;">${timeText}</td>
-                        <td style="text-align:center;">${item.carModel || ''}</td>
+                        <td style="text-align:center;">${UIUtils.carModelLabel(item.carModel) || ''}</td>
                         <td>${item.partName || ''}</td>
                         <td style="text-align:center;">${item.color || ''}</td>
                         <td style="text-align:right;">${block.isFirst && q > 0 ? UIUtils.formatNumber(q) + ' EA' : ''}</td>
@@ -3673,7 +3687,7 @@ const ProductionPlanModule = (function() {
         UIUtils.showChildModal(
             `📦 ${carModel ? carModel + ' · ' : ''}${partName}${color ? ' · ' + color : ''} — LOT 재고`,
             `<div style="margin-bottom:14px;padding:10px 14px;background:var(--bg-secondary);border-radius:8px;display:flex;gap:24px;font-size:0.85rem;flex-wrap:wrap;">
-                ${carModel ? `<span>차종: <strong>${carModel}</strong></span>` : ''}
+                ${carModel ? `<span>차종: <strong>${UIUtils.carModelLabel(carModel)}</strong></span>` : ''}
                 <span>자재명: <strong>${partName}</strong></span>
                 ${color ? `<span>컬러: <strong>${color}</strong></span>` : ''}
                 <span style="margin-left:auto;font-weight:700;color:var(--accent-blue);">총 재고: ${UIUtils.formatNumber(totalQty)} EA</span>

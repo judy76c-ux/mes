@@ -797,6 +797,10 @@ const UIUtils = (function () {
             return set;
         } catch (e) { return new Set(); }
     }
+    function isAsCarModel(carModel) {
+        const c = String(carModel == null ? '' : carModel).trim();
+        return !!c && _asCarSet().has(c);
+    }
     function carModelLabel(carModel) {
         const c = String(carModel == null ? '' : carModel).trim();
         if (!c) return '';
@@ -997,6 +1001,7 @@ const UIUtils = (function () {
         badge,
         itemTypeBadge,
         carModelLabel,
+        isAsCarModel,
         sortCarModels,
         masterCarModelSet,
         filterKnownCarModels,

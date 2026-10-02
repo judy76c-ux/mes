@@ -16738,6 +16738,7 @@ var PaintMixModule = (function() {
 
         // ③ 관리자 실사 조정 / 배합실 입고 등록
         _residualAdjustments().forEach(a => {
+            if (a.isAs) return;   // A/S 도료 입고분은 별도 집계(_calcAsMixingRoomResiduals)
             const matId = a.materialId || '';
             const mat   = mats.find(x => x.id === matId);
             if (!mat) return;
@@ -16766,6 +16767,110 @@ var PaintMixModule = (function() {
             .filter(r => r.residualG > 0)
             .filter(r => !_isHardenerOrThinnerMat(mats.find(x => x.id === r.materialId)))
             .sort((a, b) => (a.paintName||'').localeCompare(b.paintName||'', 'ko'));
+    }
+
+    /* ── A/S 도료 배합실 재고 ──
+       A/S 차종은 도료를 도료 창고에 보관하지 않고(유통기한 지난 도료 사용) 배합실에만 둔다.
+       배합실 입고 등록 때 'A/S 도료'로 체크한 입고분(isAs)만 따로 집계하고,
+       A/S 차종 도료사용등록의 사용량(usageG)을 같은 도료·LOT에서 뺀다. */
+    function _calcAsMixingRoomResiduals() {
+        const mats = Storage.getAll(PAINT_MAT_STORE) || [];
+        const map = {};
+        _residualAdjustments().filter(a => a.isAs).forEach(a => {
+            const matId = a.materialId || '';
+            const mat = mats.find(x => x.id === matId);
+            if (!mat) return;
+            const lotNo = a.lotNo || '미기입';
+            const key = `${matId}__${lotNo}`;
+            if (!map[key]) {
+                map[key] = { materialId: matId, lotNo, paintName: mat.name || '', supplier: mat.supplier || '',
+                    manufacturer: mat.manufacturer || '', inG: 0, usedG: 0, residualG: 0 };
+            }
+            map[key].inG += Number(a.adjustG) || 0;
+        });
+        _mixes().forEach(m => {
+            if (typeof UIUtils.isAsCarModel !== 'function' || !UIUtils.isAsCarModel(m.carModel)) return;
+            (m.usages || []).forEach(u => {
+                const key = `${u.materialId || ''}__${u.residualProdLot || u.prodLot || u.lotNo || '미기입'}`;
+                if (map[key]) map[key].usedG += Number(u.usageG) || 0;
+            });
+        });
+        return Object.values(map)
+            .map(r => Object.assign(r, { residualG: r.inG - r.usedG }))
+            .filter(r => r.residualG > 0)
+            .sort((a, b) => (a.paintName || '').localeCompare(b.paintName || '', 'ko'));
+    }
+
+    let _pmixShowAs = false;
+
+    function _renderAsResidualCardHtml() {
+        const rows = _calcAsMixingRoomResiduals();
+        const total = rows.reduce((sum, r) => sum + r.residualG, 0);
+        const canDel = _isAdmin();
+        return `
+        <div id="pmixAsResidualWrap" style="display:${_pmixShowAs ? '' : 'none'};margin-top:14px;">
+            <div class="card" style="border-left:3px solid #7c3aed;">
+                <div class="card-header">
+                    <h4><span class="material-symbols-outlined" style="color:#7c3aed;">build</span> A/S 도료 재고
+                        <span style="font-size:0.78rem;font-weight:400;color:var(--text-muted);margin-left:6px;">${rows.length}종 · ${UIUtils.formatNumber(total)}g · 도료 창고에 보관하지 않는 A/S 차종 도료</span>
+                    </h4>
+                </div>
+                <div class="card-body" style="padding:0;">
+                    ${rows.length ? `
+                    <div class="data-table-wrapper">
+                        <table class="data-table" style="font-size:0.83rem;">
+                            <thead><tr>
+                                <th>도료사</th><th>도료명</th><th>제조 LOT</th>
+                                <th style="text-align:right;">입고(g)</th><th style="text-align:right;">A/S 사용(g)</th><th style="text-align:right;">잔량(g)</th>
+                                ${canDel ? '<th></th>' : ''}
+                            </tr></thead>
+                            <tbody>
+                                ${rows.map(r => `<tr>
+                                    <td>${_esc(r.supplier || '-')}</td>
+                                    <td style="font-weight:600;">${_esc(r.paintName || '-')}</td>
+                                    <td style="font-family:monospace;">${_esc(r.lotNo)}</td>
+                                    <td style="text-align:right;">${UIUtils.formatNumber(r.inG)}</td>
+                                    <td style="text-align:right;">${UIUtils.formatNumber(r.usedG)}</td>
+                                    <td style="text-align:right;font-weight:700;color:#7c3aed;">${UIUtils.formatNumber(r.residualG)}</td>
+                                    ${canDel ? `<td><button class="btn btn-sm btn-outline" onclick="PaintMixModule.deleteAsResidual('${_js(r.materialId)}','${_js(r.lotNo)}')">삭제</button></td>` : ''}
+                                </tr>`).join('')}
+                            </tbody>
+                        </table>
+                    </div>` : `
+                    <div style="text-align:center;padding:24px;color:var(--text-muted);">등록된 A/S 도료 재고가 없습니다.
+                        <div style="font-size:0.8rem;margin-top:4px;">'배합실에 잔량 도료 등록'에서 <strong>A/S 도료</strong>로 체크해 등록하면 여기에 표시됩니다.</div>
+                    </div>`}
+                </div>
+            </div>
+        </div>`;
+    }
+
+    function toggleAsResidual(on) {
+        _pmixShowAs = !!on;
+        const wrap = document.getElementById('pmixAsResidualWrap');
+        if (wrap) wrap.style.display = _pmixShowAs ? '' : 'none';
+    }
+
+    function deleteAsResidual(materialId, lotNo) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 삭제할 수 있습니다.', 'warning'); return; }
+        const cur = _calcAsMixingRoomResiduals().find(r => r.materialId === materialId && r.lotNo === lotNo);
+        if (!cur) { UIUtils.toast('A/S 도료 재고를 찾을 수 없습니다.', 'warning'); return; }
+        UIUtils.confirm(`${cur.paintName} (LOT ${lotNo}) A/S 도료 잔량 ${UIUtils.formatNumber(cur.residualG)}g을 삭제하시겠습니까?`, async () => {
+            const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            await Storage.add(STORE, {
+                _docKind: 'paint_residual_adjust',
+                kind: 'adjust',
+                isAs: true,
+                materialId,
+                lotNo,
+                adjustG: -cur.residualG,
+                date: UIUtils.today(),
+                note: 'A/S 도료 잔량 삭제',
+                operator: user ? (user.name || '') : ''
+            });
+            UIUtils.toast('A/S 도료 잔량을 삭제했습니다.', 'success');
+            renderResidualTab();
+        });
     }
 
     function _residualAdjustments() {
@@ -16868,6 +16973,11 @@ var PaintMixModule = (function() {
                     <input type="date" class="form-input" id="pmixResDate" value="${UIUtils.today()}">
                 </div>
             </div>
+            ${isNew ? `
+            <label style="display:flex;align-items:center;gap:6px;margin-bottom:8px;cursor:pointer;font-size:0.86rem;font-weight:600;color:#7c3aed;">
+                <input type="checkbox" id="pmixResIsAs" style="width:16px;height:16px;accent-color:#7c3aed;">
+                A/S 도료 (도료 창고에 보관하지 않는 A/S 차종용 — 'A/S 도료 확인'에서 별도 표시)
+            </label>` : ''}
             <div class="form-group">
                 <label class="form-label">사유</label>
                 <input type="text" class="form-input" id="pmixResNote" placeholder="${isNew ? '예: 배합실 입고' : '예: 배합실 실사 결과 반영'}">
@@ -16960,6 +17070,7 @@ var PaintMixModule = (function() {
         await Storage.add(STORE, {
             _docKind: 'paint_residual_adjust',
             kind: isNew ? 'inbound' : 'adjust',
+            isAs: !!(isNew && document.getElementById('pmixResIsAs')?.checked),
             materialId: matId,
             lotNo: finalLotNo,
             adjustG: delta,
@@ -17920,6 +18031,10 @@ var PaintMixModule = (function() {
 
         pane.innerHTML = `
         <div style="margin-bottom:14px;">
+            <label style="display:inline-flex;align-items:center;gap:6px;margin-bottom:10px;cursor:pointer;font-size:0.86rem;font-weight:600;color:#7c3aed;">
+                <input type="checkbox" id="pmixShowAsResidual" ${_pmixShowAs ? 'checked' : ''} onchange="PaintMixModule.toggleAsResidual(this.checked)" style="width:16px;height:16px;accent-color:#7c3aed;">
+                A/S 도료 확인
+            </label>
             <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
                 <div class="card-header">
                     <h4><span class="material-symbols-outlined" style="color:#2563eb;">local_shipping</span> 오늘 도료창고 출고 → 배합실 입고 목록
@@ -18036,6 +18151,7 @@ var PaintMixModule = (function() {
                     </div>`}
                 </div>
             </div>
+            ${_renderAsResidualCardHtml()}
         </div>`;
     }
 
@@ -19287,6 +19403,8 @@ var PaintMixModule = (function() {
         _onFormulaModalCarChange, viewControlPlan, showFormulaValidation,
         renderHistoryTab, renderResidualTab, renderMixHistTab, search, searchMixHist,
         openFromWork, openManualModal, removeWork, removeAllWork,
+        getMixingRoomResiduals: _calcMixingRoomResiduals,
+        toggleAsResidual, deleteAsResidual,
         getHiddenWorkIds: function() { return _hiddenWorkIds; },
         ensureHiddenWorksLoaded: _loadHiddenWorks,
         _onResidualLotChange, _onRowCalc,
