@@ -2837,6 +2837,35 @@ var PaintingInputModule = (function () {
         } catch (e) { return false; }
     }
 
+    /** 제작품명→사출명 매핑이 여러 사출명(MAP RH/LH, REAR/DOOR 등)으로 넓게 잡힐 때, 이 실적의
+     *  사출명 하나로 좁힌다. 안 좁히면 서로 다른 사출자재의 입고가 한 숫자로 합쳐진다.
+     *  ① 실적에 저장된 사출명과 정확히 같은 입고가 있으면 그것만, ② 아니면 사출명의 모든 단어가
+     *  제작품명에 들어 있는 사출명만(예: "MAP KNOB RH" ⊂ "KNOB- MAP RH [..]") 남긴다. */
+    function _narrowInjNamesToWork(injNames, dayRecords, opts) {
+        const present = {};
+        dayRecords.forEach(function (r) {
+            const n = String((r && r.partName) || '').trim();
+            if (n && injNames[n]) present[n] = true;
+        });
+        const names = Object.keys(present);
+        if (names.length <= 1) return injNames;
+        const exact = String(opts.injPartName || '').trim();
+        if (exact && present[exact]) { const o = {}; o[exact] = true; return o; }
+        const tok = function (t) { return String(t || '').toUpperCase().split(/[^A-Z0-9가-힣]+/).filter(Boolean); };
+        const prod = {};
+        tok(opts.partName).forEach(function (t) { prod[t] = true; });
+        const fit = names.filter(function (n) {
+            const ts = tok(n);
+            return ts.length && ts.every(function (t) { return prod[t]; });
+        });
+        if (fit.length >= 1 && fit.length < names.length) {
+            const o = {};
+            fit.forEach(function (n) { o[n] = true; });
+            return o;
+        }
+        return injNames;
+    }
+
     function getReturnedQtyForWork(line, opts) {
         opts = opts || {};
         const want = _normLine(line);
@@ -2940,7 +2969,7 @@ var PaintingInputModule = (function () {
         if (opts.lotNo) lotSet[String(opts.lotNo).trim()] = true;
         const hasLots = Object.keys(lotSet).length > 0;
 
-        const injNames = _injNamesFromWorkOpts(opts);
+        let injNames = _injNamesFromWorkOpts(opts);
 
         const dayRecords = (_recordsForLine(want) || []).filter(function (r) {
             if (String(r.type || '') !== '입고') return false;
@@ -2948,6 +2977,7 @@ var PaintingInputModule = (function () {
             if (opts.carModel && r.carModel && !UIUtils.sameCarModel(r.carModel, opts.carModel)) return false;
             return true;
         });
+        injNames = _narrowInjNamesToWork(injNames, dayRecords, opts);
 
         // 0순위: planId 매칭 — 이 작업실적이 속한 생산계획(opts.planId)과 정확히 같은
         // planId로 사출창고에서 출고된 입고 건만 골라낸다. refOutId로 원본 사출 출고
@@ -2993,6 +3023,27 @@ var PaintingInputModule = (function () {
             }).length
             : 0;
 
+        const ownUsedByLot = {};
+        (opts.lots || []).forEach(function (l) {
+            const n = String((l && l.lotNo) || '').trim();
+            if (n) ownUsedByLot[n] = (ownUsedByLot[n] || 0) + (Number(l.qty) || 0);
+        });
+        const otherUsedByLot = {};
+        if (hasLots && typeof DB !== 'undefined' && DB.STORES && DB.STORES.PAINTING_WORK) {
+            (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(function (w) {
+                if (!w || (opts.workId && String(w.id) === String(opts.workId))) return;
+                if (String(w.date || '').slice(0, 10) !== day) return;
+                if (_normLine(w.line || '') !== want) return;
+                if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return;
+                // LOT 번호는 다른 사출품에서도 같을 수 있다 — 같은 사출자재를 쓰는 실적만 차감 대상.
+                if (!_isSiblingWork(w, opts, injNames)) return;
+                (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
+                    const n = String((l && l.lotNo) || '').trim();
+                    if (n && lotSet[n]) otherUsedByLot[n] = (otherUsedByLot[n] || 0) + (Number(l.qty) || 0);
+                });
+            });
+        }
+
         if (hasLots && siblingCount > 0) {
             const requirePartMatch = Object.keys(injNames).length > 0;
             let total = 0;
@@ -3007,7 +3058,13 @@ var PaintingInputModule = (function () {
                 seenLot[outKey] = true;
                 _issuedLotsOfRecord(r).forEach(function (l) {
                     const n = String(l.lotNo || '').trim();
-                    if (n && lotSet[n]) total += Number(l.qty) || 0;
+                    if (!n || !lotSet[n]) return;
+                    // 한 LOT을 여러 실적이 나눠 썼으면(앞 계획이 쓰고 남은 분을 다음 계획이 사용),
+                    // 다른 실적이 쓴 수량은 이 실적의 현장입고가 아니다 — 그만큼 빼지 않으면
+                    // 다음 계획에서 정상 사용한 수량이 이 실적의 "유실"로 표시된다.
+                    const received = Number(l.qty) || 0;
+                    const share = Math.max(ownUsedByLot[n] || 0, received - (otherUsedByLot[n] || 0));
+                    total += Math.min(received, share);
                 });
             });
             return total;
