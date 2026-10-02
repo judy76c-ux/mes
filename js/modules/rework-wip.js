@@ -801,7 +801,7 @@ var ReworkWipModule = (function () {
                       background:rgba(37,99,235,.04);">
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
               <div style="font-size:0.78rem;font-weight:700;color:var(--accent-blue);">
-                LOT 계보 (사출 · 수입검사일 · 도장)
+                LOT 계보 (사출 · 수입검사일)
               </div>
               <button type="button" class="btn btn-sm btn-outline" onclick="ReworkWipModule.openInjLotLookup()"
                   title="사출 수입검사 이력에서 LOT·검사일을 찾아 채웁니다">
@@ -809,7 +809,7 @@ var ReworkWipModule = (function () {
                 사출 이력에서 찾기
               </button>
             </div>
-            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
               <div>
                 <label class="form-label">사출LOT</label>
                 <input id="rwInjLot" type="text" class="form-input" style="width:auto;min-width:8em;font-family:monospace;"
@@ -819,12 +819,8 @@ var ReworkWipModule = (function () {
                 <label class="form-label">수입검사일</label>
                 <input id="rwInspDate" type="date" class="form-input" value="${_esc(lots.inspDate)}">
               </div>
-              <div>
-                <label class="form-label">도장LOT</label>
-                <input id="rwPaintLot" type="text" class="form-input" style="width:auto;min-width:8em;font-family:monospace;"
-                    value="${_esc(lots.paintLot)}" placeholder="예: 260728 (도장작업일 YYMMDD)">
-              </div>
             </div>
+            <input id="rwPaintLot" type="hidden" value="${_esc(lots.paintLot)}">
           </div>
           <div>
             <label class="form-label">보관위치</label>
@@ -1129,9 +1125,9 @@ var ReworkWipModule = (function () {
                 </div>
                 <div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid var(--border-color);background:var(--bg-secondary);">
                     <div style="font-size:0.78rem;font-weight:700;margin-bottom:8px;color:var(--text-secondary);">
-                        LOT 계보 (사출 · 수입검사일 · 도장)
+                        LOT 계보 (사출 · 수입검사일)
                     </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
                         <div>
                             <label class="form-label">사출LOT</label>
                             <input type="text" class="form-input" id="rwDispInjLot" style="width:auto;min-width:7em;font-family:monospace;"
@@ -1141,12 +1137,8 @@ var ReworkWipModule = (function () {
                             <label class="form-label">수입검사일</label>
                             <input type="date" class="form-input" id="rwDispInspDate" value="${_esc(defs.inspDate)}">
                         </div>
-                        <div>
-                            <label class="form-label">도장LOT</label>
-                            <input type="text" class="form-input" id="rwDispPaintLot" style="width:auto;min-width:7em;font-family:monospace;"
-                                value="${_esc(defs.paintLot)}" placeholder="예: 260728">
-                        </div>
                     </div>
+                    <input type="hidden" id="rwDispPaintLot" value="${_esc(defs.paintLot)}">
                 </div>
                 <div class="form-group" style="margin-top:10px;">
                     <label class="form-label">비고</label>

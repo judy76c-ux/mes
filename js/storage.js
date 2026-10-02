@@ -12,6 +12,23 @@ const Storage = (function() {
   let initialized = false;
   let _initialDataPromise = Promise.resolve();
   let offlineMode = false;   // 세션 중 API 쓰기 실패 시 true (조회만 가능)
+  let _mutationVersion = 0;
+  const _mutationLog = [];
+  function _markMutation(storeName) {
+    _mutationVersion += 1;
+    const stores = Array.isArray(storeName) ? storeName : [storeName || ''];
+    stores.forEach(function (store) { _mutationLog.push({ version: _mutationVersion, store: store || '' }); });
+    if (_mutationLog.length > 1000) _mutationLog.splice(0, _mutationLog.length - 1000);
+  }
+  function getMutationVersion() { return _mutationVersion; }
+  function getMutationInfoSince(version) {
+    const changes = _mutationLog.filter(function (m) { return m.version > (Number(version) || 0); });
+    return {
+      changed: changes.length > 0,
+      stores: Array.from(new Set(changes.map(function (m) { return m.store; }).filter(Boolean)))
+    };
+  }
+
 
   // ── 스토어 준비 상태 추적 ────────────────────────────────────────────
   // 어떤 스토어가 API(원격)로부터 최소 1회 로드되었는지 기록
@@ -511,6 +528,7 @@ const Storage = (function() {
 
       if (!cache[storeName]) cache[storeName] = [];
       cache[storeName].push(newItem);
+      _markMutation(storeName);
       return newItem;
     })();
 
@@ -555,6 +573,7 @@ const Storage = (function() {
     }
 
     items[index] = updated;
+    _markMutation(storeName);
     return updated;
   }
 
@@ -586,6 +605,7 @@ const Storage = (function() {
     if (cache[storeName]) {
       cache[storeName] = cache[storeName].filter(item => item.id !== id);
     }
+    _markMutation(storeName);
   }
 
   // 배치 저장 (await 가능 — 호출측에서 await 사용 권장)
@@ -601,6 +621,7 @@ const Storage = (function() {
       throw err;
     }
     cache[storeName] = dataArray;
+    _markMutation(storeName);
   }
 
   // 날짜 범위 필터
@@ -672,6 +693,7 @@ const Storage = (function() {
   // 설정 저장
   async function saveConfig(config) {
     await ApiClient.setConfig('app_config', config);
+    _markMutation('');
   }
 
   // 특정 설정값 가져오기
@@ -805,6 +827,7 @@ const Storage = (function() {
         await call();
       }
 
+      _markMutation(affectedStores);
       return results;
 
     } catch (err) {
@@ -905,6 +928,9 @@ const Storage = (function() {
     isStoreReady,           // 특정 스토어가 권위 있는 소스에서 1회 이상 로드됐는지
     areStoresReady,         // 여러 스토어가 모두 준비됐는지
     isOffline,              // 세션 중 API 쓰기 실패 시 true
+    getMutationVersion,     // 성공한 저장/수정/삭제 이후 모달 닫힘 갱신 여부 판단
+    getMutationInfoSince,
+    noteExternalMutation: _markMutation,
     getConfig,
     saveConfig,
     getConfigValue,

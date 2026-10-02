@@ -80,6 +80,12 @@ const ApiClient = (function() {
     return res.json();
   }
 
+  function _noteSuccessfulMutation(storeName) {
+    if (typeof Storage !== 'undefined' && typeof Storage.noteExternalMutation === 'function') {
+      Storage.noteExternalMutation(storeName || '');
+    }
+  }
+
   // 헬스체크 (init 대용) — 5초 타임아웃
   async function init() {
     const result = await request('GET', '/health', undefined, 5000);
@@ -100,17 +106,23 @@ const ApiClient = (function() {
   // 단건 저장 (upsert)
   async function save(storeName, data) {
     if (!data.id) throw new Error('id 필드 필요');
-    return request('PUT', `/api/docs/${storeName}/${data.id}`, data);
+    const result = await request('PUT', `/api/docs/${storeName}/${data.id}`, data);
+    _noteSuccessfulMutation(storeName);
+    return result;
   }
 
   // 배치 저장
   async function saveAll(storeName, dataArray) {
-    return request('POST', `/api/docs/${storeName}/bulk`, { rows: dataArray });
+    const result = await request('POST', `/api/docs/${storeName}/bulk`, { rows: dataArray });
+    _noteSuccessfulMutation(storeName);
+    return result;
   }
 
   // 삭제
   async function remove(storeName, id) {
-    return request('DELETE', `/api/docs/${storeName}/${id}`);
+    const result = await request('DELETE', `/api/docs/${storeName}/${id}`);
+    _noteSuccessfulMutation(storeName);
+    return result;
   }
 
   // 설정 조회
@@ -120,7 +132,9 @@ const ApiClient = (function() {
 
   // 설정 저장
   async function setConfig(key, value) {
-    return request('PUT', `/api/config/${key}`, value);
+    const result = await request('PUT', `/api/config/${key}`, value);
+    _noteSuccessfulMutation('');
+    return result;
   }
 
   async function getBackupConfig() {
@@ -128,7 +142,9 @@ const ApiClient = (function() {
   }
 
   async function saveBackupConfig(config) {
-    return request('PUT', '/api/backups/config', config);
+    const result = await request('PUT', '/api/backups/config', config);
+    _noteSuccessfulMutation('');
+    return result;
   }
 
   async function listBackups() {
@@ -160,7 +176,9 @@ const ApiClient = (function() {
   }
 
   async function saveNasConfig(config) {
-    return request('PUT', '/api/nas-config', config);
+    const result = await request('PUT', '/api/nas-config', config);
+    _noteSuccessfulMutation('');
+    return result;
   }
 
   async function listNasBackups() {
