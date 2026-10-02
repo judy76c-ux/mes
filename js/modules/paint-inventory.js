@@ -2020,14 +2020,12 @@ const PaintInventoryModule = (function() {
             }
         }
 
-        const users = (typeof AuthModule !== 'undefined' ? AuthModule.getUsers() : []) || [];
         const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
-        const TARGET_ROLES = ['paint_line_op', 'logistics_worker']; // 도장라인운영자 + 물류작업자
-        const workers = users.filter(u => {
-            if (u.active === false) return false;
-            const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean);
-            return roles.some(r => TARGET_ROLES.includes(r));
-        });
+        if (!_workerOrderLoaded) {
+            _workerOrderLoaded = true;
+            _loadWorkerOrder().then(() => { if (document.getElementById('paintOutListupBody')) renderPaintOutgoingListup(); });
+        }
+        const workers = _eligibleWorkers();
         const defaultIssuer = loginUser.displayName || loginUser.username || '';
         const issuerOpts = '<option value="">-- 출고자 선택 --</option>' +
             workers.map(u => {
@@ -2039,7 +2037,7 @@ const PaintInventoryModule = (function() {
         const footerHtml = `
             <div style="padding:12px 16px;border-top:1px solid var(--border-color);background:var(--bg-secondary);display:flex;align-items:flex-end;gap:12px;flex-wrap:wrap;">
                 <div class="form-group" style="margin:0;min-width:180px;flex:1 1 180px;">
-                    <label class="form-label" style="font-size:0.75rem;">출고자 <span style="color:var(--accent-red);">*</span></label>
+                    <label class="form-label" style="font-size:0.75rem;">출고자 <span style="color:var(--accent-red);">*</span>${_workerOrderBtnHtml()}</label>
                     <select class="form-select" id="paintOutListupIssuer" style="font-size:0.85rem;">${issuerOpts}</select>
                 </div>
                 <button class="btn btn-primary" onclick="PaintInventoryModule.confirmPaintOutgoingListup()" style="white-space:nowrap;" ${rows.length ? '' : 'disabled'}>
@@ -2675,7 +2673,7 @@ const PaintInventoryModule = (function() {
             </div>
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                    <label class="form-label">입고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span>${_workerOrderBtnHtml()}</label>
                     <select class="form-select" id="addPaintInvReceivedBy">
                         <option value="">-- 선택 --</option>
                     </select>
@@ -2685,7 +2683,7 @@ const PaintInventoryModule = (function() {
             ${type === '출고' ? `
             <div class="form-row">
                 <div class="form-group">
-                    <label class="form-label">출고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span></label>
+                    <label class="form-label">출고자 <span style="font-size:.78rem;color:var(--text-muted);font-weight:400;">(선택)</span>${_workerOrderBtnHtml()}</label>
                     <select class="form-select" id="addPaintInvIssuedBy">
                         <option value="">-- 선택 --</option>
                     </select>
@@ -2714,18 +2712,101 @@ const PaintInventoryModule = (function() {
         setTimeout(() => _fillWorkerSelect(type), 0);
     }
 
-    function _fillWorkerSelect(type) {
+    // ── 입·출고자 후보: 도료 창고 입력 권한자 + MES 관리자가 정한 표시 순서 ──
+    const WORKER_ORDER_KEY = 'paint_inv_worker_order';
+    let _workerOrder = [];
+    let _workerOrderLoaded = false;
+
+    async function _loadWorkerOrder() {
+        try {
+            const v = await Storage.getConfigValue(WORKER_ORDER_KEY);
+            _workerOrder = Array.isArray(v) ? v.map(String) : [];
+        } catch (e) { _workerOrder = []; }
+    }
+
+    function _workerName(u) { return String((u && (u.displayName || u.username)) || ''); }
+
+    /** 도료 창고에 입력 권한이 있는 사용자 — 저장된 순서대로, 순서가 없는 사용자는 뒤에 */
+    function _eligibleWorkers() {
         const users = (typeof AuthModule !== 'undefined' ? AuthModule.getUsers() : []) || [];
-        const TARGET_ROLES = ['paint_line_op', 'logistics_worker']; // 도장라인운영자 + 물류작업자
-        const workers = users.filter(u => {
+        const TARGET_ROLES = ['paint_line_op', 'logistics_worker'];
+        const list = users.filter(u => {
             if (u.active === false) return false;
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canUserWritePage === 'function') {
+                return AuthModule.canUserWritePage(u, 'paint-inventory');
+            }
             const roles = [...(Array.isArray(u.roles) ? u.roles : []), u.role].filter(Boolean);
-            return roles.some(r => TARGET_ROLES.includes(r));
+            return roles.some(r => TARGET_ROLES.includes(r) || String(r).indexOf('물류') >= 0);
         });
+        const rank = u => { const i = _workerOrder.indexOf(_workerName(u)); return i < 0 ? 1e6 : i; };
+        return list.map((u, i) => ({ u: u, i: i })).sort((a, b) => (rank(a.u) - rank(b.u)) || (a.i - b.i)).map(x => x.u);
+    }
+
+    function _isMesAdmin() {
+        return typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
+    }
+
+    function _workerOrderBtnHtml() {
+        if (!_isMesAdmin()) return '';
+        return ' <button type="button" class="btn btn-sm btn-outline" style="padding:1px 8px;font-size:0.72rem;margin-left:6px;"' +
+            ' onclick="PaintInventoryModule.openWorkerOrderEditor()">순서 설정</button>';
+    }
+
+    async function _fillWorkerSelect(type) {
+        await _loadWorkerOrder();
         const opts = '<option value="">-- 선택 --</option>' +
-            workers.map(u => `<option value="${_escapeHtml(u.displayName || u.username)}">${_escapeHtml(u.displayName || u.username)}</option>`).join('');
+            _eligibleWorkers().map(u => `<option value="${_escapeHtml(_workerName(u))}">${_escapeHtml(_workerName(u))}</option>`).join('');
         const sel = document.getElementById(type === '입고' ? 'addPaintInvReceivedBy' : 'addPaintInvIssuedBy');
         if (sel) sel.innerHTML = opts;
+    }
+
+    // MES 관리자 전용: 입·출고자 목록의 표시 순서 편집
+    let _orderDraft = [];
+    async function openWorkerOrderEditor() {
+        if (!_isMesAdmin()) { UIUtils.toast('MES 관리자만 순서를 정할 수 있습니다.', 'warning'); return; }
+        await _loadWorkerOrder();
+        _orderDraft = _eligibleWorkers().map(_workerName);
+        const body = '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">▲▼로 순서를 바꾸고 저장하세요. 입고자·출고자 목록 모두에 적용됩니다.</div>' +
+            '<div id="paintWorkerOrderList"></div>';
+        const footer = '<button class="btn btn-secondary" onclick="UIUtils.closeChildModal ? UIUtils.closeChildModal() : UIUtils.closeModal()">취소</button>' +
+            '<button class="btn btn-primary" onclick="PaintInventoryModule.saveWorkerOrder()">저장</button>';
+        if (typeof UIUtils.showChildModal === 'function') UIUtils.showChildModal('입·출고자 표시 순서', body, footer, 'sm');
+        else UIUtils.showModal('입·출고자 표시 순서', body, footer, 'sm');
+        _renderWorkerOrderList();
+    }
+
+    function _renderWorkerOrderList() {
+        const el = document.getElementById('paintWorkerOrderList');
+        if (!el) return;
+        el.innerHTML = _orderDraft.map((n, i) =>
+            '<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border-color);">' +
+            '<span style="width:22px;color:var(--text-muted);font-size:0.78rem;">' + (i + 1) + '</span>' +
+            '<span style="flex:1;font-weight:600;">' + _escapeHtml(n) + '</span>' +
+            '<button type="button" class="btn btn-sm btn-outline" ' + (i === 0 ? 'disabled' : '') + ' onclick="PaintInventoryModule.moveWorkerOrder(' + i + ',-1)">▲</button>' +
+            '<button type="button" class="btn btn-sm btn-outline" ' + (i === _orderDraft.length - 1 ? 'disabled' : '') + ' onclick="PaintInventoryModule.moveWorkerOrder(' + i + ',1)">▼</button>' +
+            '</div>').join('') || '<div style="color:var(--text-muted);">대상 사용자가 없습니다.</div>';
+    }
+
+    function moveWorkerOrder(i, d) {
+        const j = i + d;
+        if (j < 0 || j >= _orderDraft.length) return;
+        const t = _orderDraft[i]; _orderDraft[i] = _orderDraft[j]; _orderDraft[j] = t;
+        _renderWorkerOrderList();
+    }
+
+    async function saveWorkerOrder() {
+        if (!_isMesAdmin()) return;
+        try {
+            await Storage.setConfigValue(WORKER_ORDER_KEY, _orderDraft.slice());
+            _workerOrder = _orderDraft.slice();
+        } catch (e) {
+            UIUtils.toast('순서 저장에 실패했습니다.', 'error');
+            return;
+        }
+        if (typeof UIUtils.closeChildModal === 'function') UIUtils.closeChildModal(); else UIUtils.closeModal();
+        ['입고', '출고'].forEach(t => { if (document.getElementById(t === '입고' ? 'addPaintInvReceivedBy' : 'addPaintInvIssuedBy')) _fillWorkerSelect(t); });
+        if (document.getElementById('paintOutListupBody')) renderPaintOutgoingListup();
+        UIUtils.toast('입·출고자 표시 순서를 저장했습니다.', 'success');
     }
 
     function onSupplierChange(type) {
@@ -5496,6 +5577,9 @@ const PaintInventoryModule = (function() {
         autoFillProdLot,
         _onMfgDateInput,
         _onDateInput,
+        openWorkerOrderEditor,
+        moveWorkerOrder,
+        saveWorkerOrder,
         validateProdLot,
         openOutgoingModal,
         onLotInput,

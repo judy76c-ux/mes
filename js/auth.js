@@ -1284,6 +1284,15 @@ const AuthModule = (function () {
         return isPageWriteGranted(_roleKeys(user), pageId);
     }
 
+    /* 지정한 사용자(현재 로그인 사용자가 아니어도 됨)가 특정 페이지에 입력/등록 권한이 있는지 —
+       입·출고자 후보처럼 "이 페이지에 입력할 수 있는 사람" 목록을 만들 때 쓴다. */
+    function canUserWritePage(user, pageId) {
+        if (!user || user.active === false) return false;
+        const policy = _userPassesPageWritePolicy(user, pageId);
+        if (policy !== null) return policy;
+        return isPageWriteGranted(_roleKeys(user), pageId);
+    }
+
     /* 현재 사용자가 특정 페이지에서 "수량 보정"(재고 수량 보정) 권한이 있는지 */
     function canAdjustPage(pageId) {
         const user = getCurrentUser();
@@ -2522,6 +2531,7 @@ const AuthModule = (function () {
         canWrite,
         canAccessPage,
         canWritePage,
+        canUserWritePage,
         canAdjustPage,
         PAGE_WRITE_POLICY,
         isAdminUser,
