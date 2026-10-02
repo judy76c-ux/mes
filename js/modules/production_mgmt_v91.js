@@ -21485,6 +21485,7 @@ var ProdQualityModule = (function() {
     function _sameColorStandardSignature(items, key) {
         const item = (items || []).find(i => String(i?.key || '') === key);
         if (!item) return '__missing__';
+        if (item.notApplicable === true) return '__not_applicable__';
         const { upperSpec, lowerSpec } = _rangeSpecValues(item);
         return [
             _specModeOf(item),
@@ -21500,8 +21501,8 @@ var ProdQualityModule = (function() {
         return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '제품 기본정보 없음'}${line ? ` / ${line}` : ''}`;
     }
 
-    // 구버전 공통 템플릿은 partName/productId 없이 차종+컬러만 저장돼 있다.
-    // 검증 결과에서는 제품 마스터의 실제 품목으로 풀어서 품명과 편집 링크를 보여준다.
+    // 제품 ID가 없더라도 품명이 있는 구형 템플릿은 제품 마스터의 실제 품목으로 연결한다.
+    // 품명까지 없는 차종+컬러 공통 레코드는 특정 제품 기준이 아니므로 임의 확장하지 않는다.
     function _sameColorTemplateDisplayRows(template) {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const exact = template?.productId ? products.find(p => p.id === template.productId) : null;
@@ -21509,6 +21510,7 @@ var ProdQualityModule = (function() {
 
         const car = _normText(template?.carModel || '');
         const part = _normText(template?.partName || '');
+        if (!part) return [template];
         const colorKey = _sameColorCompareKey(template?.color || '');
         const process = _normText(template?.paintProcess || '');
         const matched = products.filter(p => {
@@ -21547,9 +21549,8 @@ var ProdQualityModule = (function() {
     function _sameColorEditButtonHtml(template, label = '기준 입력') {
         const target = _sameColorTemplateEditTarget(template);
         if (!target) {
-            return `<button type="button" class="btn btn-sm"
-                onclick="UIUtils.closeModal();SettingsModule.openProductMasterAdd({carModel:'${_js(template?.carModel || '')}',color:'${_js(template?.color || '')}'})"
-                style="padding:3px 8px;font-size:.7rem;white-space:nowrap;background:#dc2626;color:#fff;border-color:#dc2626;">제품 등록</button>`;
+            return `<span title="품명과 제품 ID가 저장되지 않아 실제 제품을 특정할 수 없습니다."
+                style="padding:4px 8px;font-size:.7rem;white-space:nowrap;color:#9a3412;background:#fff7ed;border:1px solid #fdba74;border-radius:6px;font-weight:700;">제품 식별 불가</span>`;
         }
         return `<button type="button" class="btn btn-sm btn-primary"
             onclick="UIUtils.closeModal();ProdQualityModule.openSpecPage('${_js(target.productId)}','edit','${_js(target.paintProcess)}')"
@@ -21570,7 +21571,16 @@ var ProdQualityModule = (function() {
         const conflicts = [];
         SAME_COLOR_STANDARD_KEYS.forEach(key => {
             const wanted = _sameColorStandardSignature(items, key);
-            const different = rows.filter(t => _sameColorStandardSignature(t.items, key) !== wanted);
+            if (wanted === '__not_applicable__') return;
+            const wantedNeedsInput = _sameColorSignatureNeedsInput(wanted);
+            const different = rows.filter(t => {
+                const existing = _sameColorStandardSignature(t.items, key);
+                if (existing === '__not_applicable__') return false;
+                // 관리항목 없음과 값 미입력은 모두 '실제 비교 기준 없음'이다.
+                // 양쪽 모두 기준이 없으면 서로 다른 기준으로 판정하지 않는다.
+                if (wantedNeedsInput && _sameColorSignatureNeedsInput(existing)) return false;
+                return existing !== wanted;
+            });
             if (different.length) {
                 conflicts.push({
                     key,
@@ -21583,7 +21593,48 @@ var ProdQualityModule = (function() {
         return conflicts;
     }
 
+    async function setSameColorNotApplicable(templateId, itemKey, checked) {
+        if (!checked || !['film_under', 'film_top'].includes(String(itemKey || ''))) return;
+        const template = _templates().find(row => row.id === templateId);
+        if (!template) {
+            UIUtils.toast('품목 기준을 찾을 수 없습니다. 검증을 새로고침해 주세요.', 'warning');
+            return;
+        }
+        const items = Array.isArray(template.items) ? template.items.map(item => ({ ...item })) : [];
+        let item = items.find(row => String(row.key || '') === itemKey);
+        if (!item) {
+            item = {
+                key: itemKey,
+                label: SAME_COLOR_STANDARD_LABELS[itemKey],
+                unit: 'μm',
+                method: '도막측정기',
+                inputType: 'number',
+                specMode: 'range',
+                spec: '',
+                upperSpec: '',
+                lowerSpec: '',
+                selected: false
+            };
+            items.push(item);
+        }
+        item.notApplicable = true;
+        item.selected = false;
+        item.spec = '';
+        item.upperSpec = '';
+        item.lowerSpec = '';
+        try {
+            await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
+            UIUtils.closeModal();
+            UIUtils.toast(`${_sameColorTemplateLabel(template)} · ${SAME_COLOR_STANDARD_LABELS[itemKey]}을(를) 해당 없음으로 저장했습니다.`, 'success');
+            validateSameColorStandards();
+        } catch (err) {
+            console.error('[setSameColorNotApplicable] 저장 실패:', err);
+            UIUtils.toast(`해당 없음 저장 실패: ${err?.message || String(err)}`, 'error');
+        }
+    }
+
     function _sameColorSignatureDisplay(signature, key = '') {
+        if (signature === '__not_applicable__') return '해당 없음';
         if (signature === '__missing__') return '관리항목 없음';
         const parts = String(signature).split('|');
         const mode = parts[0];
@@ -21606,12 +21657,16 @@ var ProdQualityModule = (function() {
     }
 
     function _sameColorSignatureNeedsInput(signature) {
+        if (signature === '__not_applicable__') return false;
         if (signature === '__missing__') return true;
         return String(signature).split('|').slice(1).every(value => !String(value || '').trim());
     }
 
     function _sameColorSignatureDetailHtml(signature, key = '') {
         const itemLabel = SAME_COLOR_STANDARD_LABELS[key] || key;
+        if (signature === '__not_applicable__') {
+            return `<div style="margin-top:7px;padding:7px 9px;border-radius:7px;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-size:.73rem;line-height:1.45;"><strong>${_esc(itemLabel)}</strong> 기준을 해당 없음으로 확인했습니다.</div>`;
+        }
         if (signature === '__missing__') {
             return `<div style="margin-top:7px;padding:7px 9px;border-radius:7px;background:#fff;border:1px dashed #fca5a5;color:#991b1b;font-size:.73rem;line-height:1.45;">
                 <strong>${_esc(itemLabel)}</strong>이 현재 품목의 관리항목(프리셋)에 포함되어 있지 않습니다.
@@ -21701,14 +21756,16 @@ var ProdQualityModule = (function() {
             <div style="margin-bottom:12px;padding:10px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:9px;">
                 <div style="display:flex;align-items:center;gap:7px;color:#9a3412;font-weight:900;margin-bottom:7px;">
                     <span class="material-symbols-outlined" style="font-size:19px;">inventory_2</span>
-                    제품 기본정보 없는 기준 ${orphanTemplates.length}건 — 기준 비교에서 제외
+                    제품을 특정할 수 없는 구형 기준 ${orphanTemplates.length}건 — 기준 비교에서 제외
                 </div>
-                <div style="font-size:.74rem;color:#9a3412;margin-bottom:7px;">제품을 먼저 등록해야 동일 컬러 기준 검증 대상에 포함됩니다.</div>
+                <div style="font-size:.74rem;color:#9a3412;margin-bottom:7px;line-height:1.55;">
+                    아래 자료에는 차종·컬러만 저장되어 있고 품명, 제품 ID, 원본 제품 참조가 없습니다. 이 정보만으로는 등록할 제품을 알 수 없으므로 임의로 제품을 만들지 않고 검증에서 제외합니다. 실제 품목을 확인한 뒤 제품 기본정보와 품목별 기준을 등록하세요.
+                </div>
                 <div style="display:grid;gap:5px;max-height:160px;overflow:auto;">
                     ${orphanTemplates.map(template => `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #fed7aa;border-radius:6px;font-size:.76rem;">
                         <strong style="min-width:70px;">${_esc(_normText(template.carModel) || '-')}</strong>
-                        <span style="flex:1;">${_esc(_normText(template.color) || '-')} · 제품 기본정보 없음</span>
-                        ${_sameColorEditButtonHtml(template, '제품 등록')}
+                        <span style="flex:1;">${_esc(_normText(template.color) || '-')} · 품명/제품 연결정보 없음</span>
+                        <span title="저장된 기준 레코드 ID" style="font-size:.67rem;color:#78716c;white-space:nowrap;">기준 ID: ${_esc(template.id || '-')}</span>
                     </div>`).join('')}
                 </div>
             </div>` : '';
@@ -21720,10 +21777,14 @@ var ProdQualityModule = (function() {
                 const signatures = new Map();
                 templates.forEach(template => {
                     const signature = _sameColorStandardSignature(template.items, key);
+                    if (signature === '__not_applicable__') return;
                     if (!signatures.has(signature)) signatures.set(signature, []);
                     signatures.get(signature).push(template);
                 });
-                if (signatures.size > 1) {
+                // 같은 컬러의 모든 품목에 실제 입력된 기준이 없다면 비교할 기준도 없다.
+                // 실제 기준이 하나라도 있을 때만 누락/불일치를 검증한다.
+                const hasEnteredStandard = [...signatures.keys()].some(signature => !_sameColorSignatureNeedsInput(signature));
+                if (hasEnteredStandard && signatures.size > 1) {
                     mismatches.push({ color: group.label, key, label: SAME_COLOR_STANDARD_LABELS[key] || key, signatures });
                 }
             });
@@ -21733,7 +21794,7 @@ var ProdQualityModule = (function() {
             UIUtils.showModal('동일 컬러 기준 검증', `
                 <div style="padding:24px;text-align:center;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
                     <span class="material-symbols-outlined" style="font-size:34px;display:block;margin-bottom:8px;">verified</span>
-                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">제품 기본정보가 존재하는 동일 컬러 품목의 색차·도막 기준값이 모두 일치합니다.</span>
+                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">제품 기본정보가 존재하는 동일 컬러 품목에서 실제 입력된 색차·도막 기준값 사이에 불일치가 없습니다.</span>
                 </div>
                 <div style="margin-top:12px;">${orphanHtml}</div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, orphanTemplates.length ? 'lg' : 'sm');
             return;
@@ -21761,10 +21822,14 @@ var ProdQualityModule = (function() {
                 ])).values()];
                 const productRows = uniqueDisplayRows.map(row => {
                     const line = _normText(row.paintProcess || '');
-                    return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
+                    const naCheck = isMissing && String(group.key).startsWith('film_') && row.id
+                        ? `<label style="display:flex;align-items:center;gap:4px;white-space:nowrap;color:#166534;font-weight:700;"><input type="checkbox" onchange="ProdQualityModule.setSameColorNotApplicable('${_js(row.id)}','${_js(group.key)}',this.checked)">해당 없음</label>`
+                        : '';
+                    return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto auto auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
                         <strong style="color:#334155;">${_esc(_normText(row.carModel) || '-')}</strong>
                         <span style="color:${_normText(row.partName) ? '#475569' : '#dc2626'};font-weight:${_normText(row.partName) ? '400' : '800'};word-break:break-word;">${_esc(_normText(row.partName) || '제품 기본정보 없음')}</span>
                         ${line ? `<span style="white-space:nowrap;padding:1px 6px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:.7rem;font-weight:700;">${_esc(line)}</span>` : '<span></span>'}
+                        ${naCheck}
                         ${_sameColorEditButtonHtml(row, isMissing ? '기준 입력' : '수정')}
                     </div>`;
                 }).join('');
@@ -22051,7 +22116,10 @@ var ProdQualityModule = (function() {
                     partName: pn,
                     color: col,
                     productId: p.id,
-                    items,
+                    items: [
+                        ...items,
+                        ...((existing?.items || []).filter(item => item?.notApplicable === true && !items.some(current => String(current.key || '') === String(item.key || ''))).map(item => ({ ...item })))
+                    ],
                     updatedAt: UIUtils.now()
                 };
                 if (paintProcess) payload.paintProcess = paintProcess;
@@ -26484,6 +26552,7 @@ var ProdQualityModule = (function() {
       <span>생산계획 시간 기준으로 생산 LOT가 4시간 이내: 초, 종 - 2회 실시</span>
       <span>생산 LOT가 4hr 초과: 초, 중, 종 - 3회 실시</span>
     </div>
+    <div class="main-wrap">
     <table class="main">
     <colgroup>
        <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:17%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%">
@@ -26506,6 +26575,7 @@ var ProdQualityModule = (function() {
     </thead>
     <tbody>${rows}</tbody>
     </table>
+    </div>
   </div>
 </div>`;
     }
@@ -26717,7 +26787,7 @@ body{font-family:Arial,'Malgun Gothic',sans-serif;color:#111827;background:#eef2
 .print-close-btn{padding:6px 14px;border:1px solid #cbd5e1;background:#fff;color:#475569;border-radius:6px;cursor:pointer;font-weight:700}
 [contenteditable="true"]:focus{outline:2px solid #2563eb;outline-offset:-2px;background:#fff7d6}
  .print-page{width:283mm;min-height:200mm;height:auto;margin:18px auto;overflow:visible;background:#fff;box-shadow:0 18px 44px rgba(15,23,42,.18),0 3px 10px rgba(15,23,42,.12)}
- .sheet{width:100%;min-height:200mm;height:auto;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:visible;page-break-inside:avoid}
+ .sheet{width:100%;height:200mm;margin:0;padding:2.5mm;background:#fff;border:1.6px solid #111827;display:flex;flex-direction:column;overflow:hidden;page-break-inside:avoid}
 .title-row{position:relative;display:flex;align-items:center;justify-content:center;min-height:12mm;margin-bottom:1.5mm;border:1.6px solid #111827;background:#fff;flex:0 0 auto}
 .title-logo{position:absolute;left:3mm;top:50%;transform:translateY(-50%);width:46mm;height:10mm;display:flex;align-items:center;justify-content:flex-start;background:#fff}
 .title-logo img{display:block;max-width:100%;max-height:9.5mm;object-fit:contain}
@@ -26731,7 +26801,8 @@ table{border-collapse:collapse;width:100%}
 .meta td,.sign td{font-weight:700;color:#111827}
 .meta .ko{display:block;font-size:11px}.meta .en{display:block;font-size:8px;color:#475569}
 .sign td{height:8mm;background:#fff}
- .main{table-layout:fixed;border:1.6px solid #111827;flex:1 1 auto;height:100%;width:100%;min-width:100%;max-width:100%}
+ .main-wrap{position:relative;flex:1 1 auto;min-height:0;width:100%;overflow:hidden}
+ .main{table-layout:fixed;border:1.6px solid #111827;height:100%;width:100%;min-width:100%;max-width:none;transform-origin:top left}
  .main col{width:auto}
 .main th,.main td{border:1px solid #111827;text-align:center;vertical-align:middle;padding:2px 2px;font-size:12px}
 .main th{background:#e8eef6;font-weight:900;color:#0f172a}
@@ -26785,10 +26856,11 @@ table{border-collapse:collapse;width:100%}
   html,body{width:283mm;height:200mm;overflow:hidden;background:#fff!important;color:#000}
   body{margin:0;padding:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .print-toolbar{display:none!important}
-   .print-page{width:283mm;min-height:200mm;height:auto;margin:0;overflow:visible;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
-   .sheet{width:283mm;min-height:200mm;height:auto;max-width:none;overflow:visible;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;transform-origin:top left;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
+   .print-page{width:283mm;height:200mm;margin:0;overflow:hidden;box-shadow:none;position:relative;break-inside:avoid;page-break-inside:avoid}
+   .sheet{width:283mm;height:200mm;max-width:none;overflow:hidden;margin:0;padding:2.5mm;border:1.4px solid #111827;box-shadow:none;transform:none;display:flex;flex-direction:column;break-inside:avoid;page-break-inside:avoid}
   .title-row,.top-grid,.cycle-note{flex:0 0 auto}
-   .main{flex:0 0 auto;height:auto;width:100%;min-width:100%;max-width:100%}
+   .main-wrap{flex:1 1 auto;min-height:0;width:100%;overflow:hidden}
+   .main{height:100%;width:100%;min-width:100%;max-width:none}
   .measure-cell{height:auto;min-height:0}
   .measure-cell span{min-height:0}
   .film-measure-cell .film-box{min-height:0}
@@ -26821,6 +26893,7 @@ function fitOnePage() {
     const sheet = page.querySelector('.sheet');
     if (!page || !sheet) return;
     const main = page.querySelector('.main');
+    const mainWrap = page.querySelector('.main-wrap');
     const tbody = main ? main.tBodies[0] : null;
     const rows = tbody ? Array.from(tbody.rows || []) : [];
     const cols = main ? Array.from(main.querySelectorAll('colgroup col')) : [];
@@ -26830,11 +26903,15 @@ function fitOnePage() {
       if (widthTotal > 0) cols.forEach((col, idx) => { col.style.width = (widths[idx] * 100 / widthTotal).toFixed(4) + '%'; });
     }
     const mm = (v) => Math.round(v * 96 / 25.4);
-    sheet.style.transform = '';
-    sheet.style.transformOrigin = '';
     sheet.style.height = '';
     sheet.style.width = '';
-    if (main) { main.style.height = ''; main.style.minHeight = ''; }
+    if (main) {
+      main.style.height = '';
+      main.style.minHeight = '';
+      main.style.width = '';
+      main.style.transform = '';
+      main.style.transformOrigin = '';
+    }
     rows.forEach(row => {
       row.style.height = '';
       Array.from(row.cells || []).forEach(cell => { cell.style.height = ''; cell.style.minHeight = ''; });
@@ -26851,12 +26928,9 @@ function fitOnePage() {
     page.style.height = pageH + 'px';
     sheet.style.width = pageW + 'px';
     sheet.style.height = pageH + 'px';
-    if (main && rows.length) {
+    if (main && mainWrap && rows.length) {
       void sheet.offsetHeight;
-      const sheetRect = sheet.getBoundingClientRect();
-      const mainRect = main.getBoundingClientRect();
-      const padB = parseFloat(getComputedStyle(sheet).paddingBottom) || 0;
-      const availableMainH = Math.max(140, Math.floor(pageH - (mainRect.top - sheetRect.top) - padB - 1));
+      const availableMainH = Math.max(120, Math.floor(mainWrap.clientHeight));
       const headH = Array.from(main.tHead && main.tHead.rows || []).reduce((sum, row) => sum + row.getBoundingClientRect().height, 0);
       const bodyTarget = Math.max(100, availableMainH - headH);
       const naturalHeights = rows.map(row => Math.max(28, row.getBoundingClientRect().height));
@@ -26890,15 +26964,17 @@ function fitOnePage() {
           }
         });
       });
+      // 셀의 최소 콘텐츠 높이 때문에 표가 목표 영역보다 커질 때는 세로만 맞춘다.
+      // 가로 폭은 항상 100%라서 오른쪽에 빈 공간이 생기지 않는다.
+      void main.offsetHeight;
+      const actualMainH = Math.max(main.offsetHeight || 0, main.scrollHeight || 0, main.getBoundingClientRect().height || 0);
+      const tableScaleY = Math.min(1, availableMainH / Math.max(1, actualMainH));
+      main.style.width = '100%';
+      if (tableScaleY < 0.998) {
+        main.style.transformOrigin = 'top left';
+        main.style.transform = 'scaleY(' + Math.max(0.01, tableScaleY).toFixed(4) + ')';
+      }
       updateAdminRowTargetLabels();
-    }
-    void sheet.offsetHeight;
-    const sheetW = sheet.scrollWidth || pageW;
-    const sheetH = sheet.scrollHeight || pageH;
-    const scale = Math.min(1, pageW / sheetW, pageH / sheetH);
-    if (scale < 0.998) {
-      sheet.style.transformOrigin = 'top left';
-      sheet.style.transform = 'scale(' + Math.max(0.6, scale).toFixed(4) + ')';
     }
   });
 }
@@ -27044,6 +27120,7 @@ window.addEventListener('afterprint', () => {
         ,printQualityStandardPage
         ,renderStandardsCard
         ,validateSameColorStandards
+        ,setSameColorNotApplicable
         ,onStdFilterCarChange
         ,openSpecModal
         ,saveSpecModal

@@ -174,6 +174,7 @@ const DashboardModule = (function() {
     let _resizeCtx = null;
     let _blockObserver = null;
     let _winResizeBound = false;
+    let _layoutTimer = null;
 
     function _readLayout() {
         try {
@@ -240,16 +241,22 @@ const DashboardModule = (function() {
     }
 
     // 카드의 폭을 유지하면서 위쪽 빈 공간부터 채워 배치한다.
-    function autoArrangeLayout() {
+    function autoArrangeLayout(silent = false) {
         const grid = document.getElementById('dashLayoutGrid');
         if (!grid) return;
+        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
+        blocks.forEach(function(block) {
+            // 이전 화면 크기에서 저장된 고정 높이는 해제하고 현재 콘텐츠 높이를 사용한다.
+            block.dataset.h = 0;
+            _applyBlockStyle(block);
+        });
         if (window.innerWidth <= FREE_MIN_WIDTH) {
-            UIUtils.toast('자동 정렬은 넓은 화면에서 사용할 수 있습니다.', 'info');
+            _enterFreeMode(grid);
+            if (!silent) UIUtils.toast('화면 폭에 맞춰 대시보드 블럭을 세로로 자동 배치했습니다.', 'success');
             return;
         }
 
         _enterFreeMode(grid);
-        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
         if (!blocks.length) return;
         const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
         const placed = [];
@@ -281,7 +288,7 @@ const DashboardModule = (function() {
         });
         _updateGridHeight(grid);
         _saveLayout();
-        UIUtils.toast('대시보드 카드를 빈 공간 없이 자동 정렬했습니다.', 'success');
+        if (!silent) UIUtils.toast('대시보드 카드를 빈 공간 없이 자동 정렬했습니다.', 'success');
     }
 
     // 넓은 화면 = 자유 배치(절대 위치), 좁은 화면 = 기존 흐름 배치
@@ -562,14 +569,22 @@ const DashboardModule = (function() {
         // 블럭 내용이 늦게 채워져 높이가 바뀌면 그리드 높이도 따라간다
         if (_blockObserver) _blockObserver.disconnect();
         if (window.ResizeObserver) {
-            _blockObserver = new ResizeObserver(function() { _updateGridHeight(grid); });
+            _blockObserver = new ResizeObserver(function() {
+                _updateGridHeight(grid);
+                if (_isFree(grid) && !_moveCtx && !_resizeCtx) {
+                    clearTimeout(_layoutTimer);
+                    _layoutTimer = setTimeout(function() { autoArrangeLayout(true); }, 100);
+                }
+            });
             grid.querySelectorAll(':scope > .dash-block').forEach(function(el) { _blockObserver.observe(el); });
         }
         if (!_winResizeBound) {
             _winResizeBound = true;
             window.addEventListener('resize', function() {
                 const g = document.getElementById('dashLayoutGrid');
-                if (g) _enterFreeMode(g);
+                if (!g) return;
+                clearTimeout(_layoutTimer);
+                _layoutTimer = setTimeout(function() { autoArrangeLayout(true); }, 120);
             });
         }
     }
@@ -587,7 +602,6 @@ const DashboardModule = (function() {
     }
 
     function renderStandardDashboard(container) {
-        const hadSavedLayout = !!_readLayout();
         container.innerHTML = `
         <div class="dash-standard-page fade-in-up">
             <div class="dash-free-grid" id="dashLayoutGrid">
@@ -631,12 +645,10 @@ const DashboardModule = (function() {
         renderImprovementTiles();
         _bindCacheWarmRefreshOnce();
         _loadSummary();
-        // 카드 내부 내용이 모두 렌더링된 뒤 실제 높이로 한 번 더 압축 정렬한다.
-        if (!hadSavedLayout && window.innerWidth > FREE_MIN_WIDTH) {
-            setTimeout(function() {
-                if (document.getElementById('dashLayoutGrid')) autoArrangeLayout();
-            }, 800);
-        }
+        // 저장된 좌표나 높이를 따르지 않고, 현재 화면과 타일 콘텐츠에 맞춰 매 진입 시 재배치한다.
+        setTimeout(function() {
+            if (document.getElementById('dashLayoutGrid')) autoArrangeLayout(true);
+        }, 800);
     }
 
     /* ══════════════════════════════════════════════════════════
