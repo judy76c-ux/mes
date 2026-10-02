@@ -1287,6 +1287,11 @@ var PaintingInputModule = (function () {
             }
         } catch (e) { /* ignore */ }
         try {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.renderOverdueInputStockSection === 'function') {
+                PaintingWorkModule.renderOverdueInputStockSection();
+            }
+        } catch (e) { /* ignore */ }
+        try {
             if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.renderPlanSummary === 'function') {
                 PaintingWorkModule.renderPlanSummary();
             }
@@ -2813,6 +2818,25 @@ var PaintingInputModule = (function () {
     // 창고 확인 대기 등). 반납 레코드를 작업일과 같은 날짜로 제한하면, 하루만 지나도 이미
     // 반납된 수량을 "아직 반납 안 됨"으로 다시 세어 중복 반납을 유도하는 사고가 난다.
     // 그래서 날짜 대신 LOT 번호로만 범위를 좁힌다 — LOT은 그 자체로 유일한 실물 단위다.
+    /** 같은 날·라인·차종에서 이 실적과 사출자재를 나눠 쓰는 다른 실적인가.
+     *  제작품명이 같을 때뿐 아니라, 제작품명이 달라도(예: 6PS/AZ3, MAP RH/LH) 같은 사출명을
+     *  쓰면 형제다. 제작품명이 같을 때만 형제로 보면 같은 사출 입고분 전체가 실적마다 통째로
+     *  "현장입고"로 잡혀 자재 유실이 중복 표시된다. */
+    function _isSiblingWork(w, opts, injNames) {
+        const wantPart = String(opts.partName || '').trim();
+        if (wantPart && String(w.partName || '').trim() === wantPart) return true;
+        const names = [String(w.injPartName || '').trim()];
+        (Array.isArray(w.lots) ? w.lots : []).forEach(function (l) {
+            if (l && l.partName) names.push(String(l.partName).trim());
+        });
+        if (!wantPart) names.push(String(w.partName || '').trim());
+        if (names.some(function (n) { return n && injNames[n]; })) return true;
+        try {
+            const wi = _injNamesFromWorkOpts({ carModel: w.carModel, partName: w.partName, injPartName: w.injPartName });
+            return Object.keys(wi).some(function (n) { return injNames[n]; });
+        } catch (e) { return false; }
+    }
+
     function getReturnedQtyForWork(line, opts) {
         opts = opts || {};
         const want = _normLine(line);
@@ -2839,10 +2863,7 @@ var PaintingInputModule = (function () {
                 if (String(w.date || '').slice(0, 10) !== day) return false;
                 if (_normLine(w.line || '') !== want) return false;
                 if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return false;
-                const wantPart = String(opts.partName || '').trim();
-                if (wantPart) return String(w.partName || '').trim() === wantPart;
-                const wPart = String(w.injPartName || w.partName || '').trim();
-                return wPart && injNamesForSibling[wPart];
+                return _isSiblingWork(w, opts, injNamesForSibling);
             }).length
             : 0;
         const useLotMatch = hasLots && siblingCount > 0;
@@ -2968,10 +2989,7 @@ var PaintingInputModule = (function () {
                 if (String(w.date || '').slice(0, 10) !== day) return false;
                 if (_normLine(w.line || '') !== want) return false;
                 if (opts.carModel && w.carModel && !UIUtils.sameCarModel(w.carModel, opts.carModel)) return false;
-                const wantPart = String(opts.partName || '').trim();
-                if (wantPart) return String(w.partName || '').trim() === wantPart;
-                const wPart = String(w.injPartName || w.partName || '').trim();
-                return wPart && injNames[wPart];
+                return _isSiblingWork(w, opts, injNames);
             }).length
             : 0;
 

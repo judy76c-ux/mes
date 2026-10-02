@@ -4352,8 +4352,31 @@ const PaintingWorkModule = (function() {
         }
         if (planDate) {
             lots = _filterLotsToPlanDay(lots, planDate, carModel, injPartName);
+            lots = _excludeLotsUsedBySiblingWorks(lots, injPartName, planColor, carModel, planDate);
         }
         return lots || [];
+    }
+
+    /** 같은 날·차종·라인·사출명의 다른 실적이 이미 쓴 수량을 LOT 잔량에서 빼고, 다 쓴 LOT은 목록에서 제거한다.
+     *  (실적 등록이 끝난 소재가 같은 소재의 다음 계획 LOT 선택에 다시 보이면 안 된다.) */
+    function _excludeLotsUsedBySiblingWorks(lots, injPartName, planColor, carModel, planDate) {
+        if (!lots || !lots.length) return lots || [];
+        try {
+            var pn = ((document.getElementById('addPwPartNameHidden') || document.getElementById('editPwPartName') || {}).value || '').trim();
+            var line = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
+                || (typeof _currentLine !== 'undefined' ? _currentLine : '');
+            var maps = _computeSiteInboundLotMaps({
+                id: _workViewId || null, line: line, carModel: carModel, partName: pn,
+                color: planColor, date: String(planDate || '').slice(0, 10), injPartName: injPartName, lots: []
+            });
+            if (!maps || !maps.ok) return lots;
+            return lots.map(function (l) {
+                var no = String((l && l.lotNo) || '').trim();
+                if (!no || l.lotSource === 'site_rework' || !(no in maps.receivedQtyByLot)) return l;
+                var left = (maps.receivedQtyByLot[no] || 0) - (maps.usedQtyByLot[no] || 0) - ((maps.returnedQtyByLot || {})[no] || 0);
+                return Object.assign({}, l, { balance: Math.max(0, Math.min(Number(l.balance) || 0, left)) });
+            }).filter(function (l) { return (Number(l.balance) || 0) > 0; });
+        } catch (e) { return lots; }
     }
 
     /** 차종+제작품명에 연결된 사출명의 LOT만. 사출명 미선택 때 차종 전체(1SPOT 혼입)를 쓰지 않는다. */
@@ -4624,9 +4647,19 @@ const PaintingWorkModule = (function() {
             var sel = row.querySelector('.pw-lot-sel');
             if (!sel) return;
             var curVal = sel.value;
+            // 이 행이 이미 선택한 옵션(자동 추가된 미반영분·잔량 0인 LOT 등)은 재고 목록에 없어도
+            // 다시 만든 옵션 목록에 유지해야 드롭다운이 빈칸으로 바뀌지 않는다.
+            var curOptHtml = '';
+            if (curVal) {
+                var curOpt = sel.options[sel.selectedIndex];
+                if (curOpt) curOptHtml = curOpt.outerHTML;
+            }
             var excludeLots = _getSelectedLotNos(row);
             sel.innerHTML = _buildFilteredLotOptions(injPartName, cm, pn, excludeLots);
-            if (curVal && sel.querySelector('option[value="' + curVal + '"]'))
+            if (curVal && !sel.querySelector('option[value="' + curVal.replace(/"/g, '\\"') + '"]') && curOptHtml) {
+                sel.insertAdjacentHTML('afterbegin', curOptHtml);
+            }
+            if (curVal && sel.querySelector('option[value="' + curVal.replace(/"/g, '\\"') + '"]'))
                 sel.value = curVal;
         });
     }
@@ -4650,7 +4683,7 @@ const PaintingWorkModule = (function() {
                 if (!warn) {
                     warn = document.createElement('div');
                     warn.className = 'pw-qty-warn';
-                    warn.style.cssText = 'font-size:0.72rem;color:#dc2626;margin-top:2px;';
+                    warn.style.cssText = 'font-size:0.72rem;color:#dc2626;width:100%;text-align:right;';
                     input.parentNode.appendChild(warn);
                 }
                 warn.textContent = '최대 ' + UIUtils.formatNumber(max) + ' EA (재고 초과)';
@@ -6040,16 +6073,18 @@ const PaintingWorkModule = (function() {
             ' onchange="PaintingWorkModule.onLotRowSelect(this)">' +
             lotsHtml + '</select>' +
             '<input type="hidden" class="pw-lot-no"' + noVal + '>' +
+            '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;min-width:0;">' +
             '<input type="number" class="form-input pw-lot-qty"' + qtyVal + maxAttr +
-            ' min="0" style="font-size:0.84rem;text-align:right;"' +
+            ' min="0" style="font-size:0.84rem;text-align:right;flex:1 1 90px;min-width:0;"' +
             ' oninput="PaintingWorkModule._validateLotQty(this)">' +
+            '<div class="pw-lot-status" style="font-size:0.68rem;font-weight:700;white-space:nowrap;">' +
+            _lotRowStatusHtml(autoBalance, qty) + '</div>' +
+            '</div>' +
             '<button class="btn btn-sm" title="삭제" onclick="PaintingWorkModule.removeLotRow(this)"' +
             ' style="background:transparent;color:var(--text-muted);border:1px solid var(--border);' +
             'border-radius:6px;padding:4px 6px;min-width:34px;">' +
             '<span class="material-symbols-outlined" style="font-size:15px;display:block;">remove</span>' +
             '</button>' +
-            '<div class="pw-lot-status" style="grid-column:3;text-align:right;font-size:0.68rem;font-weight:700;margin-top:1px;">' +
-            _lotRowStatusHtml(autoBalance, qty) + '</div>' +
             '</div>' +
             '<div class="pw-fifo-warn" style="display:none;margin-top:5px;padding:8px 12px;' +
             'background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.55);border-radius:6px;">' +
@@ -6146,6 +6181,27 @@ const PaintingWorkModule = (function() {
             }
         } else {
             lots = _lotsForPlanPart(cm, pn, planColor, planDate) || [];
+        }
+        // 같은 날·차종·라인·사출명의 다른 실적(같은 소재의 두 번째 계획 등)이 이미 쓴 수량은
+        // 자동 선택 후보에서 뺀다. 안 빼면 앞 실적이 쓴 LOT이 전량 다시 선택된다.
+        if (!isLaserWip && lots && lots.length) {
+            try {
+                var _lineFor = ((document.getElementById('addPwLineHidden') || document.getElementById('editPwLineHidden') || {}).value || '').trim()
+                    || (typeof _currentLine !== 'undefined' ? _currentLine : '');
+                var _dayFor = String(planDate || '').slice(0, 10);
+                var _maps = _computeSiteInboundLotMaps({
+                    id: _workViewId || null, line: _lineFor, carModel: cm, partName: pn,
+                    color: planColor, date: _dayFor, injPartName: injPartName, lots: []
+                });
+                if (_maps && _maps.ok) {
+                    lots = lots.map(function (l) {
+                        var no = String((l && l.lotNo) || '').trim();
+                        if (!no || l.lotSource === 'site_rework' || !(no in _maps.receivedQtyByLot)) return l;
+                        var left = (_maps.receivedQtyByLot[no] || 0) - (_maps.usedQtyByLot[no] || 0) - ((_maps.returnedQtyByLot || {})[no] || 0);
+                        return Object.assign({}, l, { balance: Math.max(0, Math.min(Number(l.balance) || 0, left)) });
+                    });
+                }
+            } catch (eSib) { /* 계산 실패 시 기존 잔량 유지 */ }
         }
         return lots
             .filter(function (l) { return l && l.lotNo && (Number(l.balance) || 0) > 0; })
@@ -6318,6 +6374,11 @@ const PaintingWorkModule = (function() {
                     '" data-lot-source="site_rework" data-balance="' + a.balance + '" selected>' +
                     '현장 잔여 재공품 / 사출 ' + _pwEsc(a.lotNo) + ' │ ' + UIUtils.formatNumber(a.balance) + ' EA</option>' +
                     lotsHtml;
+            } else if (!wantRework && !lotOptRe.test(lotsHtml)) {
+                // 다른 행 제외·재고 필터로 옵션이 빠져도 선택값이 빈칸이 되지 않게 옵션을 직접 만든다.
+                lotsHtml = '<option value="' + _pwEsc(selectVal) + '" data-lot-no="' + _pwEsc(a.lotNo) +
+                    '" data-balance="' + a.balance + '" selected>LOT ' + _pwEsc(a.lotNo) +
+                    ' │ ' + UIUtils.formatNumber(a.balance) + ' EA</option>' + lotsHtml;
             }
             container.insertAdjacentHTML('beforeend', _buildLotRow(lotsHtml, selectVal, a.qty));
             var row = container.querySelectorAll('.pw-lot-row')[idx];
@@ -6658,21 +6719,39 @@ const PaintingWorkModule = (function() {
                 '<span style="font-weight:700;white-space:nowrap;">' + UIUtils.formatNumber(l.balance) + ' EA</span></div>';
         }).join('');
 
+        // 전체 현장 재고(입고) 중 이번 작업 사용분과 남는 수량을 한 줄로 보여준다.
+        var totalIn = 0, totalUsed = 0, totalReturned = 0;
+        try {
+            var _m = _computeSiteInboundLotMaps(ctx.data);
+            if (_m && _m.ok) {
+                Object.keys(_m.receivedQtyByLot || {}).forEach(function (k) {
+                    totalIn += Number(_m.receivedQtyByLot[k]) || 0;
+                    totalUsed += Number((_m.usedQtyByLot || {})[k]) || 0;
+                    totalReturned += Number((_m.returnedQtyByLot || {})[k]) || 0;
+                });
+            }
+        } catch (e) { /* 요약만 생략 */ }
+        if (totalIn <= 0) totalIn = (Number(ctx.remainQty) || 0) + totalUsed;
+        var summaryHtml = '<div style="margin-top:8px;font-weight:700;">전체 현장 재고 <span style="color:var(--accent-blue);">' + UIUtils.formatNumber(totalIn) +
+            ' EA</span> 중 <span style="color:#16a34a;">' + UIUtils.formatNumber(totalUsed) + ' EA</span> 사용' +
+            (totalReturned > 0.001 ? ' · 반납 ' + UIUtils.formatNumber(totalReturned) + ' EA' : '') +
+            ' → 남은 재고 <span style="color:#b45309;">' + UIUtils.formatNumber(ctx.remainQty) + ' EA</span></div>';
+
         UIUtils.showModal('현장에 남는 자재 처리',
             '<div style="padding:4px 0;">' +
             '<div style="padding:11px 13px;border-radius:8px;border:1px solid rgba(180,83,9,.35);background:rgba(180,83,9,.07);font-size:0.85rem;line-height:1.6;">' +
             '이 도장작업일 입고분 기준으로 현장에 <strong style="color:#b45309;">' + UIUtils.formatNumber(ctx.remainQty) + ' EA</strong>가 남습니다. ' +
-            '처리 방법을 정하지 않으면 나중에 <strong>유실</strong>로 잡히고 사출창고 재고와 실물이 어긋납니다.' +
+            '처리 방법을 정하지 않으면 나중에 <strong>유실</strong>로 잡히고 사출창고 재고와 실물이 어긋납니다.' + summaryHtml +
             '<div style="margin-top:4px;font-size:0.75rem;color:var(--text-muted);">지난 도장일의 사출 LOT 잔량은 0 처리되며 이 목록에 포함되지 않습니다.</div>' +
             '</div>' +
             '<div style="margin-top:10px;background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">' + rows + '</div>' +
             '<div style="margin-top:12px;">' +
             '<label style="display:flex;gap:8px;align-items:flex-start;padding:9px 11px;border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:0.85rem;">' +
             '<input type="radio" name="pwRemainAction" value="carryover" checked style="margin-top:3px;">' +
-            '<span><strong>이어서 사용 (이월)</strong><div style="color:var(--text-muted);font-size:0.78rem;">다음 작업에 그대로 씁니다. 현장 잔량으로 남습니다.</div></span></label>' +
+            '<span><strong>이어서 사용 (이월) · ' + UIUtils.formatNumber(ctx.remainQty) + ' EA</strong><div style="color:var(--text-muted);font-size:0.78rem;">다음 작업에 그대로 씁니다. 현장 잔량으로 남습니다.</div></span></label>' +
             '<label style="display:flex;gap:8px;align-items:flex-start;padding:9px 11px;border:1px solid var(--border-color);border-radius:8px;cursor:pointer;font-size:0.85rem;margin-top:6px;">' +
             '<input type="radio" name="pwRemainAction" value="return" style="margin-top:3px;">' +
-            '<span><strong>사출창고로 반납</strong><div style="color:var(--text-muted);font-size:0.78rem;">반납 대기로 기록되고, 사출창고에서 「입고 처리」하면 재고에 편입됩니다.</div></span></label>' +
+            '<span><strong>사출창고로 반납 · ' + UIUtils.formatNumber(ctx.remainQty) + ' EA</strong><div style="color:var(--text-muted);font-size:0.78rem;">반납 대기로 기록되고, 사출창고에서 「입고 처리」하면 재고에 편입됩니다.</div></span></label>' +
             '</div>' +
             '<div class="form-group" style="margin-top:12px;">' +
             '<label class="form-label">사유</label>' +
@@ -10216,6 +10295,13 @@ const PaintingWorkModule = (function() {
             if (isReturned) {
                 return '<tr style="background:rgba(124,45,18,0.05);border-bottom:1px solid rgba(124,45,18,0.15);">' + cells + '</tr>';
             }
+            // 반영됨 행을 다시 클릭하면 ②투입 목록에서 이 LOT 행을 빼서 미반영으로 되돌린다.
+            if (!readOnly && used > 0.001) {
+                return '<tr class="pw-reflected-lot-row" data-lot="' + _pwEsc(lotNo) + '"' +
+                    ' title="클릭하면 ②투입에서 제외되어 미반영으로 변경됩니다"' +
+                    ' onclick="PaintingWorkModule.removeReflectedLot(this)"' +
+                    ' style="cursor:pointer;background:rgba(22,163,74,0.05);border-bottom:1px solid rgba(22,163,74,0.15);">' + cells + '</tr>';
+            }
             return '<tr style="background:rgba(22,163,74,0.05);border-bottom:1px solid rgba(22,163,74,0.15);">' + cells + '</tr>';
         }).join('');
 
@@ -10348,6 +10434,42 @@ const PaintingWorkModule = (function() {
         }
         // _updateLotSummary가 ①번 경고 박스도 함께 재계산한다(방금 추가한 만큼 반영 처리).
         setTimeout(_updateLotSummary, 60);
+    }
+
+    // 반영됨 행 클릭 → ②투입 목록에서 해당 사출 LOT 행을 모두 제거해 미반영 상태로 되돌린다.
+    // 마지막 한 행만 남는 경우엔 행을 지우지 않고 선택·수량만 비운다(최소 1행 유지).
+    function removeReflectedLot(trEl) {
+        var lotNo = trEl && trEl.dataset ? trEl.dataset.lot : '';
+        var container = document.getElementById('pwLotRows');
+        if (!lotNo || !container) return;
+        var matched = [];
+        container.querySelectorAll('.pw-lot-row').forEach(function (row) {
+            var s = row.querySelector('.pw-lot-sel');
+            var inp = row.querySelector('.pw-lot-no');
+            var opt = s && s.options ? s.options[s.selectedIndex] : null;
+            var dataNo = opt ? String(opt.getAttribute('data-lot-no') || '').trim() : '';
+            var typed = inp ? String(inp.value || '').trim() : '';
+            if (dataNo === lotNo || typed === lotNo || (s && (s.value === lotNo || s.value === 'rework:' + lotNo))) {
+                matched.push(row);
+            }
+        });
+        if (!matched.length) return;
+        var total = container.querySelectorAll('.pw-lot-row').length;
+        matched.forEach(function (row, i) {
+            if (total - i <= 1) {
+                var s = row.querySelector('.pw-lot-sel');
+                var inp = row.querySelector('.pw-lot-no');
+                var q = row.querySelector('.pw-lot-qty');
+                if (s) { s.value = ''; if (typeof onLotRowSelect === 'function') onLotRowSelect(s); }
+                if (inp) inp.value = '';
+                if (q) q.value = '';
+            } else {
+                row.remove();
+            }
+        });
+        _updateLotSummary();
+        _refreshAddLotBtn();
+        UIUtils.toast('LOT ' + lotNo + ' 반영을 취소했습니다(미반영).', 'info');
     }
 
     /** ①번 "창고→도장현장 입고" 경고 박스를 ②번 LOT 선택의 현재 화면 상태로 즉시 재계산한다.
@@ -11581,6 +11703,7 @@ const PaintingWorkModule = (function() {
         goToWorkFromPlan,
         addLotRow,
         addMissingLotRow,
+        removeReflectedLot,
         toggleReworkUseBox,
         applyReworkMaterial,
         removeLotRow,
@@ -11635,6 +11758,7 @@ const PaintingWorkModule = (function() {
         _matHistToggleAll: function() {},
         _matHistApplySelected: function() {},
         renderInputStockSection,
+        renderOverdueInputStockSection,
         _validateLotQty,
         _updateLotSummary,
         _autoFillLotQtys,

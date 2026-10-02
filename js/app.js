@@ -58,7 +58,7 @@ const App = (function() {
         contentArea.innerHTML = `
             <div class="fade-in-up" style="display:flex;flex-direction:column;gap:10px;">
                 <div style="padding:18px 20px;border:1px solid var(--border-color);border-radius:10px;background:var(--bg-secondary);color:var(--text-secondary);">
-                    대시보드를 준비하고 있습니다…
+                    화면을 준비하고 있습니다…
                 </div>
             </div>`;
     }
@@ -114,6 +114,18 @@ const App = (function() {
                 } catch (e) { return 'dashboard'; }
             })();
             const _contentArea = document.getElementById('contentArea');
+            // index.html 기본값이 대시보드(제목·사이드바 활성)라 새로고침 직후 대시보드로 보이므로,
+            // 복원할 페이지가 따로 있으면 활성 메뉴·제목을 먼저 맞춰 둔다.
+            if (_restorePage !== 'dashboard' && _restorePage !== '__intent__') {
+                const _nav = document.querySelector('.nav-item[data-page="' + _restorePage.replace(/"/g, '') + '"]');
+                if (_nav) {
+                    document.querySelectorAll('.nav-item.active').forEach(function (n) { n.classList.remove('active'); });
+                    _nav.classList.add('active');
+                    const _label = _nav.querySelector('.nav-label');
+                    const _title = document.getElementById('pageTitle');
+                    if (_label && _title) _title.textContent = _label.textContent;
+                }
+            }
             if (_restorePage === 'dashboard') {
                 if (typeof DashboardModule !== 'undefined' && DashboardModule.render) {
                     DashboardModule.render(_contentArea);
