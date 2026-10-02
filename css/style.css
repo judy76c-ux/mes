@@ -5226,3 +5226,25 @@ body.monitor-mode .dash-notification-list.is-tv { max-height:none !important;hei
 
 /* 부트스트랩 로딩 아이콘 회전 (app.js 새로고침 복원 중 표시) */
 @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+
+
+/* 사출 입·출고 등록 모달 — 스크롤 없이 한 화면에 보이도록 간격을 줄이고 높이를 최대한 사용 */
+.modal-container:has(.inj-inv-compact) {
+    max-height: calc((100dvh - 12px) / var(--mes-fit-scale, 1));
+}
+.modal-body:has(.inj-inv-compact) { padding: 10px 18px; }
+.modal-container:has(.inj-inv-compact) .modal-header { padding: 10px 20px; }
+.modal-container:has(.inj-inv-compact) .modal-footer { padding: 8px 20px 10px; }
+.inj-inv-compact .form-row { gap: 10px; margin-bottom: 0; }
+.inj-inv-compact .form-group { margin-bottom: 6px; }
+.inj-inv-compact .form-label { margin-bottom: 2px; font-size: 0.76rem; }
+.inj-inv-compact .form-input,
+.inj-inv-compact .form-select { padding-top: 5px; padding-bottom: 5px; min-height: 32px; font-size: 0.86rem; }
+.inj-inv-compact [style*="margin-bottom:14px"],
+.inj-inv-compact [style*="margin-bottom: 14px"] { margin-bottom: 6px !important; }
+.inj-inv-compact [style*="padding:8px 0"] { padding-top: 2px !important; padding-bottom: 2px !important; }
+.inj-inv-compact [style*="margin-bottom:16px"],
+.inj-inv-compact [style*="margin-bottom:12px"],
+.inj-inv-compact [style*="margin-bottom:10px"] { margin-bottom: 6px !important; }
+.inj-inv-compact [style*="padding:10px 12px"] { padding-top: 6px !important; padding-bottom: 6px !important; }
+.inj-inv-compact #lotStockList { max-height: 84px !important; }

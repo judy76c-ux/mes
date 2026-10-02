@@ -364,9 +364,9 @@ var InjectionWarehouseModule = (function() {
                     '</button>' +
                     (row.fromRework
                         ? ' <button type="button" class="btn btn-sm btn-outline" style="padding:4px 8px;font-size:0.76rem;margin-left:4px;border-color:#7c3aed;color:#7c3aed;"' +
-                          ' title="이미 리워크 자재를 사용해 도장했다면 눌러서 취소 처리하세요"' +
-                          ' onclick="InjectionWarehouseModule.cancelReworkShortage(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' + row.shortage + ')">' +
-                          '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">cancel</span> 잔여 재공품 사용됨(취소)' +
+                          ' title="실제로 사용한 잔여 재공품 수량만큼 부족 알림에서 제외합니다"' +
+                          ' onclick="InjectionWarehouseModule.openReworkUsageConfirm(\'' + em + '\',\'' + ep + '\',\'' + ec + '\',' + row.need + ',' + row.shortage + ')">' +
+                          '<span class="material-symbols-outlined" style="font-size:14px;vertical-align:middle;">inventory</span> 잔여 재공품 사용 입력' +
                           '</button>'
                         : '') +
                 '</td></tr>';
@@ -736,32 +736,77 @@ var InjectionWarehouseModule = (function() {
         loadData();
     }
 
-    /** 리워크 소재 부족 행을 "이미 리워크 자재를 사용해 도장 완료" 사유로 즉시 취소 처리한다.
-     *  현장 실적 입력 화면의 [리워크에서 투입 처리] 버튼을 거치지 않고(이미 보유 중이던 리워크
-     *  LOT을 그냥 ②투입 목록에서 골라 썼거나, 시스템 반영 전에 실물만 먼저 사용한 경우 등)
-     *  현장에서 실제로는 이미 자재를 확보·사용했는데 목록엔 부족으로 계속 남는 경우를 위한
-     *  수동 확인 버튼 — 사유 입력·관리자 쪽지 없이 즉시 처리된다(ackReworkUsageFromWork와 동일한
-     *  acked 저장소를 공유하므로 그만큼 need 계산에서 바로 빠진다). */
-    async function cancelReworkShortage(carEnc, partEnc, colorEnc, shortage) {
+    /** 잔여 재공품을 실제 사용한 수량만큼 부족 알림에서 제외한다.
+     *  재고 원장은 건드리지 않으며, 이미 실물 사용은 했지만 시스템 사용 반영이 누락된 경우를 위한 확인 입력이다. */
+    function openReworkUsageConfirm(carEnc, partEnc, colorEnc, need, shortage) {
         const carModel = decodeURIComponent(carEnc || '');
         const partName = decodeURIComponent(partEnc || '');
         const color = decodeURIComponent(colorEnc || '');
-        const qty = Math.max(0, Number(shortage) || 0);
-        if (qty <= 0) return;
-        if (!confirm(
-            '이미 잔여 재공품을 사용해 도장을 진행했다는 뜻으로, 이 부족 요청(' +
-            UIUtils.formatNumber(qty) + ' EA)을 취소 처리하시겠습니까?\n\n' +
-            carModel + ' / ' + partName + (color ? ' / ' + color : '') +
-            '\n\n재고 수량은 변경되지 않고, 목록에서만 사라집니다.'
-        )) return;
-        const r = await ackReworkUsageFromWork(carModel, partName, color, qty, {
-            note: '리워크 자재 사용 확인 — 목록에서 수동 취소 처리'
-        });
-        if (!r || !r.ok) {
-            UIUtils.toast('취소 처리에 실패했습니다.', 'error');
+        const needQty = Math.max(0, Number(need) || 0);
+        const shortageQty = Math.max(0, Number(shortage) || 0);
+        if (needQty <= 0 || shortageQty <= 0) return;
+        UIUtils.showModal(
+            '잔여 재공품 사용 확인',
+            '<div style="padding:12px 14px;border:1px solid rgba(124,58,237,.28);border-radius:10px;background:rgba(124,58,237,.06);">' +
+                '<div style="font-weight:800;color:#6d28d9;">' + _escapeHtml(carModel || '-') + ' / ' +
+                    _escapeHtml(partName || '-') + (color ? ' / ' + _escapeHtml(color) : '') + '</div>' +
+                '<div style="margin-top:8px;font-size:.86rem;">현장 필요량 <strong>' + UIUtils.formatNumber(needQty) +
+                    ' EA</strong> · 현재 부족 <strong style="color:var(--accent-red);">' +
+                    UIUtils.formatNumber(shortageQty) + ' EA</strong></div>' +
+            '</div>' +
+            '<label style="display:flex;align-items:center;gap:9px;margin-top:16px;padding:12px;border:1px solid #c4b5fd;border-radius:9px;cursor:pointer;">' +
+                '<input id="injConfirmReworkUsed" type="checkbox" onchange="InjectionWarehouseModule.toggleReworkUsageQty(this.checked)">' +
+                '<strong>이 품목에 잔여 재공품을 실제 투입했습니다</strong>' +
+            '</label>' +
+            '<div class="form-group" style="margin-top:12px;">' +
+                '<label class="form-label" for="injConfirmReworkQty">잔여 재공품 사용 수량 (EA)</label>' +
+                '<input id="injConfirmReworkQty" class="form-input" type="number" min="1" max="' + needQty + '" step="1" value="' +
+                    Math.min(shortageQty, needQty) + '" disabled style="width:100%;opacity:.55;">' +
+                '<div style="margin-top:5px;font-size:.76rem;color:var(--text-muted);">입력한 수량만 부족 알림에서 제외됩니다. 재고 수량은 변경되지 않습니다.</div>' +
+            '</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+            '<button class="btn btn-primary" style="background:#7c3aed;border-color:#7c3aed;" onclick="InjectionWarehouseModule.confirmReworkUsage(\'' +
+                encodeURIComponent(carModel) + '\',\'' + encodeURIComponent(partName) + '\',\'' + encodeURIComponent(color) + '\',' + needQty + ')">사용 반영</button>',
+            'sm'
+        );
+    }
+
+    function toggleReworkUsageQty(enabled) {
+        const qtyInput = document.getElementById('injConfirmReworkQty');
+        if (!qtyInput) return;
+        qtyInput.disabled = !enabled;
+        qtyInput.style.opacity = enabled ? '1' : '.55';
+        if (enabled) {
+            qtyInput.focus();
+            qtyInput.select();
+        }
+    }
+
+    async function confirmReworkUsage(carEnc, partEnc, colorEnc, maxNeed) {
+        const checked = document.getElementById('injConfirmReworkUsed');
+        const qtyInput = document.getElementById('injConfirmReworkQty');
+        if (!checked || !checked.checked) {
+            UIUtils.toast('잔여 재공품 실제 투입 여부를 체크하세요.', 'warning');
             return;
         }
-        UIUtils.toast('리워크 자재 사용으로 취소 처리했습니다.', 'success');
+        const qty = Math.floor(Number(qtyInput && qtyInput.value) || 0);
+        const max = Math.max(0, Number(maxNeed) || 0);
+        if (qty < 1 || qty > max) {
+            UIUtils.toast('사용 수량은 1~' + UIUtils.formatNumber(max) + ' EA 범위로 입력하세요.', 'warning');
+            return;
+        }
+        const carModel = decodeURIComponent(carEnc || '');
+        const partName = decodeURIComponent(partEnc || '');
+        const color = decodeURIComponent(colorEnc || '');
+        const r = await ackReworkUsageFromWork(carModel, partName, color, qty, {
+            note: '잔여 재공품 실제 투입 확인 — 사용 수량 ' + qty + ' EA'
+        });
+        if (!r || !r.ok) {
+            UIUtils.toast('사용 수량 반영에 실패했습니다.', 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast(UIUtils.formatNumber(qty) + ' EA를 잔여 재공품 사용량으로 반영했습니다.', 'success');
         loadData();
     }
 
@@ -1397,8 +1442,23 @@ var InjectionWarehouseModule = (function() {
         if (rcv || out) _prefillActorSelect(rcv ? '입고' : '출고', true);
     }
 
+    // 입고자(임의 입고) 후보 — 사출 창고에 입력 권한이 있는 사용자. 역할 이름(생산작업자 등)이 아니라
+    // 역할별 접근 권한 설정을 따른다(입력 권한이 없는 사용자는 목록에서 빠진다).
     function _getProductionWorkerUsers() {
-        return _applyInjActorOrder(_getUsersByRoles(['prod_worker']), 'receiver');
+        if (typeof AuthModule === 'undefined' || typeof AuthModule.canUserWritePage !== 'function' || typeof AuthModule.getUsers !== 'function') {
+            return _applyInjActorOrder(_getUsersByRoles(['prod_worker']), 'receiver');
+        }
+        const list = (AuthModule.getUsers() || [])
+            .filter(function(user) { return user && user.active !== false && AuthModule.canUserWritePage(user, 'injection-warehouse'); })
+            .map(function(user) {
+                return {
+                    id: String(user.id || user.username || user.displayName || ''),
+                    name: String(user.displayName || user.name || user.username || user.id || '')
+                };
+            })
+            .filter(function(user) { return user.id && user.name; })
+            .sort(function(a, b) { return a.name.localeCompare(b.name, 'ko'); });
+        return _applyInjActorOrder(list, 'receiver');
     }
 
     // 순서(물류작업자 → 생산관리자)대로 역할별로 묶어서 반환한다.
@@ -8684,7 +8744,7 @@ var InjectionWarehouseModule = (function() {
         const colorClass = type === '출고' ? 'var(--accent-red)' : 'var(--accent-blue)';
         const titleIcon = type === '출고' ? 'do_not_disturb_on' : 'add_circle';
 
-        UIUtils.showModal(`<span class="material-symbols-outlined" style="vertical-align:middle;color:${colorClass};">${titleIcon}</span> 사출 ${type} 등록`, `
+        UIUtils.showModal(`<span class="material-symbols-outlined" style="vertical-align:middle;color:${colorClass};">${titleIcon}</span> 사출 ${type} 등록`, `<div class="inj-inv-compact">
             ${type === '입고' ? `
             <div id="addInvInspWarn" data-warn-state="idle" style="margin-bottom:14px;padding:10px 14px;background:rgba(37,99,235,0.05);
                 border:1px solid rgba(37,99,235,0.25);border-radius:8px;line-height:1.55;">
@@ -8874,7 +8934,7 @@ var InjectionWarehouseModule = (function() {
                     </select>
                 </div>`}
             </div>
-        `, `
+        </div>`, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn ${type === '출고' ? 'btn-danger' : 'btn-primary'}" onclick="InjectionWarehouseModule.saveNew()">확인</button>
         `, 'min(1180px, calc(100vw - 32px))');
@@ -13157,7 +13217,9 @@ var InjectionWarehouseModule = (function() {
         openActorOrderEditor,
         moveActorOrder,
         saveActorOrder,
-        cancelReworkShortage,
+        openReworkUsageConfirm,
+        toggleReworkUsageQty,
+        confirmReworkUsage,
         openReworkDispatchFromShortage,
         toggleSiteInboundShortageNotify,
         ackReworkUsageFromWork,
