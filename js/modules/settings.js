@@ -23,6 +23,7 @@ const SettingsModule = (function() {
     let currentTab = (() => {
         try { return sessionStorage.getItem(SETTINGS_TAB_KEY) || 'products'; } catch(e) { return 'products'; }
     })();
+    let _pendingExternalProductPrefill = null;
     let _pendingPhoto = null; // 모달 사진 임시 보관
     let _pendingSeal = null;  // 모달 서명/날인 임시 보관
 
@@ -75,6 +76,11 @@ const SettingsModule = (function() {
         `;
 
         renderTabContent();
+        if (_pendingExternalProductPrefill) {
+            const pending = _pendingExternalProductPrefill;
+            _pendingExternalProductPrefill = null;
+            setTimeout(() => openAddProductModal(pending), 0);
+        }
     }
 
     function switchTab(tab) {
@@ -83,6 +89,19 @@ const SettingsModule = (function() {
         try { sessionStorage.setItem(SETTINGS_TAB_KEY, tab); } catch(e) {}
         const container = document.getElementById('contentArea');
         render(container);
+    }
+
+    // 다른 업무 화면에서 제품 기본정보 누락을 발견했을 때 제품 추가 화면으로 연결한다.
+    // Router의 설정 권한 확인을 거친 뒤 render()에서 제품 추가 모달을 연다.
+    function openProductMasterAdd(prefill = {}) {
+        currentTab = 'products';
+        try { sessionStorage.setItem(SETTINGS_TAB_KEY, 'products'); } catch(e) {}
+        _pendingExternalProductPrefill = {
+            carModel: String(prefill.carModel || '').trim(),
+            partName: String(prefill.partName || '').trim(),
+            color: String(prefill.color || '').trim()
+        };
+        Router.navigate('settings');
     }
 
     // 필터 값 저장: 탭 재렌더링 전에 현재 필터 값을 읽어 둠
@@ -13942,6 +13961,7 @@ const SettingsModule = (function() {
         onRolePermSelect, onGroupPermChange, togglePermGroupExpand, onPagePermChange, toggleAllGroupPerm, openRoleModal, saveRole, deleteRole,
         fixShippingWritePermsNow,
         switchTab,
+        openProductMasterAdd,
         openAddProductModal,
         loadProductTemplate,
         onTemplateCarModelChange,

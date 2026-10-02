@@ -21497,7 +21497,63 @@ var ProdQualityModule = (function() {
 
     function _sameColorTemplateLabel(template) {
         const line = _normText(template.paintProcess || '');
-        return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '-'}${line ? ` / ${line}` : ''}`;
+        return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '제품 기본정보 없음'}${line ? ` / ${line}` : ''}`;
+    }
+
+    // 구버전 공통 템플릿은 partName/productId 없이 차종+컬러만 저장돼 있다.
+    // 검증 결과에서는 제품 마스터의 실제 품목으로 풀어서 품명과 편집 링크를 보여준다.
+    function _sameColorTemplateDisplayRows(template) {
+        const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const exact = template?.productId ? products.find(p => p.id === template.productId) : null;
+        if (exact) return [{ ...template, productId: exact.id, carModel: exact.carModel, partName: exact.partName }];
+
+        const car = _normText(template?.carModel || '');
+        const part = _normText(template?.partName || '');
+        const colorKey = _sameColorCompareKey(template?.color || '');
+        const process = _normText(template?.paintProcess || '');
+        const matched = products.filter(p => {
+            if (_normText(p.carModel) !== car) return false;
+            if (part && _normText(p.partName || '') !== part) return false;
+            if (!colorKey) return true;
+            const colors = process
+                ? [_resolveProductColor(p, process)]
+                : [p.color, p.paintColor, p.paint, p.drawingColor, p.paintColorA, p.paintColorB];
+            return colors.some(color => _sameColorCompareKey(color || '') === colorKey);
+        });
+        if (!matched.length && part) {
+            const fallback = products.filter(p =>
+                _normText(p.carModel) === car && _normText(p.partName || '') === part
+            );
+            if (fallback.length) matched.push(...fallback);
+        }
+        if (!matched.length) return [template];
+        return matched.map(product => ({
+            ...template,
+            productId: product.id,
+            carModel: _normText(product.carModel),
+            partName: _normText(product.partName || '')
+        }));
+    }
+
+    function _sameColorTemplateEditTarget(template) {
+        const product = _sameColorTemplateDisplayRows(template).find(row => row.productId) || null;
+        return product ? { productId: product.productId, paintProcess: _normText(template?.paintProcess || '') } : null;
+    }
+
+    function _sameColorTemplateHasProduct(template) {
+        return _sameColorTemplateDisplayRows(template).some(row => !!row.productId);
+    }
+
+    function _sameColorEditButtonHtml(template, label = '기준 입력') {
+        const target = _sameColorTemplateEditTarget(template);
+        if (!target) {
+            return `<button type="button" class="btn btn-sm"
+                onclick="UIUtils.closeModal();SettingsModule.openProductMasterAdd({carModel:'${_js(template?.carModel || '')}',color:'${_js(template?.color || '')}'})"
+                style="padding:3px 8px;font-size:.7rem;white-space:nowrap;background:#dc2626;color:#fff;border-color:#dc2626;">제품 등록</button>`;
+        }
+        return `<button type="button" class="btn btn-sm btn-primary"
+            onclick="UIUtils.closeModal();ProdQualityModule.openSpecPage('${_js(target.productId)}','edit','${_js(target.paintProcess)}')"
+            style="padding:3px 8px;font-size:.7rem;white-space:nowrap;">${_esc(label)}</button>`;
     }
 
     /**
@@ -21510,7 +21566,7 @@ var ProdQualityModule = (function() {
         const excluded = new Set(excludeTemplateIds.filter(Boolean));
         const rows = _templates().filter(t =>
             _sameColorCompareKey(t.color || '') === _sameColorCompareKey(targetColor) && !excluded.has(t.id)
-        );
+        ).filter(_sameColorTemplateHasProduct);
         const conflicts = [];
         SAME_COLOR_STANDARD_KEYS.forEach(key => {
             const wanted = _sameColorStandardSignature(items, key);
@@ -21528,7 +21584,7 @@ var ProdQualityModule = (function() {
     }
 
     function _sameColorSignatureDisplay(signature, key = '') {
-        if (signature === '__missing__') return '항목 없음';
+        if (signature === '__missing__') return '관리항목 없음';
         const parts = String(signature).split('|');
         const mode = parts[0];
         const target = parts[1] || '';
@@ -21540,13 +21596,48 @@ var ProdQualityModule = (function() {
             const tolerance = upper || lower ? `+${abs(upper) || '?'} / -${abs(lower) || '?'}` : '';
             if (target && tolerance) return `기준 ${target} · ${tolerance}`;
             if (tolerance) return tolerance;
-            return fallback || '미입력';
+            return fallback || '기준값 미입력';
         }
         if (mode === 'range') {
             if (upper || lower) return `하 ${lower || '?'} ~ 상 ${upper || '?'}${String(key).startsWith('film_') ? ' μm' : ''}`;
-            return fallback || '미입력';
+            return fallback || '기준값 미입력';
         }
-        return fallback || target || upper || lower || '미입력';
+        return fallback || target || upper || lower || '기준값 미입력';
+    }
+
+    function _sameColorSignatureNeedsInput(signature) {
+        if (signature === '__missing__') return true;
+        return String(signature).split('|').slice(1).every(value => !String(value || '').trim());
+    }
+
+    function _sameColorSignatureDetailHtml(signature, key = '') {
+        const itemLabel = SAME_COLOR_STANDARD_LABELS[key] || key;
+        if (signature === '__missing__') {
+            return `<div style="margin-top:7px;padding:7px 9px;border-radius:7px;background:#fff;border:1px dashed #fca5a5;color:#991b1b;font-size:.73rem;line-height:1.45;">
+                <strong>${_esc(itemLabel)}</strong>이 현재 품목의 관리항목(프리셋)에 포함되어 있지 않습니다.
+            </div>`;
+        }
+        const parts = String(signature).split('|');
+        const mode = parts[0];
+        const target = parts[1] || '';
+        const upper = parts[2] || '';
+        const lower = parts[3] || '';
+        const fallback = parts[4] || '';
+        const chip = (label, value, suffix = '') => `<span style="display:inline-flex;align-items:center;gap:4px;padding:3px 7px;border-radius:6px;background:#fff;border:1px solid currentColor;font-size:.7rem;white-space:nowrap;">
+            <span style="opacity:.72;">${_esc(label)}</span><strong>${_esc(value || '-')}</strong>${suffix ? `<span style="opacity:.7;">${_esc(suffix)}</span>` : ''}
+        </span>`;
+        let fields = '';
+        if (mode === 'deviation') {
+            fields = chip('기준값', target) + chip('+공차', upper) + chip('-공차', lower);
+        } else if (mode === 'range') {
+            const unit = String(key).startsWith('film_') ? 'μm' : '';
+            fields = chip('하한', lower, unit) + chip('상한', upper, unit);
+        } else {
+            fields = chip('입력값', fallback || target || upper || lower);
+        }
+        const legacy = fallback && !target && !upper && !lower
+            ? `<div style="width:100%;margin-top:3px;font-size:.68rem;opacity:.78;">저장 문자열: ${_esc(fallback)}</div>` : '';
+        return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;color:inherit;">${fields}${legacy}</div>`;
     }
 
     function _sameColorConflictHtml(color, conflicts, prefixText = '') {
@@ -21560,14 +21651,18 @@ var ProdQualityModule = (function() {
             });
             const differentValues = [...bySignature.entries()].map(([signature, templates], valueIndex) => {
                 const detailId = `pqSaveConflict_${safeColorId}_${conflictIndex}_${valueIndex}`;
+                const displayRows = templates.flatMap(_sameColorTemplateDisplayRows);
                 return `<div style="border:1px solid #fecaca;border-radius:8px;background:#fff;overflow:hidden;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 10px;">
-                        <strong style="font-size:.9rem;color:#b91c1c;">${_esc(_sameColorSignatureDisplay(signature, conflict.key))}</strong>
+                        <div style="color:#b91c1c;">
+                            <strong style="font-size:.9rem;">${_esc(_sameColorSignatureDisplay(signature, conflict.key))}</strong>
+                            ${_sameColorSignatureDetailHtml(signature, conflict.key)}
+                        </div>
                         <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
-                            style="padding:3px 8px;background:#fff7ed;border:1px solid #fca5a5;color:#991b1b;font-size:.7rem;font-weight:800;">품목 ${templates.length}개 ▾</button>
+                            style="padding:3px 8px;background:#fff7ed;border:1px solid #fca5a5;color:#991b1b;font-size:.7rem;font-weight:800;">품목 ${displayRows.length}개 ▾</button>
                     </div>
                     <div id="${detailId}" style="display:none;padding:7px 10px;border-top:1px solid #fecaca;background:#fff7ed;font-size:.76rem;color:#7f1d1d;line-height:1.65;">
-                        ${templates.map(row => `<div>• ${_esc(_sameColorTemplateLabel(row))}</div>`).join('')}
+                        ${displayRows.map(row => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #fee2e2;"><span style="flex:1;">• ${_esc(_sameColorTemplateLabel(row))}</span>${_sameColorEditButtonHtml(row)}</div>`).join('')}
                     </div>
                 </div>`;
             }).join('');
@@ -21576,7 +21671,7 @@ var ProdQualityModule = (function() {
                 <div style="display:grid;grid-template-columns:minmax(210px,.8fr) minmax(260px,1.2fr);gap:10px;align-items:start;">
                     <div style="padding:9px 11px;background:#eff6ff;border:2px solid #2563eb;border-radius:8px;">
                         <div style="font-size:.67rem;font-weight:800;color:#1d4ed8;margin-bottom:3px;">현재 입력값</div>
-                        <strong style="font-size:1rem;color:#1d4ed8;">${_esc(_sameColorSignatureDisplay(conflict.wanted, conflict.key))}</strong>
+                        <div style="color:#1d4ed8;"><strong style="font-size:1rem;">${_esc(_sameColorSignatureDisplay(conflict.wanted, conflict.key))}</strong>${_sameColorSignatureDetailHtml(conflict.wanted, conflict.key)}</div>
                     </div>
                     <div style="display:grid;gap:7px;">${differentValues}</div>
                 </div>
@@ -21589,13 +21684,34 @@ var ProdQualityModule = (function() {
     // 품목별 기준 화면에서 기존 기준 전체를 검사하는 공개 동작.
     function validateSameColorStandards() {
         const groups = new Map();
+        const orphanTemplates = [];
         _templates().forEach(template => {
             const color = _normText(template.color || '');
             if (!color) return;
+            if (!_sameColorTemplateHasProduct(template)) {
+                orphanTemplates.push(template);
+                return;
+            }
             const groupKey = _sameColorCompareKey(color);
             if (!groups.has(groupKey)) groups.set(groupKey, { label: color, templates: [] });
             groups.get(groupKey).templates.push(template);
         });
+
+        const orphanHtml = orphanTemplates.length ? `
+            <div style="margin-bottom:12px;padding:10px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:9px;">
+                <div style="display:flex;align-items:center;gap:7px;color:#9a3412;font-weight:900;margin-bottom:7px;">
+                    <span class="material-symbols-outlined" style="font-size:19px;">inventory_2</span>
+                    제품 기본정보 없는 기준 ${orphanTemplates.length}건 — 기준 비교에서 제외
+                </div>
+                <div style="font-size:.74rem;color:#9a3412;margin-bottom:7px;">제품을 먼저 등록해야 동일 컬러 기준 검증 대상에 포함됩니다.</div>
+                <div style="display:grid;gap:5px;max-height:160px;overflow:auto;">
+                    ${orphanTemplates.map(template => `<div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:#fff;border:1px solid #fed7aa;border-radius:6px;font-size:.76rem;">
+                        <strong style="min-width:70px;">${_esc(_normText(template.carModel) || '-')}</strong>
+                        <span style="flex:1;">${_esc(_normText(template.color) || '-')} · 제품 기본정보 없음</span>
+                        ${_sameColorEditButtonHtml(template, '제품 등록')}
+                    </div>`).join('')}
+                </div>
+            </div>` : '';
 
         const mismatches = [];
         groups.forEach(group => {
@@ -21617,8 +21733,9 @@ var ProdQualityModule = (function() {
             UIUtils.showModal('동일 컬러 기준 검증', `
                 <div style="padding:24px;text-align:center;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
                     <span class="material-symbols-outlined" style="font-size:34px;display:block;margin-bottom:8px;">verified</span>
-                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">동일 컬러의 색차·도막 기준값이 모두 일치합니다.</span>
-                </div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'sm');
+                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">제품 기본정보가 존재하는 동일 컬러 품목의 색차·도막 기준값이 모두 일치합니다.</span>
+                </div>
+                <div style="margin-top:12px;">${orphanHtml}</div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, orphanTemplates.length ? 'lg' : 'sm');
             return;
         }
 
@@ -21631,28 +21748,39 @@ var ProdQualityModule = (function() {
         ];
         const html = mismatches.map((group, groupIndex) => {
             const values = [...group.signatures.entries()].map(([signature, rows], valueIndex) => {
-                const tone = valueColors[valueIndex % valueColors.length];
+                const displayValue = _sameColorSignatureDisplay(signature, group.key);
+                const isMissing = _sameColorSignatureNeedsInput(signature);
+                const tone = isMissing
+                    ? { border:'#dc2626', bg:'#fef2f2', text:'#b91c1c' }
+                    : valueColors[valueIndex % valueColors.length];
                 const detailId = `pqSameColorConflict_${groupIndex}_${valueIndex}`;
-                const productRows = rows.map(row => {
+                const displayRows = rows.flatMap(_sameColorTemplateDisplayRows);
+                const uniqueDisplayRows = [...new Map(displayRows.map(row => [
+                    `${row.productId || row.id}|${_normText(row.paintProcess || '')}|${_normText(row.partName || '')}`,
+                    row
+                ])).values()];
+                const productRows = uniqueDisplayRows.map(row => {
                     const line = _normText(row.paintProcess || '');
-                    return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
+                    return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
                         <strong style="color:#334155;">${_esc(_normText(row.carModel) || '-')}</strong>
-                        <span style="color:#475569;word-break:break-word;">${_esc(_normText(row.partName) || '-')}</span>
+                        <span style="color:${_normText(row.partName) ? '#475569' : '#dc2626'};font-weight:${_normText(row.partName) ? '400' : '800'};word-break:break-word;">${_esc(_normText(row.partName) || '제품 기본정보 없음')}</span>
                         ${line ? `<span style="white-space:nowrap;padding:1px 6px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:.7rem;font-weight:700;">${_esc(line)}</span>` : '<span></span>'}
+                        ${_sameColorEditButtonHtml(row, isMissing ? '기준 입력' : '수정')}
                     </div>`;
                 }).join('');
                 return `<div style="min-width:260px;flex:1 1 300px;border:2px solid ${tone.border};border-radius:10px;background:${tone.bg};overflow:hidden;">
                     <div style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
                         <div>
                             <div style="font-size:.68rem;font-weight:800;color:${tone.text};margin-bottom:3px;">기준 ${String.fromCharCode(65 + valueIndex)}</div>
-                            <div style="font-size:1.05rem;font-weight:900;color:${tone.text};line-height:1.35;">${_esc(_sameColorSignatureDisplay(signature, group.key))}</div>
+                            <div style="font-size:1.05rem;font-weight:900;color:${tone.text};line-height:1.35;">${_esc(displayValue)}</div>
+                            ${_sameColorSignatureDetailHtml(signature, group.key)}
                         </div>
                         <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
                             style="flex-shrink:0;padding:4px 9px;background:#fff;border:1px solid ${tone.border};color:${tone.text};font-size:.72rem;font-weight:800;">
-                            적용 ${rows.length}개 ▾
+                            ${isMissing ? '입력 대상' : '적용'} ${uniqueDisplayRows.length}개 ▾
                         </button>
                     </div>
-                    <div id="${detailId}" style="display:none;background:#fff;border-top:1px solid ${tone.border};max-height:210px;overflow:auto;">${productRows}</div>
+                    <div id="${detailId}" style="display:${isMissing ? 'block' : 'none'};background:#fff;border-top:1px solid ${tone.border};max-height:210px;overflow:auto;">${productRows}</div>
                 </div>`;
             }).join('');
             return `<section style="margin-bottom:14px;border:1px solid #fecaca;border-left:5px solid #dc2626;border-radius:10px;background:#fff;box-shadow:0 2px 6px rgba(127,29,29,.06);overflow:hidden;">
@@ -21672,6 +21800,12 @@ var ProdQualityModule = (function() {
                     <div style="font-size:.76rem;color:#b91c1c;margin-top:2px;">색상별 기준 A/B를 먼저 비교하고, 적용 품목은 버튼을 눌러 확인하세요.</div>
                 </div>
             </div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:-4px 0 12px;font-size:.73rem;">
+                <span style="padding:5px 8px;border-radius:6px;background:#eff6ff;border:1px solid #93c5fd;color:#1d4ed8;"><strong>기준 A/B</strong> = 현재 저장 상태가 같은 품목끼리 묶은 비교 그룹</span>
+                <span style="padding:5px 8px;border-radius:6px;background:#fff7ed;border:1px solid #fdba74;color:#9a3412;"><strong>기준값 미입력</strong> = 관리항목은 있으나 기준값·공차가 비어 있음</span>
+                <span style="padding:5px 8px;border-radius:6px;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"><strong>관리항목 없음</strong> = 해당 품목의 프리셋에 항목 자체가 없음</span>
+            </div>
+            ${orphanHtml}
             <div style="max-height:62vh;overflow:auto;padding-right:4px;">${html}</div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
@@ -22342,7 +22476,7 @@ var ProdQualityModule = (function() {
     }
 
     function _measureCompletion(issue, record) {
-        const sourceItems = (issue && Array.isArray(issue.items) ? issue.items : []).filter(it => it && it.selected !== false);
+        const sourceItems = _measureItemsForIssue(issue || {});
         const total = sourceItems.length;
         if (!total || !record) return { entered: 0, total };
         const saved = Array.isArray(record.items) ? record.items : [];
