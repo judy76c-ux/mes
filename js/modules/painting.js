@@ -2664,6 +2664,10 @@ const PaintingWorkModule = (function() {
         var canRetarget = _canCorrectPastInbound();
         var pending = _pendingShipmentsForPlan(plan);
         var existing = _existingInboundForPlan(plan);
+        var confirmedForPlanDay = existing.reduce(function (sum, rec) {
+            return sum + (_inboundUseDay(rec) === day ? Math.max(0, Number(rec.quantity) || 0) : 0);
+        }, 0);
+        var planInboundRemaining = Math.max(0, Math.floor(Number(plan.planQty) || 0) - confirmedForPlanDay);
         var injPart = '';
         try { injPart = _resolveInjPartNameForWork(plan.carModel, plan.partName, plan.color) || ''; } catch (e) { injPart = ''; }
         if (!injPart) injPart = String(plan.partName || '').trim();
@@ -2743,6 +2747,29 @@ const PaintingWorkModule = (function() {
         var cars = _injCarsForPastInbound();
         var parts = _injPartsForPastInbound(plan.carModel);
         var colors = _injColorsForPastInbound(plan.carModel, injPart);
+        var reworkQtyAvailable = 0;
+        try {
+            if (typeof ReworkWipModule !== 'undefined' && typeof ReworkWipModule.getStockQty === 'function') {
+                reworkQtyAvailable = Math.max(0, Math.floor(Number(ReworkWipModule.getStockQty(plan.carModel, injPart, plan.color)) || 0));
+            }
+        } catch (e) { reworkQtyAvailable = 0; }
+        var reworkUseMax = Math.min(planInboundRemaining, reworkQtyAvailable);
+        var reworkUseHtml = '<div style="margin-top:14px;padding:12px;border-radius:8px;border:1px solid rgba(124,58,237,.32);background:rgba(124,58,237,.05);">' +
+            '<div style="font-size:.84rem;font-weight:800;color:#6d28d9;margin-bottom:5px;">잔여 재공품 사용</div>' +
+            '<div style="font-size:.76rem;color:var(--text-muted);margin-bottom:10px;line-height:1.45;">재공 재고에서 실제 출고하고 이 계획일 현장 입고로 등록합니다. 사출 창고 소재 입고 요청 대신 사용할 수 있습니다. 가용 재공품: <strong>' +
+                UIUtils.formatNumber(reworkQtyAvailable) + ' EA</strong> · 계획 미입고량: <strong>' + UIUtils.formatNumber(planInboundRemaining) + ' EA</strong></div>' +
+            (reworkUseMax > 0
+                ? ('<label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:700;">' +
+                    '<input id="pwMissingReworkEnabled" type="checkbox" onchange="PaintingWorkModule.toggleMissingInboundRework(this.checked)">' +
+                    '잔여 재공품으로 투입' +
+                  '</label>' +
+                  '<div style="display:flex;align-items:end;gap:10px;margin-top:10px;">' +
+                    '<div style="flex:1;"><label class="form-label" for="pwMissingReworkQty">사용 수량 (EA)</label>' +
+                    '<input id="pwMissingReworkQty" class="form-input" type="number" min="1" max="' + reworkUseMax + '" step="1" value="' + reworkUseMax + '" disabled style="width:100%;opacity:.55;"></div>' +
+                    '<button id="pwMissingReworkApply" type="button" class="btn btn-primary" disabled style="background:#7c3aed;border-color:#7c3aed;opacity:.55;" onclick="PaintingWorkModule.applyReworkForMissingInbound(\'' + _pwJs(plan.id) + '\',this)">재공품 투입</button>' +
+                  '</div>')
+                : '<div style="font-size:.78rem;color:var(--text-muted);">사용 가능한 잔여 재공품이 없거나 계획 수량이 없습니다.</div>') +
+            '</div>';
         var manualHtml = isAdmin
             ? ('<div style="margin-top:14px;padding:12px;border-radius:8px;border:1px solid rgba(37,99,235,.25);background:rgba(37,99,235,.04);">' +
                 '<div style="font-size:0.82rem;font-weight:700;color:var(--accent-blue);margin-bottom:8px;">관리자 수기 입고 (지난 실적 보정)</div>' +
@@ -2790,6 +2817,7 @@ const PaintingWorkModule = (function() {
                 '<div style="overflow-x:auto;margin-bottom:14px;">' + pendingHtml + '</div>' +
                 '<div style="font-size:0.82rem;font-weight:700;margin-bottom:6px;">기존 현장 입고</div>' +
                 '<div style="overflow-x:auto;">' + existingHtml + '</div>' +
+                reworkUseHtml +
                 manualHtml +
             '</div>',
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
@@ -2806,6 +2834,84 @@ const PaintingWorkModule = (function() {
             }
             PaintingInputModule.confirmSiteInbound(outId, line, { useDate: planDate });
         }, 80);
+    }
+
+    function toggleMissingInboundRework(enabled) {
+        var qty = document.getElementById('pwMissingReworkQty');
+        var button = document.getElementById('pwMissingReworkApply');
+        if (qty) {
+            qty.disabled = !enabled;
+            qty.style.opacity = enabled ? '1' : '.55';
+            if (enabled) { qty.focus(); qty.select(); }
+        }
+        if (button) {
+            button.disabled = !enabled;
+            button.style.opacity = enabled ? '1' : '.55';
+        }
+    }
+
+    async function applyReworkForMissingInbound(planId, button) {
+        var check = document.getElementById('pwMissingReworkEnabled');
+        var qtyEl = document.getElementById('pwMissingReworkQty');
+        if (!check || !check.checked) {
+            UIUtils.toast('잔여 재공품 투입을 체크하세요.', 'warning');
+            return;
+        }
+        var plan = Storage.getById(PLAN_STORE, planId);
+        if (!plan) { UIUtils.toast('생산계획을 찾을 수 없습니다.', 'warning'); return; }
+        var qty = Math.floor(Number(qtyEl && qtyEl.value) || 0);
+        var carModel = String(plan.carModel || '').trim();
+        var partName = '';
+        try { partName = _resolveInjPartNameForWork(carModel, plan.partName, plan.color) || ''; } catch (e) {}
+        partName = partName || String(plan.partName || '').trim();
+        var color = String(plan.color || '').trim();
+        var planQty = Math.max(0, Math.floor(Number(plan.planQty) || 0));
+        var day = _planDayKey(plan);
+        var alreadyInbound = _existingInboundForPlan(plan).reduce(function (sum, rec) {
+            return sum + (_inboundUseDay(rec) === day ? Math.max(0, Number(rec.quantity) || 0) : 0);
+        }, 0);
+        var remainingQty = Math.max(0, planQty - alreadyInbound);
+        var available = 0;
+        try {
+            available = (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty)
+                ? Math.max(0, Math.floor(Number(ReworkWipModule.getStockQty(carModel, partName, color)) || 0)) : 0;
+        } catch (e) { available = 0; }
+        var maxQty = Math.min(remainingQty, available);
+        if (!qtyEl || qty < 1 || qty > maxQty) {
+            UIUtils.toast('사용 수량은 1~' + UIUtils.formatNumber(maxQty) + ' EA 범위여야 합니다.', 'warning');
+            if (qtyEl) qtyEl.focus();
+            return;
+        }
+        if (button) button.disabled = true;
+        try {
+            if (typeof ReworkWipModule === 'undefined' || !ReworkWipModule.dispatchFromPaintingWork ||
+                typeof PaintingInputModule === 'undefined' || !PaintingInputModule.receiveFromWarehouseOut) {
+                throw new Error('잔여 재공품 출고/현장 입고 기능을 사용할 수 없습니다.');
+            }
+            var actor = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+            var actorLabel = actor ? String(actor.displayName || actor.name || actor.username || actor.id || '') : '';
+            var outRec = await ReworkWipModule.dispatchFromPaintingWork({
+                carModel: carModel, partName: partName, color: color, qty: qty,
+                line: _resolvePaintLine(plan.line),
+                note: '소재입고 부족 보정 — 계획 ' + String(plan.id || '')
+            });
+            var appliedQty = Math.max(0, Math.floor(Number(outRec && outRec.qty) || 0));
+            if (!outRec || appliedQty <= 0) throw new Error('재공품 출고에 실패했습니다. 재고를 확인하세요.');
+            await PaintingInputModule.receiveFromWarehouseOut(outRec, {
+                useDate: day, receivedBy: actorLabel, isAutoReceived: true
+            });
+            if (typeof InjectionWarehouseModule !== 'undefined' && InjectionWarehouseModule.ackReworkUsageFromWork) {
+                var ack = await InjectionWarehouseModule.ackReworkUsageFromWork(carModel, partName, color, appliedQty, {
+                    note: '소재입고 화면 — 잔여 재공품 실제 투입 (' + appliedQty + ' EA)'
+                });
+                if (!ack || !ack.ok) UIUtils.toast('현장 입고는 등록됐지만 사출 부족 알림 반영에 실패했습니다.', 'warning');
+            }
+            UIUtils.toast(UIUtils.formatNumber(appliedQty) + ' EA를 잔여 재공품에서 출고해 현장 입고했습니다.', 'success');
+            openMissingInboundForPlan(planId);
+        } catch (e) {
+            UIUtils.toast('잔여 재공품 처리 실패: ' + (e && e.message ? e.message : e), 'error');
+            if (button) button.disabled = false;
+        }
     }
 
     async function applyInboundUseDate(inboundId, planDate, planId) {
@@ -11744,6 +11850,8 @@ const PaintingWorkModule = (function() {
         openPastInboundPicker,
         pickReworkStockLot,
         openMissingInboundForPlan,
+        toggleMissingInboundRework,
+        applyReworkForMissingInbound,
         confirmPendingInboundForPlan,
         applyInboundUseDate,
         reassignInboundLot,
