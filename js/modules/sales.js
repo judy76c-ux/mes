@@ -616,7 +616,7 @@ var SalesDeliveryModule = (function() {
             const shipColor = (allocations[0] && allocations[0].color) || '';
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)가 합격인 품목만 출고할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -731,7 +731,7 @@ var SalesDeliveryModule = (function() {
             const shipColor = (allocations[0] && allocations[0].color) || '';
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(data.carModel, data.partName, shipColor);
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)가 합격인 품목만 출고할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -1322,7 +1322,7 @@ var SalesDeliveryPlanModule = (function() {
                     </div>
                     <div class="form-group" style="align-self:flex-end;">
                         <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">
-                            <input type="checkbox" id="sdpHideNoPlan" onchange="SalesDeliveryPlanModule.toggleHideNoPlan()">
+                            <input type="checkbox" id="sdpHideNoPlan" checked onchange="SalesDeliveryPlanModule.toggleHideNoPlan()">
                             계획 없는 품목 숨기기
                         </label>
                     </div>
@@ -3057,14 +3057,25 @@ var SalesDeliveryPlanModule = (function() {
             note:     '납품계획 자동 등록'
         };
 
+        let savedDelivery = null;
         if (delivQty > 0) {
             if (existingDelivery) {
-                await Storage.update(DB.STORES.SALES_DELIVERY, existingDelivery.id, { ...existingDelivery, ...delivData });
+                savedDelivery = { ...existingDelivery, ...delivData };
+                await Storage.update(DB.STORES.SALES_DELIVERY, existingDelivery.id, savedDelivery);
             } else {
-                await Storage.add(DB.STORES.SALES_DELIVERY, delivData);
+                savedDelivery = await Storage.add(DB.STORES.SALES_DELIVERY, delivData);
             }
         } else if (existingDelivery) {
             await Storage.remove(DB.STORES.SALES_DELIVERY, existingDelivery.id);
+        }
+
+        // 영업계획에서 납품 실적(출고)을 저장하면 금일 출하 화면에도 같은 건을 표시한다.
+        // 금일 출하에서 LOT를 지정하지 않은 계획 출고는 재고 출고를 다시 만들지 않고,
+        // 실제 LOT 출고는 금일 출하 화면에서 처리하도록 한다.
+        if (savedDelivery && typeof SalesDeliveryPlanModule.syncTodayShipmentFromDelivery === 'function') {
+            await SalesDeliveryPlanModule.syncTodayShipmentFromDelivery(savedDelivery);
+        } else if (!delivQty && existingDelivery && typeof SalesDeliveryPlanModule.removeTodayShipmentForDelivery === 'function') {
+            await SalesDeliveryPlanModule.removeTodayShipmentForDelivery(existingDelivery.id);
         }
 
         UIUtils.closeModal();
@@ -3946,6 +3957,74 @@ var SalesDeliveryPlanModule = (function() {
         Storage.exportToCSV(headers, rows, '납품계획');
     }
 
+    // 영업계획 납품 실적과 금일 출하 화면의 공통 연결부.
+    // 영업계획은 SALES_DELIVERY, 금일 출하는 config 배열을 사용하므로
+    // salesDeliveryId를 양쪽에 기록해 중복 표시와 누락을 방지한다.
+    const TODAY_SHIPMENT_CONFIG_KEY = 'sales_today_shipment_v1';
+
+    async function syncTodayShipmentFromDelivery(delivery) {
+        if (!delivery || !delivery.id) return;
+        const records = (await Storage.getConfigValue(TODAY_SHIPMENT_CONFIG_KEY).catch(() => ([]))) || [];
+        const list = Array.isArray(records) ? records.slice() : [];
+        const index = list.findIndex(r => String(r.salesDeliveryId || '') === String(delivery.id));
+        const existing = index >= 0 ? list[index] : null;
+        const synced = {
+            id: existing?.id || `sdp_${delivery.id}`,
+            date: delivery.date || '',
+            carModel: delivery.carModel || '',
+            partName: delivery.partName || '',
+            color: delivery.color || '',
+            customer: delivery.customer || '',
+            qty: Number(delivery.qty ?? delivery.quantity) || 0,
+            note: existing?.note || '영업계획 출고',
+            source: existing?.source === '금일 출하' ? '금일 출하' : '영업계획 출고',
+            salesDeliveryId: delivery.id,
+            updatedAt: new Date().toISOString(),
+            ...(existing || {})
+        };
+        // 연결 키와 계획 값은 기존 금일 출하 값보다 최신 영업계획 값을 우선한다.
+        Object.assign(synced, {
+            date: delivery.date || synced.date,
+            carModel: delivery.carModel || synced.carModel,
+            partName: delivery.partName || synced.partName,
+            color: delivery.color || synced.color,
+            customer: delivery.customer || synced.customer,
+            qty: Number(delivery.qty ?? delivery.quantity) || 0,
+            salesDeliveryId: delivery.id,
+            updatedAt: new Date().toISOString()
+        });
+        if (index >= 0) list[index] = synced;
+        else list.push(synced);
+
+        // 이미 금일 출하에서 LOT 출고까지 완료된 연결 건의 수량만 영업계획에서
+        // 수정한 경우에는 해당 출고 원장도 같은 수량으로 맞춘다.
+        if (existing && existing.source === '금일 출하') {
+            const inventory = (Storage.getAll(DB.STORES.PRODUCT_INVENTORY) || [])
+                .filter(r => r.type === '출고' && String(r.todayShipmentId || '') === String(existing.id));
+            if (inventory.length) {
+                await Storage.update(DB.STORES.PRODUCT_INVENTORY, inventory[0].id, {
+                    ...inventory[0], quantity: synced.qty
+                });
+                for (const extra of inventory.slice(1)) await Storage.remove(DB.STORES.PRODUCT_INVENTORY, extra.id);
+            }
+        }
+        await Storage.setConfigValue(TODAY_SHIPMENT_CONFIG_KEY, list);
+    }
+
+    async function removeTodayShipmentForDelivery(deliveryId) {
+        if (!deliveryId) return;
+        const records = (await Storage.getConfigValue(TODAY_SHIPMENT_CONFIG_KEY).catch(() => ([]))) || [];
+        const list = Array.isArray(records) ? records : [];
+        const removed = list.filter(r => String(r.salesDeliveryId || '') === String(deliveryId));
+        for (const shipment of removed) {
+            const inventory = (Storage.getAll(DB.STORES.PRODUCT_INVENTORY) || [])
+                .filter(r => r.type === '출고' && r.todayShipmentId && String(r.todayShipmentId) === String(shipment.id));
+            for (const record of inventory) await Storage.remove(DB.STORES.PRODUCT_INVENTORY, record.id);
+        }
+        const next = list.filter(r => String(r.salesDeliveryId || '') !== String(deliveryId));
+        if (next.length !== list.length) await Storage.setConfigValue(TODAY_SHIPMENT_CONFIG_KEY, next);
+    }
+
     return {
         render,
         search,
@@ -4001,7 +4080,9 @@ var SalesDeliveryPlanModule = (function() {
         _reparse,
         _savePresetNow,
         _deleteCurrentPreset,
-        _confirmExcelImport
+        _confirmExcelImport,
+        syncTodayShipmentFromDelivery,
+        removeTodayShipmentForDelivery
     };
 })();
 
@@ -4999,6 +5080,20 @@ var SalesTodayShipmentModule = (function () {
     async function _load() {
         _records = (await Storage.getConfigValue(CONFIG_KEY).catch(() => ([]))) || [];
         if (!Array.isArray(_records)) _records = [];
+
+        // 기존 데이터도 양방향 연결이 되도록, 영업계획 출고·금일 출하로 식별되는
+        // 납품 실적 중 아직 금일 출하 설정에 연결되지 않은 건을 1회 보정한다.
+        if (typeof SalesDeliveryPlanModule !== 'undefined' && SalesDeliveryPlanModule.syncTodayShipmentFromDelivery) {
+            const linked = new Set(_records.map(r => String(r.salesDeliveryId || '')).filter(Boolean));
+            const deliveryRows = (Storage.getAll(DB.STORES.SALES_DELIVERY) || []).filter(d =>
+                d.note === '납품계획 자동 등록' || d.source === '금일 출하' || d.todayShipmentId
+            );
+            for (const delivery of deliveryRows) {
+                if (!linked.has(String(delivery.id))) await SalesDeliveryPlanModule.syncTodayShipmentFromDelivery(delivery);
+            }
+            _records = (await Storage.getConfigValue(CONFIG_KEY).catch(() => ([]))) || [];
+            if (!Array.isArray(_records)) _records = [];
+        }
     }
     async function _save() { await Storage.setConfigValue(CONFIG_KEY, _records); }
 
@@ -5604,6 +5699,51 @@ var SalesTodayShipmentModule = (function () {
         if (c) custEl.value = c;
     }
 
+    async function _syncSalesDelivery(payload, shipmentId, previous = null) {
+        const deliveries = Storage.getAll(DB.STORES.SALES_DELIVERY) || [];
+        const linkedId = previous && previous.salesDeliveryId;
+        const existing = linkedId
+            ? deliveries.find(d => String(d.id) === String(linkedId))
+            : deliveries.find(d =>
+                String(d.date || '').slice(0, 10) === String(payload.date || '').slice(0, 10) &&
+                _normKey(d.carModel) === _normKey(payload.carModel) &&
+                _normKey(d.partName) === _normKey(payload.partName) &&
+                (!payload.color || !d.color || _normKey(d.color) === _normKey(payload.color)) &&
+                (!payload.customer || !d.customer || _normKey(d.customer) === _normKey(payload.customer))
+            );
+        const data = {
+            date: payload.date,
+            productId: (_products().find(p => p.carModel === payload.carModel && p.partName === payload.partName) || {}).id || '',
+            customer: payload.customer || _customerFor(payload.carModel, payload.partName, payload.color),
+            carModel: payload.carModel,
+            partName: payload.partName,
+            color: payload.color || '',
+            qty: Number(payload.qty) || 0,
+            unitPrice: _unitPriceFor(payload.carModel, payload.partName, payload.color),
+            amount: (Number(payload.qty) || 0) * _unitPriceFor(payload.carModel, payload.partName, payload.color),
+            note: payload.note || '금일 출하 자동 연동',
+            todayShipmentId: shipmentId,
+            source: '금일 출하',
+            updatedAt: new Date().toISOString()
+        };
+        if (existing) {
+            await Storage.update(DB.STORES.SALES_DELIVERY, existing.id, { ...existing, ...data, salesDeliveryId: existing.id });
+            return existing.id;
+        }
+        const created = await Storage.add(DB.STORES.SALES_DELIVERY, data);
+        return created && created.id;
+    }
+
+    async function _removeSalesDeliveryForShipment(record) {
+        if (!record) return;
+        const deliveries = Storage.getAll(DB.STORES.SALES_DELIVERY) || [];
+        const linked = deliveries.filter(d =>
+            (record.salesDeliveryId && String(d.id) === String(record.salesDeliveryId)) ||
+            (d.todayShipmentId && String(d.todayShipmentId) === String(record.id))
+        );
+        for (const delivery of linked) await Storage.remove(DB.STORES.SALES_DELIVERY, delivery.id);
+    }
+
     async function saveForm(id) {
         const g = elId => (document.getElementById(elId) || {}).value || '';
         const date = g('tsDate').trim();
@@ -5630,7 +5770,7 @@ var SalesTodayShipmentModule = (function () {
         if (typeof ProductWarehouseModule !== 'undefined' && ProductWarehouseModule.getShippingReadiness) {
             const shipStatus = await ProductWarehouseModule.getShippingReadiness(carModel, partName, lot.color || '');
             if (!shipStatus.eligible) {
-                UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출하 완료할 수 있습니다.', 'warning');
+                UIUtils.toast('출하검사(외관)가 합격인 품목만 출하 완료할 수 있습니다.', 'warning');
                 return;
             }
         }
@@ -5659,6 +5799,7 @@ var SalesTodayShipmentModule = (function () {
         };
 
         let shipmentId = id;
+        const previousRecord = id ? _records.find(r => r.id === id) : null;
         try {
             if (id) {
                 await _removeInventoryOut(id);
@@ -5671,6 +5812,10 @@ var SalesTodayShipmentModule = (function () {
                 _records.push(payload);
             }
             await _addInventoryOut(shipmentId, payload, lot);
+            const salesDeliveryId = await _syncSalesDelivery(payload, shipmentId, previousRecord);
+            payload.salesDeliveryId = salesDeliveryId || (previousRecord && previousRecord.salesDeliveryId) || '';
+            const savedIndex = _records.findIndex(r => String(r.id) === String(shipmentId));
+            if (savedIndex >= 0) _records[savedIndex].salesDeliveryId = payload.salesDeliveryId;
             await _save();
         } catch (err) {
             console.error('[SalesTodayShipment] save failed:', err);
@@ -5689,7 +5834,9 @@ var SalesTodayShipmentModule = (function () {
         UIUtils.confirm('이 출하 계획품을 삭제하고 창고 출고를 취소하시겠습니까?', async () => {
             await _load();
             try {
+                const record = _records.find(r => r.id === id);
                 await _removeInventoryOut(id);
+                await _removeSalesDeliveryForShipment(record);
                 _records = _records.filter(r => r.id !== id);
                 await _save();
                 UIUtils.toast('삭제 및 창고 출고 취소가 완료되었습니다.', 'success');

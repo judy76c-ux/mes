@@ -6351,15 +6351,17 @@ var ProdStandardsModule = (function() {
                 <td style="text-align:center;font-weight:800;">${idx + 1}</td>
                 <td>
                     <strong>${_esc(t.presetName || t.templateName || 'PFMEA 프리셋')}</strong>
-                    <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px;">${_esc(t.sourceFileName || '-')} · ${_esc(t.sheetName || '-')}</div>
+                    <div style="font-size:.74rem;color:var(--text-muted);margin-top:3px;">${t.sourceType === 'manual' ? `${_esc(t.carModel || '-')} · ${_esc(t.partName || '-')}` : `${_esc(t.sourceFileName || '-')} · ${_esc(t.sheetName || '-')}`}</div>
                 </td>
                 <td>${_esc(t.cover && t.cover.docNo || '-')}</td>
                 <td style="text-align:center;">${UIUtils.formatNumber((t.rows || []).length)}</td>
                 <td style="text-align:center;">${UIUtils.formatNumber((t.blocks || []).length)}</td>
                 <td style="text-align:center;font-weight:900;color:${_pfmeaRpnMax(t.rows) >= 100 ? '#dc2626' : '#2563eb'};">${_pfmeaRpnMax(t.rows) || '-'}</td>
-                <td>${_esc(t.uploadedAt || t.updatedAt || '-')}</td>
+                <td style="white-space:nowrap;">${t.sourceType === 'manual' ? `<span class="badge ${t.status === 'confirmed' ? 'badge-success' : 'badge-warning'}">${t.status === 'confirmed' ? '확정' : '초안'}</span> Rev.${_esc(t.revisionNo || 1)}<br>` : ''}${_esc(t.uploadedAt || t.updatedAt || '-')}</td>
                 <td style="text-align:center;white-space:nowrap;">
+                    ${t.sourceType === 'manual' && t.status !== 'confirmed' ? `<button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaEditor('${_jsArg(t.id)}')">작성</button>` : ''}
                     <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaTemplateDetail('${_jsArg(t.id)}')">보기</button>
+                    ${t.sourceType === 'manual' && t.status === 'confirmed' ? `<button class="btn btn-sm btn-primary" onclick="ProdStandardsModule.openPfmeaEditor('${_jsArg(t.id)}',true)">개정</button>` : ''}
                     <button class="btn btn-sm" style="border:1px solid var(--accent-red);color:var(--accent-red);background:#fff;" onclick="ProdStandardsModule.deletePfmeaTemplate('${_jsArg(t.id)}')">삭제</button>
                 </td>
             </tr>
@@ -6406,7 +6408,10 @@ var ProdStandardsModule = (function() {
                     </div>
                 </div>
                 <div style="display:flex;gap:8px;flex-wrap:wrap;">
-                    <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openPfmeaUpload()">
+                    <button class="btn btn-primary btn-sm" onclick="ProdStandardsModule.openPfmeaCreate()">
+                        <span class="material-symbols-outlined" style="font-size:15px;">add</span> 신규 작성
+                    </button>
+                    <button class="btn btn-outline btn-sm" onclick="ProdStandardsModule.openPfmeaUpload()">
                         <span class="material-symbols-outlined" style="font-size:15px;">upload_file</span> 엑셀 업로드
                     </button>
                 </div>
@@ -6435,7 +6440,10 @@ var ProdStandardsModule = (function() {
             <div class="card" style="margin-bottom:14px;">
                 <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
                     <h3 style="margin:0;font-size:15px;">PFMEA 원본 / 프리셋</h3>
-                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaUpload()">업로드</button>
+                    <div style="display:flex;gap:6px;">
+                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaCreate()">신규 작성</button>
+                        <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaUpload()">업로드</button>
+                    </div>
                 </div>
                 <div class="card-body" style="padding:0;">
                     <div class="data-table-wrapper" style="overflow-x:auto;">
@@ -6509,6 +6517,7 @@ var ProdStandardsModule = (function() {
             const presetName = _pfmeaGuessPresetName(file.name, sheetName, cover);
             await Storage.add(STORE, {
                 _docKind: PFMEA_TEMPLATE_KIND,
+                sourceType: 'excel',
                 templateName: file.name.replace(/\.(xlsx|xls|xlsm)$/i, ''),
                 presetName,
                 presetKey: presetName.replace(/\s+/g, '-').toLowerCase(),
@@ -6593,6 +6602,397 @@ var ProdStandardsModule = (function() {
         await Storage.remove(STORE, id);
         UIUtils.toast('PFMEA 프리셋이 삭제되었습니다.', 'success');
         _renderPfmeaPage();
+    }
+
+    // ── 수동 PFMEA 작성 ─────────────────────────────────────────────
+    // 업로드 문서와 동일한 pfmea_template 레코드를 사용하되, sourceType으로
+    // 작성 방식을 구분한다. 편집 중인 draft는 메모리에서만 유지하고 저장 시 API에 반영한다.
+    let _pfmeaDraft = null;
+    let _pfmeaDraftId = '';
+    let _pfmeaRevisionMode = false;
+
+    const PFMEA_EDIT_FIELDS = [
+        ['processNo', '공정번호', 'text'],
+        ['process', '주공정', 'select'],
+        ['subProcess', '세부공정', 'text'],
+        ['functionText', '공정 기능', 'text'],
+        ['failureMode', '잠재 불량 모드', 'textarea'],
+        ['effect', '불량 영향', 'textarea'],
+        ['severity', '심각도', 'score'],
+        ['cause', '불량 원인', 'textarea'],
+        ['preventionControl', '예방 관리', 'textarea'],
+        ['occurrence', '발생도', 'score'],
+        ['detectionControl', '검출 관리', 'textarea'],
+        ['detection', '검출도', 'score'],
+        ['recommendedAction', '개선조치', 'textarea'],
+        ['owner', '담당자', 'text'],
+        ['dueDate', '완료 예정일', 'date'],
+        ['actionResult', '조치 결과', 'textarea'],
+        ['resultSeverity', '개선 후 심각도', 'score'],
+        ['resultOccurrence', '개선 후 발생도', 'score'],
+        ['resultDetection', '개선 후 검출도', 'score'],
+        ['linkedItem', '관리계획서 항목', 'text'],
+        ['note', '비고', 'textarea']
+    ];
+
+    const PFMEA_PROCESS_OPTIONS = ['수입검사', '보관', '도장(A)', '레이져', '도장(B)', '출하검사', '출하'];
+
+    // 사내 PFMEA 평가 기준. 숫자만 입력하지 않고 각 등급의 의미를 확인한 뒤 선택한다.
+    // 발생도는 공정 불량/이상 발생 빈도, 검출도는 고객 유출 전 발견 가능성을 뜻한다.
+    const PFMEA_RATING_CRITERIA = {
+        severity: [
+            ['1', '영향 없음', '기능·외관·공정에 영향 없음'],
+            ['2', '매우 경미', '작업자가 인지할 수 있으나 재작업 불필요'],
+            ['3', '경미', '경미한 외관/규격 편차, 내부에서 즉시 처리'],
+            ['4', '낮음', '부분 재작업 또는 공정 조정 필요'],
+            ['5', '보통', '재작업·선별이 필요하고 생산성 저하 발생'],
+            ['6', '다소 높음', '기능 또는 조립성 저하, 내부 부적합 처리'],
+            ['7', '높음', '주요 품질 특성에 영향, 고객 불만 가능'],
+            ['8', '매우 높음', '고객 사용상 중대한 문제 또는 대량 재작업'],
+            ['9', '심각', '법규·안전 관련 가능성 또는 고객 라인 정지'],
+            ['10', '치명적', '안전사고·법규 위반·사용 불가 수준']
+        ],
+        occurrence: [
+            ['1', '거의 없음', '1/10,000 미만'],
+            ['2', '매우 낮음', '1/5,000 미만'],
+            ['3', '낮음', '1/2,000 미만'],
+            ['4', '다소 낮음', '1/1,000 미만'],
+            ['5', '보통', '1/500 미만'],
+            ['6', '다소 높음', '1/200 미만'],
+            ['7', '높음', '1/100 미만'],
+            ['8', '매우 높음', '1/50 미만'],
+            ['9', '거의 매번', '1/20 미만'],
+            ['10', '반복 발생', '1/10 이상 또는 지속 발생']
+        ],
+        detection: [
+            ['1', '확실히 검출', '자동검사·인터록으로 100% 차단'],
+            ['2', '매우 높음', '자동검사 또는 초품검사로 거의 확실히 발견'],
+            ['3', '높음', '전수검사와 명확한 판정기준으로 발견'],
+            ['4', '다소 높음', '신뢰성 있는 측정기기로 정기 검사'],
+            ['5', '보통', '샘플링 검사로 발견 가능'],
+            ['6', '다소 낮음', '육안 또는 작업자 확인에 의존'],
+            ['7', '낮음', '검사 주기가 길거나 검사 범위가 제한적'],
+            ['8', '매우 낮음', '기준이 불명확하거나 검사 방법이 불안정'],
+            ['9', '거의 불가능', '불량이 다음 공정 또는 고객까지 유출될 가능성 높음'],
+            ['10', '검출 불가', '현재 관리·검사 방법으로 발견할 수 없음']
+        ]
+    };
+
+    function _pfmeaToday() {
+        return typeof UIUtils.today === 'function' ? UIUtils.today() : new Date().toISOString().slice(0, 10);
+    }
+
+    function _pfmeaCurrentUserName() {
+        const user = typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser
+            ? AuthModule.getCurrentUser() : null;
+        return user && (user.name || user.username || user.userId) || '';
+    }
+
+    function _pfmeaEmptyRow(process = '') {
+        return {
+            no: 0, processNo: '', process, subProcess: '', functionText: '',
+            failureMode: '', effect: '', severity: '', special: '', causeClass: '', cause: '',
+            preventionControl: '', occurrence: '', detectionControl: '', detection: '', rpn: '',
+            recommendedAction: '', owner: '', dueDate: '', actionResult: '',
+            resultSeverity: '', resultOccurrence: '', resultDetection: '', resultRpn: '',
+            linkedItem: '', note: ''
+        };
+    }
+
+    function _pfmeaNum(value) {
+        const n = Number(value);
+        return Number.isInteger(n) && n >= 1 && n <= 10 ? n : null;
+    }
+
+    function _pfmeaCalcRpn(row, prefix = '') {
+        const s = _pfmeaNum(row[`${prefix}severity`]);
+        const o = _pfmeaNum(row[`${prefix}occurrence`]);
+        const d = _pfmeaNum(row[`${prefix}detection`]);
+        return s && o && d ? s * o * d : '';
+    }
+
+    function _pfmeaNormalizeDraftRow(row = {}, index = 0) {
+        const r = { ..._pfmeaEmptyRow(row.process || ''), ...row };
+        r.no = index + 1;
+        r.rpn = _pfmeaCalcRpn(r);
+        r.resultRpn = _pfmeaCalcRpn(r, 'result');
+        return r;
+    }
+
+    function _pfmeaNewDraft(base = {}) {
+        const rows = Array.isArray(base.rows) && base.rows.length
+            ? base.rows.map(_pfmeaNormalizeDraftRow)
+            : [_pfmeaEmptyRow(base.process || '')];
+        return {
+            _docKind: PFMEA_TEMPLATE_KIND,
+            sourceType: 'manual',
+            standardType: 'pfmea',
+            standardLabel: STANDARD_DOC_TYPES.pfmea.label,
+            presetName: base.presetName || '',
+            templateName: base.templateName || base.presetName || '',
+            presetKey: base.presetKey || '',
+            carModel: base.carModel || '',
+            partName: base.partName || '',
+            partNo: base.partNo || '',
+            cover: { ...(base.cover || {}) },
+            docNo: base.docNo || (base.cover && base.cover.docNo) || '',
+            author: base.author || base.createdBy || _pfmeaCurrentUserName(),
+            작성일: base.작성일 || (base.createdAt ? String(base.createdAt).slice(0, 10) : _pfmeaToday()),
+            revisionNo: Number(base.revisionNo) || 1,
+            status: base.status || 'draft',
+            rows,
+            blocks: Array.isArray(base.blocks) ? base.blocks : [],
+            previousRevisionId: base.previousRevisionId || '',
+            createdBy: base.createdBy || _pfmeaCurrentUserName(),
+            createdAt: base.createdAt || '',
+            updatedBy: base.updatedBy || _pfmeaCurrentUserName(),
+            updatedAt: base.updatedAt || ''
+        };
+    }
+
+    function _pfmeaProducts() {
+        return Storage.getAll(DB.STORES.PRODUCTS) || [];
+    }
+
+    function _pfmeaOptions(values, selected = '') {
+        return values.filter((v, i, arr) => v && arr.indexOf(v) === i).map(v =>
+            `<option value="${_esc(v)}" ${String(v) === String(selected) ? 'selected' : ''}>${_esc(v)}</option>`
+        ).join('');
+    }
+
+    function _pfmeaSyncDraftFromDom() {
+        if (!_pfmeaDraft) return;
+        const get = id => document.getElementById(id);
+        ['presetName', 'carModel', 'partName', 'partNo', 'docNo', 'author', '작성일', 'revisionNo', 'status']
+            .forEach(key => { const el = get(`pfmea_${key}`); if (el) _pfmeaDraft[key] = el.value || ''; });
+        _pfmeaDraft.rows = Array.from(document.querySelectorAll('[data-pfmea-row]')).map((tr, index) => {
+            const row = { ..._pfmeaDraft.rows[index] };
+            PFMEA_EDIT_FIELDS.forEach(([key]) => {
+                const el = tr.querySelector(`[data-pfmea-field="${key}"]`);
+                if (el) row[key] = el.value || '';
+            });
+            return _pfmeaNormalizeDraftRow(row, index);
+        });
+    }
+
+    function _pfmeaScoreType(id) {
+        return String(id || '').replace(/^result/, '').replace(/^./, m => m.toLowerCase());
+    }
+
+    function _pfmeaScoreInput(id, value, label) {
+        const type = _pfmeaScoreType(id);
+        const criteria = PFMEA_RATING_CRITERIA[type] || [];
+        return `<select class="form-select" data-pfmea-field="${id}" aria-label="${_esc(label)}" title="${_esc(label)} 기준에 따라 선택" style="min-width:150px;padding:4px 6px;">` +
+            `<option value="">-- 기준 선택 --</option>` +
+            criteria.map(([score, name, desc]) => `<option value="${score}" title="${_esc(desc)}" ${String(score) === String(value) ? 'selected' : ''}>${score} · ${_esc(name)}</option>`).join('') +
+            `</select>`;
+    }
+
+    function _pfmeaEditorCell(row, key, label, type) {
+        const value = row[key] ?? '';
+        if (type === 'select') {
+            return `<select class="form-select" data-pfmea-field="${key}" aria-label="${_esc(label)}" style="min-width:92px;padding:4px 6px;">` +
+                `<option value="">-- 선택 --</option>${_pfmeaOptions(PFMEA_PROCESS_OPTIONS, value)}</select>`;
+        }
+        if (type === 'score') return _pfmeaScoreInput(key, value, label);
+        if (type === 'date') return `<input class="form-input" data-pfmea-field="${key}" type="date" value="${_esc(value)}" aria-label="${_esc(label)}" style="min-width:126px;padding:4px 6px;">`;
+        if (type === 'textarea') return `<textarea class="form-textarea" data-pfmea-field="${key}" rows="2" aria-label="${_esc(label)}" style="min-width:150px;resize:vertical;padding:4px 6px;">${_esc(value)}</textarea>`;
+        return `<input class="form-input" data-pfmea-field="${key}" value="${_esc(value)}" aria-label="${_esc(label)}" style="min-width:110px;padding:4px 6px;">`;
+    }
+
+    function _pfmeaRiskBadge(value) {
+        const n = Number(value) || 0;
+        if (!n) return '<span style="color:var(--text-muted);">-</span>';
+        const color = n >= 100 ? '#dc2626' : n >= 60 ? '#d97706' : '#2563eb';
+        return `<span style="font-weight:900;color:${color};white-space:nowrap;">${n}${n >= 100 ? ' ⚠' : ''}</span>`;
+    }
+
+    function openPfmeaRatingCriteria() {
+        const section = (key, title) => `<div style="margin-bottom:14px;">
+            <h4 style="margin:0 0 6px;font-size:14px;">${title}</h4>
+            <div class="data-table-wrapper" style="overflow:auto;">
+                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:12px;">
+                    <thead><tr><th style="width:48px;text-align:center;white-space:nowrap;">점수</th><th style="white-space:nowrap;">등급</th><th>판정 기준</th></tr></thead>
+                    <tbody>${PFMEA_RATING_CRITERIA[key].map(([score, name, desc]) => `<tr><td style="text-align:center;font-weight:900;">${score}</td><td style="white-space:nowrap;font-weight:700;">${_esc(name)}</td><td>${_esc(desc)}</td></tr>`).join('')}</tbody>
+                </table>
+            </div>
+        </div>`;
+        UIUtils.showModal('PFMEA 평가 기준', `<div style="max-height:70vh;overflow:auto;">${section('severity', '심각도 (Severity)')}${section('occurrence', '발생도 (Occurrence)')}${section('detection', '검출도 (Detection)')}</div>`, '<button class="btn btn-primary" onclick="UIUtils.closeModal()">확인</button>', 'lg');
+    }
+
+    function _renderPfmeaEditor() {
+        if (!_pfmeaDraft) return;
+        const d = _pfmeaDraft;
+        const products = _pfmeaProducts();
+        const cars = [...new Set(products.map(p => p.carModel).filter(Boolean))].sort();
+        const parts = [...new Set(products.filter(p => !d.carModel || p.carModel === d.carModel).map(p => p.partName).filter(Boolean))].sort();
+        const rows = (d.rows || []).map((row, index) => {
+            const cells = PFMEA_EDIT_FIELDS.map(([key, label, type]) => {
+                const calculated = key === 'detection' ? `<td style="vertical-align:top;text-align:right;">${_pfmeaRiskBadge(row.rpn)}</td>` :
+                    key === 'resultDetection' ? `<td style="vertical-align:top;text-align:right;">${_pfmeaRiskBadge(row.resultRpn)}</td>` : '';
+                return `<td>${_pfmeaEditorCell(row, key, label, type)}</td>${calculated}`;
+            }).join('');
+            return `<tr data-pfmea-row="${index}">
+                <td style="text-align:center;vertical-align:top;white-space:nowrap;font-weight:800;">${index + 1}<div style="display:flex;gap:3px;margin-top:6px;justify-content:center;">
+                    <button class="btn btn-sm btn-outline" title="위로" onclick="ProdStandardsModule.pfmeaMoveRow(${index},-1)">↑</button>
+                    <button class="btn btn-sm btn-outline" title="아래로" onclick="ProdStandardsModule.pfmeaMoveRow(${index},1)">↓</button>
+                </div></td>
+                ${cells}
+                <td style="vertical-align:top;text-align:center;white-space:nowrap;">
+                    <div style="margin-bottom:6px;">현재 ${_pfmeaRiskBadge(row.rpn)}<br>개선 후 ${_pfmeaRiskBadge(row.resultRpn)}</div>
+                    <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.pfmeaDuplicateRow(${index})">복제</button>
+                    <button class="btn btn-sm btn-danger" onclick="ProdStandardsModule.pfmeaDeleteRow(${index})">삭제</button>
+                </td>
+            </tr>`;
+        }).join('');
+        const headers = PFMEA_EDIT_FIELDS.map(([key, label]) => `<th style="white-space:nowrap;">${label}</th>${key === 'detection' ? '<th style="white-space:nowrap;">RPN</th>' : key === 'resultDetection' ? '<th style="white-space:nowrap;">개선 후 RPN</th>' : ''}`).join('');
+        const body = `<div style="display:flex;flex-direction:column;gap:12px;max-height:82vh;overflow:hidden;">
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(150px,1fr));gap:8px;flex:0 0 auto;">
+                <div class="form-group" style="margin:0;"><label class="form-label">문서명 <span style="color:var(--accent-red)">*</span></label><input class="form-input" id="pfmea_presetName" value="${_esc(d.presetName)}" placeholder="예: A라인 도장 PFMEA"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">차종 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="pfmea_carModel" onchange="ProdStandardsModule.pfmeaProductChanged(this.value)"><option value="">-- 차종 선택 --</option>${_pfmeaOptions(cars, d.carModel)}</select></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">품명 <span style="color:var(--accent-red)">*</span></label><select class="form-select" id="pfmea_partName"><option value="">-- 품명 선택 --</option>${_pfmeaOptions(parts, d.partName)}</select></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">품번</label><input class="form-input" id="pfmea_partNo" value="${_esc(d.partNo)}"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">문서번호 <span style="color:var(--accent-red)">*</span></label><input class="form-input" id="pfmea_docNo" value="${_esc(d.docNo)}"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">작성자</label><input class="form-input" id="pfmea_author" value="${_esc(d.author)}"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">작성일</label><input class="form-input" id="pfmea_작성일" type="date" value="${_esc(d.작성일)}"></div>
+                <div class="form-group" style="margin:0;"><label class="form-label">개정번호</label><input class="form-input" id="pfmea_revisionNo" type="number" min="1" value="${_esc(d.revisionNo)}"></div>
+            </div>
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;flex:0 0 auto;">
+                <div style="font-size:.8rem;color:var(--text-muted);">심각도·발생도·검출도는 아래 평가 기준에 따라 선택합니다. RPN은 세 점수의 곱으로 자동 계산됩니다. <b style="color:#dc2626;">RPN 100 이상은 위험</b>입니다.</div>
+                <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.openPfmeaRatingCriteria()">평가 기준 보기</button>
+                <button class="btn btn-sm btn-outline" onclick="ProdStandardsModule.pfmeaAddRow()">+ 행 추가</button>
+            </div>
+            <div class="data-table-wrapper" style="overflow:auto;flex:1 1 auto;min-height:220px;border:1px solid var(--border-color);">
+                <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:11px;">
+                    <thead><tr><th style="width:55px;white-space:nowrap;">No</th>${headers}<th style="white-space:nowrap;">RPN / 작업</th></tr></thead>
+                <tbody>${rows || '<tr><td colspan="25" style="padding:24px;text-align:center;">행을 추가하세요.</td></tr>'}</tbody>
+                </table>
+            </div>
+        </div>`;
+        UIUtils.showModal(_pfmeaRevisionMode ? `PFMEA 개정 작성 · Rev.${d.revisionNo}` : 'PFMEA 신규 작성', body, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-outline" onclick="ProdStandardsModule.savePfmeaDocument('draft')">초안 저장</button>
+            <button class="btn btn-primary" onclick="ProdStandardsModule.savePfmeaDocument('confirmed')">확정 저장</button>`, 'xl');
+    }
+
+    function openPfmeaCreate() {
+        _pfmeaDraftId = '';
+        _pfmeaRevisionMode = false;
+        _pfmeaDraft = _pfmeaNewDraft({ createdAt: UIUtils.now ? UIUtils.now() : '', 작성일: _pfmeaToday() });
+        _renderPfmeaEditor();
+    }
+
+    function openPfmeaEditor(id, revision = false) {
+        const source = _pfmeaTemplates().find(x => x.id === id);
+        if (!source) return;
+        _pfmeaRevisionMode = revision || source.status === 'confirmed';
+        _pfmeaDraftId = revision || source.status === 'confirmed' ? '' : id;
+        _pfmeaDraft = _pfmeaNewDraft(revision || source.status === 'confirmed'
+            ? { ...source, status: 'draft', revisionNo: (Number(source.revisionNo) || 1) + 1, previousRevisionId: source.id, createdAt: '', updatedAt: '' }
+            : source);
+        _renderPfmeaEditor();
+    }
+
+    function pfmeaProductChanged(carModel) {
+        _pfmeaSyncDraftFromDom();
+        _pfmeaDraft.carModel = carModel || '';
+        const p = _pfmeaProducts().find(x => x.carModel === carModel && x.partName === _pfmeaDraft.partName);
+        if (p) _pfmeaDraft.partNo = p.partNo || p.productNo || _pfmeaDraft.partNo;
+        _renderPfmeaEditor();
+    }
+
+    function pfmeaAddRow(process = '') {
+        _pfmeaSyncDraftFromDom();
+        _pfmeaDraft.rows.push(_pfmeaEmptyRow(process || (_pfmeaDraft.rows[_pfmeaDraft.rows.length - 1] || {}).process || ''));
+        _renderPfmeaEditor();
+    }
+
+    function pfmeaDuplicateRow(index) {
+        _pfmeaSyncDraftFromDom();
+        const row = _pfmeaDraft.rows[index];
+        if (!row) return;
+        _pfmeaDraft.rows.splice(index + 1, 0, { ...row, no: index + 2 });
+        _pfmeaDraft.rows = _pfmeaDraft.rows.map(_pfmeaNormalizeDraftRow);
+        _renderPfmeaEditor();
+    }
+
+    function pfmeaDeleteRow(index) {
+        _pfmeaSyncDraftFromDom();
+        if (_pfmeaDraft.rows.length <= 1) {
+            UIUtils.toast('PFMEA 행은 최소 1개가 필요합니다.', 'warning');
+            return;
+        }
+        _pfmeaDraft.rows.splice(index, 1);
+        _pfmeaDraft.rows = _pfmeaDraft.rows.map(_pfmeaNormalizeDraftRow);
+        _renderPfmeaEditor();
+    }
+
+    function pfmeaMoveRow(index, direction) {
+        _pfmeaSyncDraftFromDom();
+        const target = index + direction;
+        if (target < 0 || target >= _pfmeaDraft.rows.length) return;
+        const [row] = _pfmeaDraft.rows.splice(index, 1);
+        _pfmeaDraft.rows.splice(target, 0, row);
+        _pfmeaDraft.rows = _pfmeaDraft.rows.map(_pfmeaNormalizeDraftRow);
+        _renderPfmeaEditor();
+    }
+
+    async function savePfmeaDocument(status = 'draft') {
+        _pfmeaSyncDraftFromDom();
+        const d = _pfmeaDraft;
+        if (!d) return;
+        d.presetName = String(d.presetName || '').trim();
+        d.carModel = String(d.carModel || '').trim();
+        d.partName = String(d.partName || '').trim();
+        d.docNo = String(d.docNo || '').trim();
+        if (!d.presetName || !d.carModel || !d.partName || !d.docNo) {
+            UIUtils.toast('문서명, 차종, 품명, 문서번호를 입력하세요.', 'warning');
+            return;
+        }
+        const invalidScore = d.rows.some(r => ['severity', 'occurrence', 'detection', 'resultSeverity', 'resultOccurrence', 'resultDetection'].some(k => r[k] !== '' && !_pfmeaNum(r[k])));
+        if (invalidScore) {
+            UIUtils.toast('평가 점수는 1~10 범위의 정수만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        const validRows = d.rows.filter(r => r.process || r.failureMode || r.effect || r.cause);
+        if (!validRows.length) {
+            UIUtils.toast('주공정, 불량 모드, 영향 또는 원인 중 하나 이상 입력된 행이 필요합니다.', 'warning');
+            return;
+        }
+        if (d.rows.some(r => r.recommendedAction && (!r.owner || !r.dueDate))) {
+            UIUtils.toast('개선조치가 있는 행은 담당자와 완료 예정일을 확인하세요.', 'warning');
+        }
+        d.rows = d.rows.map(_pfmeaNormalizeDraftRow);
+        d.blocks = Object.values(d.rows.reduce((map, r) => {
+            const key = `${r.processNo || '-'}||${r.process || '-'}`;
+            if (!map[key]) map[key] = { processNo: r.processNo || '-', process: r.process || '-', rowCount: 0, maxRpn: 0, failureModes: [] };
+            map[key].rowCount += 1;
+            map[key].maxRpn = Math.max(map[key].maxRpn, Number(r.rpn) || 0);
+            if (r.failureMode && !map[key].failureModes.includes(r.failureMode)) map[key].failureModes.push(r.failureMode);
+            return map;
+        }, {}));
+        d.status = status;
+        d.sourceType = 'manual';
+        d.presetKey = d.presetName.replace(/\s+/g, '-').toLowerCase();
+        d.cover = { ...(d.cover || {}), docNo: d.docNo, carModel: d.carModel, partName: d.partName, partNo: d.partNo };
+        d.templateName = d.presetName;
+        d.createdBy = d.createdBy || d.author || _pfmeaCurrentUserName();
+        d.createdAt = d.createdAt || (UIUtils.now ? UIUtils.now() : new Date().toISOString());
+        d.updatedBy = d.author || _pfmeaCurrentUserName();
+        d.updatedAt = UIUtils.now ? UIUtils.now() : new Date().toISOString();
+        try {
+            if (_pfmeaDraftId) await Storage.update(STORE, _pfmeaDraftId, d);
+            else await Storage.add(STORE, d);
+            UIUtils.closeModal();
+            _pfmeaDraft = null;
+            _pfmeaDraftId = '';
+            _pfmeaRevisionMode = false;
+            UIUtils.toast(`PFMEA ${status === 'confirmed' ? '확정' : '초안'} 저장 완료`, 'success');
+            _renderPfmeaPage();
+        } catch (err) {
+            console.error('PFMEA manual save failed:', err);
+            UIUtils.toast('PFMEA 저장 중 오류가 발생했습니다.', 'error');
+        }
     }
 
     function _isMergeableStandard(type = _curDocType) {
@@ -12636,6 +13036,15 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         deleteProcessFlowPreset,
         openPfmeaUpload,
         importPfmeaFile,
+        openPfmeaCreate,
+        openPfmeaEditor,
+        pfmeaProductChanged,
+        pfmeaAddRow,
+        pfmeaDuplicateRow,
+        pfmeaDeleteRow,
+        pfmeaMoveRow,
+        openPfmeaRatingCriteria,
+        savePfmeaDocument,
         openPfmeaTemplateDetail,
         deletePfmeaTemplate,
         openFilmConflictDetail,
@@ -20191,8 +20600,10 @@ var ProdQualityModule = (function() {
     }
 
     // 제품 기준값 상태: 'none' | 'items-only' | 'partial' | 'complete'
-    function _specStatus(tmplItems = []) {
-        if (!tmplItems.length) return 'none';
+    function _specStatus(allItems = []) {
+        // '해당 없음' 항목은 설정 완료 여부 계산에서 제외한다.
+        const tmplItems = (allItems || []).filter(i => i?.notApplicable !== true);
+        if (!tmplItems.length) return (allItems || []).length ? 'complete' : 'none';
         const filled = tmplItems.filter(_hasSpecValue).length;
         if (filled === 0) return 'items-only';
         if (filled < tmplItems.length) return 'partial';
@@ -20808,6 +21219,15 @@ var ProdQualityModule = (function() {
     // 에디터 로드용 정규화 — 리스트 표시는 건드리지 않고 입력 필드만 채움
     function _normalizeItemForEdit(item) {
         const it = Object.assign({}, item);
+        // 저장된 품목 항목에 관리 방식(공차/상하한 등)이 없으면 관리항목 마스터의 방식을 따른다.
+        if (!String(it.specMode || '').trim() && it.key) {
+            const master = _masterItems().find(m => m.key === it.key);
+            if (master && String(master.specMode || '').trim()) it.specMode = master.specMode;
+        }
+        if (it.subLabel === undefined && it.key) {
+            const master = _masterItems().find(m => m.key === it.key);
+            if (master && master.subLabel) it.subLabel = master.subLabel;
+        }
         if (_isGlossSpecItem(it)) {
             // targetSpec/toleranceSpec 없으면 spec 문자열에서 추출 시도
             if (!it.targetSpec && !it.toleranceSpec && it.spec) {
@@ -21008,14 +21428,22 @@ var ProdQualityModule = (function() {
                     .map(p => {
                         const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] });
                         const status = _specStatus(specItems);
-                        const filledCount = specItems.filter(_hasSpecValue).length;
+                        const activeItems = specItems.filter(i => i.notApplicable !== true);
+                        const filledCount = activeItems.filter(_hasSpecValue).length;
                         const specMap = new Map(specItems.map(item => [item.key, item]));
 
                         const specCells = masterItems.map(item => {
                             const ti = specMap.get(item.key);
                             const isNumeric = _isNumericItem(item);
                             if (!ti) {
+                                // 이 품목의 관리항목에 없는 항목 = 해당 없음. 기준이 아예 없는 품목만 X(미설정)로 표시한다.
+                                if (specItems.length) {
+                                    return `<td style=\"text-align:center;padding:5px 3px;\"><span style=\"font-size:0.72rem;font-weight:700;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;white-space:nowrap;\">해당 없음</span></td>`;
+                                }
                                 return `<td style=\"text-align:center;padding:5px 3px;\"><span style=\"color:#ef4444;font-weight:700;\">X</span></td>`;
+                            }
+                            if (ti.notApplicable === true) {
+                                return `<td style=\"text-align:center;padding:5px 3px;\"><span style=\"font-size:0.72rem;font-weight:700;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:4px;padding:1px 5px;white-space:nowrap;\">해당 없음</span></td>`;
                             }
                             let specText = '-';
                             if (_isGlossSpecItem(ti)) {
@@ -21038,7 +21466,7 @@ var ProdQualityModule = (function() {
 
                         const badgeHtml = {
                             complete:    `<span class="badge badge-success"   style="font-size:0.68rem;">✓ 항목+기준값</span>`,
-                            partial:     `<span class="badge badge-info"      style="font-size:0.68rem;">△ 기준값 ${filledCount}/${specItems.length}</span>`,
+                            partial:     `<span class="badge badge-info"      style="font-size:0.68rem;">△ 기준값 ${filledCount}/${activeItems.length}</span>`,
                             'items-only':`<span style="font-size:0.68rem;color:#2563eb;font-weight:600;">항목만 설정</span>`,
                             none:        `<span class="badge badge-warning"   style="font-size:0.68rem;">✗ 미설정</span>`
                         }[status] || '';
@@ -21087,7 +21515,7 @@ var ProdQualityModule = (function() {
                                     <span style="font-size:0.82rem;font-weight:700;
                                         color:${status==='complete'?'#16a34a':status==='none'?'#9ca3af':'#d97706'};"
                                         title="${status==='complete'?'기준값 설정완료':status==='none'?'기준값 없음':'기준값 미완성'}">
-                                        ${specItems.length ? `${filledCount} / ${specItems.length}` : '-'}
+                                        ${activeItems.length ? `${filledCount} / ${activeItems.length}` : (specItems.length ? '해당없음' : '-')}
                                     </span>
                                     <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
                                         onclick="ProdQualityModule.openSpecPage('${_js(p.id)}','view','${_js(p.paintProcess||'')}')">보기</button>
@@ -21142,7 +21570,7 @@ var ProdQualityModule = (function() {
         if (src) {
             return `
                 <img src="${_esc(src)}" onclick="ProdQualityModule._pqViewItemPhoto(this.src)"
-                    style="width:44px;height:44px;object-fit:cover;border-radius:6px;border:1px solid var(--border-color);cursor:pointer;display:block;margin:0 auto;">
+                    title="클릭하면 크게 봅니다" style="max-width:140px;max-height:100px;width:auto;height:auto;object-fit:contain;background:#fff;border-radius:6px;border:1px solid var(--border-color);cursor:zoom-in;display:block;margin:0 auto;">
                 ${readOnly ? '' : `<button type="button" onclick="ProdQualityModule._pqRemoveItemPhoto(this)"
                     style="background:none;border:none;cursor:pointer;color:#ef4444;font-size:0.68rem;padding:2px 0;display:block;margin:0 auto;">삭제</button>`}
             `;
@@ -21152,7 +21580,8 @@ var ProdQualityModule = (function() {
             : `<label style="display:inline-flex;flex-direction:column;align-items:center;gap:2px;cursor:pointer;color:var(--accent-blue);font-size:0.66rem;white-space:nowrap;">
                    <span class="material-symbols-outlined" style="font-size:20px;">add_a_photo</span>사진 첨부
                    <input type="file" accept="image/*" style="display:none;" onchange="ProdQualityModule._pqHandleItemPhotoChange(event)">
-               </label>`;
+               </label>
+               <div style="font-size:0.62rem;color:var(--text-muted);margin-top:2px;white-space:nowrap;">또는 클릭 후 Ctrl+V</div>`;
     }
 
     function _pqHandleItemPhotoChange(event) {
@@ -21172,6 +21601,62 @@ var ProdQualityModule = (function() {
         };
         reader.onerror = () => UIUtils.toast('이미지를 읽을 수 없습니다.', 'error');
         reader.readAsDataURL(file);
+    }
+
+    // 클립보드(스크린샷 등) 이미지 붙여넣기 — 큰 이미지는 가로 1280px 이하 JPEG로 줄여 저장한다.
+    function _pqSetRowPhotoFromBlob(row, blob) {
+        const reader = new FileReader();
+        reader.onerror = () => UIUtils.toast('이미지를 읽을 수 없습니다.', 'error');
+        reader.onload = e => {
+            const raw = String(e.target.result || '');
+            const img = new Image();
+            img.onload = () => {
+                let dataUrl = raw;
+                const MAX = 1280;
+                if (img.width > MAX) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = MAX;
+                    canvas.height = Math.round(img.height * MAX / img.width);
+                    canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+                    dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                }
+                const hidden = row.querySelector('.pqs-photo-val');
+                if (hidden) hidden.value = dataUrl;
+                const wrap = row.querySelector('.pqs-photo-wrap');
+                if (wrap) wrap.innerHTML = _pqPhotoThumbHtml(dataUrl, false);
+                UIUtils.toast('클립보드 사진을 붙여넣었습니다.', 'success');
+            };
+            img.onerror = () => UIUtils.toast('이미지 형식을 읽을 수 없습니다.', 'error');
+            img.src = raw;
+        };
+        reader.readAsDataURL(blob);
+    }
+
+    function _pqOnSpecPaste(e) {
+        const items = [...(e.clipboardData?.items || [])];
+        const imgItem = items.find(i => i.kind === 'file' && i.type.startsWith('image/'));
+        if (!imgItem) return; // 텍스트 붙여넣기는 건드리지 않는다
+        const active = document.activeElement;
+        const row = (e.target && e.target.closest && e.target.closest('.pq-spec-item-row'))
+            || (active && active.closest && active.closest('.pq-spec-item-row'))
+            || document.querySelector('.pq-spec-item-row.pq-photo-target');
+        // 편집 모드(사진 첨부 UI가 있는 행)에서만 동작
+        if (!row || !row.querySelector('.pqs-photo-wrap input[type=file], .pqs-photo-wrap img')) return;
+        if (row.querySelector('.pqs-photo-wrap')?.dataset.readonly === '1') return;
+        const blob = imgItem.getAsFile();
+        if (!blob) return;
+        e.preventDefault();
+        _pqSetRowPhotoFromBlob(row, blob);
+    }
+    if (!window.__pqSpecPasteBound) {
+        window.__pqSpecPasteBound = true;
+        document.addEventListener('paste', _pqOnSpecPaste);
+    }
+
+    function _pqMarkPhotoTarget(cell) {
+        document.querySelectorAll('.pq-spec-item-row.pq-photo-target').forEach(r => r.classList.remove('pq-photo-target'));
+        const row = cell.closest('.pq-spec-item-row');
+        if (row) row.classList.add('pq-photo-target');
     }
 
     function _pqRemoveItemPhoto(btn) {
@@ -21217,20 +21702,24 @@ var ProdQualityModule = (function() {
                 <input type="hidden" class="pqs-label-val" value="${_esc(item.label||'')}">
                 <input type="hidden" class="pqs-unit-val" value="${_esc(item.unit||'')}">
                 <input type="hidden" class="pqs-input-type" value="${_esc(item.inputType||'text')}">
+                <input type="hidden" class="pqs-spec-mode" value="${_esc(item.specMode||'')}">
                 <div style="display:flex;align-items:flex-start;gap:2px;">
                     ${dragHandle}
                     <div style="min-width:0;flex:1;">
                         <strong style="font-size:0.85rem;">${_esc(item.label||'')}</strong>
                         ${_specModeBadge(_specModeOf(item))}
+                        ${readOnly
+                            ? (item.subLabel ? `<span style="margin-left:6px;font-size:0.76rem;color:var(--text-muted);">· ${_esc(item.subLabel)}</span>` : '')
+                            : `<input type="text" class="form-input pqs-sublabel" value="${_esc(item.subLabel||'')}" placeholder="소제목 (점검표 우측 칸, 예: POINT-1)" style="margin-top:4px;height:26px;padding:3px 7px;font-size:0.74rem;width:100%;">`}
                         <input type="text" class="form-input pqs-method-val" value="${_esc(item.method||'')}" placeholder="점검방법 입력 (예: 도막측정기, 크로스컷)" ${readOnly ? 'disabled' : ''} style="margin-top:4px;height:28px;padding:3px 7px;font-size:0.76rem;width:100%;">
                     </div>
                 </div>
             </td>
             <td style="text-align:center;font-size:0.82rem;color:var(--text-muted);">${_esc(item.unit||'-')}</td>
             <td>${specEditor}</td>
-            <td style="text-align:center;vertical-align:middle;">
+            <td style="text-align:center;vertical-align:middle;${readOnly ? '' : 'outline-offset:-2px;'}" ${readOnly ? '' : `tabindex="0" onclick="ProdQualityModule._pqMarkPhotoTarget(this)" onfocus="ProdQualityModule._pqMarkPhotoTarget(this)" title="클릭 후 Ctrl+V로 사진 붙여넣기"`}>
                 <input type="hidden" class="pqs-photo-val" value="${_esc(item.photo||'')}">
-                <div class="pqs-photo-wrap">${_pqPhotoThumbHtml(item.photo||'', readOnly)}</div>
+                <div class="pqs-photo-wrap" data-readonly="${readOnly ? '1' : '0'}">${_pqPhotoThumbHtml(item.photo||'', readOnly)}</div>
             </td>
             ${showDelete ? `<td style="text-align:center;vertical-align:middle;">${delBtn}</td>` : ''}
         </tr>`;
@@ -21266,7 +21755,7 @@ var ProdQualityModule = (function() {
                         <th style="min-width:200px;">관리항목 / 점검방법</th>
                         <th style="text-align:center;min-width:60px;">단위</th>
                         <th style="min-width:180px;">기준값 / 범위</th>
-                        <th style="text-align:center;min-width:70px;width:70px;">사진</th>
+                        <th style="text-align:center;min-width:160px;width:160px;">사진</th>
                     </tr></thead>
                     <tbody id="pqSpecItemsBody">${items.map(i=>_specItemRowHtml(i)).join('')}</tbody>
                 </table>
@@ -21293,6 +21782,8 @@ var ProdQualityModule = (function() {
                 method:    row.querySelector('.pqs-method-val')?.value?.trim() || '',
                 photo:     row.querySelector('.pqs-photo-val')?.value || '',
                 inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+                specMode:  row.querySelector('.pqs-spec-mode')?.value || undefined,
+                subLabel:  row.querySelector('.pqs-sublabel')?.value?.trim() || '',
                 spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
                 upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
                 lowerSpec: row.querySelector('.pqs-lower')?.value?.trim() || '',
@@ -21345,7 +21836,10 @@ var ProdQualityModule = (function() {
         });
         const sameColorTemplateCandidates = _getSameColorTemplateCandidates(productId, color, proc);
 
-        const items = _keepItemOrder(_productSpecItems(carModel, partName, color, { paintProcess: proc }).map(item => _normalizeItemForEdit({ ...item })));
+        // '해당 없음' 처리된 항목은 관리항목이 아니므로 보기/편집 화면에 표시하지 않는다(저장 시 별도로 유지됨).
+        const items = _keepItemOrder(_productSpecItems(carModel, partName, color, { paintProcess: proc })
+            .filter(item => item.notApplicable !== true)
+            .map(item => _normalizeItemForEdit({ ...item })));
 
         const status = _specStatus(items);
         const filledCount = items.filter(_hasSpecValue).length;
@@ -21534,7 +22028,7 @@ var ProdQualityModule = (function() {
                                     <th style="min-width:200px;">관리항목 / 점검방법</th>
                                     <th style="text-align:center;min-width:60px;">단위</th>
                                     <th style="min-width:180px;">기준값 / 범위</th>
-                                    <th style="text-align:center;min-width:70px;width:70px;">사진</th>
+                                    <th style="text-align:center;min-width:160px;width:160px;">사진</th>
                                     ${!viewOnly ? `<th style="text-align:center;min-width:70px;width:70px;">관리항목 삭제</th>` : ''}
                                 </tr></thead>
                                 <tbody id="pqSpecItemsBody">${items.map(i => _specItemRowHtml(i, { readOnly: viewOnly, showDelete: !viewOnly })).join('')}</tbody>
@@ -21616,7 +22110,8 @@ var ProdQualityModule = (function() {
 
     function _sameColorTemplateLabel(template) {
         const line = _normText(template.paintProcess || '');
-        return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '제품 기본정보 없음'}${line ? ` / ${line}` : ''}`;
+        const color = _sameColorEffectiveColor(template);
+        return `${_normText(template.carModel) || '-'} / ${_normText(template.partName) || '제품 기본정보 없음'}${color ? ` / ${color}` : ''}${line ? ` / ${line}` : ''}`;
     }
 
     // 제품 ID가 없더라도 품명이 있는 구형 템플릿은 제품 마스터의 실제 품목으로 연결한다.
@@ -21679,21 +22174,50 @@ var ProdQualityModule = (function() {
      * 동일 컬러의 기준값을 비교한다.
      * excludeTemplateIds는 현재 저장 대상처럼 새 값으로 함께 덮어쓸 템플릿이다.
      */
-    function _findSameColorStandardConflicts(color, items, excludeTemplateIds = []) {
+    // 템플릿에 저장된 컬러가 실제 제품의 공정별 컬러와 다를 수 있으므로(예: 저장은 BK, 제품은 CLEAR),
+    // 제품이 특정되면 제품 마스터의 공정별 컬러를 기준으로 동일 컬러 그룹을 판정한다.
+    function _sameColorEffectiveColor(template) {
+        const stored = _normText(template?.color || '');
+        if (!template?.productId) return stored;
+        const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === template.productId);
+        if (!product) return stored;
+        return _resolveProductColor(product, _normText(template.paintProcess || '')) || stored;
+    }
+
+    // 같은 차종·품명·컬러에 '도장 라인(도장-A/B)이 지정된 기준'과 '라인 없는 구형 기준'이 함께 있으면
+    // 라인 없는 쪽은 목록에서 쓰이지 않는 중복 기록이므로 동일 컬러 비교에서 제외한다.
+    function _sccShadowedTemplateIds() {
+        const all = _templates();
+        const withProcess = new Set(all.filter(t => _normText(t.paintProcess || '')).map(t =>
+            [_normText(t.carModel), _normText(t.partName || ''), _sameColorCompareKey(_sameColorEffectiveColor(t))].join('|')));
+        const shadowed = new Set();
+        all.forEach(t => {
+            if (_normText(t.paintProcess || '')) return;
+            const k = [_normText(t.carModel), _normText(t.partName || ''), _sameColorCompareKey(_sameColorEffectiveColor(t))].join('|');
+            if (withProcess.has(k)) shadowed.add(t.id);
+        });
+        return shadowed;
+    }
+
+    // carScope: null=전 차종, {cars:Set, same:true}=해당 차종만, {cars:Set, same:false}=해당 차종 제외(타 차종)
+    function _findSameColorStandardConflicts(color, items, excludeTemplateIds = [], carScope = null) {
         const targetColor = _normText(color);
         if (!targetColor) return [];
         const excluded = new Set(excludeTemplateIds.filter(Boolean));
+        const shadowedIds = _sccShadowedTemplateIds();
         const rows = _templates().filter(t =>
-            _sameColorCompareKey(t.color || '') === _sameColorCompareKey(targetColor) && !excluded.has(t.id)
-        ).filter(_sameColorTemplateHasProduct);
+            _sameColorCompareKey(_sameColorEffectiveColor(t)) === _sameColorCompareKey(targetColor) && !excluded.has(t.id) && !shadowedIds.has(t.id)
+        ).filter(_sameColorTemplateHasProduct).filter(t =>
+            !carScope || carScope.cars.has(_normText(t.carModel)) === carScope.same);
         const conflicts = [];
         SAME_COLOR_STANDARD_KEYS.forEach(key => {
             const wanted = _sameColorStandardSignature(items, key);
-            if (wanted === '__not_applicable__') return;
+            // 관리항목에 없는 항목(예: 색차 △L(좌/우)만 쓰는 품목)은 별개 항목이므로 비교하지 않는다.
+            if (wanted === '__not_applicable__' || wanted === '__missing__') return;
             const wantedNeedsInput = _sameColorSignatureNeedsInput(wanted);
             const different = rows.filter(t => {
                 const existing = _sameColorStandardSignature(t.items, key);
-                if (existing === '__not_applicable__') return false;
+                if (existing === '__not_applicable__' || existing === '__missing__') return false;
                 // 관리항목 없음과 값 미입력은 모두 '실제 비교 기준 없음'이다.
                 // 양쪽 모두 기준이 없으면 서로 다른 기준으로 판정하지 않는다.
                 if (wantedNeedsInput && _sameColorSignatureNeedsInput(existing)) return false;
@@ -21711,8 +22235,119 @@ var ProdQualityModule = (function() {
         return conflicts;
     }
 
+    // ── 검증 화면의 일괄 변경·삭제 전 원본 스냅샷 (되돌리기용) ──────────────────
+    const SCC_UNDO_KIND = 'same_color_undo';
+    const SCC_UNDO_KEEP = 10;
+
+    function _sccUndoList() {
+        return (Storage.getAll(STORE) || []).filter(d => d._docKind === SCC_UNDO_KIND)
+            .sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    }
+
+    // 변경 직전 원본을 저장한다. 저장에 실패하면 예외를 던져 변경 자체를 중단시킨다.
+    async function _sccSnapshot(label, templates) {
+        const originals = (templates || []).filter(Boolean).map(t => JSON.parse(JSON.stringify(t)));
+        if (!originals.length) return;
+        await Storage.add(STORE, { _docKind: SCC_UNDO_KIND, label, templates: originals, createdAt: new Date().toISOString() });
+        const old = _sccUndoList().slice(SCC_UNDO_KEEP);
+        for (const o of old) { try { await Storage.remove(STORE, o.id); } catch (e) { /* 정리 실패는 무시 */ } }
+    }
+
+    async function undoSameColorChange(snapshotId) {
+        const snap = _sccUndoList().find(d => d.id === snapshotId);
+        if (!snap) return;
+        if (!window.confirm(`'${snap.label}' 변경을 되돌리시겠습니까?
+(${snap.templates.length}건이 변경 전 값으로 복원됩니다.)`)) return;
+        try {
+            for (const t of snap.templates) await Storage.put(STORE, t);
+            await Storage.remove(STORE, snap.id);
+        } catch (err) {
+            console.error('[undoSameColorChange] 실패:', err);
+            UIUtils.toast(`되돌리기 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast('변경 전 값으로 복원했습니다.', 'success');
+        validateSameColorStandards();
+    }
+
+    // '해당 없음' 처리 전 기준값을 보관해 두었다가 복원할 수 있게 한다.
+    function _stashNaBackup(item) {
+        if (item.notApplicable === true) return;
+        const backup = {};
+        ['spec', 'targetSpec', 'upperSpec', 'lowerSpec', 'specMode', 'selected'].forEach(k => {
+            if (item[k] !== undefined) backup[k] = item[k];
+        });
+        if (['spec', 'targetSpec', 'upperSpec', 'lowerSpec'].some(k => String(backup[k] ?? '').trim())) item.naBackup = backup;
+    }
+
+    // 해당 없음 해제. 보관된 기준값이 있으면 함께 복원한다. templateId/key 없으면 전체.
+    async function restoreSameColorNA(templateId = '', key = '') {
+        const targets = _templates().filter(t => (!templateId || t.id === templateId)
+            && (t.items || []).some(i => i.notApplicable === true && (!key || i.key === key)));
+        if (!targets.length) return;
+        if (!templateId && !window.confirm(`해당 없음 처리된 ${targets.length}개 품목 기준을 모두 해제하시겠습니까?`)) return;
+        try {
+            for (const t of targets) {
+                const items = t.items.map(i => {
+                    if (!(i.notApplicable === true && (!key || i.key === key))) return i;
+                    const { naBackup, ...rest } = i;
+                    return { ...rest, ...(naBackup || {}), notApplicable: false, selected: true };
+                });
+                await Storage.update(STORE, t.id, { ...t, items, updatedAt: UIUtils.now() });
+            }
+        } catch (err) {
+            console.error('[restoreSameColorNA] 실패:', err);
+            UIUtils.toast(`해제 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast('해당 없음을 해제했습니다.', 'success');
+        validateSameColorStandards();
+    }
+
+    // 품목별 기준 목록의 미설정(X) 셀을 눌러 해당 항목을 '해당 없음'으로 처리한다.
+    async function markItemNotApplicable(productId, paintProcess, itemKey) {
+        if (!_isAdminUser()) { UIUtils.toast('품목별 기준값은 MES 관리자만 변경할 수 있습니다.', 'warning'); return; }
+        const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === productId);
+        if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
+        const proc = _normText(paintProcess || '');
+        const color = _resolveProductColor(product, proc);
+        let template = _templateForProduct(product.carModel, product.partName, color, proc);
+        if (!template && proc) {
+            template = _templates().find(t => _normText(t.carModel) === _normText(product.carModel)
+                && _normText(t.partName || '') === _normText(product.partName || '')
+                && _normText(t.paintProcess || '') === proc) || null;
+        }
+        const master = _masterItems().find(m => m.key === itemKey) || { key: itemKey, label: itemKey };
+        if (!window.confirm(`${_normText(product.carModel)} / ${_normText(product.partName || '')} 의 '${master.label}'을(를) 해당 없음으로 처리하시겠습니까?`)) return;
+        try {
+            if (template) {
+                const items = Array.isArray(template.items) ? template.items.map(i => ({ ...i })) : [];
+                const idx = items.findIndex(i => String(i.key || '') === itemKey);
+                const na = { ...(idx >= 0 ? items[idx] : { key: itemKey, label: master.label, unit: master.unit || '', method: master.method || '', inputType: master.inputType || 'text', specMode: master.specMode }),
+                    selected: false, spec: '', targetSpec: '', upperSpec: '', lowerSpec: '' };
+                if (idx >= 0) _stashNaBackup(items[idx]);
+                if (idx >= 0 && items[idx].naBackup) na.naBackup = items[idx].naBackup;
+                na.notApplicable = true;
+                if (idx >= 0) items[idx] = na; else items.push(na);
+                await _sccSnapshot(`해당 없음: ${_normText(product.carModel)} / ${_normText(product.partName || '')} · ${master.label}`, [template]);
+                await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
+            } else {
+                UIUtils.toast('이 품목은 저장된 기준이 없어 먼저 기준값을 등록해야 합니다.', 'warning');
+                return;
+            }
+        } catch (err) {
+            console.error('[markItemNotApplicable] 저장 실패:', err);
+            UIUtils.toast(`해당 없음 처리 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.toast(`'${master.label}'을(를) 해당 없음으로 처리했습니다.`, 'success');
+        if (typeof renderStandardsCard === 'function') renderStandardsCard();
+    }
+
     async function setSameColorNotApplicable(templateId, itemKey, checked) {
-        if (!checked || !['film_under', 'film_top'].includes(String(itemKey || ''))) return;
+        if (!checked || !SAME_COLOR_STANDARD_KEYS.includes(String(itemKey || ''))) return;
         const template = _templates().find(row => row.id === templateId);
         if (!template) {
             UIUtils.toast('품목 기준을 찾을 수 없습니다. 검증을 새로고침해 주세요.', 'warning');
@@ -21724,10 +22359,10 @@ var ProdQualityModule = (function() {
             item = {
                 key: itemKey,
                 label: SAME_COLOR_STANDARD_LABELS[itemKey],
-                unit: 'μm',
-                method: '도막측정기',
+                unit: String(itemKey).startsWith('film_') ? 'μm' : '',
+                method: String(itemKey).startsWith('film_') ? '도막측정기' : '',
                 inputType: 'number',
-                specMode: 'range',
+                specMode: String(itemKey).startsWith('film_') ? 'range' : 'deviation',
                 spec: '',
                 upperSpec: '',
                 lowerSpec: '',
@@ -21735,12 +22370,14 @@ var ProdQualityModule = (function() {
             };
             items.push(item);
         }
+        _stashNaBackup(item);
         item.notApplicable = true;
         item.selected = false;
         item.spec = '';
         item.upperSpec = '';
         item.lowerSpec = '';
         try {
+            await _sccSnapshot(`해당 없음: ${_sameColorTemplateLabel(template)} · ${SAME_COLOR_STANDARD_LABELS[itemKey]}`, [template]);
             await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
             UIUtils.closeModal();
             UIUtils.toast(`${_sameColorTemplateLabel(template)} · ${SAME_COLOR_STANDARD_LABELS[itemKey]}을(를) 해당 없음으로 저장했습니다.`, 'success');
@@ -21813,7 +22450,84 @@ var ProdQualityModule = (function() {
         return `<div style="display:flex;gap:5px;flex-wrap:wrap;margin-top:7px;color:inherit;">${fields}${legacy}</div>`;
     }
 
-    function _sameColorConflictHtml(color, conflicts, prefixText = '') {
+    // 차종별 구분 배지 (차종명 해시로 고정 색상 부여)
+    const _CAR_BADGE_TONES = [
+        ['#dbeafe', '#1e40af'], ['#dcfce7', '#166534'], ['#fef3c7', '#92400e'], ['#fce7f3', '#9d174d'],
+        ['#ede9fe', '#5b21b6'], ['#cffafe', '#155e75'], ['#ffedd5', '#9a3412'], ['#e2e8f0', '#334155']
+    ];
+    function _carBadgeHtml(car, count) {
+        const name = _normText(car) || '차종 미지정';
+        let h = 0;
+        for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+        const [bg, fg] = _CAR_BADGE_TONES[h % _CAR_BADGE_TONES.length];
+        return `<span style="display:inline-block;padding:1px 8px;border-radius:999px;background:${bg};color:${fg};font-size:.7rem;font-weight:800;white-space:nowrap;">${_esc(name)}${count ? ` ${count}` : ''}</span>`;
+    }
+    function _carSummaryHtml(rows) {
+        const counts = new Map();
+        rows.forEach(r => { const c = _normText(r.carModel) || ''; counts.set(c, (counts.get(c) || 0) + 1); });
+        return `<div style="display:flex;gap:4px;flex-wrap:wrap;margin-top:6px;">${[...counts.entries()]
+            .sort((a, b) => a[0].localeCompare(b[0], 'ko')).map(([c, n]) => _carBadgeHtml(c, n)).join('')}</div>`;
+    }
+    // 차종 순 정렬 + 차종이 바뀔 때마다 구분 헤더를 넣은 행 목록
+    function _groupRowsByCar(rows, renderRow) {
+        const sorted = [...rows].sort((a, b) => (_normText(a.carModel) || '').localeCompare(_normText(b.carModel) || '', 'ko'));
+        let prev = null;
+        return sorted.map(row => {
+            const car = _normText(row.carModel) || '';
+            const header = car !== prev
+                ? `<div style="padding:4px 8px;background:#f1f5f9;border-top:1px solid #cbd5e1;">${_carBadgeHtml(car, sorted.filter(r => (_normText(r.carModel) || '') === car).length)}</div>` : '';
+            prev = car;
+            return header + renderRow(row);
+        }).join('');
+    }
+
+    // 저장 중단 모달에서 '전체 수정'에 사용할 대기 상태 (saveSpecPage가 채움)
+    let _pendingSameColorFix = null;
+
+    // 불일치 품목의 해당 기준 항목을 현재 입력값으로 일괄 덮어쓴다. conflictFilter로 일부 항목만 지정 가능.
+    async function applySameColorConflictsToAll(groupIndex = null, conflictKey = null) {
+        const pending = _pendingSameColorFix;
+        if (!pending) return;
+        const updates = new Map(); // templateId → { template, keys:Set }
+        pending.groups.forEach((group, gi) => {
+            if (groupIndex !== null && gi !== groupIndex) return;
+            group.conflicts.forEach(conflict => {
+                if (conflictKey && conflict.key !== conflictKey) return;
+                conflict.rows.forEach(row => {
+                    if (!updates.has(row.id)) updates.set(row.id, { keys: new Set() });
+                    updates.get(row.id).keys.add(conflict.key);
+                });
+            });
+        });
+        let count = 0;
+        try {
+            await _sccSnapshot('저장 불일치 전체 수정', [...updates.keys()].map(id => _templates().find(t => t.id === id)));
+            for (const [templateId, info] of updates) {
+                const template = _templates().find(t => t.id === templateId);
+                if (!template) continue;
+                const items = Array.isArray(template.items) ? template.items.map(i => ({ ...i })) : [];
+                info.keys.forEach(key => {
+                    const source = pending.items.find(i => String(i.key || '') === key);
+                    if (!source) return;
+                    const idx = items.findIndex(i => String(i.key || '') === key);
+                    const merged = { ...(idx >= 0 ? items[idx] : {}), ...source, notApplicable: false };
+                    if (idx >= 0) items[idx] = merged; else items.push(merged);
+                });
+                await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
+                count++;
+            }
+        } catch (err) {
+            console.error('[applySameColorConflictsToAll] 저장 실패:', err);
+            UIUtils.toast(`일괄 수정 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast(`${count}개 품목 기준을 현재 입력값으로 수정했습니다. 다시 저장합니다.`, 'success');
+        _pendingSameColorFix = null;
+        await saveSpecPage();
+    }
+
+    function _sameColorConflictHtml(color, conflicts, prefixText = '', groupIndex = null) {
         const safeColorId = _sameColorCompareKey(color).replace(/[^A-Z0-9가-힣_-]/g, '_');
         const rows = conflicts.map((conflict, conflictIndex) => {
             const bySignature = new Map();
@@ -21830,17 +22544,22 @@ var ProdQualityModule = (function() {
                         <div style="color:#b91c1c;">
                             <strong style="font-size:.9rem;">${_esc(_sameColorSignatureDisplay(signature, conflict.key))}</strong>
                             ${_sameColorSignatureDetailHtml(signature, conflict.key)}
+                            ${_carSummaryHtml(displayRows)}
                         </div>
                         <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
                             style="padding:3px 8px;background:#fff7ed;border:1px solid #fca5a5;color:#991b1b;font-size:.7rem;font-weight:800;">품목 ${displayRows.length}개 ▾</button>
                     </div>
                     <div id="${detailId}" style="display:none;padding:7px 10px;border-top:1px solid #fecaca;background:#fff7ed;font-size:.76rem;color:#7f1d1d;line-height:1.65;">
-                        ${displayRows.map(row => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #fee2e2;"><span style="flex:1;">• ${_esc(_sameColorTemplateLabel(row))}</span>${_sameColorEditButtonHtml(row)}</div>`).join('')}
+                        ${_groupRowsByCar(displayRows, row => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #fee2e2;"><span style="flex:1;">• ${_esc(_sameColorTemplateLabel(row))}</span>${_sameColorEditButtonHtml(row)}</div>`)}
                     </div>
                 </div>`;
             }).join('');
             return `<div style="padding:10px 12px;margin-bottom:10px;background:#fff;border:1px solid #fecaca;border-left:4px solid #dc2626;border-radius:9px;">
-                <div style="font-weight:900;color:#7f1d1d;margin-bottom:8px;">${_esc(conflict.label)}</div>
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;font-weight:900;color:#7f1d1d;margin-bottom:8px;">
+                    <span>${_esc(conflict.label)}</span>
+                    ${groupIndex !== null ? `<button type="button" class="btn btn-sm btn-primary" onclick="ProdQualityModule.applySameColorConflictsToAll(${groupIndex},'${_js(conflict.key)}')"
+                        style="padding:3px 10px;font-size:.72rem;white-space:nowrap;">전체 현재값으로 수정</button>` : ''}
+                </div>
                 <div style="display:grid;grid-template-columns:minmax(210px,.8fr) minmax(260px,1.2fr);gap:10px;align-items:start;">
                     <div style="padding:9px 11px;background:#eff6ff;border:2px solid #2563eb;border-radius:8px;">
                         <div style="font-size:.67rem;font-weight:800;color:#1d4ed8;margin-bottom:3px;">현재 입력값</div>
@@ -21854,12 +22573,125 @@ var ProdQualityModule = (function() {
             <div style="overflow:auto;max-height:48vh;">${rows}</div>`;
     }
 
+    // 검증 결과 창의 일괄 입력 대상 (카드 인덱스 → { key, ids })
+    let _sccBulkTargets = [];
+
+    async function applySameColorBulk(groupIndex) {
+        const target = _sccBulkTargets[groupIndex];
+        if (!target) return;
+        const read = f => String(document.getElementById(`pqSccBulk_${groupIndex}_${f}`)?.value ?? '').trim().replace(/[−–—]/g, '-');
+        const isFilm = target.key.startsWith('film_');
+        const strip = v => v.replace(/^[+\-]/, '');
+        const vals = isFilm
+            ? { targetSpec: '', upperSpec: read('u'), lowerSpec: read('l') }
+            : { targetSpec: read('t'), upperSpec: strip(read('u')), lowerSpec: strip(read('l')) };
+        const nums = [vals.upperSpec, vals.lowerSpec, vals.targetSpec].filter(v => v !== '');
+        if (!vals.upperSpec || !vals.lowerSpec) {
+            UIUtils.toast(isFilm ? '하한과 상한을 모두 입력하세요.' : '+공차와 -공차를 모두 입력하세요.', 'warning');
+            return;
+        }
+        if (nums.some(v => !Number.isFinite(Number(v)))) {
+            UIUtils.toast('숫자만 입력할 수 있습니다.', 'warning');
+            return;
+        }
+        if (isFilm && Number(vals.lowerSpec) > Number(vals.upperSpec)) {
+            UIUtils.toast('하한이 상한보다 클 수 없습니다.', 'warning');
+            return;
+        }
+        if (!window.confirm(`${SAME_COLOR_STANDARD_LABELS[target.key]} 기준 ${target.ids.length}건을 입력한 값으로 모두 변경하시겠습니까?`)) return;
+        let count = 0;
+        try {
+            await _sccSnapshot(`일괄 입력: ${SAME_COLOR_STANDARD_LABELS[target.key]} ${target.ids.length}건`, target.ids.map(id => _templates().find(t => t.id === id)));
+            for (const id of target.ids) {
+                const template = _templates().find(t => t.id === id);
+                if (!template) continue;
+                const items = Array.isArray(template.items) ? template.items.map(i => ({ ...i })) : [];
+                let idx = items.findIndex(i => String(i.key || '') === target.key);
+                if (idx < 0) {
+                    items.push({
+                        key: target.key, label: SAME_COLOR_STANDARD_LABELS[target.key],
+                        unit: isFilm ? 'μm' : '', method: isFilm ? '도막측정기' : '', inputType: 'number'
+                    });
+                    idx = items.length - 1;
+                }
+                const item = { ...items[idx], ...vals, specMode: isFilm ? 'range' : 'deviation', notApplicable: false, selected: true };
+                item.spec = _composeRangeSpec(item);
+                items[idx] = item;
+                await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
+                count++;
+            }
+        } catch (err) {
+            console.error('[applySameColorBulk] 저장 실패:', err);
+            UIUtils.toast(`일괄 변경 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast(`${count}건을 일괄 변경했습니다.`, 'success');
+        validateSameColorStandards();
+    }
+
+    // 카드에 속한 모든 품목의 해당 항목을 '해당 없음'으로 처리 (비교 대상에서 제외)
+    async function applySameColorBulkNA(groupIndex) {
+        const target = _sccBulkTargets[groupIndex];
+        if (!target) return;
+        if (!window.confirm(`${SAME_COLOR_STANDARD_LABELS[target.key]} 기준 ${target.ids.length}건을 모두 '해당 없음'으로 처리하시겠습니까?
+(입력된 기준값은 비워지고 동일 컬러 비교에서 제외됩니다.)`)) return;
+        let count = 0;
+        try {
+            await _sccSnapshot(`해당 없음 일괄: ${SAME_COLOR_STANDARD_LABELS[target.key]} ${target.ids.length}건`, target.ids.map(id => _templates().find(t => t.id === id)));
+            for (const id of target.ids) {
+                const template = _templates().find(t => t.id === id);
+                if (!template) continue;
+                const isFilm = target.key.startsWith('film_');
+                const items = Array.isArray(template.items) ? template.items.map(i => ({ ...i })) : [];
+                let item = items.find(i => String(i.key || '') === target.key);
+                if (!item) {
+                    item = { key: target.key, label: SAME_COLOR_STANDARD_LABELS[target.key], unit: isFilm ? 'μm' : '',
+                        method: isFilm ? '도막측정기' : '', inputType: 'number', specMode: isFilm ? 'range' : 'deviation' };
+                    items.push(item);
+                }
+                _stashNaBackup(item);
+                Object.assign(item, { notApplicable: true, selected: false, spec: '', targetSpec: '', upperSpec: '', lowerSpec: '' });
+                await Storage.update(STORE, template.id, { ...template, items, updatedAt: UIUtils.now() });
+                count++;
+            }
+        } catch (err) {
+            console.error('[applySameColorBulkNA] 저장 실패:', err);
+            UIUtils.toast(`해당 없음 처리 실패: ${err?.message || String(err)}`, 'error');
+            return;
+        }
+        UIUtils.closeModal();
+        UIUtils.toast(`${count}건을 해당 없음으로 처리했습니다.`, 'success');
+        validateSameColorStandards();
+    }
+
+    // 제품을 특정할 수 없는 구형(차종/컬러 전용) 기준 삭제. templateId 없으면 전체 삭제.
+    function deleteOrphanSameColorTemplates(templateId = '') {
+        const orphans = _templates().filter(t => _normText(t.color || '') && !_sameColorTemplateHasProduct(t)
+            && (!templateId || t.id === templateId));
+        if (!orphans.length) { UIUtils.toast('삭제할 기준이 없습니다.', 'info'); return; }
+        const msg = templateId
+            ? `${_normText(orphans[0].carModel) || '-'} / ${_normText(orphans[0].color)} 기준을 삭제하시겠습니까?\n(제품 연결정보가 없는 구형 자료이며, 삭제 후 복구할 수 없습니다.)`
+            : `제품을 특정할 수 없는 구형 기준 ${orphans.length}건을 모두 삭제하시겠습니까?\n(삭제 후 복구할 수 없습니다.)`;
+        if (!window.confirm(msg)) return;
+        _sccSnapshot(`구형 기준 삭제 ${orphans.length}건`, orphans).then(() => Promise.all(orphans.map(t => Storage.remove(STORE, t.id)))).then(() => {
+            UIUtils.closeModal();
+            UIUtils.toast(`${orphans.length}건을 삭제했습니다.`, 'success');
+            validateSameColorStandards();
+        }).catch(err => {
+            console.error('[deleteOrphanSameColorTemplates] 삭제 실패:', err);
+            UIUtils.toast(`삭제 실패: ${err?.message || String(err)}`, 'error');
+        });
+    }
+
     // 품목별 기준 화면에서 기존 기준 전체를 검사하는 공개 동작.
     function validateSameColorStandards() {
         const groups = new Map();
         const orphanTemplates = [];
+        const shadowedIds = _sccShadowedTemplateIds();
         _templates().forEach(template => {
-            const color = _normText(template.color || '');
+            if (shadowedIds.has(template.id)) return;
+            const color = _sameColorEffectiveColor(template);
             if (!color) return;
             if (!_sameColorTemplateHasProduct(template)) {
                 orphanTemplates.push(template);
@@ -21870,7 +22702,7 @@ var ProdQualityModule = (function() {
             groups.get(groupKey).templates.push(template);
         });
 
-        const orphanHtml = orphanTemplates.length ? `
+        let orphanHtml = orphanTemplates.length ? `
             <div style="margin-bottom:12px;padding:10px 12px;background:#fff7ed;border:1px solid #fdba74;border-radius:9px;">
                 <div style="display:flex;align-items:center;gap:7px;color:#9a3412;font-weight:900;margin-bottom:7px;">
                     <span class="material-symbols-outlined" style="font-size:19px;">inventory_2</span>
@@ -21884,9 +22716,50 @@ var ProdQualityModule = (function() {
                         <strong style="min-width:70px;">${_esc(_normText(template.carModel) || '-')}</strong>
                         <span style="flex:1;">${_esc(_normText(template.color) || '-')} · 품명/제품 연결정보 없음</span>
                         <span title="저장된 기준 레코드 ID" style="font-size:.67rem;color:#78716c;white-space:nowrap;">기준 ID: ${_esc(template.id || '-')}</span>
+                        <button type="button" class="btn btn-sm" onclick="ProdQualityModule.deleteOrphanSameColorTemplates('${_js(template.id)}')"
+                            style="padding:3px 8px;font-size:.7rem;white-space:nowrap;background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;font-weight:700;">삭제</button>
                     </div>`).join('')}
                 </div>
+                <div style="text-align:right;margin-top:8px;">
+                    <button type="button" class="btn btn-sm" onclick="ProdQualityModule.deleteOrphanSameColorTemplates()"
+                        style="padding:4px 12px;font-size:.74rem;background:#dc2626;border:1px solid #dc2626;color:#fff;font-weight:800;">제품 미확인 기준 ${orphanTemplates.length}건 전체 삭제</button>
+                </div>
             </div>` : '';
+
+        const undoList = _sccUndoList();
+        if (undoList.length) {
+            orphanHtml += `<details style="margin-bottom:12px;border:1px solid #93c5fd;border-radius:9px;background:#eff6ff;">
+                <summary style="cursor:pointer;padding:8px 12px;font-weight:800;color:#1d4ed8;font-size:.82rem;">변경 이력 ${undoList.length}건 — 눌러서 이전 값으로 되돌리기</summary>
+                <div style="padding:6px 12px 10px;max-height:200px;overflow:auto;">
+                    ${undoList.map(u => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #dbeafe;font-size:.76rem;">
+                        <span style="flex:1;"><strong>${_esc(u.label || '변경')}</strong> <span style="color:#64748b;">${_esc(String(u.createdAt || '').replace('T', ' ').slice(0, 16))} · ${u.templates.length}건</span></span>
+                        <button type="button" class="btn btn-sm" onclick="ProdQualityModule.undoSameColorChange('${_js(u.id)}')"
+                            style="padding:2px 9px;font-size:.7rem;background:#fff;border:1px solid #2563eb;color:#1d4ed8;font-weight:800;">되돌리기</button>
+                    </div>`).join('')}
+                </div>
+            </details>`;
+        }
+        const naRows = [];
+        _templates().forEach(t => {
+            if (!_sameColorTemplateHasProduct(t)) return;
+            (t.items || []).forEach(i => {
+                if (i.notApplicable === true && SAME_COLOR_STANDARD_KEYS.includes(i.key)) naRows.push({ t, i });
+            });
+        });
+        if (naRows.length) {
+            orphanHtml += `<details style="margin-bottom:12px;border:1px solid #86efac;border-radius:9px;background:#f0fdf4;">
+                <summary style="cursor:pointer;padding:8px 12px;font-weight:800;color:#166534;font-size:.82rem;">해당 없음 처리된 항목 ${naRows.length}건 (비교 제외) — 눌러서 확인·해제</summary>
+                <div style="padding:6px 12px 10px;max-height:200px;overflow:auto;">
+                    ${naRows.map(({ t, i }) => `<div style="display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px solid #dcfce7;font-size:.76rem;">
+                        <span style="flex:1;">${_carBadgeHtml(t.carModel)} ${_esc(_sameColorTemplateLabel(t))} · <strong>${_esc(SAME_COLOR_STANDARD_LABELS[i.key])}</strong>${i.naBackup ? ' <span style="color:#166534;">(이전 값 복원 가능)</span>' : ''}</span>
+                        <button type="button" class="btn btn-sm" onclick="ProdQualityModule.restoreSameColorNA('${_js(t.id)}','${_js(i.key)}')"
+                            style="padding:2px 9px;font-size:.7rem;background:#fff;border:1px solid #16a34a;color:#166534;font-weight:800;">해제</button>
+                    </div>`).join('')}
+                    <div style="text-align:right;margin-top:6px;"><button type="button" class="btn btn-sm" onclick="ProdQualityModule.restoreSameColorNA()"
+                        style="padding:3px 12px;font-size:.72rem;background:#16a34a;border:1px solid #16a34a;color:#fff;font-weight:800;">전체 해제</button></div>
+                </div>
+            </details>`;
+        }
 
         const mismatches = [];
         groups.forEach(group => {
@@ -21895,16 +22768,37 @@ var ProdQualityModule = (function() {
                 const signatures = new Map();
                 templates.forEach(template => {
                     const signature = _sameColorStandardSignature(template.items, key);
-                    if (signature === '__not_applicable__') return;
+                    if (signature === '__not_applicable__' || signature === '__missing__') return;
                     if (!signatures.has(signature)) signatures.set(signature, []);
                     signatures.get(signature).push(template);
                 });
                 // 같은 컬러의 모든 품목에 실제 입력된 기준이 없다면 비교할 기준도 없다.
                 // 실제 기준이 하나라도 있을 때만 누락/불일치를 검증한다.
                 const hasEnteredStandard = [...signatures.keys()].some(signature => !_sameColorSignatureNeedsInput(signature));
-                if (hasEnteredStandard && signatures.size > 1) {
-                    mismatches.push({ color: group.label, key, label: SAME_COLOR_STANDARD_LABELS[key] || key, signatures });
-                }
+                if (!hasEnteredStandard || signatures.size <= 1) return;
+                const category = key.startsWith('film_') ? 'film' : 'color';
+                // 1) 같은 차종 안의 불일치(저장 차단 대상)
+                const byCar = new Map();
+                templates.forEach(template => {
+                    const car = _normText(template.carModel) || '';
+                    if (!byCar.has(car)) byCar.set(car, []);
+                    byCar.get(car).push(template);
+                });
+                let hasSameCar = false;
+                [...byCar.entries()].sort((a, b) => a[0].localeCompare(b[0], 'ko')).forEach(([car, carTemplates]) => {
+                    const carSignatures = new Map();
+                    carTemplates.forEach(template => {
+                        const signature = _sameColorStandardSignature(template.items, key);
+                        if (signature === '__not_applicable__' || signature === '__missing__') return;
+                        if (!carSignatures.has(signature)) carSignatures.set(signature, []);
+                        carSignatures.get(signature).push(template);
+                    });
+                    if (carSignatures.size > 1 && [...carSignatures.keys()].some(s => !_sameColorSignatureNeedsInput(s))) {
+                        hasSameCar = true;
+                        mismatches.push({ color: group.label, key, label: SAME_COLOR_STANDARD_LABELS[key] || key, signatures: carSignatures, scope: 'same', car, category });
+                    }
+                });
+                // 타 차종 간 기준 차이는 컬러 명칭만 같을 수 있으므로 검증 대상에서 제외한다(동일 차종만 검증).
             });
         });
 
@@ -21912,19 +22806,30 @@ var ProdQualityModule = (function() {
             UIUtils.showModal('동일 컬러 기준 검증', `
                 <div style="padding:24px;text-align:center;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;">
                     <span class="material-symbols-outlined" style="font-size:34px;display:block;margin-bottom:8px;">verified</span>
-                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">제품 기본정보가 존재하는 동일 컬러 품목에서 실제 입력된 색차·도막 기준값 사이에 불일치가 없습니다.</span>
+                    <strong>검증 완료</strong><br><span style="font-size:.82rem;">동일 차종·동일 컬러 품목에서 실제 입력된 색차·도막 기준값 사이에 불일치가 없습니다. (타 차종 간 비교는 하지 않습니다)</span>
                 </div>
                 <div style="margin-top:12px;">${orphanHtml}</div>`, `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, orphanTemplates.length ? 'lg' : 'sm');
             return;
         }
 
+        mismatches.sort((a, b) => (a.scope === b.scope ? 0 : a.scope === 'same' ? -1 : 1));
         const colorCount = new Set(mismatches.map(group => _sameColorCompareKey(group.color))).size;
+        const cnt = fn => mismatches.filter(fn).length;
+        const filterBtn = (id, label, n) => `<button type="button" class="btn btn-sm pq-scc-flt" data-flt="${id}" onclick="(function(b){var m=b.dataset.flt;document.querySelectorAll('.pq-scc-flt').forEach(function(x){x.style.outline=x===b?'2px solid #2563eb':'none';});document.querySelectorAll('.pq-scc-sec').forEach(function(s){var ok=m==='all'||s.dataset.scope===m||s.dataset.cat===m;s.style.display=ok?'':'none';});})(this)"
+            style="padding:4px 10px;font-size:.74rem;font-weight:800;background:#fff;border:1px solid #cbd5e1;${id === 'all' ? 'outline:2px solid #2563eb;' : ''}">${label} ${n}</button>`;
+        const filterBar = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+            ${filterBtn('all', '전체', mismatches.length)}
+            ${filterBtn('same', '동일 차종 (저장 차단)', cnt(m => m.scope === 'same'))}
+            ${filterBtn('color', '색차 △L/△a/△b', cnt(m => m.category === 'color'))}
+            ${filterBtn('film', '도막두께', cnt(m => m.category === 'film'))}
+        </div>`;
         const valueColors = [
             { border:'#2563eb', bg:'#eff6ff', text:'#1d4ed8' },
             { border:'#dc2626', bg:'#fef2f2', text:'#b91c1c' },
             { border:'#d97706', bg:'#fffbeb', text:'#b45309' },
             { border:'#7c3aed', bg:'#f5f3ff', text:'#6d28d9' }
         ];
+        _sccBulkTargets = [];
         const html = mismatches.map((group, groupIndex) => {
             const values = [...group.signatures.entries()].map(([signature, rows], valueIndex) => {
                 const displayValue = _sameColorSignatureDisplay(signature, group.key);
@@ -21938,25 +22843,26 @@ var ProdQualityModule = (function() {
                     `${row.productId || row.id}|${_normText(row.paintProcess || '')}|${_normText(row.partName || '')}`,
                     row
                 ])).values()];
-                const productRows = uniqueDisplayRows.map(row => {
+                const productRows = _groupRowsByCar(uniqueDisplayRows, row => {
                     const line = _normText(row.paintProcess || '');
-                    const naCheck = isMissing && String(group.key).startsWith('film_') && row.id
+                    const naCheck = row.id
                         ? `<label style="display:flex;align-items:center;gap:4px;white-space:nowrap;color:#166534;font-weight:700;"><input type="checkbox" onchange="ProdQualityModule.setSameColorNotApplicable('${_js(row.id)}','${_js(group.key)}',this.checked)">해당 없음</label>`
                         : '';
                     return `<div style="display:grid;grid-template-columns:minmax(70px,110px) minmax(180px,1fr) auto auto auto;gap:8px;align-items:center;padding:6px 8px;border-top:1px solid #e5e7eb;font-size:.78rem;">
                         <strong style="color:#334155;">${_esc(_normText(row.carModel) || '-')}</strong>
-                        <span style="color:${_normText(row.partName) ? '#475569' : '#dc2626'};font-weight:${_normText(row.partName) ? '400' : '800'};word-break:break-word;">${_esc(_normText(row.partName) || '제품 기본정보 없음')}</span>
+                        <span style="color:${_normText(row.partName) ? '#475569' : '#dc2626'};font-weight:${_normText(row.partName) ? '400' : '800'};word-break:break-word;">${_esc(_normText(row.partName) || '제품 기본정보 없음')}${_sameColorEffectiveColor(row) ? ` <span style="padding:1px 6px;border-radius:5px;background:#1e293b;color:#fff;font-size:.68rem;font-weight:800;white-space:nowrap;">${_esc(_sameColorEffectiveColor(row))}</span>` : ''}</span>
                         ${line ? `<span style="white-space:nowrap;padding:1px 6px;border-radius:999px;background:#f1f5f9;color:#475569;font-size:.7rem;font-weight:700;">${_esc(line)}</span>` : '<span></span>'}
                         ${naCheck}
                         ${_sameColorEditButtonHtml(row, isMissing ? '기준 입력' : '수정')}
                     </div>`;
-                }).join('');
+                });
                 return `<div style="min-width:260px;flex:1 1 300px;border:2px solid ${tone.border};border-radius:10px;background:${tone.bg};overflow:hidden;">
                     <div style="padding:10px 12px;display:flex;align-items:center;justify-content:space-between;gap:10px;">
                         <div>
                             <div style="font-size:.68rem;font-weight:800;color:${tone.text};margin-bottom:3px;">기준 ${String.fromCharCode(65 + valueIndex)}</div>
                             <div style="font-size:1.05rem;font-weight:900;color:${tone.text};line-height:1.35;">${_esc(displayValue)}</div>
                             ${_sameColorSignatureDetailHtml(signature, group.key)}
+                            ${_carSummaryHtml(uniqueDisplayRows)}
                         </div>
                         <button type="button" class="btn btn-sm" onclick="(function(){var d=document.getElementById('${detailId}');if(d)d.style.display=d.style.display==='none'?'block':'none';})()"
                             style="flex-shrink:0;padding:4px 9px;background:#fff;border:1px solid ${tone.border};color:${tone.text};font-size:.72rem;font-weight:800;">
@@ -21966,12 +22872,41 @@ var ProdQualityModule = (function() {
                     <div id="${detailId}" style="display:${isMissing ? 'block' : 'none'};background:#fff;border-top:1px solid ${tone.border};max-height:210px;overflow:auto;">${productRows}</div>
                 </div>`;
             }).join('');
-            return `<section style="margin-bottom:14px;border:1px solid #fecaca;border-left:5px solid #dc2626;border-radius:10px;background:#fff;box-shadow:0 2px 6px rgba(127,29,29,.06);overflow:hidden;">
+            // 일괄 입력 패널: 이 카드에 속한 모든 품목 기준을 입력한 값으로 한 번에 변경
+            const bulkTemplates = [...group.signatures.values()].flat();
+            const bulkIsFilm = group.category === 'film';
+            _sccBulkTargets[groupIndex] = { key: group.key, ids: [...new Set(bulkTemplates.map(t => t.id).filter(Boolean))] };
+            const seedSig = [...group.signatures.entries()].filter(([s]) => !_sameColorSignatureNeedsInput(s))
+                .sort((a, b) => {
+                    const filled = s => String(s).split('|').slice(1, 4).filter(v => String(v || '').trim()).length;
+                    return filled(b[0]) - filled(a[0]) || b[1].length - a[1].length;
+                })[0]?.[0];
+            const seed = seedSig ? String(seedSig).split('|') : [];
+            const stripSign = v => String(v || '').replace(/^[+\-]/, '');
+            const inp = (field, label, val) => `<label style="display:inline-flex;align-items:center;gap:4px;font-size:.74rem;font-weight:700;color:#334155;white-space:nowrap;">${label}
+                <input type="text" id="pqSccBulk_${groupIndex}_${field}" value="${_esc(val || '')}" inputmode="decimal" style="width:70px;padding:3px 6px;border:1px solid #94a3b8;border-radius:5px;font-size:.78rem;"></label>`;
+            const bulkPanel = `<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:#f8fafc;border-bottom:1px solid #e2e8f0;">
+                <strong style="font-size:.76rem;color:#0f172a;">일괄 입력 (기준 ${_sccBulkTargets[groupIndex].ids.length}건)</strong>
+                ${bulkIsFilm
+                    ? inp('l', '하한', seed[3]) + inp('u', '상한', seed[2]) + '<span style="font-size:.72rem;color:#64748b;">μm</span>'
+                    : inp('t', '기준값', seed[1]) + inp('u', '+공차', stripSign(seed[2])) + inp('l', '-공차', stripSign(seed[3]))}
+                <button type="button" class="btn btn-sm btn-primary" onclick="ProdQualityModule.applySameColorBulk(${groupIndex})"
+                    style="padding:4px 12px;font-size:.74rem;white-space:nowrap;">입력값으로 전체 변경</button>
+                <button type="button" class="btn btn-sm" onclick="ProdQualityModule.applySameColorBulkNA(${groupIndex})"
+                    style="padding:4px 12px;font-size:.74rem;white-space:nowrap;background:#f0fdf4;border:1px solid #86efac;color:#166534;font-weight:800;">이 카드 전체 해당 없음</button>
+            </div>`;
+            const isSame = group.scope === 'same';
+            const scopeBadge = isSame
+                ? `<span style="padding:2px 8px;border-radius:6px;background:#dc2626;color:#fff;font-size:.7rem;font-weight:800;">동일 차종 불일치 · 저장 차단</span>${_carBadgeHtml(group.car)}`
+                : `<span style="padding:2px 8px;border-radius:6px;background:#d97706;color:#fff;font-size:.7rem;font-weight:800;">타 차종 간 상이 · 참고(차종별 기준 다를 수 있음)</span>`;
+            return `<section class="pq-scc-sec" data-scope="${group.scope}" data-cat="${group.category}" style="margin-bottom:14px;border:1px solid #fecaca;border-left:5px solid ${isSame ? '#dc2626' : '#d97706'};border-radius:10px;background:#fff;box-shadow:0 2px 6px rgba(127,29,29,.06);overflow:hidden;">
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;background:#fff7ed;border-bottom:1px solid #fed7aa;">
                     <span style="padding:3px 9px;border-radius:999px;background:#9a3412;color:#fff;font-size:.76rem;font-weight:900;">${_esc(group.color)}</span>
                     <strong style="font-size:.93rem;color:#7f1d1d;">${_esc(group.label)}</strong>
+                    ${scopeBadge}
                     <span style="margin-left:auto;font-size:.72rem;font-weight:800;color:#dc2626;">서로 다른 기준 ${group.signatures.size}종</span>
                 </div>
+                ${bulkPanel}
                 <div style="display:flex;gap:10px;flex-wrap:wrap;padding:10px 12px;">${values}</div>
             </section>`;
         }).join('');
@@ -21989,6 +22924,7 @@ var ProdQualityModule = (function() {
                 <span style="padding:5px 8px;border-radius:6px;background:#fef2f2;border:1px solid #fca5a5;color:#991b1b;"><strong>관리항목 없음</strong> = 해당 품목의 프리셋에 항목 자체가 없음</span>
             </div>
             ${orphanHtml}
+            ${filterBar}
             <div style="max-height:62vh;overflow:auto;padding-right:4px;">${html}</div>`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'xl');
     }
@@ -22131,6 +23067,8 @@ var ProdQualityModule = (function() {
                 method:    row.querySelector('.pqs-method-val')?.value?.trim() || '',
                 photo:     row.querySelector('.pqs-photo-val')?.value || '',
                 inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+                specMode:  row.querySelector('.pqs-spec-mode')?.value || undefined,
+                subLabel:  row.querySelector('.pqs-sublabel')?.value?.trim() || '',
                 spec:      row.querySelector('.pqs-spec')?.value?.trim() || '',
                 upperSpec: row.querySelector('.pqs-upper')?.value?.trim() || '',
                 lowerSpec: row.querySelector('.pqs-lower')?.value?.trim() || '',
@@ -22180,25 +23118,36 @@ var ProdQualityModule = (function() {
             });
         }).map(t => t.id);
         const colorsToCheck = [...new Set(saveTargets.map(p => _resolveProductColor(p, paintProcess)).filter(Boolean))];
+        // 같은 차종 안의 불일치만 저장을 막는다. 타 차종은 컬러 명칭만 같을 수 있어 저장 시 검사하지 않는다.
+        const saveCars = new Set(saveTargets.map(p => _normText(p.carModel)));
         const sameColorConflicts = colorsToCheck.flatMap(color => {
-            const conflicts = _findSameColorStandardConflicts(color, items, targetTemplateIds);
+            const conflicts = _findSameColorStandardConflicts(color, items, targetTemplateIds, { cars: saveCars, same: true });
             return conflicts.length ? [{ color, conflicts }] : [];
         });
         if (sameColorConflicts.length) {
-            const conflictHtml = sameColorConflicts.map(group =>
+            _pendingSameColorFix = { groups: sameColorConflicts, items };
+            const conflictHtml = sameColorConflicts.map((group, gi) =>
                 `<div style="margin-bottom:14px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;">
                     <div style="font-weight:800;color:#9a3412;margin-bottom:8px;">컬러 ${_esc(group.color)}</div>
-                    ${_sameColorConflictHtml(group.color, group.conflicts, '현재 입력값과 기존 동일 컬러 품목의 기준이 달라 저장을 중단했습니다.')}
+                    ${_sameColorConflictHtml(group.color, group.conflicts, '현재 입력값과 같은 차종의 동일 컬러 품목 기준이 달라 저장을 중단했습니다.', gi)}
                 </div>`
             ).join('');
             UIUtils.showModal('동일 컬러 기준 불일치', `
                 <div style="font-size:.84rem;color:#991b1b;margin-bottom:10px;">색차(△L/△a/△b)와 도막두께(하도/상도)는 동일 컬러에서 같은 기준을 사용해야 합니다. 기존 품목 기준을 확인하거나 동일 컬러 품목에 함께 적용한 뒤 다시 저장하세요.</div>
                 <div style="max-height:58vh;overflow:auto;">${conflictHtml}</div>`,
-                `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">확인</button>`, 'xl');
+                `<button class="btn btn-primary" onclick="ProdQualityModule.applySameColorConflictsToAll()">전체 현재 입력값으로 수정 후 저장</button>
+                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">확인</button>`, 'xl');
             return;
         }
 
         try {
+            // 동일 컬러 일괄 적용 시 덮어쓰이는 기존 기준을 먼저 스냅샷(되돌리기용)
+            if (saveTargets.length > 1) {
+                const touched = _templates().filter(t => saveTargets.some(p => t.productId === p.id
+                    || (_normText(t.carModel) === _normText(p.carModel) && _normText(t.partName || '') === _normText(p.partName || '')
+                        && (!paintProcess || _normText(t.paintProcess || '') === paintProcess))));
+                await _sccSnapshot(`동일 컬러 일괄 적용 ${saveTargets.length}개 품목`, touched);
+            }
             for (const p of saveTargets) {
                 const cm  = _normText(p.carModel);
                 const pn  = _normText(p.partName||'');
@@ -22228,20 +23177,42 @@ var ProdQualityModule = (function() {
                         _normText(t.paintProcess || '') === paintProcess
                     ) || null;
                 }
+                // 현재 품목이 아닌 '동일 컬러 일괄 적용' 대상은 색차·도막 기준만 덮어쓴다.
+                // 나머지 항목(광택·부착력·사진·점검방법 등)은 기존 값을 유지한다. 해당 없음이었던 색차·도막은 입력값으로 되살린다.
+                const isExtraTarget = p.id !== product.id && !!existing && Array.isArray(existing.items) && existing.items.length > 0;
+                let mergedItems;
+                if (isExtraTarget) {
+                    mergedItems = existing.items.map(item => ({ ...item }));
+                    SAME_COLOR_STANDARD_KEYS.forEach(key => {
+                        const src = items.find(i => String(i.key || '') === key);
+                        if (!src || !_hasSpecValue(src)) return; // 입력값이 없으면 기존 값을 지우지 않는다
+                        const idx = mergedItems.findIndex(i => String(i.key || '') === key);
+                        // 사용자가 체크해서 적용하는 것이므로 '해당 없음'이었던 항목도 입력값으로 되살린다.
+                        if (idx >= 0) {
+                            const { naBackup, ...base } = mergedItems[idx];
+                            mergedItems[idx] = { ...base, ...src, notApplicable: false, selected: true, photo: base.photo || src.photo || '', method: base.method || src.method };
+                        }
+                        else mergedItems.push({ ...src });
+                    });
+                } else {
+                    mergedItems = [
+                        ...items,
+                        ...((existing?.items || []).filter(item => item?.notApplicable === true && !items.some(current => String(current.key || '') === String(item.key || ''))).map(item => ({ ...item })))
+                    ];
+                }
                 const payload = {
                     _docKind: TEMPLATE_KIND,
                     carModel: cm,
                     partName: pn,
                     color: col,
                     productId: p.id,
-                    items: [
-                        ...items,
-                        ...((existing?.items || []).filter(item => item?.notApplicable === true && !items.some(current => String(current.key || '') === String(item.key || ''))).map(item => ({ ...item })))
-                    ],
+                    items: mergedItems,
                     updatedAt: UIUtils.now()
                 };
                 if (paintProcess) payload.paintProcess = paintProcess;
-                if (matchedPreset) {
+                if (isExtraTarget) {
+                    // 프리셋 정보도 기존 값 유지
+                } else if (matchedPreset) {
                     payload.presetId = matchedPreset.id;
                     payload.presetName = matchedPreset.name;
                 } else {
@@ -22454,6 +23425,8 @@ var ProdQualityModule = (function() {
             unit:      row.querySelector('.pqs-unit-val')?.value || '',
             method:    row.querySelector('.pqs-method-val')?.value || '',
             inputType: row.querySelector('.pqs-input-type')?.value || 'text',
+                specMode:  row.querySelector('.pqs-spec-mode')?.value || undefined,
+                subLabel:  row.querySelector('.pqs-sublabel')?.value?.trim() || '',
         })).filter(i => i.key);
         const existing = (Storage.getAll(STORE)||[]).find(d => d._docKind === PRESET_KIND && d.name.trim() === trimmed);
         if (existing) {
@@ -24451,11 +25424,21 @@ var ProdQualityModule = (function() {
         let sourceItems = templateItems;
         if (linkedPreset && Array.isArray(linkedPreset.items) && linkedPreset.items.length) {
             const tmplByKey = new Map(templateItems.map(item => [String(item.key || ''), item]));
-            sourceItems = _normalizeQualityItems(linkedPreset.items.map(item => ({ ...item })))
-                .map(pi => {
+            const presetItems = _normalizeQualityItems(linkedPreset.items.map(item => ({ ...item })));
+            if (templateItems.length) {
+                // 품목에 저장된 관리항목 구성이 진실이다. 품목에서 삭제한 항목(예: 색차)이
+                // 프리셋 때문에 저장할 때마다 되살아나지 않도록, 프리셋은 순서·기본 속성만 제공한다.
+                const presetByKey = new Map(presetItems.map(pi => [String(pi.key || ''), pi]));
+                const order = new Map(presetItems.map((pi, idx) => [String(pi.key || ''), idx]));
+                sourceItems = templateItems
+                    .map(ti => ({ ...(presetByKey.get(String(ti.key || '')) || {}), ...ti }))
+                    .sort((a, b) => (order.get(String(a.key || '')) ?? 9999) - (order.get(String(b.key || '')) ?? 9999));
+            } else {
+                sourceItems = presetItems.map(pi => {
                     const ti = tmplByKey.get(String(pi.key || ''));
                     return ti ? { ...pi, ...ti } : pi;
                 });
+            }
         }
         const items = sourceItems.length
             ? _normalizeQualityItems(sourceItems.map(item => ({ ...item })))
@@ -25356,7 +26339,8 @@ var ProdQualityModule = (function() {
             lowerSpec: row.querySelector('.pq-master-lower')?.value || '',
             targetSpec: row.querySelector('.pq-master-gloss-target')?.value || '',
             toleranceSpec: row.querySelector('.pq-master-gloss-tol')?.value || '',
-            specMode: row.querySelector('.pq-master-spec-mode')?.value || 'text'
+            specMode: row.querySelector('.pq-master-spec-mode')?.value || 'text',
+            subLabel: row.querySelector('.pq-master-sublabel')?.value?.trim() || ''
         };
     }
 
@@ -25370,7 +26354,8 @@ var ProdQualityModule = (function() {
                 <td style="text-align:center;"><input type="checkbox" class="pq-master-delete"></td>
                 <td>
                     <input type="hidden" class="pq-master-key" value="${_esc(item.key || Storage.generateId())}">
-                    <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명">
+                    <input type="text" class="form-input pq-master-label" value="${_esc(item.label || '')}" placeholder="관리항목명(대제목)">
+                    <input type="text" class="form-input pq-master-sublabel" value="${_esc(item.subLabel || '')}" placeholder="소제목 (선택) 예: POINT-1" style="margin-top:4px;font-size:0.76rem;">
                 </td>
                 <td>${_masterSpecModeSelect(item)}</td>
                 <td class="pq-master-spec-cell">${specEditor}</td>
@@ -25486,7 +26471,7 @@ var ProdQualityModule = (function() {
                 .filter(i => masterKeySet.has(i.key))
                 .map(i => {
                     const m = masterByKey[i.key];
-                    return { ...i, label: m.label, unit: m.unit, method: m.method, inputType: m.inputType, specMode: m.specMode || _specModeOf(m) };
+                    return { ...i, label: m.label, subLabel: m.subLabel || '', unit: m.unit, method: m.method, inputType: m.inputType, specMode: m.specMode || _specModeOf(m) };
                 }));
 
         const presets   = allDocs.filter(d => d._docKind === PRESET_KIND);
@@ -26543,7 +27528,12 @@ var ProdQualityModule = (function() {
             if (key === 'injection_color') return { groupKey: 'injection_color', groupLabel: '사출품 color', detailHtml: '' };
             if (key === 'touch') return { groupKey: 'touch', groupLabel: '촉감', detailHtml: '' };
             if (key === 'fit_check') return { groupKey: 'fit_check', groupLabel: '형합 검사', detailHtml: '' };
-            return { groupKey: key || `single:${item.label || ''}`, groupLabel: item.label || '', detailHtml: '' };
+            // 관리항목 이름이 같은 항목(예: 색차 △L (POINT) 1~4)은 하나의 그룹으로 묶어
+            // 검사여부 칸과 관리항목명을 한 번만 표시한다. 이름이 없으면 키 단위로 구분한다.
+            const labelText = String(item.label || '').trim();
+            return labelText
+                ? { groupKey: `lbl:${labelText}`, groupLabel: _esc(labelText), detailHtml: item.subLabel ? _esc(String(item.subLabel).trim()) : '' }
+                : { groupKey: key || 'single:', groupLabel: '', detailHtml: '' };
         };
         const specCells = item => {
             const spec = item.spec || '';
@@ -26589,6 +27579,40 @@ var ProdQualityModule = (function() {
             }
             return span;
         });
+        // 같은 그룹 안에서 관리 규격이 동일한 연속 행(예: 색차 △L (POINT) 1~4의 +2 / -2)은 규격 칸을 합친다.
+        const specHtmls = items.map(item => specCells(item));
+        const specRowspans = specHtmls.map((html, idx) => {
+            const key = String(displayInfos[idx].groupKey || '');
+            if (!key.startsWith('lbl:')) return 1;
+            const same = i => displayInfos[i].groupKey === displayInfos[idx].groupKey && specHtmls[i] === html;
+            if (idx > 0 && same(idx - 1)) return 0;
+            let span = 1;
+            for (let i = idx + 1; i < items.length && same(i); i += 1) span += 1;
+            return span;
+        });
+        // 점검 방법도 같은 묶음 안에서 동일하면(사진은 같거나 뒤 행이 비어 있을 때) 칸을 합친다.
+        const methodRowspans = [];
+        {
+            let idx = 0;
+            while (idx < items.length) {
+                const key = String(displayInfos[idx].groupKey || '');
+                let span = 1;
+                if (key.startsWith('lbl:')) {
+                    const m0 = _normText(items[idx].method || '');
+                    const p0 = items[idx].photo || '';
+                    while (idx + span < items.length) {
+                        const n = items[idx + span];
+                        if (displayInfos[idx + span].groupKey !== displayInfos[idx].groupKey) break;
+                        if (_normText(n.method || '') !== m0) break;
+                        if ((n.photo || '') && (n.photo || '') !== p0) break;
+                        span += 1;
+                    }
+                }
+                methodRowspans[idx] = span;
+                for (let k = 1; k < span; k += 1) methodRowspans[idx + k] = 0;
+                idx += span;
+            }
+        }
         const lotHead = (type, suffix) => {
             const checked = selectedTypes.has(type);
             return `
@@ -26611,8 +27635,9 @@ var ProdQualityModule = (function() {
                 _isGlossSpecItem(item) ? 'gloss-row' : '',
                 _isFilmSpecItem(item) ? 'film-row' : ''
             ].filter(Boolean).join(' ');
-            const isFirstColorRow = info.groupKey === 'color' && (idx === 0 || displayInfos[idx - 1].groupKey !== 'color');
-            const isColorContinuation = info.groupKey === 'color' && !isFirstColorRow;
+            const mergedCheckGroup = info.groupKey === 'color' || String(info.groupKey).startsWith('lbl:');
+            const isFirstColorRow = mergedCheckGroup && groupRowspans[idx] > 0 && (info.groupKey === 'color' || groupRowspans[idx] > 1);
+            const isColorContinuation = mergedCheckGroup && groupRowspans[idx] === 0;
             const checkCellHtml = isColorContinuation
                 ? ''
                 : `<td class="check-cell"${isFirstColorRow ? ` rowspan="${groupRowspans[idx]}"` : ''}><span class="check-box"></span></td>`;
@@ -26621,8 +27646,8 @@ var ProdQualityModule = (function() {
                     ${checkCellHtml}
                     ${groupCellHtml}
                     <td class="item-detail">${info.detailHtml || '&nbsp;'}</td>
-                    ${specCells(item)}
-                    <td class="method-cell">${_esc(item.method || '')}${item.photo ? `<br><img src="${_esc(item.photo)}" style="width:30px;height:30px;object-fit:cover;border:1px solid #94a3b8;border-radius:3px;margin-top:2px;">` : ''}</td>
+                    ${specRowspans[idx] === 0 ? '' : (specRowspans[idx] > 1 ? specHtmls[idx].replace('<td ', `<td rowspan="${specRowspans[idx]}" `) : specHtmls[idx])}
+                    ${methodRowspans[idx] === 0 ? '' : `<td class="method-cell"${methodRowspans[idx] > 1 ? ` rowspan="${methodRowspans[idx]}"` : ''}>${_esc(item.method || '')}${item.photo ? `<br><img src="${_esc(item.photo)}" style="max-width:100%;width:auto;height:auto;max-height:90px;object-fit:contain;border:1px solid #94a3b8;border-radius:3px;margin-top:3px;">` : ''}</td>`}
                     ${renderMeasureCell(item, '초물')}
                     ${renderMeasureCell(item, '중물')}
                     ${renderMeasureCell(item, '종물')}
@@ -26673,7 +27698,7 @@ var ProdQualityModule = (function() {
     <div class="main-wrap">
     <table class="main">
     <colgroup>
-       <col style="width:4%"><col style="width:8%"><col style="width:14%"><col style="width:17%"><col style="width:12%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%">
+       <col style="width:4%"><col style="width:8%"><col style="width:7%"><col style="width:18%"><col style="width:18%"><col style="width:11%"><col style="width:11%"><col style="width:11%"><col style="width:12%">
     </colgroup>
     <thead>
       <tr>
@@ -27239,6 +28264,14 @@ window.addEventListener('afterprint', () => {
         ,renderStandardsCard
         ,validateSameColorStandards
         ,setSameColorNotApplicable
+        ,applySameColorConflictsToAll
+        ,deleteOrphanSameColorTemplates
+        ,applySameColorBulk
+        ,applySameColorBulkNA
+        ,restoreSameColorNA
+        ,markItemNotApplicable
+        ,undoSameColorChange
+        ,_pqMarkPhotoTarget
         ,onStdFilterCarChange
         ,openSpecModal
         ,saveSpecModal

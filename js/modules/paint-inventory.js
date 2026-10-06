@@ -287,6 +287,39 @@ const PaintInventoryModule = (function() {
         };
     }
 
+    /** LOT의 유효기한 — 입고 기록 → 연결된 수입검사 순으로 조회. 없으면 ''. */
+    function _lotExpDate(matId, lotKey) {
+        const key = String(lotKey || '').trim();
+        if (!matId || !key) return '';
+        const recs = (Storage.getAll(STORE) || []).filter(function(r) {
+            return r && r.materialId === matId && String(r.prodLot || r.lotNo || '').trim() === key;
+        });
+        let exp = '';
+        recs.forEach(function(r) {
+            const e = _toIsoDate(r.expDate) || '';
+            if (e && (!exp || e < exp)) exp = e;
+        });
+        if (exp) return exp;
+        const mat = (Storage.getAll(MATERIALS_STORE) || []).find(function(m) { return m.id === matId; });
+        const ref = recs.find(function(r) { return r.type !== '출고'; }) || recs[0] || {};
+        const inspId = ref.sourceInspectionId
+            || _findLinkedPaintInspectionId(matId, ref.prodLot || key, ref.lotNo || key, mat, ref.mfgDate);
+        const insp = inspId ? Storage.getById(DB.STORES.PAINT_INCOMING_INSPECTIONS, inspId) : null;
+        return insp ? (_toIsoDate(insp.expDate) || '') : '';
+    }
+
+    /** 유효기한이 지난 LOT이면 만료일(YYYY-MM-DD), 아니면 ''. 만료 도료는 배합실로 출고할 수 없다. */
+    function _expiredLotDate(matId, lotKey) {
+        const exp = _lotExpDate(matId, lotKey);
+        if (!exp) return '';
+        const todayIso = (UIUtils.today && UIUtils.today()) || new Date().toISOString().slice(0, 10);
+        return exp < todayIso ? exp : '';
+    }
+
+    function _toastExpiredBlocked(lotKey, exp) {
+        UIUtils.toast(`유효기한이 만료된 LOT(${lotKey}, 만료일 ${exp})은 배합실로 출고할 수 없습니다. 보관 LOT 표의 [폐기]로 폐기 처리하세요.`, 'error');
+    }
+
     /** LOT 키에 연결된 수입검사 ID — 입고 스탬프 → LOT/제조일 매칭 */
     function _findLinkedPaintInspectionId(matId, prodLot, lotNo, mat, mfgDate) {
         const lotKeys = [prodLot, lotNo].map(function(v) { return String(v || '').trim(); }).filter(Boolean);
@@ -1282,6 +1315,7 @@ const PaintInventoryModule = (function() {
                 }, l.lotNo);
 
                 return {
+                    balanceKey: l.lotNo, // 원장 잔량 계산에 쓰이는 실제 LOT 키 (표시용 제조 LOT과 다를 수 있음)
                     prodLot: finalDisp.prodLot,
                     lotNo: finalDisp.lotNo,
                     mfgDate: finalDisp.mfgDate,
@@ -1299,14 +1333,19 @@ const PaintInventoryModule = (function() {
         const lotRows = activeLots.length > 0
             ? activeLots.map(l => {
                 let expHtml = '-';
+                let isExpired = false;
                 if (l.expDate) {
                     const exp = new Date(l.expDate); exp.setHours(0, 0, 0, 0);
                     const diff = Math.round((exp - today) / 86400000);
+                    isExpired = diff < 0;
                     const color = diff < 0 ? 'var(--accent-red)' : diff <= 30 ? 'var(--accent-orange,#f59e0b)' : 'var(--accent-green)';
                     expHtml = `<span style="color:${color};font-weight:600;">${l.expDate} (${diff < 0 ? '만료' : diff + '일 남음'})</span>`;
                 }
                 const prodLotEsc = (l.prodLot || '').replace(/'/g, "\\'");
                 const lotNoEsc   = (l.lotNo   || '').replace(/'/g, "\\'");
+                // 출고는 원장 잔량 키(balanceKey)로 등록해야 재고 검증·차감이 맞는다. 화면 표기는 제조 LOT 그대로.
+                const outKeyEsc   = String(l.balanceKey || l.prodLot || '').replace(/'/g, "\\'");
+                const outLabelEsc = String(l.prodLot || l.lotNo || '').replace(/'/g, "\\'");
                 const adjustBtn = canEditStock
                     ? `<button type="button" title="재고 수량 수정"
                             onclick="event.stopPropagation(); PaintInventoryModule._openDetailAdjust('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
@@ -1315,11 +1354,13 @@ const PaintInventoryModule = (function() {
                 const outCol = asChild
                     ? `<td style="text-align:center;padding:4px 8px;white-space:nowrap;color:var(--text-muted);font-size:0.72rem;">조회</td>`
                     : `<td style="text-align:center;padding:4px 8px;white-space:nowrap;">
-                            ${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
+                            ${isExpired && canEditStock ? `<button type="button" title="유효기한이 만료된 도료 — 폐기 처리"
+                                onclick="event.stopPropagation(); PaintInventoryModule._openDetailDispose('${matId}','${outKeyEsc}','${lotNoEsc}',${l.qty},'${outLabelEsc}')"
+                                style="font-size:0.7rem;border:1px solid #b91c1c;border-radius:4px;padding:2px 6px;margin-right:4px;background:#b91c1c;color:#fff;font-weight:700;cursor:pointer;white-space:nowrap;">폐기</button>` : ''}${adjustBtn}<span style="font-size:0.7rem;background:#fee2e2;color:#dc2626;border-radius:4px;padding:2px 6px;white-space:nowrap;">출고</span>
                         </td>`;
                 return `
                     <tr${asChild ? '' : ` style="cursor:pointer;" title="클릭하여 출고 목록에 추가"
-                        onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${prodLotEsc}','${lotNoEsc}',${l.qty})"
+                        onclick="PaintInventoryModule._openDetailOutgoing('${matId}','${outKeyEsc}','${lotNoEsc}',${l.qty},'${outLabelEsc}')"
                         onmouseover="this.style.background='rgba(239,68,68,0.07)'"
                         onmouseout="this.style.background=''"`}>
                         <td style="white-space:nowrap;font-size:0.8rem;">${l.inDate || '-'}</td>
@@ -1464,6 +1505,9 @@ const PaintInventoryModule = (function() {
         if (!materialId) { UIUtils.toast('도료를 선택하세요.', 'warning'); return false; }
         if (!prodLot) { UIUtils.toast('제조 LOT를 선택하세요.', 'warning'); return false; }
 
+        const expiredOn = _expiredLotDate(materialId, prodLot);
+        if (expiredOn) { _toastExpiredBlocked(prodLot, expiredOn); return false; }
+
         const avail = _lotAvailableCans(materialId, prodLot);
         const pending = _outListupPendingQty(materialId, prodLot);
         if (pending + qty > avail) {
@@ -1506,14 +1550,17 @@ const PaintInventoryModule = (function() {
     }
 
     // ── 도료 상세 팝업에서 LOT 클릭 → 출고 리스트업에 추가 ────────────────
-    async function _openDetailOutgoing(matId, prodLot, lotNo, currentQty) {
+    async function _openDetailOutgoing(matId, prodLot, lotNo, currentQty, displayLot) {
         const materials = Storage.getAll(MATERIALS_STORE);
         const mat = materials.find(m => m.id === matId);
         if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
 
+        const expiredOn = _expiredLotDate(matId, prodLot || lotNo);
+        if (expiredOn) { _toastExpiredBlocked(displayLot || prodLot || lotNo, expiredOn); return; }
+
         const todayStr = UIUtils.today();
         const qtyMax   = Number(currentQty) || 0;
-        const lotLabel = prodLot || lotNo || '-';
+        const lotLabel = displayLot || prodLot || lotNo || '-';
 
         // 선입선출(FIFO) 안내 — 이 LOT보다 제조일이 빠른 LOT의 재고가 남아 있으면 경고
         const currentKey = prodLot || lotNo || '무표기';
@@ -1591,6 +1638,71 @@ const PaintInventoryModule = (function() {
         UIUtils.closeModal();
         UIUtils.closeModal();
         loadData();
+    }
+
+    // ── 유효기한 만료 도료 폐기 ─────────────────────────────────────────────
+    // 폐기 수량만큼 출고(adjust·disposal) 기록을 남겨 재고에서 차감하고 사유를 이력에 보존한다.
+    function _openDetailDispose(matId, prodLot, lotNo, currentQty, displayLot) {
+        if (!_canEditPaintStock()) { UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 폐기 처리할 수 있습니다.', 'warning'); return; }
+        const mat = (Storage.getAll(MATERIALS_STORE) || []).find(m => m.id === matId);
+        if (!mat) { UIUtils.toast('도료 정보를 찾을 수 없습니다.', 'error'); return; }
+        const qtyNow = Number(currentQty) || 0;
+        UIUtils.showModal(
+            `<span class="material-symbols-outlined" style="vertical-align:middle;color:#b91c1c;">delete_forever</span> 만료 도료 폐기`,
+            `<div style="margin-bottom:12px;padding:10px 14px;background:rgba(185,28,28,0.08);border:1px solid #fca5a5;border-radius:8px;font-size:0.85rem;color:#7f1d1d;">
+                <strong>${mat.name}</strong> · 제조 LOT <strong style="font-family:monospace;">${displayLot || prodLot || lotNo || '-'}</strong> · 현재 재고 <strong>${UIUtils.formatNumber(qtyNow)} 개</strong>
+                <div style="margin-top:4px;font-size:0.78rem;">유효기한이 만료된 LOT입니다. 폐기하면 재고에서 차감되며 복구할 수 없습니다.</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label class="form-label">폐기 일자 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="date" class="form-input" id="detailDisposeDate" value="${UIUtils.today()}">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">폐기 수량 <span style="color:var(--accent-red)">*</span></label>
+                    <input type="number" class="form-input" id="detailDisposeQty" min="1" max="${qtyNow}" value="${qtyNow}"
+                           oninput="this.value=Math.min(Math.max(this.value,1),${qtyNow})">
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">폐기 사유 / 처리 방법</label>
+                <input type="text" class="form-input" id="detailDisposeMemo" value="유효기한 만료" placeholder="예: 유효기한 만료, 업체 반품, 폐기물 업체 인계">
+            </div>`,
+            `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+             <button class="btn btn-primary" style="background:#b91c1c;border-color:#b91c1c;" onclick="PaintInventoryModule._saveDetailDispose('${matId}','${prodLot}','${lotNo}')">폐기 처리</button>`
+        );
+    }
+
+    async function _saveDetailDispose(matId, prodLot, lotNo) {
+        if (!_canEditPaintStock()) { UIUtils.toast('도료 창고 입력 권한이 있는 사용자만 폐기 처리할 수 있습니다.', 'warning'); return; }
+        const date = (document.getElementById('detailDisposeDate') || {}).value || '';
+        const qty  = Number((document.getElementById('detailDisposeQty') || {}).value) || 0;
+        const memo = (document.getElementById('detailDisposeMemo') || {}).value?.trim() || '';
+        if (!date) { UIUtils.toast('폐기 일자를 선택하세요.', 'warning'); return; }
+        if (qty <= 0) { UIUtils.toast('폐기 수량을 입력하세요.', 'warning'); return; }
+        const key = prodLot || lotNo || '무표기';
+        const available = _lotAvailableCans(matId, key);
+        if (qty > available) { UIUtils.toast(`폐기 수량이 재고(${UIUtils.formatNumber(available)}개)를 초과합니다.`, 'error'); return; }
+        const loginUser = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? (AuthModule.getCurrentUser() || {}) : {};
+        await Storage.executeTransaction([{
+            store: STORE, op: 'add', data: {
+                date: _paintInvSaveDate(date),
+                type: '출고',
+                materialId: matId,
+                prodLot: prodLot || '',
+                lotNo: lotNo || prodLot || '',
+                quantity: qty,
+                memo: '[폐기] ' + (memo || '유효기한 만료'),
+                adjust: true,
+                disposal: true,
+                processedBy: loginUser.displayName || loginUser.username || ''
+            }
+        }]);
+        UIUtils.toast(`${UIUtils.formatNumber(qty)}개를 폐기 처리했습니다.`, 'success');
+        UIUtils.closeModal(); // 폐기 모달
+        UIUtils.closeModal(); // 상세 팝업
+        loadData();
+        setTimeout(() => showPaintDetail(matId), 150);
     }
 
     // ── 도료 상세 팝업에서 LOT 재고 수량 수정 (도료 창고 입력 권한) ──────────
@@ -2225,6 +2337,8 @@ const PaintInventoryModule = (function() {
                 UIUtils.toast('제조 LOT가 선택되지 않은 항목이 있습니다.', 'warning');
                 return;
             }
+            const expiredOn = _expiredLotDate(item.materialId, item.prodLot);
+            if (expiredOn) { _toastExpiredBlocked(item.prodLot, expiredOn); return; }
             const avail = _lotAvailableCans(item.materialId, item.prodLot);
             if (item.qty > avail) {
                 UIUtils.toast(`재고 부족: LOT ${item.prodLot} 가용 ${UIUtils.formatNumber(avail)}캔, 요청 ${UIUtils.formatNumber(item.qty)}캔`, 'error');
@@ -3549,6 +3663,8 @@ const PaintInventoryModule = (function() {
                 l.materialId === data.materialId &&
                 (l.prodLot || l.lotNo) === selectedProdLot
             );
+            const expiredOn = _expiredLotDate(data.materialId, selectedProdLot);
+            if (expiredOn) { _toastExpiredBlocked(selectedProdLot, expiredOn); return; }
             const available = InvCalc.paintBalance(allLogs, data.materialId).lots[selectedProdLot] || 0;
             const pending = _outListupPendingQty(data.materialId, selectedProdLot);
 
@@ -5570,6 +5686,8 @@ const PaintInventoryModule = (function() {
         showPaintDetail,
         openLinkedPaintInspection,
         _openDetailOutgoing,
+        _openDetailDispose,
+        _saveDetailDispose,
         _saveDetailOutgoing,
         _openDetailAdjust,
         _saveDetailAdjust,

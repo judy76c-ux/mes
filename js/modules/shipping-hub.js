@@ -923,12 +923,15 @@ var ShippingCertificateModule = (function () {
             (!_norm(row.color) || !_norm(c.color) || _normKey(c.color) === _normKey(row.color)))) || null;
     }
 
+    // 성적서 발행 시 외관·신뢰성 검사 합격을 필수로 요구할지 여부. 추후 기능 연동 전까지 제약 없음(true면 다시 적용).
+    const CERT_INSPECTION_REQUIRED = false;
+
     function _buildRowStatus(row) {
         const daily = _findDailyPass(row.carModel, row.partName, row.color);
         const reli = _findReliPass(row.carModel, row.partName, row.color);
         const cert = _certForShipment(row.id, row);
         const standard = _findStandard(row);
-        const eligible = !!(daily && reli);
+        const eligible = !CERT_INSPECTION_REQUIRED || !!(daily && reli);
         return { daily, reli, cert, standard, eligible };
     }
 
@@ -1450,8 +1453,8 @@ var ShippingCertificateModule = (function () {
                 <div><strong>품목:</strong> ${_esc(row.carModel || '')} / ${_esc(row.partName || '')} / ${_esc(row.color || '-')}</div>
                 <div><strong>적용 기준서:</strong> ${_esc(st.standard.title || `${row.customer || ''} ${row.partName || ''}`)} &nbsp;·&nbsp; 개정 ${_esc(st.standard.revision || '-')}</div>
                 <div style="margin-top:6px;color:var(--text-muted);">
-                    외관검사: ${_esc((daily.date || '').slice(0, 10))} 합격 &nbsp;|&nbsp;
-                    신뢰성: ${_esc((reli.date || '').slice(0, 10))} 합격
+                    외관검사: ${daily ? `${_esc((daily.date || '').slice(0, 10))} 합격` : '검사 이력 없음'} &nbsp;|&nbsp;
+                    신뢰성: ${reli ? `${_esc((reli.date || '').slice(0, 10))} 합격` : '검사 이력 없음'}
                     ${(row._source === 'manual' || row.source === 'manual') ? ' &nbsp;|&nbsp; <span style="color:var(--accent-orange);">수기 입력</span>' : ''}
                 </div>
             </div>
@@ -1513,12 +1516,12 @@ var ShippingCertificateModule = (function () {
             qty: Number(row.qty) || 0,
             inspector,
             note,
-            dailyInspId: st.daily.id || '',
-            dailyInspDate: (st.daily.date || '').slice(0, 10),
-            dailyLotNo: st.daily.lotNo || st.daily.injectionLot || '',
-            reliId: st.reli.id || '',
-            reliDate: (st.reli.date || '').slice(0, 10),
-            reliLotNo: st.reli.lotNo || '',
+            dailyInspId: (st.daily || {}).id || '',
+            dailyInspDate: ((st.daily || {}).date || '').slice(0, 10),
+            dailyLotNo: (st.daily || {}).lotNo || (st.daily || {}).injectionLot || '',
+            reliId: (st.reli || {}).id || '',
+            reliDate: ((st.reli || {}).date || '').slice(0, 10),
+            reliLotNo: (st.reli || {}).lotNo || '',
             standardId: st.standard.id || '',
             standardRevision: st.standard.revision || '',
             standardTitle: st.standard.title || '',
@@ -1560,8 +1563,8 @@ var ShippingCertificateModule = (function () {
                 <div style="grid-column:1/-1;"><span style="color:var(--text-muted);">품목</span><br>
                     <strong>${_esc(cert.carModel || '')} / ${_esc(cert.partName || '')} / ${_esc(cert.color || '-')}</strong>
                     &nbsp;·&nbsp; 수량 <strong>${UIUtils.formatNumber(Number(cert.qty) || 0)}</strong></div>
-                <div><span style="color:var(--text-muted);">외관검사</span><br>${_esc(cert.dailyInspDate || '-')} 합격</div>
-                <div><span style="color:var(--text-muted);">신뢰성</span><br>${_esc(cert.reliDate || '-')} 합격</div>
+                <div><span style="color:var(--text-muted);">외관검사</span><br>${cert.dailyInspDate ? `${_esc(cert.dailyInspDate)} 합격` : '검사 이력 없음'}</div>
+                <div><span style="color:var(--text-muted);">신뢰성</span><br>${cert.reliDate ? `${_esc(cert.reliDate)} 합격` : '검사 이력 없음'}</div>
             </div>
             ${cert.note ? `<div style="font-size:0.84rem;padding:10px;background:var(--bg-secondary);border-radius:8px;"><strong>비고:</strong> ${_esc(cert.note)}</div>` : ''}
         `, `
@@ -1606,8 +1609,8 @@ var ShippingCertificateModule = (function () {
         <table>
             <tr><th colspan="4">검사 이력</th></tr>
             <tr><th>구분</th><th>검사일</th><th>LOT</th><th>판정</th></tr>
-            <tr><td style="text-align:center;">출하검사(외관)</td><td style="text-align:center;">${_esc(cert.dailyInspDate || '-')}</td><td style="text-align:center;font-family:monospace;">${_esc(cert.dailyLotNo || '-')}</td><td class="ok">합격</td></tr>
-            <tr><td style="text-align:center;">출하검사(신뢰성)</td><td style="text-align:center;">${_esc(cert.reliDate || '-')}</td><td style="text-align:center;font-family:monospace;">${_esc(cert.reliLotNo || '-')}</td><td class="ok">합격</td></tr>
+            <tr><td style="text-align:center;">출하검사(외관)</td><td style="text-align:center;">${_esc(cert.dailyInspDate || '-')}</td><td style="text-align:center;font-family:monospace;">${_esc(cert.dailyLotNo || '-')}</td><td class="${cert.dailyInspDate ? 'ok' : ''}">${cert.dailyInspDate ? '합격' : '-'}</td></tr>
+            <tr><td style="text-align:center;">출하검사(신뢰성)</td><td style="text-align:center;">${_esc(cert.reliDate || '-')}</td><td style="text-align:center;font-family:monospace;">${_esc(cert.reliLotNo || '-')}</td><td class="${cert.reliDate ? 'ok' : ''}">${cert.reliDate ? '합격' : '-'}</td></tr>
         </table>
         <table>
             <tr><th colspan="5">검사 기준 및 규격</th></tr>

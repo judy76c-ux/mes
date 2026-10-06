@@ -5248,3 +5248,7 @@ body.monitor-mode .dash-notification-list.is-tv { max-height:none !important;hei
 .inj-inv-compact [style*="margin-bottom:10px"] { margin-bottom: 6px !important; }
 .inj-inv-compact [style*="padding:10px 12px"] { padding-top: 6px !important; padding-bottom: 6px !important; }
 .inj-inv-compact #lotStockList { max-height: 84px !important; }
+
+/* 품목별 기준 — 사진 붙여넣기 대상 행 표시 */
+.pq-spec-item-row.pq-photo-target td:has(.pqs-photo-wrap) { outline: 2px dashed var(--accent-blue, #2563eb); background: rgba(37, 99, 235, 0.05); }
+.pq-spec-item-row td[tabindex]:focus { outline: 2px dashed var(--accent-blue, #2563eb); }

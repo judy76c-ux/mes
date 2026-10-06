@@ -5285,12 +5285,28 @@ const ProductWarehouseModule = (function() {
             const headerColor = style.header;
             const group = _carItems(section, car).slice().sort((a, b) =>
                 _itemTypeRank(a.itemType) - _itemTypeRank(b.itemType) ||
-                (a.part || '').localeCompare(b.part, 'ko') ||
-                (a.color || '').localeCompare(b.color, 'ko')
+                (a.color || '').localeCompare(b.color || '', 'ko') ||
+                (a.part || '').localeCompare(b.part, 'ko')
             );
+            // 컬러별 소계 (같은 컬러를 묶어 표시)
+            const colorTotals = {};
+            group.forEach(i => {
+                const ck = `${i.itemType}||${i.color || ''}`;
+                colorTotals[ck] = (colorTotals[ck] || { n: 0, stock: 0 });
+                colorTotals[ck].n += 1;
+                colorTotals[ck].stock += (i.inQty - i.outQty);
+            });
+            let _prevColorKey = null;
             const groupTotal = group.reduce((s, i) => s + (i.inQty - i.outQty), 0);
 
             const rows = group.map(i => {
+                const colorKey = `${i.itemType}||${i.color || ''}`;
+                const colorHead = colorKey !== _prevColorKey
+                    ? `<tr class="pw-color-group-head"><td colspan="4" style="background:var(--bg-secondary,#f1f5f9);font-weight:700;font-size:0.82em;padding:4px 8px;border-top:1px solid var(--border-color,#e2e8f0);">
+                        ${_escapeHtml(i.color || '컬러 미지정')}
+                        <span style="font-weight:400;color:var(--text-muted);margin-left:6px;">${colorTotals[colorKey].n}종 · ${UIUtils.formatNumber(colorTotals[colorKey].stock)} EA</span>
+                       </td></tr>` : '';
+                _prevColorKey = colorKey;
                 const stock = i.inQty - i.outQty;
                 const stockColor = stock <= 0
                     ? 'var(--accent-red)'
@@ -5310,7 +5326,7 @@ const ProductWarehouseModule = (function() {
                 const noMasterTag = i.noMaster
                     ? '<span title="제품 기초정보(제품 마스터)에 이 차종·품명이 없습니다. 품명 오기 또는 미등록 품목입니다." style="font-size:0.72em;background:#fee2e2;color:#dc2626;border:1px solid #fca5a5;border-radius:3px;padding:0 0.3em;margin-left:0.3em;vertical-align:middle;font-weight:700;cursor:help;">기초정보 없음</span>'
                     : '';
-                return `
+                return `${colorHead}
                 <tr onclick="ProductWarehouseModule._showHistory('${keyEnc}', event)"
                     style="cursor:pointer;"
                     onmouseover="this.style.background='var(--bg-secondary)'"
@@ -5797,8 +5813,11 @@ const ProductWarehouseModule = (function() {
             .sort((a, b) => (b.date || '').localeCompare(a.date || ''));
         const dailyPass = dailyAll.find(d => (d.result || '') === '합격') || null;
         const reliPass = reliAll.find(d => (d.verdict || '') === '합격') || null;
-        return { dailyAll, reliAll, dailyPass, reliPass, eligible: !!(dailyPass && reliPass) };
+        return { dailyAll, reliAll, dailyPass, reliPass, eligible: !SHIPPING_INSPECTION_REQUIRED || !!dailyPass }; // 신뢰성은 항상 제외, 외관은 플래그로 제어
     }
+
+    // 출하 시 출하검사(외관) 합격을 필수로 요구할지 여부. 현재는 제약을 걸지 않는다(true로 바꾸면 다시 적용).
+    const SHIPPING_INSPECTION_REQUIRED = false;
 
     async function getShippingReadiness(car, part, color) {
         const reliRecords = await _loadReliRecords();
@@ -5822,8 +5841,7 @@ const ProductWarehouseModule = (function() {
         const dailyOk = !!status.dailyPass;
         const reliOk = !!status.reliPass;
         const miss = [];
-        if (!dailyOk) miss.push('출하검사(외관)');
-        if (!reliOk) miss.push('출하검사(신뢰성)');
+        if (SHIPPING_INSPECTION_REQUIRED && !dailyOk) miss.push('출하검사(외관)');
         return `
             <div style="margin-bottom:16px;padding:12px 16px;border-radius:10px;border:1px solid ${border};background:${bg};">
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
@@ -5836,11 +5854,11 @@ const ProductWarehouseModule = (function() {
                 <div style="font-size:0.82rem;color:var(--text-secondary);line-height:1.65;">
                     <strong>출하검사(외관)</strong>: ${dailyOk
                         ? `합격 완료 <span style="color:var(--text-muted);">(${(status.dailyPass.date || '').slice(0, 10)})</span>`
-                        : '<span style="color:var(--accent-orange);font-weight:600;">미완료</span>'}
+                        : `<span style="color:var(--accent-orange);font-weight:600;">미완료</span>${SHIPPING_INSPECTION_REQUIRED ? '' : ' <span style="color:var(--text-muted);">(출하 조건 아님)</span>'}`}
                     &nbsp;|&nbsp;
                     <strong>출하검사(신뢰성)</strong>: ${reliOk
                         ? `합격 완료 <span style="color:var(--text-muted);">(${(status.reliPass.date || '').slice(0, 10)})</span>`
-                        : '<span style="color:var(--accent-orange);font-weight:600;">미완료</span>'}
+                        : '<span style="color:var(--text-muted);">미완료 (출하 조건 아님)</span>'}
                 </div>
                 ${!eligible ? `<div style="margin-top:8px;font-size:0.78rem;color:var(--accent-orange);">${miss.join(' · ')} 합격 완료 후 출하할 수 있습니다.</div>` : ''}
             </div>`;
@@ -7367,7 +7385,7 @@ const ProductWarehouseModule = (function() {
 
         const shipStatus = await getShippingReadiness(carModel, partName, lot.color || color || '');
         if (!shipStatus.eligible) {
-            UIUtils.toast('출하검사(외관)·신뢰성 검사가 모두 합격인 품목만 출고할 수 있습니다.', 'warning');
+            UIUtils.toast('출하검사(외관)가 합격인 품목만 출고할 수 있습니다.', 'warning');
             return;
         }
 
