@@ -1035,6 +1035,32 @@ var LaserWorkModule = (function() {
                         </div>
                     </div>
                 </div>
+
+                <div class="card" style="margin-top:16px;">
+                    <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+                        <h4><span class="material-symbols-outlined">support_agent</span> A/S 품 레이져 작업 대상</h4>
+                        <span id="lwAsProductCount" style="font-size:0.78rem;color:var(--text-muted);"></span>
+                    </div>
+                    <div class="card-body" style="padding:0;">
+                        <div class="data-table-wrapper" style="overflow-x:auto;">
+                            <table class="data-table data-table--compact" style="width:max-content;min-width:100%;table-layout:auto;">
+                                <thead>
+                                    <tr>
+                                        <th style="width:56px;text-align:center;white-space:nowrap;">No</th>
+                                        <th style="min-width:90px;white-space:nowrap;">차종</th>
+                                        <th style="min-width:220px;">품명</th>
+                                        <th style="min-width:110px;white-space:nowrap;">컬러</th>
+                                        <th style="min-width:110px;white-space:nowrap;">품목구분</th>
+                                        <th style="min-width:130px;white-space:nowrap;">레이져 공정</th>
+                                        <th style="min-width:110px;white-space:nowrap;">최근 작업일</th>
+                                        <th style="min-width:110px;white-space:nowrap;">작업 상태</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="lwAsProductTableBody"></tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
             </div>
         `;
         search();
@@ -1078,6 +1104,54 @@ var LaserWorkModule = (function() {
         renderStats(completedData);
         renderInProgressTable(inProgressData);
         renderTable(completedData);
+        renderAsProductList();
+    }
+
+    function _isAsLaserProduct(product) {
+        if (!product || !_hasLaserProcess(product)) return false;
+        const type = String(product.itemType || product.productType || product.itemCategory || '')
+            .replace(/\s+/g, '').toUpperCase();
+        return type === 'A/S' || type === 'AS' || type === 'A/S품'.toUpperCase() || /A\/?S/.test(type);
+    }
+
+    function renderAsProductList() {
+        const tbody = document.getElementById('lwAsProductTableBody');
+        const countEl = document.getElementById('lwAsProductCount');
+        if (!tbody) return;
+        const products = (Storage.getAll(DB.STORES.PRODUCTS) || [])
+            .filter(_isAsLaserProduct)
+            .sort((a, b) => String(_productCarName(a)).localeCompare(String(_productCarName(b)), 'ko') ||
+                String(_productPartName(a)).localeCompare(String(_productPartName(b)), 'ko') ||
+                String(_productColorName(a)).localeCompare(String(_productColorName(b)), 'ko'));
+        const works = Storage.getAll(STORE) || [];
+        const laserProcessText = product => [product.process1, product.process2, product.process3, product.process4]
+            .filter(_isLaserProcessName).join(' → ') || '-';
+        const latestWork = product => works
+            .filter(w => !_isInventoryCorrectionRecord(w) &&
+                _productCarName(product) === String(w.carModel || '') &&
+                _productPartName(product) === String(w.partName || '') &&
+                (!_productColorName(product) || !_productColorName(w) || _productColorName(product) === _productColorName(w)))
+            .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+        if (countEl) countEl.textContent = `총 ${UIUtils.formatNumber(products.length)}개`;
+        if (!products.length) {
+            tbody.innerHTML = `<tr><td colspan="8" style="text-align:center;padding:28px;color:var(--text-muted);">등록된 A/S 레이져 품이 없습니다.</td></tr>`;
+            return;
+        }
+        tbody.innerHTML = products.map((product, index) => {
+            const work = latestWork(product);
+            const status = work ? (_isWorkCompleted(work) ? '작업 이력 있음' : '작업중') : '작업 이력 없음';
+            const statusColor = work ? (_isWorkCompleted(work) ? 'var(--accent-green)' : 'var(--accent-orange)') : 'var(--text-muted)';
+            return `<tr>
+                <td style="text-align:center;white-space:nowrap;">${index + 1}</td>
+                <td style="white-space:nowrap;font-weight:700;">${_esc(_productCarName(product) || '-')}</td>
+                <td style="font-weight:700;">${_esc(_productPartName(product) || '-')}</td>
+                <td style="white-space:nowrap;">${_esc(_productColorName(product) || '-')}</td>
+                <td style="white-space:nowrap;"><span class="badge" style="background:#e2e8f0;color:#475569;">A/S</span></td>
+                <td style="white-space:nowrap;">${_esc(laserProcessText(product))}</td>
+                <td style="white-space:nowrap;">${_esc(work && work.date || '-')}</td>
+                <td style="white-space:nowrap;font-weight:700;color:${statusColor};">${status}</td>
+            </tr>`;
+        }).join('');
     }
 
     function renderInProgressTable(data) {
@@ -1205,8 +1279,13 @@ var LaserWorkModule = (function() {
     function buildFormHTML(d = {}) {
         // 레이저 대기품 목록 갱신
         _standbyItems = getLaserStandbyItems();
-        // 대기품 목록에 있는 차종만 필터 옵션으로 사용
-        const sbCarModels = [...new Set(_standbyItems.map(w => w.carModel).filter(Boolean))].sort();
+        // 실제 대기품이 없는 제품도 수기 등록할 수 있도록 제품 마스터의
+        // 레이저 공정 차종·품명을 선택 목록에 함께 노출한다.
+        const laserProducts = _getLaserRelatedProducts();
+        const sbCarModels = [...new Set([
+            ..._standbyItems.map(w => w.carModel),
+            ...laserProducts.map(_productCarName)
+        ].filter(Boolean))].sort();
 
         // 수정 모드: 기존 차종/품명/컬러/LOT 읽기 전용 표시
         const isEditMode = !!(d.carModel || d.partName || d.date);
@@ -1238,7 +1317,7 @@ var LaserWorkModule = (function() {
                     ${_standbyItems.length === 0 ? `<span style="font-size:0.75rem;color:var(--accent-red);">대기 품목 없음</span>` : `<span style="font-size:0.75rem;color:var(--text-muted);">차종 선택 후 클릭</span>`}
                 </div>
                 <div style="display:flex;gap:8px;margin-bottom:6px;">
-                    <select class="form-select" id="lwSbCar" onchange="LaserWorkModule.onSbCarChange()" style="flex:1;" ${_standbyItems.length === 0 ? 'disabled' : ''}>
+                    <select class="form-select" id="lwSbCar" onchange="LaserWorkModule.onSbCarChange()" style="flex:1;" ${sbCarModels.length === 0 ? 'disabled' : ''}>
                         <option value="">-- 차종 --</option>
                         ${sbCarModels.map(c => `<option value="${c}">${c}</option>`).join('')}
                     </select>
@@ -1247,7 +1326,7 @@ var LaserWorkModule = (function() {
                     </select>
                 </div>
                 <div id="lwStandbyResults" style="font-size:0.82rem;color:var(--text-muted);min-height:22px;">
-                    ${_standbyItems.length > 0 ? '차종을 선택하세요.' : ''}
+                    ${sbCarModels.length > 0 ? '차종을 선택하세요.' : '레이저 공정 제품이 없습니다.'}
                 </div>
             </div>
             <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px;padding:7px 12px;border:1px solid rgba(59,130,246,0.18);border-radius:8px;background:rgba(59,130,246,0.04);">
@@ -1651,9 +1730,12 @@ var LaserWorkModule = (function() {
         const partSel = document.getElementById('lwSbPart');
         if (!partSel) return;
 
-        const parts = [...new Set(
-            _standbyItems.filter(w => !car || w.carModel === car).map(w => w.partName).filter(Boolean)
-        )].sort();
+        const parts = [...new Set([
+            ..._standbyItems.filter(w => !car || w.carModel === car).map(w => w.partName),
+            ..._getLaserRelatedProducts()
+                .filter(p => !car || _productCarName(p) === car)
+                .map(_productPartName)
+        ].filter(Boolean))].sort();
 
         partSel.innerHTML = '<option value="">-- 품명 --</option>' +
             parts.map(p => `<option value="${p}">${p}</option>`).join('');
