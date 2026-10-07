@@ -493,6 +493,64 @@ var ReworkWipModule = (function () {
         });
     }
 
+    /** 도장현장 반납 중 잔여 재공품으로 판정된 입고 확인 대기 목록 (사출창고 화면에는 표시하지 않음) */
+    function _pendingSiteReturnsHtml() {
+        try {
+            if (typeof PaintingInputModule === 'undefined' || typeof PaintingInputModule.listPendingReturns !== 'function') return '';
+            if (typeof InjectionWarehouseModule === 'undefined' || typeof InjectionWarehouseModule.isReworkSiteReturn !== 'function') return '';
+            const list = (PaintingInputModule.listPendingReturns() || []).filter(function (r) {
+                return InjectionWarehouseModule.isReworkSiteReturn(r);
+            });
+            if (!list.length) return '';
+            const rows = list.map(function (r) {
+                const lotsTxt = (Array.isArray(r.lots) && r.lots.length)
+                    ? r.lots.map(function (l) { return (l.lotNo || '-') + '(' + _fmt(l.qty) + ')'; }).join(', ')
+                    : (r.lotNo || '-');
+                let color = String(r.color || '').trim();
+                if (!color && typeof PaintingInputModule.resolveReturnColor === 'function') {
+                    try { color = PaintingInputModule.resolveReturnColor(r.carModel, r.partName, r.lots || []) || ''; } catch (e) { /* ignore */ }
+                }
+                return `<tr style="border-top:1px solid var(--border-color);">
+                  <td style="padding:8px 12px;white-space:nowrap;font-size:.82rem;">${_esc(String(r.date || '-').slice(0, 16))}</td>
+                  <td style="padding:8px 12px;white-space:nowrap;font-weight:700;">${_esc(r.carModel || '-')}</td>
+                  <td style="padding:8px 12px;white-space:nowrap;">${_esc(r.partName || '-')}</td>
+                  <td style="padding:8px 12px;white-space:nowrap;">${color ? _esc(color) : '<span style="color:#dc2626;font-weight:700;">확인 필요</span>'}</td>
+                  <td style="padding:8px 12px;">${_esc(lotsTxt)}</td>
+                  <td style="padding:8px 12px;text-align:right;font-weight:800;white-space:nowrap;">${_fmt(r.quantity)}</td>
+                  <td style="padding:8px 12px;font-size:.8rem;color:var(--text-secondary);">${_esc(r.returnReason || '-')}</td>
+                  <td style="padding:8px 12px;white-space:nowrap;font-size:.82rem;">${_esc(r.returnedBy || '-')}</td>
+                  <td style="padding:8px 12px;white-space:nowrap;">
+                    <button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:.78rem;"
+                        onclick="InjectionWarehouseModule.openConfirmSiteReturnModal('${_esc(r.id)}')">입고 처리</button>
+                  </td>
+                </tr>`;
+            }).join('');
+            return `
+            <div class="section-card" style="margin-bottom:16px;border-left:3px solid #7c3aed;">
+              <div style="padding:14px 20px;border-bottom:1px solid var(--border-color);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <span style="font-weight:700;font-size:.97rem;">도장현장 반납 입고 확인 대기</span>
+                <span style="font-size:.78rem;background:#7c3aed;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">${list.length}건</span>
+                <span style="font-size:.75rem;color:var(--text-muted);">실물을 확인한 뒤 입고 처리하면 잔여 재공품 재고로 반영됩니다.</span>
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="data-table data-table--content" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:.88rem;">
+                  <thead><tr style="background:var(--bg-secondary);text-align:left;">
+                    <th style="padding:8px 12px;white-space:nowrap;">반납일시</th><th style="padding:8px 12px;white-space:nowrap;">차종</th>
+                    <th style="padding:8px 12px;white-space:nowrap;">사출명</th><th style="padding:8px 12px;white-space:nowrap;">컬러</th>
+                    <th style="padding:8px 12px;white-space:nowrap;">LOT(수량)</th><th style="padding:8px 12px;text-align:right;white-space:nowrap;">합계수량</th>
+                    <th style="padding:8px 12px;white-space:nowrap;">반납 사유</th><th style="padding:8px 12px;white-space:nowrap;">반납자</th>
+                    <th style="padding:8px 12px;white-space:nowrap;">작업</th>
+                  </tr></thead>
+                  <tbody>${rows}</tbody>
+                </table>
+              </div>
+            </div>`;
+        } catch (e) {
+            console.warn('[ReworkWipModule] 반납 대기 목록 표시 실패:', e);
+            return '';
+        }
+    }
+
     function render(container) {
         _bindCacheWarmRefreshOnce();
         const records = _getAll().sort(function (a, b) {
@@ -509,6 +567,7 @@ var ReworkWipModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up" data-rework-wip-page="1">
             ${typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-rework-wip') : ''}
+            ${_pendingSiteReturnsHtml()}
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
               <div>
                 <h3 style="margin:0;font-size:1.1rem;font-weight:800;">잔여 재공품</h3>

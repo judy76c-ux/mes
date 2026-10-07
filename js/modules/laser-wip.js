@@ -618,6 +618,25 @@ var LaserWipModule = (function() {
         return dateStamp < resetStamp;
     }
 
+    /** 외관검사 포장출고(검사 저장 시 별도 생성, createdAt이 작업일지보다 늦음)는
+     *  원본 작업일지의 "잔량 발생"보다 먼저 오도록 작업일지 기준 '_a_pack' 키로 정렬한다. */
+    function _manualOutSeq(w, suffix) {
+        if (w && w.isInspectionResidualOut && w.sourceWorkLogId) {
+            const work = Storage.getById(STORE_LASER, w.sourceWorkLogId);
+            if (work) return String(work.createdAt || work.id || '') + '_a_pack' + suffix;
+        }
+        return String((w && (w.createdAt || w.id)) || '') + suffix;
+    }
+
+    /** 이력 표 시각 표시용 — 외관검사 포장출고는 원본 작업일지 등록 시각으로 보여 "발생"과 같은 검사임을 맞춘다 */
+    function _manualOutDisplayAt(w) {
+        if (w && w.isInspectionResidualOut && w.sourceWorkLogId) {
+            const work = Storage.getById(STORE_LASER, w.sourceWorkLogId);
+            if (work && work.createdAt) return work.createdAt;
+        }
+        return '';
+    }
+
     /** 이력/LOT 재생 공통 정렬 — 같은 날은 date 문자열 길이 함정(YYYY-MM-DD < YYYY-MM-DD HH:mm)을 피하고 createdAt/_seq로 순서를 가른다 */
     function _compareEventOccurrence(a, b) {
         const aDay = String((a && a.date) || '').slice(0, 10);
@@ -3607,7 +3626,7 @@ function lwStFilterRows(q){
                         events.push({
                             date: w.date || '',
                             createdAt: w.createdAt || w.id || '',
-                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            _seq: _manualOutSeq(w, '_lot' + idx),
                             type: 'unassigned',
                             qty: sign * lot.qty,
                             sourceId: w.id || '',
@@ -3619,7 +3638,7 @@ function lwStFilterRows(q){
                         events.push({
                             date: w.date || '',
                             createdAt: w.createdAt || w.id || '',
-                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            _seq: _manualOutSeq(w, '_lot' + idx),
                             type: 'delta',
                             key: _residualLotKey(lot.paintLot, lot.injLot),
                             paintLot: lot.paintLot,
@@ -3632,6 +3651,7 @@ function lwStFilterRows(q){
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
+                    _seq: _manualOutSeq(w, ''),
                     type: 'delta',
                     key: _residualLotKey(paintLot, injLot),
                     paintLot: paintLot,
@@ -3642,6 +3662,7 @@ function lwStFilterRows(q){
                 events.push({
                     date: w.date || '',
                     createdAt: w.createdAt || w.id || '',
+                    _seq: _manualOutSeq(w, ''),
                     type: 'unassigned',
                     qty: w.isResidualManualIn ? qty : -qty,
                     sourceId: w.id || '',
@@ -3690,6 +3711,7 @@ function lwStFilterRows(q){
                             fifoTrace.push({
                                 date: sourceEvent.date || '',
                                 createdAt: sourceEvent.createdAt || '',
+                                seq: sourceEvent._seq || '',
                                 sourceId: sourceEvent.sourceId || '',
                                 author: sourceEvent.author || '',
                                 paintLot: lot.paintLot,
@@ -5512,7 +5534,8 @@ function lwStFilterRows(q){
                     qty: prevUsed,
                     author: w.author || w.operator || '-',
                     note: '잔량 사용',
-                    _seq: (w.createdAt || w.id || '') + '_packout',
+                    // 같은 작업일지에서는 "기존 잔량 소진(포장출고)" → "새 잔량 발생" 순서 (_calcResidualLotDetail 재생과 동일)
+                    _seq: String(w.createdAt || w.id || '') + '_a_pack',
                     createdAt: w.createdAt || '',
                     sourceId: w.id || '',
                     editKind: 'laser_work'
@@ -5532,7 +5555,7 @@ function lwStFilterRows(q){
                 qty: residualQty,
                 author: w.author || w.operator || [w.worker1, w.worker2, w.worker3].filter(Boolean).join(', ') || '-',
                 note: w.note || '',
-                _seq: w.createdAt || w.id || '',
+                _seq: String(w.createdAt || w.id || '') + '_b_res',
                 createdAt: w.createdAt || '',
                 sourceId: w.id || '',
                 editKind: 'laser_work'
@@ -5571,8 +5594,9 @@ function lwStFilterRows(q){
                             qty: lot.qty,
                             author: w.author || '-',
                             note: w.note || '',
-                            _seq: String(w.createdAt || w.id || '') + '_lot' + idx,
+                            _seq: _manualOutSeq(w, '_lot' + idx),
                             createdAt: w.createdAt || '',
+                            displayAt: _manualOutDisplayAt(w),
                             sourceId: w.id || '',
                             editKind: 'residual_manual'
                         });
@@ -5658,8 +5682,9 @@ function lwStFilterRows(q){
                     qty: t.qty,
                     author: t.author || src.author || '-',
                     note: src.note || '외관검사 포장 사용',
-                    _seq: (t.createdAt || t.date || '') + '_fifo',
+                    _seq: (t.seq || t.createdAt || t.date || '') + '_fifo',
                     createdAt: t.createdAt || src.createdAt || '',
+                    displayAt: _manualOutDisplayAt(src),
                     sourceId: src.id || '',
                     editKind: 'residual_manual'
                 });
@@ -5702,8 +5727,9 @@ function lwStFilterRows(q){
                 qty: remainder,
                 author: w.author || '-',
                 note: w.note || '',
-                _seq: String(w.createdAt || w.id || '') + '_packout',
+                _seq: _manualOutSeq(w, '_packout'),
                 createdAt: w.createdAt || '',
+                displayAt: _manualOutDisplayAt(w),
                 sourceId: w.id || '',
                 editKind: 'residual_manual'
             });

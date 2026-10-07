@@ -78,6 +78,18 @@ var StockDetailUI = (function() {
         return `<span style="display:inline-flex;align-items:center;gap:4px;flex-wrap:nowrap;"${title}>${chips}</span>`;
     }
 
+    /** 일시 표시 — date에 시각이 없으면 등록시각(createdAt, 로컬)을 덧붙인다 */
+    function _stampWithTime(item) {
+        const date = String((item && item.date) || '-');
+        if (/\d{1,2}:\d{2}/.test(date)) return date.replace('T', ' ').slice(0, 16);
+        const src = item && (item.displayAt || item.createdAt);
+        const ts = src ? new Date(src) : null;
+        if (!ts || isNaN(ts.getTime())) return date;
+        const hh = String(ts.getHours()).padStart(2, '0');
+        const mm = String(ts.getMinutes()).padStart(2, '0');
+        return date + ' ' + hh + ':' + mm;
+    }
+
     /** 경로 배지 — link={onclick,title} 있으면 클릭 이동 */
     function _renderRouteBadge(route, link) {
         const badgeStyle = `font-size:0.72rem;font-weight:700;padding:1px 7px;border-radius:4px;
@@ -180,7 +192,7 @@ var StockDetailUI = (function() {
         const unmatchedHandled = Math.max(0, Number(item.unmatchedHandled) || 0);
         const who = _escHtml(item.author || item.who || '-');
         const noteTitle = item.note ? _escAttr(item.note) : '';
-        const dateStamp = _escHtml(item.date || '-');
+        const dateStamp = _escHtml(_stampWithTime(item));
         const beforeColor = _stockColor(step.stockBefore);
         const afterColor = _stockColor(step.stockAfter);
         const detail = _escAttr(route.detail || item.note || '');

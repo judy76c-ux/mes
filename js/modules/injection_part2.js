@@ -5580,7 +5580,8 @@ var InjectionWarehouseModule = (function() {
             try { await PaintingInputModule.alignInflatedSiteReturns({ force: true }); }
             catch (e) { console.warn('[InjectionWarehouseModule] 반납수량 정리 실패:', e); }
         }
-        const list = PaintingInputModule.listPendingReturns();
+        // 잔여 재공품으로 판정된 반납은 사출창고 대기 목록에 두지 않는다 — 잔여 재공품 화면에서 입고 확인한다.
+        const list = PaintingInputModule.listPendingReturns().filter(function (r) { return !_isReworkSiteReturn(r); });
         const isAdmin = typeof AuthModule !== 'undefined' && typeof AuthModule.isAdminUser === 'function' && AuthModule.isAdminUser();
         const misrouted = _findMisroutedReturns();
         if (!list.length && !misrouted.length && !isAdmin) {
@@ -13230,6 +13231,7 @@ var InjectionWarehouseModule = (function() {
         removeReservedPlan,
         renderOutgoingListup,
         renderSiteReturns,
+        isReworkSiteReturn: _isReworkSiteReturn,
         openConfirmSiteReturnModal,
         confirmSiteReturn,
         cancelSiteReturn,

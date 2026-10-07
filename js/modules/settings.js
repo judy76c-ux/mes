@@ -26,6 +26,9 @@ const SettingsModule = (function() {
     let _pendingExternalProductPrefill = null;
     let _pendingPhoto = null; // 모달 사진 임시 보관
     let _pendingSeal = null;  // 모달 서명/날인 임시 보관
+    // 제품 목록은 제품 수정/삭제 후 전체 탭을 다시 그린다. DOM만 읽어
+    // 필터를 복원하면 모달 전환 시 선택값이 사라질 수 있으므로 모듈 상태에도 보관한다.
+    let _productFilters = { carModel: '', customer: '' };
 
     // ── 제조 공정 타입 관리 ──────────────────────────────────────────
     const DEFAULT_PROCESS_TYPES = ['사출', '도장-A', '도장-B', '레이저', '인쇄', '외관 검사', '외관+각인 검사'];
@@ -128,7 +131,11 @@ const SettingsModule = (function() {
 
         switch (currentTab) {
             case 'products': {
-                const saved = _saveFilters(['carModelFilter', 'customerFilter']);
+                const saved = {
+                    carModelFilter: _productFilters.carModel,
+                    customerFilter: _productFilters.customer,
+                    ..._saveFilters(['carModelFilter', 'customerFilter'])
+                };
                 renderProductsTab(el);
                 _restoreFilters(saved, filterProductList);
                 break;
@@ -271,6 +278,10 @@ const SettingsModule = (function() {
     function filterProductList() {
         const selectedModel = (document.getElementById('carModelFilter') || {}).value || '';
         const selectedCustomer = (document.getElementById('customerFilter') || {}).value || '';
+
+        // onchange 직후뿐 아니라 제품 수정/삭제로 재렌더링될 때도 같은 조건을 사용한다.
+        _productFilters.carModel = selectedModel;
+        _productFilters.customer = selectedCustomer;
 
         const tbody = document.querySelector('#settingsContent .data-table tbody');
         if (!tbody) return;
