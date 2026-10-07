@@ -1795,12 +1795,36 @@ var LaserWorkModule = (function() {
             return;
         }
 
+        // 연결(분할 납품처) 대상 제품(예: KNOB BLACK [LED]-일흥)은 대기 재고가 원품 이름으로만 잡히므로
+        // 원품(예: KNOB [LED] BK 1spot)의 대기품을 대신 보여주고, LOT 선택 시 분할 패널로 수량을 나눈다.
+        const allProds = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const targetIds = new Set(allProds
+            .filter(p => (!car || _productCarName(p) === car) && _productPartName(p) === part)
+            .map(p => p.id).filter(Boolean));
+        const sourceParts = new Set(allProds
+            .filter(p => p.linkedProductId && targetIds.has(p.linkedProductId) && (!car || _productCarName(p) === car))
+            .map(_productPartName).filter(Boolean));
+        const ownItems = _standbyItems.filter(w => (!car || w.carModel === car) && w.partName === part);
+        const viaSource = ownItems.length === 0 && sourceParts.size > 0;
+
         // 오름차순 정렬: 오래된 항목이 맨 위 (선입선출)
-        const filtered = _standbyItems
-            .filter(w => (!car || w.carModel === car) && w.partName === part)
+        const filtered = (viaSource
+            ? _standbyItems.filter(w => (!car || w.carModel === car) && sourceParts.has(w.partName))
+            : ownItems)
             .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
 
+        const sourceNotice = viaSource
+            ? `<div style="font-size:0.75rem; color:var(--accent-orange); font-weight:600; margin-bottom:6px; display:flex; align-items:center; gap:4px;">
+                   <span class="material-symbols-outlined" style="font-size:0.9rem;">link</span>
+                   ${part}은(는) 연결 제품입니다 — 원품 ${[...sourceParts].join(', ')} 대기품에서 LOT 선택 후 분할 수량을 입력하세요.
+               </div>`
+            : '';
+
         if (filtered.length === 0) {
+            if (sourceParts.size > 0) {
+                el.innerHTML = `<span style="color:var(--text-muted)">원품(${[...sourceParts].join(', ')})의 대기품이 없습니다.</span>`;
+                return;
+            }
             el.innerHTML = '<span style="color:var(--text-muted)">해당 품목의 대기품이 없습니다.</span>';
             return;
         }
@@ -1815,7 +1839,7 @@ var LaserWorkModule = (function() {
             return sum + lots.reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
         }, 0);
 
-        el.innerHTML = `
+        el.innerHTML = `${sourceNotice}
             <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;">
                 <div style="font-size:0.75rem; color:var(--accent-green); font-weight:600; display:flex; align-items:center; gap:4px;">
                     <span class="material-symbols-outlined" style="font-size:0.9rem;">swap_vert</span>
