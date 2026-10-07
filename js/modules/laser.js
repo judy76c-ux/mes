@@ -1747,9 +1747,12 @@ var LaserWorkModule = (function() {
     }
 
     // 검사 후 잔량 현황 섹션 렌더링 (최근 외관검사 기록 기반)
-    function _renderResidualInfo(car, part) {
+    // 수량은 레이져 잔량 재고 현황(LaserWipModule)과 같은 실시간 값 — 외관검사 1건의 스냅샷이 아님
+    let _residualInfoToken = 0;
+    async function _renderResidualInfo(car, part) {
         const el = document.getElementById('lwResidualInfo');
         if (!el) return;
+        const token = ++_residualInfoToken;
         if (!car || !part) { el.style.display = 'none'; return; }
 
         const inspections = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
@@ -1757,24 +1760,31 @@ var LaserWorkModule = (function() {
             .filter(i => i.carModel === car && i.partName === part && typeof i.residualQty === 'number')
             .sort((a, b) => (b.date || '').localeCompare(a.date || '') ||
                             (b.inspectionStartTime || '').localeCompare(a.inspectionStartTime || ''));
+        const latest = matching[0] || {};
 
-        if (matching.length === 0 || Number(matching[0].residualQty) === 0) {
+        let residualQty = Number(latest.residualQty) || 0;
+        if (typeof LaserWipModule !== 'undefined' && typeof LaserWipModule.getResidualQtyAsync === 'function') {
+            try {
+                residualQty = Math.max(0, Number(await LaserWipModule.getResidualQtyAsync(car, part, '')) || 0);
+            } catch (e) {
+                console.warn('[LaserWork] 잔량 재고 조회 실패, 최근 검사 잔량 사용:', e);
+            }
+        }
+        if (token !== _residualInfoToken) return;
+
+        if (residualQty <= 0) {
             el.style.display = 'none';
             return;
         }
-
-        const latest = matching[0];
-        const residualQty = Number(latest.residualQty) || 0;
 
         el.style.display = 'block';
         el.innerHTML = `
         <div style="padding:8px 12px;background:rgba(245,158,11,0.07);border:1px solid rgba(245,158,11,0.4);border-radius:8px;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
             <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-orange);">inventory</span>
-            <span style="font-weight:700;font-size:0.85rem;color:var(--accent-orange);">검사 후 잔량</span>
+            <span style="font-weight:700;font-size:0.85rem;color:var(--accent-orange);">레이져 포장 잔량</span>
             <span style="font-size:0.78rem;color:var(--text-muted);">${car} / ${part}</span>
-            <span style="font-size:0.75rem;color:var(--text-muted);">최근 검사일: ${latest.date || '-'}</span>
             <span style="margin-left:auto;font-size:1rem;font-weight:800;color:var(--accent-orange);">${UIUtils.formatNumber(residualQty)} EA</span>
-            <span style="font-size:0.72rem;color:var(--text-muted);">(외관검사 등록 시 자동 반영)</span>
+            <span style="font-size:0.72rem;color:var(--text-muted);">(현재 포장 잔량)</span>
         </div>`;
     }
 
