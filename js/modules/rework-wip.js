@@ -29,8 +29,40 @@ var ReworkWipModule = (function () {
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
+    // 수동 입고는 생산관리자(또는 관리자) 승인 후에 재고에 반영된다.
+    // approvalStatus가 없는 기존·자동 적립 기록은 승인된 것으로 취급한다.
+    function _isApproved(r) {
+        return !r || !r.approvalStatus || r.approvalStatus === 'approved';
+    }
+
+    /** 재고·이력 계산용 — 승인 대기 중인 입고는 제외한다 */
     function _getAll() {
-        try { return Storage.getAll(WIP_STORE) || []; } catch (e) { return []; }
+        try { return (Storage.getAll(WIP_STORE) || []).filter(_isApproved); } catch (e) { return []; }
+    }
+
+    function _getPendingApprovals() {
+        try {
+            return (Storage.getAll(WIP_STORE) || []).filter(function (r) { return r && r.approvalStatus === 'pending'; })
+                .sort(function (a, b) { return String(b.createdAt || '').localeCompare(String(a.createdAt || '')); });
+        } catch (e) { return []; }
+    }
+
+    function _currentUser() {
+        try { return (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser && AuthModule.getCurrentUser()) || null; }
+        catch (e) { return null; }
+    }
+
+    function _currentUserName() {
+        const u = _currentUser();
+        return u ? (u.displayName || u.name || u.username || '') : '';
+    }
+
+    /** 승인 권한 — 생산관리자 또는 관리자 */
+    function _canApprove() {
+        const u = _currentUser();
+        if (!u) return false;
+        const keys = [].concat(Array.isArray(u.roles) ? u.roles : [], u.role).map(String);
+        return keys.indexOf('admin') >= 0 || keys.indexOf('prod_manager') >= 0;
     }
 
     /** 도장작업일(YYYY-MM-DD) → 도장LOT(YYMMDD) — 레이저·도장 공정과 동일 규칙 */
@@ -493,6 +525,87 @@ var ReworkWipModule = (function () {
         });
     }
 
+    /** 수동 입고 승인 대기 목록 — 승인 권한자는 승인/반려, 그 외는 현황만 본다 */
+    function _pendingApprovalsHtml() {
+        const list = _getPendingApprovals();
+        if (!list.length) return '';
+        const canApprove = _canApprove();
+        const rows = list.map(function (r) {
+            const f = _lotFieldsOf(r);
+            return `<tr style="border-top:1px solid var(--border-color);">
+              <td style="padding:8px 12px;white-space:nowrap;font-size:.82rem;">${_esc(r.date || '-')}</td>
+              <td style="padding:8px 12px;white-space:nowrap;font-weight:700;">${_esc(r.carModel || '-')}</td>
+              <td style="padding:8px 12px;white-space:nowrap;">${_esc(_displayPartName(r.carModel, r.partName))}</td>
+              <td style="padding:8px 12px;white-space:nowrap;">${_esc(_displayInjColor(r.carModel, r.partName, r.color) || '-')}</td>
+              <td style="padding:8px 12px;text-align:right;font-weight:800;white-space:nowrap;">${_fmt(r.qty)}</td>
+              <td style="padding:8px 12px;white-space:nowrap;font-family:monospace;">${_esc(f.injLot || '-')}</td>
+              <td style="padding:8px 12px;white-space:nowrap;">${_esc(r.reworkType || '-')}</td>
+              <td style="padding:8px 12px;color:var(--text-secondary);">${_esc(r.note || '')}</td>
+              <td style="padding:8px 12px;white-space:nowrap;font-size:.82rem;">${_esc(r.requestedBy || '-')}</td>
+              <td style="padding:8px 12px;white-space:nowrap;">${canApprove
+                ? `<button type="button" class="btn btn-sm btn-primary" style="padding:4px 10px;font-size:.78rem;"
+                        onclick="ReworkWipModule.approveRecord('${_esc(r.id)}')">승인</button>
+                   <button type="button" class="btn btn-sm" style="padding:4px 10px;font-size:.78rem;margin-left:4px;color:#dc2626;border:1px solid #dc2626;background:transparent;"
+                        onclick="ReworkWipModule.rejectRecord('${_esc(r.id)}')">반려</button>`
+                : '<span style="font-size:.78rem;color:var(--text-muted);">승인 대기</span>'}</td>
+            </tr>`;
+        }).join('');
+        return `
+        <div class="section-card" style="margin-bottom:16px;border-left:3px solid #d97706;">
+          <div style="padding:14px 20px;border-bottom:1px solid var(--border-color);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <span style="font-weight:700;font-size:.97rem;">입고 승인 대기</span>
+            <span style="font-size:.78rem;background:#d97706;color:#fff;padding:2px 8px;border-radius:12px;font-weight:600;">${list.length}건</span>
+            <span style="font-size:.75rem;color:var(--text-muted);">생산관리자 승인 후 잔여 재공품 재고에 반영됩니다.</span>
+          </div>
+          <div style="overflow-x:auto;">
+            <table class="data-table data-table--content" style="width:max-content;min-width:100%;table-layout:auto;border-collapse:collapse;font-size:.88rem;">
+              <thead><tr style="background:var(--bg-secondary);text-align:left;">
+                <th style="padding:8px 12px;white-space:nowrap;">일자</th><th style="padding:8px 12px;white-space:nowrap;">차종</th>
+                <th style="padding:8px 12px;white-space:nowrap;">사출명</th><th style="padding:8px 12px;white-space:nowrap;">컬러</th>
+                <th style="padding:8px 12px;text-align:right;white-space:nowrap;">수량(EA)</th><th style="padding:8px 12px;white-space:nowrap;">사출LOT</th>
+                <th style="padding:8px 12px;white-space:nowrap;">발생 종류</th><th style="padding:8px 12px;">비고</th>
+                <th style="padding:8px 12px;white-space:nowrap;">요청자</th><th style="padding:8px 12px;white-space:nowrap;">처리</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    async function approveRecord(id) {
+        if (!_canApprove()) { UIUtils.toast('생산관리자 또는 관리자만 승인할 수 있습니다.', 'warning'); return; }
+        const rec = (Storage.getAll(WIP_STORE) || []).find(function (r) { return r.id === id; });
+        if (!rec || rec.approvalStatus !== 'pending') { UIUtils.toast('승인 대기 건을 찾을 수 없습니다.', 'info'); return; }
+        if (!confirm(`${rec.partName} ${_fmt(rec.qty)} EA 입고를 승인하시겠습니까?\n승인하면 잔여 재공품 재고에 반영됩니다.`)) return;
+        try {
+            await Storage.update(WIP_STORE, id, {
+                approvalStatus: 'approved',
+                approvedBy: _currentUserName(),
+                approvedAt: new Date().toISOString()
+            });
+            UIUtils.toast('승인되어 재고에 반영되었습니다.', 'success');
+            const el = document.getElementById('contentArea');
+            if (el) render(el);
+        } catch (e) {
+            UIUtils.toast('승인 실패: ' + (e.message || e), 'error');
+        }
+    }
+
+    async function rejectRecord(id) {
+        if (!_canApprove()) { UIUtils.toast('생산관리자 또는 관리자만 반려할 수 있습니다.', 'warning'); return; }
+        const rec = (Storage.getAll(WIP_STORE) || []).find(function (r) { return r.id === id; });
+        if (!rec || rec.approvalStatus !== 'pending') { UIUtils.toast('승인 대기 건을 찾을 수 없습니다.', 'info'); return; }
+        if (!confirm(`${rec.partName} ${_fmt(rec.qty)} EA 입고 요청을 반려(삭제)하시겠습니까?`)) return;
+        try {
+            await Storage.remove(WIP_STORE, id);
+            UIUtils.toast('반려되었습니다.', 'success');
+            const el = document.getElementById('contentArea');
+            if (el) render(el);
+        } catch (e) {
+            UIUtils.toast('반려 실패: ' + (e.message || e), 'error');
+        }
+    }
+
     /** 도장현장 반납 중 잔여 재공품으로 판정된 입고 확인 대기 목록 (사출창고 화면에는 표시하지 않음) */
     function _pendingSiteReturnsHtml() {
         try {
@@ -567,6 +680,7 @@ var ReworkWipModule = (function () {
         container.innerHTML = `
         <div class="fade-in-up" data-rework-wip-page="1">
             ${typeof PaintingNavUI !== 'undefined' ? PaintingNavUI.render('painting-rework-wip') : ''}
+            ${_pendingApprovalsHtml()}
             ${_pendingSiteReturnsHtml()}
             <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:16px;flex-wrap:wrap;">
               <div>
@@ -1029,9 +1143,14 @@ var ReworkWipModule = (function () {
             AuthModule.sendInternalMessage({
                 targetType: 'role',
                 targetIds: ['prod_manager'],
-                title: '잔여 재공품 ' + rec.type + ' 등록 — ' + rec.partName,
+                title: rec.approvalStatus === 'pending'
+                    ? '[승인 요청] 잔여 재공품 입고 — ' + rec.partName
+                    : '잔여 재공품 ' + rec.type + ' 등록 — ' + rec.partName,
                 body: [
-                    '잔여 재공품이 ' + rec.type + ' 등록되었습니다.',
+                    rec.approvalStatus === 'pending'
+                        ? '잔여 재공품 입고 승인이 요청되었습니다. 잔여 재공품 화면의 「입고 승인 대기」에서 승인해야 재고에 반영됩니다.'
+                        : '잔여 재공품이 ' + rec.type + ' 등록되었습니다.',
+                    rec.requestedBy ? ('요청자: ' + rec.requestedBy) : '',
                     '',
                     '일자: ' + (rec.date || '-'),
                     '차종: ' + (rec.carModel || '-'),
@@ -1091,8 +1210,22 @@ var ReworkWipModule = (function () {
             } else {
                 rec.source = 'manual';
                 rec.createdAt = new Date().toISOString();
+                // 입고는 생산관리자 승인 후 재고 반영 — 승인 권한자가 직접 등록하면 바로 반영한다.
+                const needsApproval = type === '입고' && !_canApprove();
+                if (needsApproval) {
+                    rec.approvalStatus = 'pending';
+                    rec.requestedBy = _currentUserName();
+                    rec.requestedAt = rec.createdAt;
+                }
                 await Storage.add(WIP_STORE, rec);
                 _notifyProdManagerOfRework(rec);
+                if (needsApproval) {
+                    UIUtils.toast('승인 요청되었습니다. 생산관리자 승인 후 재고에 반영됩니다.', 'success');
+                    const elp = document.getElementById('contentArea');
+                    if (elp) render(elp);
+                    UIUtils.closeModal();
+                    return;
+                }
             }
             UIUtils.toast(id ? '수정되었습니다.' : '등록되었습니다.', 'success');
             const el = document.getElementById('contentArea');
@@ -1636,6 +1769,8 @@ var ReworkWipModule = (function () {
         applyNegativeCleanup,
         restoreForWork,
         receiveSiteReturn,
+        approveRecord,
+        rejectRecord,
         removeSiteReturnReceipt,
         findSiteReturnReceipt,
         openStockDetailModal,

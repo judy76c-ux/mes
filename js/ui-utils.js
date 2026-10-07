@@ -783,11 +783,16 @@ const UIUtils = (function () {
     function _asCarSet() {
         try {
             const prods = (typeof Storage !== 'undefined' && DB && DB.STORES) ? (Storage.getAll(DB.STORES.PRODUCTS) || []) : [];
-            const sig = prods.length;
+            // 제품 수만 같고 차종/품목구분만 수정된 경우에도 A/S 판정을 다시 계산한다.
+            const sig = prods.map(function (p) {
+                return [p && p.id, p && p.carModel, p && p.itemType].join('|');
+            }).join('\u0001');
             if (_asCarCache && _asCarCache.sig === sig) return _asCarCache.set;
             const by = {};
             prods.forEach(function (p) {
-                const c = String((p && p.carModel) || '').trim();
+                // 제품 마스터와 재고/자재 마스터의 표기 차이(GOLF_7/GOLF-7)를
+                // 같은 차종으로 묶어 A/S 전용 차종 판정이 누락되지 않게 한다.
+                const c = normCarModel((p && p.carModel) || '');
                 if (!c) return;
                 const as = String((p && p.itemType) || '').indexOf('A/S') >= 0;
                 by[c] = (by[c] === undefined) ? as : (by[c] && as);
@@ -798,13 +803,13 @@ const UIUtils = (function () {
         } catch (e) { return new Set(); }
     }
     function isAsCarModel(carModel) {
-        const c = String(carModel == null ? '' : carModel).trim();
+        const c = normCarModel(carModel);
         return !!c && _asCarSet().has(c);
     }
     function carModelLabel(carModel) {
         const c = String(carModel == null ? '' : carModel).trim();
         if (!c) return '';
-        return _asCarSet().has(c) ? c + ' (A/S)' : c;
+        return _asCarSet().has(normCarModel(c)) ? c + ' (A/S)' : c;
     }
 
     function sortCarModels(values, sourceRows) {

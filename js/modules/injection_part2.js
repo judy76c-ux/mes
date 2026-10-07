@@ -1125,6 +1125,13 @@ var InjectionWarehouseModule = (function() {
             .trim();
     }
 
+    // 사출 창고 화면의 대표 표기. 기존 재고 데이터(GOLF-7)와
+    // 제품 마스터 표기(GOLF_7)를 사용자에게는 하나의 이름으로 보여준다.
+    function _displayCarModel(v) {
+        const raw = _normKeyStr(v);
+        return UIUtils.normCarModel(raw) === 'GOLF7' ? 'GOLF_7' : raw;
+    }
+
     function _colorAliasKey(c) {
         return typeof UIUtils.normalizeColorAlias === 'function'
             ? UIUtils.normalizeColorAlias(c)
@@ -2935,7 +2942,7 @@ var InjectionWarehouseModule = (function() {
             if (!sel) return;
             const cur = sel.value;
             sel.innerHTML = `<option value="">전체 차종</option>` +
-                carModels.map(c => `<option value="${c}">${c}</option>`).join('') +
+                carModels.map(c => `<option value="${c}">${_displayCarModel(c)}</option>`).join('') +
                 (unknownCars.length
                     ? `<option value="${UNKNOWN_CAR_FILTER}">⚠ 기초정보 미등록 (${unknownCars.length})</option>`
                     : '');
@@ -3102,7 +3109,7 @@ var InjectionWarehouseModule = (function() {
                         overflow:hidden; background:var(--bg-primary); margin-bottom:12px;">
                 <div style="background:#7ec8e3; padding:6px 10px;
                             display:flex; justify-content:space-between; align-items:center;">
-                    <span style="font-weight:700; font-size:0.92rem; color:#1a3a4a;">${carModel}${_itemTypeLabel}</span>
+                    <span style="font-weight:700; font-size:0.92rem; color:#1a3a4a;">${_displayCarModel(carModel)}${_itemTypeLabel}</span>
                     <span style="font-size:0.78rem; color:#1a3a4a; font-weight:600;display:flex;align-items:center;gap:6px;">
                         ${unmatchedCount > 0
                             ? `<span title="미차감(과다출고) 품목 ${unmatchedCount}건"
@@ -3145,11 +3152,11 @@ var InjectionWarehouseModule = (function() {
         };
 
         (products || [])
-            .filter(p => p.carModel === carModel)
+            .filter(p => UIUtils.sameCarModel(p.carModel, carModel))
             .forEach(p => {
                 const productName = (p.partName || '').trim();
                 const linkedByMaterial = (materials || []).some(m => {
-                    if (m.carModel !== carModel) return false;
+                    if (!UIUtils.sameCarModel(m.carModel, carModel)) return false;
                     const matPart = (m.injPartName || '').trim();
                     if (!itemParts.has(matPart)) return false;
                     return (m.productIds || []).includes(p.id)
@@ -3160,7 +3167,7 @@ var InjectionWarehouseModule = (function() {
             });
 
         (materials || [])
-            .filter(m => m.carModel === carModel && itemParts.has((m.injPartName || '').trim()))
+            .filter(m => UIUtils.sameCarModel(m.carModel, carModel) && itemParts.has((m.injPartName || '').trim()))
             .forEach(m => addType(m.itemType));
 
         const labels = [...types];
@@ -5730,10 +5737,11 @@ var InjectionWarehouseModule = (function() {
             </div>
             <div class="form-group" style="margin-bottom:12px;">
                 <label class="form-label">입고처 ${destInfo.evidence ? '' : '<span style="color:var(--accent-red);">* 확인 필요</span>'}</label>
-                <select class="form-input" id="injSiteReturnDestSelect">
-                    <option value="injection" ${isRework ? '' : 'selected'}>사출 창고 재고</option>
+                <select class="form-input" id="injSiteReturnDestSelect"${isRework ? ' disabled' : ''}>
+                    ${isRework ? '' : '<option value="injection" selected>사출 창고 재고</option>'}
                     <option value="rework" ${isRework ? 'selected' : ''}>잔여 재공품 재고</option>
                 </select>
+                ${isRework ? '<div style="font-size:0.74rem;margin-top:3px;color:#7c3aed;">잔여 재공품 반납은 사출 창고로 입고할 수 없습니다.</div>' : ''}
                 <div style="font-size:0.74rem;margin-top:3px;color:${destInfo.evidence ? 'var(--text-secondary)' : 'var(--accent-red)'};">
                     ${destInfo.evidence
                         ? '판정 근거: ' + _escapeHtml(destInfo.reason)
@@ -5801,9 +5809,12 @@ var InjectionWarehouseModule = (function() {
             // 사람이 바로잡을 수 있어야 같은 사고가 조용히 반복되지 않는다.
             const destSel = document.getElementById('injSiteReturnDestSelect');
             const pickedDest = destSel ? String(destSel.value || '') : '';
-            const isRework = (pickedDest === 'rework' || pickedDest === 'injection')
-                ? pickedDest === 'rework'
-                : _isReworkSiteReturn(r);
+            // 잔여 재공품으로 판정된 반납은 사출 창고 입고를 허용하지 않는다(모달에서도 선택 불가).
+            const isRework = _isReworkSiteReturn(r)
+                ? true
+                : ((pickedDest === 'rework' || pickedDest === 'injection')
+                    ? pickedDest === 'rework'
+                    : false);
 
             // 재고 반영보다 먼저 상태를 「확정」으로 바꿔 잠근다 — confirmSiteReturn 내부에서
             // returnStatus가 'pending'이 아니면 즉시 반환하므로, 뒤이은 동시 호출(재클릭 등)은
@@ -10234,8 +10245,8 @@ var InjectionWarehouseModule = (function() {
         const products = Storage.getAll(DB.STORES.PRODUCTS) || [];
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
         const types = new Set();
-        products.filter(function (p) { return p.carModel === carModel; }).forEach(function (p) { if (p.itemType) types.add(p.itemType); });
-        materials.filter(function (m) { return m.carModel === carModel; }).forEach(function (m) { if (m.itemType) types.add(m.itemType); });
+        products.filter(function (p) { return UIUtils.sameCarModel(p.carModel, carModel); }).forEach(function (p) { if (p.itemType) types.add(p.itemType); });
+        materials.filter(function (m) { return UIUtils.sameCarModel(m.carModel, carModel); }).forEach(function (m) { if (m.itemType) types.add(m.itemType); });
         if (!types.size) return 0; // 구분 정보 없음 → 양산 그룹 취급
         // PRODUCTS.itemType은 'A/S품', INJECTION_MATERIALS.itemType은 'A/S'로 표기가 달라 정규화 후 비교한다
         const hasNonAs = [...types].some(function (t) { return _shortItemType(t) !== 'A/S'; });
@@ -12824,7 +12835,7 @@ var InjectionWarehouseModule = (function() {
                 <select class="form-select" id="injStockCarFilter" style="max-width:200px;"
                         onchange="InjectionWarehouseModule.filterStock()">
                     <option value="">전체 차종</option>
-                    ${carModels.map(c => `<option value="${c}">${c}</option>`).join('')}
+                    ${carModels.map(c => `<option value="${c}">${_displayCarModel(c)}</option>`).join('')}
                 </select>
                 <span style="font-size:0.82rem;color:var(--text-muted);">총 ${rows.length}개 품목</span>
             </div>
