@@ -224,13 +224,9 @@ var InvCalc = (function () {
             return true;
         }
         if (action === 'absorb') {
-            const lotSumBefore = Object.values(map).reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
-            const sink = { value: 0 };
-            // 없는 LOT키 → 지정 매칭 실패 후 보유 LOT FIFO 차감
-            _applyOutgoing(map, [{ lotNo: '__UNMATCHED_ABSORB__', qty: amount }], sink, null);
-            const lotSumAfter = Object.values(map).reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
-            const absorbed = Math.max(0, lotSumBefore - lotSumAfter);
-            unmatchedRef.value = Math.max(0, unmatchedRef.value - absorbed);
+            // 반영은 현재 보유 LOT을 과다출고로 처리해 재고를 0으로 만든다.
+            Object.keys(map).forEach(function(k) { delete map[k]; });
+            unmatchedRef.value = 0;
             return true;
         }
         // clear: 미차감만 소멸. writeOff로 영구히 깎지 않는다 — 리셋 이후 표시 재고는

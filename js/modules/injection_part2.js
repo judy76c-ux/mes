@@ -4154,7 +4154,7 @@ var InjectionWarehouseModule = (function() {
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감 → 표시 재고가 <strong>${_fmtStockQty(Math.max(0, stock - unmatchedQty))}</strong>로 줄어듭니다 (실물이 실제로 그만큼 부족했던 경우)</li>
+                                <li><strong>반영</strong> — 현재 보유 LOT을 과다출고로 처리 → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> → <strong>0</strong>으로 줄어듭니다 (실물이 실제로 부족했던 경우)</li>
                                 <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> 그대로 유지 (과거 출고 기록 자체가 착오였던 경우)</li>
                                 <li><strong>이력 확인</strong> — 처리하지 않고 입출고 이력에서 원인 출고를 먼저 확인</li>
                             </ul>
@@ -4166,11 +4166,11 @@ var InjectionWarehouseModule = (function() {
                                 ${_isAdminUser() ? `
                                 <button type="button" class="btn btn-sm" style="background:#b45309;color:#fff;border-color:#b45309;"
                                     onclick="InjectionWarehouseModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','absorb',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (${_fmtStockQty(unmatchedQty)} EA)
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (재고 0)
                                 </button>
                                 <button type="button" class="btn btn-sm" style="background:#0369a1;color:#fff;border-color:#0369a1;"
                                     onclick="InjectionWarehouseModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','clear',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (미차감 0)
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (재고 ${_fmtStockQty(stock)} 유지)
                                 </button>` : `
                                 <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;">반영·리셋은 관리자만 실행할 수 있습니다.</span>`}
                             </div>
@@ -11400,7 +11400,7 @@ var InjectionWarehouseModule = (function() {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        const resultStock = isAbsorb ? Math.max(0, stock - unmatched) : stock;
+        const resultStock = isAbsorb ? 0 : stock;
         const explain = isAbsorb
             ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
                · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA로 감소<br>
@@ -11475,14 +11475,7 @@ var InjectionWarehouseModule = (function() {
         const physicalLotSum = (balance.lots || [])
             .filter(function(l) { return l.lotNo !== InvCalc.UNMATCHED && (Number(l.qty) || 0) > 0; })
             .reduce(function(s, l) { return s + (Number(l.qty) || 0); }, 0);
-        if (isAbsorb && physicalLotSum < unmatched) {
-            UIUtils.toast(
-                `보유 LOT(${_fmtStockQty(physicalLotSum)} EA)보다 미차감(${_fmtStockQty(unmatched)} EA)이 커서 반영할 수 없습니다. 리셋을 사용하세요.`,
-                'warning'
-            );
-            return;
-        }
-        const stockAfterTarget = isAbsorb ? Math.max(0, stockBefore - unmatched) : stockBefore;
+        const stockAfterTarget = isAbsorb ? 0 : stockBefore;
         const actor = _getResetActorFields();
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';

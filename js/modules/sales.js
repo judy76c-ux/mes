@@ -955,6 +955,7 @@ var SalesDeliveryPlanModule = (function() {
     const DELIVERY_FIXED_HOLIDAYS = new Set([
         '01-01',
         '03-01',
+        '05-01',
         '05-05',
         '06-06',
         '08-15',
@@ -962,6 +963,14 @@ var SalesDeliveryPlanModule = (function() {
         '10-09',
         '12-25'
     ]);
+    const DELIVERY_HOLIDAY_NAMES = {
+        '01-01': '신정', '03-01': '삼일절', '05-01': '근로자의 날',
+        '05-05': '어린이날', '06-06': '현충일', '08-15': '광복절',
+        '10-03': '개천절', '10-09': '한글날', '12-25': '성탄절',
+        '2026-02-16': '설 연휴', '2026-02-17': '설날', '2026-02-18': '설 연휴', '2026-02-19': '대체공휴일',
+        '2026-05-24': '부처님오신날', '2026-09-24': '추석 연휴', '2026-09-25': '추석',
+        '2026-09-26': '추석 연휴', '2026-09-27': '대체공휴일'
+    };
 
     function _extraHolidaySet() {
         const holidays = [];
@@ -978,22 +987,48 @@ var SalesDeliveryPlanModule = (function() {
     function _dayColumnInfo(day) {
         const date = new Date(`${day}T00:00:00`);
         const week = date.getDay();
-        const isHoliday = DELIVERY_FIXED_HOLIDAYS.has(day.slice(5)) || _extraHolidaySet().has(day);
+        const namedHoliday = DELIVERY_HOLIDAY_NAMES[day] || DELIVERY_HOLIDAY_NAMES[day.slice(5)] || '';
+        const isHoliday = DELIVERY_FIXED_HOLIDAYS.has(day.slice(5)) || _extraHolidaySet().has(day) || !!namedHoliday;
+        const holidayName = namedHoliday || (isHoliday ? '공휴일' : '');
         const isToday = day === UIUtils.today();
-        const baseClass = (week === 0 || isHoliday) ? 'sdp-red-col' : (week === 6 ? 'sdp-sat-col' : '');
-        const className = `${baseClass}${isToday ? ' sdp-today-col' : ''}`.trim();
+        const dayClasses = [];
+        if (week === 0) dayClasses.push('sdp-sun-col');
+        if (week === 6) dayClasses.push('sdp-sat-col');
+        if (isHoliday) dayClasses.push('sdp-holiday-col');
+        if (isToday) dayClasses.push('sdp-today-col');
         return {
             dateLabel: day.slice(5).replace('-', '/'),
             monthLabel: `${Number(day.slice(5, 7))}월`,
             dayLabel: `${Number(day.slice(8))}`,
             weekday: DELIVERY_WEEKDAYS[week] || '',
-            className
+            className: dayClasses.join(' '),
+            isWeekend: week === 0 || week === 6,
+            isHoliday,
+            holidayName
         };
     }
 
     function _isWeekendDay(day) {
         const week = new Date(`${day}T00:00:00`).getDay();
         return week === 0 || week === 6;
+    }
+
+    function _isWeekStartDay(day) {
+        return new Date(`${day}T00:00:00`).getDay() === 1;
+    }
+
+    function _hideNonWorkingDays() {
+        const el = document.getElementById('sdpHideNonWorking');
+        if (el) return !!el.checked;
+        return localStorage.getItem('sdp_hide_non_working') !== 'false';
+    }
+
+    function _displayDays(days) {
+        if (!_hideNonWorkingDays()) return days;
+        return days.filter(day => {
+            const info = _dayColumnInfo(day);
+            return !info.isWeekend && !info.isHoliday;
+        });
     }
 
     function _dayColumnWidth(day) {
@@ -1335,6 +1370,13 @@ var SalesDeliveryPlanModule = (function() {
                         </label>
                     </div>
                     <div class="form-group" style="align-self:flex-end;">
+                        <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--text-secondary);cursor:pointer;white-space:nowrap;">
+                            <input type="checkbox" id="sdpHideNonWorking" ${localStorage.getItem('sdp_hide_non_working') !== 'false' ? 'checked' : ''}
+                                onchange="SalesDeliveryPlanModule.toggleHideNonWorkingDays()">
+                            토·일·공휴일 숨기기
+                        </label>
+                    </div>
+                    <div class="form-group" style="align-self:flex-end;">
                         <label class="form-label">표시 밀도</label>
                         <select class="form-select" id="sdpDensity" onchange="SalesDeliveryPlanModule.setTableDensity(this.value)" style="width:100px;">
                             <option value="standard">표준</option>
@@ -1394,7 +1436,7 @@ var SalesDeliveryPlanModule = (function() {
         const rows = _buildRows(plans, days, start, end, seedProducts);
         _lastRows = rows;
         _lastDays = days;
-        _renderTable(_visibleRows(rows), days);
+        _renderTable(_visibleRows(rows), days, _displayDays(days));
         setTableDensity(localStorage.getItem('sdp_table_density') || 'standard');
         _renderOrphanBanner();
     }
@@ -1554,7 +1596,13 @@ var SalesDeliveryPlanModule = (function() {
 
     /** "계획 없는 품목 숨기기" 체크 토글 — 이미 불러온 _lastRows를 다시 조회하지 않고 필터만 다시 적용 */
     function toggleHideNoPlan() {
-        _renderTable(_visibleRows(_lastRows), _lastDays);
+        _renderTable(_visibleRows(_lastRows), _lastDays, _displayDays(_lastDays));
+    }
+
+    function toggleHideNonWorkingDays() {
+        const checked = !!document.getElementById('sdpHideNonWorking')?.checked;
+        localStorage.setItem('sdp_hide_non_working', checked ? 'true' : 'false');
+        _renderTable(_visibleRows(_lastRows), _lastDays, _displayDays(_lastDays));
     }
 
     /**
@@ -1838,12 +1886,12 @@ var SalesDeliveryPlanModule = (function() {
         </td>`;
     }
 
-    function _dayCell(row, day, isMonthStart = false) {
+    function _dayCell(row, day, isMonthStart = false, isWeekStart = false) {
         const plan = row.planByDate[day] || 0;
         const delivered = row.deliveryByDate[day] || 0;
         const info = _dayColumnInfo(day);
         const colW = `${_dayColumnWidth(day)}px`;
-        const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
+        const borderStyle = (isMonthStart || isWeekStart) ? 'border-left:2px solid #64748b;' : '';
         const coveredUntil = row.finishedCoverage?.until || '';
         const isStockCovered = !!coveredUntil && day >= UIUtils.today() && day <= coveredUntil;
         const coverageClass = isStockCovered ? 'sdp-stock-covered' : '';
@@ -1863,7 +1911,7 @@ var SalesDeliveryPlanModule = (function() {
                 ${plan ? `<div style="font-weight:${isDone ? 600 : 400};">${_fmt(plan)}</div>` : ''}
                 ${isDone
                     ? `<div class="sdp-done-badge"><span class="material-symbols-outlined">check_circle</span>납품완료</div>`
-                    : (delivered
+                    : (plan > 0 && delivered
                         ? `<div style="color:var(--accent-green);font-weight:600;">납 ${_fmt(delivered)}</div>` +
                           (plan > 0 ? `<div class="sdp-progress" title="납품 ${_fmt(delivered)} / 계획 ${_fmt(plan)}"><span style="width:${Math.min(100, Math.round(delivered / plan * 100))}%;"></span></div>` : '')
                         : '')}
@@ -1958,14 +2006,16 @@ var SalesDeliveryPlanModule = (function() {
         return groups.map(g => `<th colspan="${g.count}" class="sdp-month-header" onmousedown="SalesDeliveryPlanModule.startDateHeaderScroll(event)" style="text-align:center;cursor:grab;">${g.month}</th>`).join('');
     }
 
-    function _renderTable(rows, days) {
+    function _renderTable(rows, allDays, days) {
         const wrap = document.getElementById('sdpTableWrap');
         if (!rows.length) {
             wrap.innerHTML = `<div style="padding:46px;text-align:center;color:var(--text-muted);">등록된 납품 계획이 없습니다.</div>`;
             return;
         }
+        allDays = allDays || days || [];
+        days = days || allDays;
         const dayColumnsWidth = days.reduce((sum, day) => sum + _dayColumnWidth(day), 0);
-        rows.forEach(row => { row.finishedCoverage = _coverageInfo(row, days); });
+        rows.forEach(row => { row.finishedCoverage = _coverageInfo(row, allDays); });
         const colgroup = `
             <colgroup>
                 <col style="width:48px;">
@@ -1998,10 +2048,11 @@ var SalesDeliveryPlanModule = (function() {
                             const info = _dayColumnInfo(d);
                             const colW = `${_dayColumnWidth(d)}px`;
                             const isMonthStart = i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7);
-                            const borderStyle = isMonthStart ? 'border-left:2px solid #64748b;' : '';
+                            const borderStyle = (isMonthStart || _isWeekStartDay(d)) ? 'border-left:2px solid #64748b;' : '';
                             return `<th data-sdp-date="${d}" class="${info.className}" onmousedown="SalesDeliveryPlanModule.startDateHeaderScroll(event)" style="min-width:${colW};max-width:${colW};text-align:center;padding:4px 1px;${borderStyle}">
-                                <button type="button" class="sdp-date-jump" onclick="SalesDeliveryPlanModule.scrollToDate(event,'${d}')" aria-label="${d} 날짜로 이동" title="이 날짜로 가로 이동">
+                                <button type="button" class="sdp-date-jump" onclick="SalesDeliveryPlanModule.scrollToDate(event,'${d}')" aria-label="${d} 날짜로 이동" title="${info.holidayName ? info.holidayName + ' · ' : ''}이 날짜로 가로 이동">
                                     <div>${Number(d.slice(8))}</div><div class="sdp-date-weekday">${info.weekday}</div>
+                                    ${info.holidayName ? `<div class="sdp-date-holiday">${_esc(info.holidayName)}</div>` : ''}
                                 </button>
                             </th>`;
                         }).join('')}
@@ -2031,7 +2082,9 @@ var SalesDeliveryPlanModule = (function() {
                                 ${row.hasShortage ? `<div class="sdp-plan-shortage">부족 ${_fmt(_shortageQty(row))}</div>` : ''}
                             </td>
                             ${_finishedStockCell(row, days)}
-                            ${days.map((d, i) => _dayCell(row, d, i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7))).join('')}
+                        ${days.map((d, i) => _dayCell(row, d,
+                            i > 0 && d.slice(0, 7) !== days[i - 1].slice(0, 7),
+                            _isWeekStartDay(d))).join('')}
                         </tr>
                     `; }).join('')}
                 </tbody>
@@ -2467,11 +2520,12 @@ var SalesDeliveryPlanModule = (function() {
                         <th style="width:132px;">품명</th>
                         <th style="width:48px;">컬러</th>
                         <th style="width:42px;">포장</th>
-                        ${dayInfos.map(info => `
-                            <th class="${info.className} sdp-grid-date-head" style="width:34px;min-width:34px;max-width:34px;">
+                        ${dayInfos.map((info, dayIndex) => `
+                            <th class="${info.className} sdp-grid-date-head" style="width:34px;min-width:34px;max-width:34px;${_isWeekStartDay(days[dayIndex]) ? 'border-left:2px solid #64748b;' : ''}">
                                 <span class="sdp-date-month">${info.monthLabel}</span>
                                 <span class="sdp-date-day">${info.dayLabel}</span>
                                 <span class="sdp-weekday-label">${info.weekday}</span>
+                                ${info.holidayName ? `<span class="sdp-date-holiday">${_esc(info.holidayName)}</span>` : ''}
                             </th>
                         `).join('')}
                     </tr>
@@ -2508,7 +2562,7 @@ var SalesDeliveryPlanModule = (function() {
                                 const qty = _planQtyForCell(row, day);
                                 const info = dayInfos[dayIndex];
                                 return `
-                                    <td class="${info.className}" style="text-align:center;width:34px;min-width:34px;max-width:34px;padding:0 1px;">
+                                    <td class="${info.className}" style="text-align:center;width:34px;min-width:34px;max-width:34px;padding:0 1px;${_isWeekStartDay(day) ? 'border-left:2px solid #64748b;' : ''}">
                                         <input type="number" min="0" class="sdp-grid-cell"
                                             data-row="${index}" data-date="${day}" value="${qty || ''}"
                                             placeholder="" onclick="this.select()" onfocus="this.select()"
@@ -4054,6 +4108,7 @@ var SalesDeliveryPlanModule = (function() {
         saveGridOrder,
         moveGridRowToOrder,
         toggleHideNoPlan,
+        toggleHideNonWorkingDays,
         saveGridPlans,
         openCellModal,
         saveCellPlan,

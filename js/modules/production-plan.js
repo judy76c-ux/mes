@@ -20,6 +20,23 @@ const ProductionPlanModule = (function() {
 
     const LINE_OPTIONS = ['도장-A', '도장-B'];
 
+    // 제품 마스터의 도장 라인 표기(예: "도장 -B", "도장(B)")를 통일한다.
+    function _normalizePaintLine(value) {
+        const text = String(value == null ? '' : value)
+            .trim()
+            .replace(/\s+/g, '')
+            .replace(/[‐‑‒–—−]/g, '-');
+        if (/^도장(?:-?\(?A\)?)$/i.test(text)) return '도장-A';
+        if (/^도장(?:-?\(?B\)?)$/i.test(text)) return '도장-B';
+        return text;
+    }
+
+    function _hasLineProcess(product, line) {
+        const wanted = _normalizePaintLine(line);
+        return [product.process1, product.process2, product.process3, product.process4]
+            .some(process => _normalizePaintLine(process) === wanted);
+    }
+
     let _autoTimer = null; // 자동 상태 갱신 타이머
     let _calYear = new Date().getFullYear();
     let _calMonth = new Date().getMonth() + 1;
@@ -1136,12 +1153,7 @@ const ProductionPlanModule = (function() {
         let lineProducts = line
             ? products.filter(p => {
                 if (_linkedTargetIds.has(p.id)) return false;
-                const hasLineProcess =
-                    (p.process1 === line) ||
-                    (p.process2 === line) ||
-                    (p.process3 === line) ||
-                    (p.process4 === line);
-                return hasLineProcess;
+                return _hasLineProcess(p, line);
             })
             : products.filter(p => !_linkedTargetIds.has(p.id));
         if (lineProducts.length === 0) lineProducts = products.filter(p => !_linkedTargetIds.has(p.id));
@@ -1292,9 +1304,7 @@ const ProductionPlanModule = (function() {
         // 엉뚱한 라인 기준으로 막힐 수 있다.
         let lineProducts = products;
         if (line) {
-            const inLine = products.filter(p =>
-                p.process1 === line || p.process2 === line || p.process3 === line || p.process4 === line
-            );
+            const inLine = products.filter(p => _hasLineProcess(p, line));
             if (inLine.length > 0) lineProducts = inLine;
         }
         const prod = lineProducts.find(p =>
@@ -2357,13 +2367,7 @@ const ProductionPlanModule = (function() {
         let lineProducts = products.filter(p => {
             // 라인에 맞는 제조공정 정보가 있는지 확인
             // 정확히 해당 라인명을 포함하는 process만 선택
-            const hasLineProcess =
-                (p.process1 === line) ||
-                (p.process2 === line) ||
-                (p.process3 === line) ||
-                (p.process4 === line);
-
-            return hasLineProcess;
+            return _hasLineProcess(p, line);
         });
         if (lineProducts.length === 0) lineProducts = products;
         // 색상 매칭: 정확일치 → 공용색상(color 없는 제품) 순으로 fallback
@@ -2586,12 +2590,7 @@ const ProductionPlanModule = (function() {
         // 라인명이 "도장-A" 또는 "도장-B" 형식이므로 라인명 자체를 사용
         let lineProducts = products.filter(p => {
             if (_linkedTargetIds.has(p.id)) return false; // 연결 대상 제품 제외
-            const hasLineProcess =
-                (p.process1 === line) ||
-                (p.process2 === line) ||
-                (p.process3 === line) ||
-                (p.process4 === line);
-            return hasLineProcess;
+            return _hasLineProcess(p, line);
         });
         if (lineProducts.length === 0) lineProducts = products;
         const models = UIUtils.sortCarModels(lineProducts.map(p => p.carModel), lineProducts);
