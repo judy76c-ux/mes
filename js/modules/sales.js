@@ -922,10 +922,17 @@ var SalesDeliveryPlanModule = (function() {
         return productPart === itemPart || itemPart.endsWith(productPart);
     }
 
+    // 로컬(KST) 기준 YYYY-MM-DD — toISOString()은 UTC라 자정 기준 하루 앞당겨진다.
+    function _localDateText(date) {
+        const m = String(date.getMonth() + 1).padStart(2, '0');
+        const d = String(date.getDate()).padStart(2, '0');
+        return `${date.getFullYear()}-${m}-${d}`;
+    }
+
     function _addDays(dateText, days) {
         const date = new Date(`${dateText}T00:00:00`);
         date.setDate(date.getDate() + days);
-        return date.toISOString().slice(0, 10);
+        return _localDateText(date);
     }
 
     function _days(start, end) {
@@ -933,7 +940,7 @@ var SalesDeliveryPlanModule = (function() {
         const cur = new Date(`${start}T00:00:00`);
         const last = new Date(`${end}T00:00:00`);
         while (cur <= last && result.length < 75) {
-            result.push(cur.toISOString().slice(0, 10));
+            result.push(_localDateText(cur));
             cur.setDate(cur.getDate() + 1);
         }
         return result;
@@ -1277,8 +1284,9 @@ var SalesDeliveryPlanModule = (function() {
     }
 
     function render(container) {
-        const start = UIUtils.today();
-        const end = _addDays(start, 30);
+        // 기본 조회: 과거 5일 + 오늘 + 이후 30일
+        const start = _addDays(UIUtils.today(), -5);
+        const end = _addDays(UIUtils.today(), 30);
         const customerOptions = _selectOptions(_deliveryCustomers(), '', '전체 납품처');
         const carOptions = _selectOptions(_deliveryCars(''), '', '전체 차종');
 
@@ -1523,7 +1531,7 @@ var SalesDeliveryPlanModule = (function() {
         const start = startEl.value || UIUtils.today();
         const end = endEl.value || _addDays(start, 30);
         const span = Math.max(0, Math.round((new Date(`${end}T00:00:00`) - new Date(`${start}T00:00:00`)) / 86400000));
-        startEl.value = UIUtils.today();
+        startEl.value = _addDays(UIUtils.today(), -5); // 기본 화면과 동일하게 과거 5일부터
         endEl.value = _addDays(startEl.value, span);
         search();
     }

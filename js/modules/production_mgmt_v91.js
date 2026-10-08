@@ -24776,6 +24776,21 @@ var ProdQualityModule = (function() {
         });
         scan(_measureItemsForIssue(issue), 'issue');
         scan(record && record.items, 'record');
+
+        // 관리항목 구성 변경(추가/삭제) — DATA 입력 대상인 측정 항목(색차·광택·도막)만 비교
+        const curMeasure = cur.filter(c => _measureGroupOfItem(c));
+        const issueMeasure = _measureItemsForIssue(issue);
+        const sameItem = (a, b) =>
+            (a.key && String(b.key || '').toLowerCase() === String(a.key).toLowerCase()) ||
+            (a.label && String(b.label || '').trim() === String(a.label).trim());
+        curMeasure.forEach(c => {
+            if (issueMeasure.some(it => sameItem(it, c))) return;
+            changes.push({ key: c.key, label: c.label || c.key, oldSpec: '(없음)', newSpec: '항목 추가 ' + (norm(_composeRangeSpec(c) || c.spec) || '') });
+        });
+        issueMeasure.forEach(it => {
+            if (curMeasure.some(c => sameItem(it, c))) return;
+            changes.push({ key: it.key, label: it.label || it.key, oldSpec: norm(_composeRangeSpec(it) || it.spec) || '-', newSpec: '항목 삭제' });
+        });
         return changes;
     }
 
@@ -24787,13 +24802,21 @@ var ProdQualityModule = (function() {
         const findCur = it => cur.find(c =>
             (it.key && String(c.key || '').toLowerCase() === String(it.key).toLowerCase()) ||
             (it.label && String(c.label || '').trim() === String(it.label).trim()));
-        const items = (issue.items || []).map(it => {
-            const m = findCur(it);
-            return m ? { ...it, ...m, selected: it.selected } : it;
-        });
+        // 관리항목 구성은 현재 품목 기준을 따른다(추가 항목 포함, 삭제 항목 제외).
+        // 기존 발행 항목과 같은 항목은 기존 속성 위에 현재 기준을 덮어쓴다.
+        const oldItems = issue.items || [];
+        const findOld = c => oldItems.find(it =>
+            (it.key && String(c.key || '').toLowerCase() === String(it.key).toLowerCase()) ||
+            (it.label && String(c.label || '').trim() === String(it.label).trim()));
+        const items = cur.length
+            ? cur.map(c => {
+                const old = findOld(c);
+                return old ? { ...old, ...c, selected: old.selected } : { ...c, selected: true };
+            })
+            : oldItems;
         await Storage.update(STORE, issue.id, { ...issue, items });
         if (record && record.id) {
-            const rItems = (record.items || []).map(it => {
+            const rItems = (record.items || []).filter(it => !cur.length || findCur(it)).map(it => {
                 const m = findCur(it);
                 if (!m) return it;
                 return { ...it, spec: _composeRangeSpec(m) || String(m.spec || '').trim() || it.spec,
@@ -24814,7 +24837,7 @@ var ProdQualityModule = (function() {
         const lines = changes.slice(0, 8).map(c => '· ' + c.label + ': ' + c.oldSpec + '  →  ' + c.newSpec).join(NL);
         const more = changes.length > 8 ? NL + '… 외 ' + (changes.length - 8) + '건' : '';
         UIUtils.confirm(
-            '품목별 관리 기준이 변경되었습니다.' + NL + NL + lines + more + NL + NL +
+            '품목별 관리 기준/항목이 변경되었습니다.' + NL + NL + lines + more + NL + NL +
             '변경된 기준으로 적용하시겠습니까?' + NL + '(취소하면 저장된 기존 기준 그대로 편집합니다)',
             async function () {
                 try {
@@ -24831,6 +24854,10 @@ var ProdQualityModule = (function() {
     }
 
     function openDataView(issueId) {
+        _confirmSpecChangesThen(issueId, () => _openDataViewCore(issueId));
+    }
+
+    function _openDataViewCore(issueId) {
         const issue = Storage.getById(STORE, issueId);
         if (!issue) return;
         const record = _measureRecordForIssue(issueId) || {};
