@@ -448,14 +448,19 @@ var LaserWipModule = (function() {
     //   과거 이력을 소급해 다시 정렬하면 LOT 배분이 틀어져 이중 계상(미차감)이 생긴다.
     const RESIDUAL_POSTING_CUTOVER = '2026-10-08T07:45:00.000Z';
 
+    let _postMapMemo = null;
     function _inspectionPostingMap() {
+        const src = Storage.getAll(DB.STORES.LASER_INSPECTIONS) || [];
+        // 같은 배열(캐시)이고 건수가 그대로면 이전 결과 재사용 — 이력 한 번 그릴 때 수백 번 호출된다.
+        if (_postMapMemo && _postMapMemo.src === src && _postMapMemo.len === src.length) return _postMapMemo.map;
         const map = {};
-        (Storage.getAll(DB.STORES.LASER_INSPECTIONS) || []).forEach(function(i) {
+        src.forEach(function(i) {
             if (!i || !i.workLogId || !i.createdAt) return;
             if (String(i.createdAt) < RESIDUAL_POSTING_CUTOVER) return;
             const k = String(i.workLogId);
             if (!map[k] || String(i.createdAt) < map[k]) map[k] = String(i.createdAt);
         });
+        _postMapMemo = { src: src, len: src.length, map: map };
         return map;
     }
 
@@ -767,6 +772,7 @@ var LaserWipModule = (function() {
             createdAt: stocktake.createdAt || stocktake.id || '',
             type: 'stocktake_set'
         };
+        const _mvPostMap = _inspectionPostingMap();
         return (_getLaserWorks()).some(function(w) {
             if (!w || w === stocktake || String(w.id || '') === String(stocktake.id || '')) return false;
             if (w.isResidualAuditOnly || w.isResidualStocktake) return false;
@@ -776,9 +782,10 @@ var LaserWipModule = (function() {
                 || w.isInspectionResidualOut
                 || (!w.isManualOut && !w.isResidualManualIn && !w.isResidualManualOut));
             if (!related) return false;
+            const mp = w.isInspectionResidualOut ? _packOutPosting(w, _mvPostMap) : _workPosting(w, _mvPostMap);
             return _compareEventOccurrence({
-                date: w.date || '',
-                createdAt: w.createdAt || w.id || ''
+                date: mp.date || '',
+                createdAt: mp.createdAt || w.createdAt || w.id || ''
             }, stEv) > 0;
         });
     }
@@ -2622,6 +2629,102 @@ function lwStFilterRows(q){
     // 표시 잔량 = 실물 LOT 잔량 합만 쓴다(+ 미지정 잔량). 미차감(unmatched/writeOff)은 여기서
     // 다시 빼지 않는다 — 과거 한 번의 과다출고가 이후 정상 입고분까지 영구히 깎아먹는 문제를
     // 막기 위함. 미차감은 별도로 배지·경고로만 추적한다.
+    /**
+     * 잔량 상세 이력의 "기존/현재 수량"과 행 순서 — 엔진(_calcResidualLotDetail)이 이벤트마다 기록한
+     * 합계(steps)를 그대로 쓴다.
+     * 예전엔 표시용 이력을 따로 만들어 LOT 키별로 다시 재생해, 현재 잔량(엔진)과 이력의 수량이 어긋났다.
+     * 이제는 같은 재생 결과에서 나오므로 이력 맨 위 "현재 수량" = 현재 잔량이고, 위아래 행이 끊김 없이 이어진다.
+     */
+    function _residualItemGroup(item) {
+        if (!item) return { key: '', kinds: null };
+        if (item.isHistoryReset || item.routeLabel === '이력 리셋') return { key: '__reset__', kinds: null };
+        if (item.editKind === 'wip_unmatched') return { key: String(item.sourceId || '') + '|unmatched', kinds: ['unmatched'] };
+        if (item.editKind === 'laser_work') {
+            const k = item.routeLabel === '잔량 발생' ? 'res' : 'pack';
+            return { key: String(item.sourceId || '') + '|' + k, kinds: [k] };
+        }
+        if (item.routeLabel === '미지정 출고 배분') return { key: String(item.sourceId || '') + '|fifo', kinds: ['pack', 'manual'] };
+        return { key: String(item.sourceId || '') + '|rec', kinds: ['manual', 'stocktake', 'absolute'] };
+    }
+
+    function _assignResidualStepTotals(items, detail) {
+        const steps = (detail && detail.steps) || [];
+        const byGroup = {};
+        steps.forEach(function(st) {
+            if (!st.sourceId) return;
+            (byGroup[st.sourceId] = byGroup[st.sourceId] || []).push(st);
+        });
+        const ordered = items.slice().sort(_compareEventOccurrence);
+        const groups = {};
+        ordered.forEach(function(it) {
+            const g = _residualItemGroup(it);
+            it._grp = g;
+            (groups[g.key] = groups[g.key] || []).push(it);
+        });
+        const signed = function(it) { return it.isOut ? -(Number(it.qty) || 0) : (Number(it.qty) || 0); };
+        const done = {};
+        // 1) 같은 원본 기록에서 나온 행 묶음에 엔진 합계와 재생 순번(_ord)을 배정
+        ordered.forEach(function(it) {
+            const g = it._grp;
+            if (done[g.key]) return;
+            done[g.key] = true;
+            const rows = groups[g.key];
+            if (g.kinds && g.key.slice(-5) === '|fifo') {
+                // '미지정 출고 배분' 행 = 같은 이벤트(포장출고/수기출고)의 LOT별 배분 내역.
+                // 이벤트 본 행이 이미 있으면 상세 행으로만 보여 주고(기존/현재 없음) 합계 흐름에는 넣지 않는다.
+                const sidf = String(rows[0].sourceId || '');
+                const primary = groups[sidf + '|pack'] || groups[sidf + '|rec'];
+                if (primary && primary.length) {
+                    rows.forEach(function(r) { r.pcDetail = true; r._detailOf = primary[0]; });
+                    return;
+                }
+            }
+            if (g.key === '__reset__') {
+                let run = 0;
+                rows.forEach(function(r) {
+                    r._ord = -0.5;
+                    r.pcBefore = run; run = run + (Number(r.qty) || 0); r.pcAfter = run;
+                });
+                return;
+            }
+            const sid = String(rows[0].sourceId || '');
+            const S = (byGroup[sid] || []).filter(function(st) { return g.kinds.indexOf(st.kind) >= 0; });
+            if (!S.length) return;   // 엔진이 반영하지 않은 기록(무효 실사·이력 리셋 이전 등) — 아래에서 직전 합계를 이어 받는다
+            if (S.length === rows.length) {
+                rows.forEach(function(r, i) { r._ord = S[i].idx; r.pcBefore = S[i].before; r.pcAfter = S[i].after; });
+                return;
+            }
+            let run = S[0].before;
+            rows.forEach(function(r, i) {
+                r._ord = S[Math.min(i, S.length - 1)].idx + (i >= S.length ? 0.001 * i : 0);
+                r.pcBefore = run;
+                const last = i === rows.length - 1;
+                run = last ? S[S.length - 1].after : Math.max(0, run + signed(r));
+                r.pcAfter = run;
+            });
+        });
+        // 상세 행은 본 행 바로 앞(오름차순)에 둔다 → 최신순 표에서는 본 행 바로 아래에 붙는다
+        ordered.forEach(function(r) {
+            if (r.pcDetail && r._detailOf && r._detailOf._ord != null) r._ord = r._detailOf._ord - 0.0005;
+        });
+        // 2) 엔진 순서에 없는 행(무효 실사 등)은 직전 행 바로 뒤에 두고 합계를 이어 받는다
+        let lastAfter = Number(detail && detail.openingTotal) || 0;
+        let lastOrd = -0.4;
+        ordered.forEach(function(r) {
+            if (r.pcDetail) return;
+            if (r._ord != null) {
+                if (r._grp.key !== '__reset__') lastOrd = r._ord;
+                lastAfter = r.pcAfter;
+                return;
+            }
+            lastOrd += 0.0001;
+            r._ord = lastOrd;
+            r.pcBefore = lastAfter;
+            r.pcAfter = lastAfter;
+        });
+        ordered.forEach(function(it) { delete it._grp; delete it._detailOf; });
+    }
+
     function _residualQtyFromLotDetail(detail) {
         const lotSum = (detail.lots || []).reduce(function(s, l) {
             return s + Math.max(0, Number(l.qty) || 0);
@@ -3568,7 +3671,7 @@ function lwStFilterRows(q){
         // packUnit이 설정돼 있거나 컬러 명칭 변경 잔재가 있어도 잔량을 계산하지 않는다(재발 방지).
         opts = opts || {};
         if (_isResidualExemptProduct(carModel, partName)) {
-            return { lots: [], manualAdj: 0, fifoTrace: [], unmatched: 0, unmatchedWriteOff: 0 };
+            return { lots: [], manualAdj: 0, fifoTrace: [], unmatched: 0, unmatchedWriteOff: 0, steps: [], openingTotal: 0 };
         }
         const excludeSet = {};
         (opts.excludeIds || []).forEach(function(id) {
@@ -3609,6 +3712,9 @@ function lwStFilterRows(q){
                 const key = _residualLotKey(paintLot, injLot);
                 ensureLot(key, _normalizePaintLot(paintLot), _normalizeInjLot(injLot)).qty = qty;
             });
+            const _openNow = Object.values(lotMap).reduce(function(sum, l) { return sum + Math.max(0, Number(l.qty) || 0); }, 0) + Math.max(0, manualAdj);
+            const _openStock = Math.max(0, Number(histReset.openingStock) || 0);
+            if (_openStock > _openNow) manualAdj += (_openStock - _openNow);
         }
 
         // ① 레이저 작업 잔량 발생
@@ -3645,6 +3751,7 @@ function lwStFilterRows(q){
                     createdAt: post.createdAt,
                     _seq: String(post.createdAt) + '_a_pack',
                     type: 'unassigned',
+                    kind: 'pack',
                     qty: -consumePrev,
                     sourceId: w.id || '',
                     author: w.author || ''
@@ -3660,6 +3767,8 @@ function lwStFilterRows(q){
                     createdAt: post.createdAt,
                     _seq: String(post.createdAt) + '_b_res',
                     type: 'delta',
+                    kind: 'res',
+                    sourceId: w.id || '',
                     key: key,
                     paintLot: paintLot,
                     injLot: injLot,
@@ -3708,10 +3817,10 @@ function lwStFilterRows(q){
             const injLot = rawInjLot ? _normalizeInjLot(rawInjLot) : '';
             if (w.isResidualStocktake) {
                 if (!_validStIds.has(String(w.id || ''))) return; // 같은 날 더 큰 장부 실사가 있으면 무시
-                events.push({
+                events.push({ sourceId: w.id || '', kind: 'manual',
                     date: _mp.date,
                     createdAt: w.createdAt || w.id || '',
-                    type: 'stocktake_set',
+                    type: 'stocktake_set', kind: 'stocktake',
                     qty: _stocktakeCountedQty(w),
                     stocktakeLots: Array.isArray(w.stocktakeLots) ? w.stocktakeLots : null,
                     sourceId: w.id || '',
@@ -3721,10 +3830,10 @@ function lwStFilterRows(q){
                 return;
             }
             if (absQty != null && w.isResidualLotAdjust && paintLot && injLot) {
-                events.push({
+                events.push({ sourceId: w.id || '', kind: 'manual',
                     date: _mp.date,
                     createdAt: w.createdAt || w.id || '',
-                    type: 'absolute',
+                    type: 'absolute', kind: 'absolute',
                     key: _residualLotKey(paintLot, injLot),
                     paintLot: paintLot,
                     injLot: injLot,
@@ -3737,7 +3846,7 @@ function lwStFilterRows(q){
                 const sign = w.isResidualManualIn ? 1 : -1;
                 plannedLots.forEach(function(lot, idx) {
                     if (lot.unassigned) {
-                        events.push({
+                        events.push({ sourceId: w.id || '', kind: 'manual',
                             date: _mp.date,
                             createdAt: w.createdAt || w.id || '',
                             _seq: _manualOutSeq(w, '_lot' + idx),
@@ -3749,7 +3858,7 @@ function lwStFilterRows(q){
                             poolOnly: true
                         });
                     } else {
-                        events.push({
+                        events.push({ sourceId: w.id || '', kind: 'manual',
                             date: _mp.date,
                             createdAt: w.createdAt || w.id || '',
                             _seq: _manualOutSeq(w, '_lot' + idx),
@@ -3762,7 +3871,7 @@ function lwStFilterRows(q){
                     }
                 });
             } else if (paintLot && injLot) {
-                events.push({
+                events.push({ sourceId: w.id || '', kind: 'manual',
                     date: _mp.date,
                     createdAt: w.createdAt || w.id || '',
                     _seq: _manualOutSeq(w, ''),
@@ -3773,7 +3882,7 @@ function lwStFilterRows(q){
                     qty: w.isResidualManualIn ? qty : -qty
                 });
             } else {
-                events.push({
+                events.push({ sourceId: w.id || '', kind: 'manual',
                     date: _mp.date,
                     createdAt: w.createdAt || w.id || '',
                     _seq: _manualOutSeq(w, ''),
@@ -3793,6 +3902,8 @@ function lwStFilterRows(q){
                 date: act.date || '',
                 createdAt: act.createdAt || act.id || '',
                 type: 'unmatched_action',
+                kind: 'unmatched',
+                sourceId: act.id || '',
                 action: act.unmatchedAction,
                 declared: Math.max(0, Number(act.quantity) || 0),
                 author: act.author || '',
@@ -3901,7 +4012,11 @@ function lwStFilterRows(q){
         //   맨 마지막에 "최종" LOT 상태에서 한 번에 FIFO 차감하면, 과거 미지정 출고가 그 이후에
         //   새로 생긴(당시엔 존재하지도 않았던) LOT에서 잘못 빠져나가는 오류가 생긴다.
         //   (예: 7/13 미지정 출고가 7/20에 새로 생긴 LOT의 잔량을 갉아먹는 문제)
+        const steps = [];
+        const openingTotal = currentResidualTotal();
         events.forEach(function(e) {
+            const _before = currentResidualTotal();
+            (function() {
             if (e.type === 'stocktake_set') {
                 applyStocktakeSet(e.qty, e);
                 return;
@@ -3948,6 +4063,15 @@ function lwStFilterRows(q){
                     row.qty = 0;
                 }
             }
+            })();
+            steps.push({
+                idx: steps.length,
+                sourceId: e.sourceId || '',
+                kind: e.kind || '',
+                seq: String(e._seq || e.createdAt || ''),
+                before: _before,
+                after: currentResidualTotal()
+            });
         });
 
         if (manualAdj < 0) manualAdj = 0;
@@ -3965,7 +4089,9 @@ function lwStFilterRows(q){
             manualAdj: manualAdj,
             fifoTrace: fifoTrace,
             unmatched: Math.round(unmatched * 1000) / 1000,
-            unmatchedWriteOff: Math.round(unmatchedWriteOff * 1000) / 1000
+            unmatchedWriteOff: Math.round(unmatchedWriteOff * 1000) / 1000,
+            steps: steps,
+            openingTotal: openingTotal
         };
     }
 
@@ -5937,7 +6063,18 @@ function lwStFilterRows(q){
                 });
             }
         }
-        displayHist.sort(_compareEventOccurrence).reverse();
+        _assignResidualStepTotals(displayHist, detail);
+        try {
+            // 안전장치: 이력 맨 위 "현재 수량"과 헤더의 현재 잔량이 어긋나면 콘솔에 남긴다(재발 감지용)
+            const _lastShown = displayHist.filter(function(h) { return !h.pcDetail && !h.beforeReset && h._ord != null; })
+                .sort(function(a, b) { return a._ord - b._ord; }).pop();
+            if (_lastShown && Number(_lastShown.pcAfter) !== Number(residualQtyDisplay)) {
+                console.warn('[레이져 잔량] 이력 마지막 현재 수량(' + _lastShown.pcAfter + ')과 현재 잔량(' + residualQtyDisplay + ')이 다릅니다:', carModel, partName, color);
+            }
+        } catch (_e) { /* 표시 전용 검사 */ }
+        displayHist.sort(function(a, b) {
+            return (a._ord != null && b._ord != null && a._ord !== b._ord) ? (a._ord - b._ord) : _compareEventOccurrence(a, b);
+        }).reverse();
 
         const _cmJs = String(carModel || '').replace(/'/g, "\\'");
         const _pnJs = String(partName || '').replace(/'/g, "\\'");
@@ -5998,7 +6135,7 @@ function lwStFilterRows(q){
         }).join('');
 
         // LOT별(도장+사출) 기존±입출고=현재 — 품목 합계 재생은 복수 도장 LOT에서 혼동을 일으킴
-        const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: false });
+        const historySection = _wipHistorySection(displayHist, { splitLots: true, productLevelQty: true, floorZero: true });
         UIUtils.showModal(
             `📦 ${carModel} · ${partName}${color && color !== '-' ? ' · ' + color : ''}`,
             `

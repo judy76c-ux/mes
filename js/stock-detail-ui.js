@@ -279,6 +279,8 @@ var StockDetailUI = (function() {
         // 잘못 재생되는 문제가 있었다. 날짜(앞 10자리)가 같으면 실제 저장 순서(_seq/createdAt/date)로
         // 다시 가려서, 같은 날 안에서는 진짜 발생 순서를 따르게 한다.
         const sorted = (items || []).slice().sort(function(a, b) {
+            // 호출한 쪽이 재생 순번(_ord)을 정해 준 경우(원장 재생 순서)는 그 순서를 따른다.
+            if (a && b && a._ord != null && b._ord != null && a._ord !== b._ord) return a._ord - b._ord;
             const aDay = String(a.date || '').slice(0, 10);
             const bDay = String(b.date || '').slice(0, 10);
             if (aDay !== bDay) return aDay.localeCompare(bDay);
@@ -293,6 +295,14 @@ var StockDetailUI = (function() {
             // 이력 리셋 이전 기록: 화면에는 남기되 재고 재생(기존/현재 수량)에는 반영하지 않는다.
             if (item && (item.beforeReset || item.archiveOnly)) {
                 return { item: item, stockBefore: null, stockAfter: null, archiveOnly: true };
+            }
+
+            // 호출한 쪽이 원장 재생 결과(합계 전/후)를 이미 계산해 넘긴 행은 그대로 쓴다.
+            if (item && item.pcDetail) {
+                return { item: item, stockBefore: null, stockAfter: null, detailOnly: true };
+            }
+            if (item && item.pcBefore != null && item.pcAfter != null) {
+                return { item: item, stockBefore: Number(item.pcBefore), stockAfter: Number(item.pcAfter) };
             }
 
             const key = perLotKey ? (perLotKey(item) || '__ALL__') : '__ALL__';
@@ -383,7 +393,7 @@ var StockDetailUI = (function() {
         let currentMarked = false;
         const currentMarkedKeys = perLotKeyFn ? new Set() : null;
         const rows = steps.map(function(step) {
-            const isArchive = !!(step.archiveOnly || (step.item && (step.item.beforeReset || step.item.archiveOnly)));
+            const isArchive = !!(step.archiveOnly || step.detailOnly || (step.item && (step.item.beforeReset || step.item.archiveOnly)));
             let isCurrent = false;
             if (!isArchive) {
                 if (currentMarkedKeys) {
