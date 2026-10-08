@@ -1043,6 +1043,25 @@ var LaserWipModule = (function() {
         return [_residualLotKey(paintLot, injStr)];
     }
 
+    /**
+     * 작업(외관검사 포장)이 남긴 새 잔량.
+     * 저장된 laserResidualQty 가 있으면 0 이라도 그 값을 쓴다 — 예전엔 `값 || 대체계산` 이라
+     * 잔량 0(기존 잔량을 써서 박스를 딱 채운 경우)이 "값 없음"으로 취급돼, 기존 잔량 사용분을
+     * 빼지 않은 대체계산(양품 % 박스단위)으로 잔량이 다시 생겼다(차감 → 같은 수량 재입고).
+     * 대체계산도 기존 잔량 사용분을 포함한다: (양품 + 사용한 기존 잔량) − 포장수량.
+     */
+    function _workNewResidualQty(w, goodQty, packUnit) {
+        const saved = w ? w.laserResidualQty : undefined;
+        if (saved !== undefined && saved !== null && saved !== '' && Number.isFinite(Number(saved))) {
+            return Math.max(0, Number(saved));
+        }
+        const prevUsed = Math.max(0, Number(w && w.prevResidualQty) || 0);
+        const packed = Math.max(0, Number(w && (w.shippingEligibleQty || w.packQty)) || 0);
+        const available = (Number(goodQty) || 0) + prevUsed;
+        if (packed > 0) return Math.max(0, available - packed);
+        return packUnit > 0 ? Math.max(0, available - Math.floor(available / packUnit) * packUnit) : 0;
+    }
+
     function _findResidualLotSourceWorks(carModel, partName, color, paintLot, injLot) {
         const targetKey = _residualLotKey(paintLot, injLot);
         return (_getLaserWorks()).filter(function(w) {
@@ -1051,7 +1070,7 @@ var LaserWipModule = (function() {
             if (w.isManualOut || w.isResidualManualIn || w.isResidualManualOut) return false;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
-            const resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+            const resQty = _workNewResidualQty(w, goodQty, packUnit);
             if (resQty <= 0) return false;
             return _workResidualLotKeys(w).some(function(k) { return k === targetKey; });
         });
@@ -3520,7 +3539,7 @@ function lwStFilterRows(q){
                 resQty = goodQty;
                 consumePrev = 0;
             } else {
-                resQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+                resQty = _workNewResidualQty(w, goodQty, packUnit);
                 consumePrev = prevUsed;
             }
 
@@ -5512,7 +5531,7 @@ function lwStFilterRows(q){
             if (!_laserWorkInspected(w, _histInspectedIds)) return;
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
-            const residualQty = Number(w.laserResidualQty) || (packUnit > 0 ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit) : 0);
+            const residualQty = _workNewResidualQty(w, goodQty, packUnit);
             const lotKeys = _workResidualLotKeys(w);
             const firstKey = lotKeys[0] || '';
             const pipeIdx = firstKey.indexOf('|');
@@ -6369,9 +6388,7 @@ function _num(value) {
 
             const goodQty = Number(w.inspectionGoodQty) || Number(w.completedQty) || Number(w.quantity) || 0;
             const packUnit = Number(w.packUnit) || 0;
-            const resQty = Number(w.laserResidualQty) || (packUnit > 0
-                ? Math.max(0, goodQty - Math.floor(goodQty / packUnit) * packUnit)
-                : 0);
+            const resQty = _workNewResidualQty(w, goodQty, packUnit);
             const prevUsed = Math.max(0, Number(w.prevResidualQty) || 0);
             if (prevUsed > 0 && !w.residualPackOutRecorded) {
                 outgoingRows.push(Object.assign({}, base, {

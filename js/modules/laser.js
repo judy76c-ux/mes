@@ -7929,15 +7929,14 @@ var LaserStandbyModule = (function() {
                 return;
             }
             if (action === 'absorb') {
+                // 반영은 과거 과다출고를 현재 재고에 반영하는 처리이므로,
+                // 미차감 수량이 LOT 잔량보다 커도 현재 보유 LOT을 전부 소진한다.
+                // 이후 입고분은 이 시점 이후의 정상 재고로 다시 더해진다.
                 const lotSumBefore = Object.values(balanceMap).reduce(function(s, l) {
                     return s + Math.max(0, Number(l.qty) || 0);
                 }, 0);
-                drainLot('__UNMATCHED_ABSORB__', amount, false);
-                const lotSumAfter = Object.values(balanceMap).reduce(function(s, l) {
-                    return s + Math.max(0, Number(l.qty) || 0);
-                }, 0);
-                const absorbed = Math.max(0, lotSumBefore - lotSumAfter);
-                unmatched = Math.max(0, unmatched - absorbed);
+                if (lotSumBefore > 0) drainLot('__UNMATCHED_ABSORB__', lotSumBefore, false);
+                unmatched = 0;
                 return;
             }
             unmatched = Math.max(0, unmatched - amount);
@@ -10901,8 +10900,8 @@ var LaserStandbyModule = (function() {
                                 <strong>이력을 확인</strong>한 뒤 <strong>반영</strong>할지 <strong>리셋</strong>할지 선택하세요.
                             </div>
                             <ul style="margin:8px 0 0;padding-left:18px;color:var(--text-secondary);">
-                                <li><strong>반영</strong> — 보유 LOT에서 미차감분(${_fmtStockQty(unmatchedQty)} EA)을 FIFO 차감
-                                    → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> → <strong style="color:var(--accent-red);">${_fmtStockQty(Math.max(0, stock - unmatchedQty))}</strong> 로 <u>줄어듭니다</u>.
+                                <li><strong>반영</strong> — 현재 보유 LOT을 과다출고로 처리
+                                    → 표시 재고 <strong>${_fmtStockQty(stock)}</strong> → <strong style="color:var(--accent-red);">0</strong>으로 <u>줄어듭니다</u>.
                                     실제로 그만큼 더 나간 게 맞을 때만 선택하세요.</li>
                                 <li><strong>리셋</strong> — 미차감만 0 · 표시 재고 <strong>${_fmtStockQty(stock)}</strong> <u>그대로 유지</u>.
                                     지난 LOT에서 생긴 오차라 지금 재고와 무관할 때 선택하세요.</li>
@@ -10916,11 +10915,11 @@ var LaserStandbyModule = (function() {
                                 ${_isAdminUser() ? `
                                 <button type="button" class="btn btn-sm" style="background:#b45309;color:#fff;border-color:#b45309;"
                                     onclick="LaserStandbyModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','absorb',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (${_fmtStockQty(unmatchedQty)} EA)
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">playlist_add_check</span> 반영 (재고 0)
                                 </button>
                                 <button type="button" class="btn btn-sm" style="background:#0369a1;color:#fff;border-color:#0369a1;"
                                     onclick="LaserStandbyModule.openUnmatchedActionModal('${_emJs}','${_epJs}','${_ecJs}','clear',${unmatchedQty},${stock},${physicalLotSum})">
-                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (미차감 0)
+                                    <span class="material-symbols-outlined" style="font-size:0.9rem;">restart_alt</span> 리셋 (재고 ${_fmtStockQty(stock)} 유지)
                                 </button>` : `
                                 <span style="font-size:0.75rem;color:var(--text-muted);align-self:center;">반영·리셋은 관리자만 실행할 수 있습니다.</span>`}
                             </div>
@@ -11734,13 +11733,12 @@ var LaserStandbyModule = (function() {
         }
         const title = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const accent = isAbsorb ? '#b45309' : '#0369a1';
-        // 표시 재고 = 실물 LOT 합계이므로, 반영(LOT FIFO 차감)은 재고를 그만큼 "떨어뜨린다".
-        // (예전 문구는 재고를 단순누적으로 잡던 시절 기준이라 '재고 유지'라고 잘못 안내했다)
-        const resultStock = isAbsorb ? Math.max(0, stock - unmatched) : stock;
+        // 반영은 현재 보유 LOT을 모두 과다출고로 처리해 재고를 0으로 만든다.
+        const resultStock = isAbsorb ? 0 : stock;
         const explain = isAbsorb
-            ? `보유 LOT에서 미차감 ${UIUtils.formatNumber(unmatched)} EA를 FIFO로 차감합니다.<br>
-               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong style="color:var(--accent-red);">${UIUtils.formatNumber(resultStock)}</strong> EA (감소)<br>
-               · LOT 잔량 합계: ${UIUtils.formatNumber(lotSum)} → <strong>${UIUtils.formatNumber(resultStock)}</strong> EA<br>
+            ? `현재 보유 LOT ${UIUtils.formatNumber(lotSum)} EA를 과다출고로 처리합니다.<br>
+               · 표시 재고: ${UIUtils.formatNumber(stock)} → <strong style="color:var(--accent-red);">0</strong> EA (감소)<br>
+               · 미차감: ${UIUtils.formatNumber(unmatched)} → <strong>0</strong> EA<br>
                · 실물이 시스템보다 적을 때(그만큼 실제로 더 나간 게 맞을 때) 선택하세요.`
             : `미차감 ${UIUtils.formatNumber(unmatched)} EA만 <strong>0</strong>으로 만듭니다.<br>
                · 표시 재고: <strong>${UIUtils.formatNumber(stock)}</strong> EA 그대로 유지 (LOT 잔량 ${UIUtils.formatNumber(lotSum)} 손대지 않음)<br>
@@ -11813,14 +11811,7 @@ var LaserStandbyModule = (function() {
 
         const stockBefore = Number(snapshot.stock) || 0;
         const physicalLotSum = _lotPhysicalSum(lots);
-        if (isAbsorb && physicalLotSum < unmatched) {
-            UIUtils.toast(
-                `보유 LOT(${_fmtStockQty(physicalLotSum)} EA)보다 미차감(${_fmtStockQty(unmatched)} EA)이 커서 반영할 수 없습니다. 리셋을 사용하세요.`,
-                'warning'
-            );
-            return;
-        }
-        const stockAfterTarget = stockBefore;
+        const stockAfterTarget = isAbsorb ? 0 : stockBefore;
         const label = isAbsorb ? '미차감 반영' : '미차감 리셋';
         const nowStr = (UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' '));
         const author = _currentAuthorName();
@@ -11842,7 +11833,7 @@ var LaserStandbyModule = (function() {
             stockBefore: stockBefore,
             stockAfterTarget: stockAfterTarget,
             reason: reason,
-            note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} EA 유지`,
+            note: `[${label}] ${reason} · 미차감 ${UIUtils.formatNumber(unmatched)} EA → 0 · 재고 ${UIUtils.formatNumber(stockBefore)} → ${UIUtils.formatNumber(stockAfterTarget)} EA`,
             date: nowStr,
             createdAt: new Date().toISOString(),
             author: author,
