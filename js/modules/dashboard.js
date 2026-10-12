@@ -1914,8 +1914,17 @@ const DashboardModule = (function() {
            - 도료사용등록 대상에서 '제외'한 작업은 알림에서도 빼 둔다 */
         const mixes = (Storage.getAll(DB.STORES.PROD_CONDITIONS) || []).filter(d => d._docKind === 'paint_mix');
         const mixedWorkIds = new Set(mixes.map(m => m.workId).filter(Boolean));
+        // A/S 품목은 도료 유통기한·재고 관리 대상이 아니라 도료사용등록을 생략한다.
+        const _prodList = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const _isAsPaintWork = w => {
+            const direct = String(w.itemType || '').trim();
+            const p = direct ? null : (_prodList.find(x => x.carModel === w.carModel && x.partName === w.partName && (!w.color || !x.color || x.color === w.color))
+                || _prodList.find(x => x.carModel === w.carModel && x.partName === w.partName));
+            const t = direct || String((p && p.itemType) || '').trim();
+            return !!t && (t.indexOf('A/S') >= 0 || t.charAt(0) === 'A');
+        };
         let paintMissing = works
-            .filter(w => w.date && w.date < today && !mixedWorkIds.has(w.id))
+            .filter(w => w.date && w.date < today && !mixedWorkIds.has(w.id) && !_isAsPaintWork(w))
             .sort((a, b) => (b.date||'').localeCompare(a.date||''));
 
         /* ④ 사출 LOT 번호 형식 오류 (설정 화면 스캔 로직과 동일 소스) */
