@@ -8246,13 +8246,10 @@ const PaintingWorkModule = (function() {
         var isLaserWipSave = ((document.getElementById('addPwIsLaserWip') || {}).value || '') === '1';
         if (!isLaserWipSave && typeof PaintingInputModule !== 'undefined' && PaintingInputModule.deductForWork) {
             try {
-                // 잔여 재공품 행은 현장 입고 LOT이 아니라 재공 재고에서 차감하므로 현장 LOT 차감 대상에서 뺀다.
-                var siteOnlyLots = (data.lots || []).filter(function (l) { return !_isReworkLot(l); });
-                var siteOnlyQty = siteOnlyLots.reduce(function (s, l) { return s + (Number(l.qty) || 0); }, 0);
-                await PaintingInputModule.deductForWork(Object.assign({}, savedWork || data, {
-                    lots: siteOnlyLots,
-                    inputQty: siteOnlyLots.length === (data.lots || []).length ? (savedWork || data).inputQty : siteOnlyQty
-                }));
+                // 잔여 재공품 LOT도 이미 현장출고→현장 입고 확인으로 현장 장부에 들어와 있다.
+                // 그러므로 다른 LOT과 똑같이 현장 장부에서 차감한다. (재공품 재고는 현장출고 때 이미
+                // 빠졌으므로 여기서 다시 차감하면 이중 차감이 되고 현장 입고 잔량만 남는다.)
+                await PaintingInputModule.deductForWork(savedWork || data);
             }
             catch (eDeduct) { console.warn('[PaintingWork] 투입 자재 차감 실패:', eDeduct); }
             await _deductReworkWip(savedWork || data);
@@ -11319,11 +11316,13 @@ const PaintingWorkModule = (function() {
         return !!l && (l.lotSource === 'site_rework' || String(l.optionKey || '').indexOf('rework:') === 0);
     }
 
-    /** 실적에 잡힌 잔여 재공품 LOT만큼 재공 재고를 차감한다(수정 저장 땐 기존 차감을 지우고 다시 만든다). */
+    /** 잔여 재공품은 현장출고 시점에 재공 재고에서 이미 빠졌고 현장 장부에서 차감된다.
+     *  예전 버전이 실적 저장 때 재공 재고를 한 번 더 차감(painting_work_use)했으므로,
+     *  이 실적에 남아 있는 그 이중 차감 기록만 되돌린다(새로 차감하지 않는다). */
     async function _deductReworkWip(work) {
-        if (!work || !work.id || typeof ReworkWipModule === 'undefined' || !ReworkWipModule.deductForWork) return;
-        try { await ReworkWipModule.deductForWork(work); }
-        catch (e) { console.warn('[PaintingWork] 잔여 재공품 차감 실패:', e); UIUtils.toast('잔여 재공품 차감 중 오류가 발생했습니다. 재공 현황을 확인하세요.', 'warning'); }
+        if (!work || !work.id || typeof ReworkWipModule === 'undefined' || !ReworkWipModule.restoreForWork) return;
+        try { await ReworkWipModule.restoreForWork(work.id, true); }
+        catch (e) { console.warn('[PaintingWork] 잔여 재공품 이중 차감 복원 실패:', e); }
     }
 
     function remove(id) {

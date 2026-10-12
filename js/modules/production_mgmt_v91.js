@@ -21342,17 +21342,35 @@ var ProdQualityModule = (function() {
             const colorA = _normText(product.paintColorA || prod.color || '');
             const colorB = _normText(product.paintColorB || prod.color || '');
             const fallback = [prod.color, colorA, colorB].filter(Boolean);
-            if (hasA && hasB) return [
-                { ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback },
-                { ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }
-            ];
-            if (hasA) return [{ ...prod, paintProcess: '도장-A', color: colorA, fallbackColors: fallback }];
-            if (hasB) return [{ ...prod, paintProcess: '도장-B', color: colorB, fallbackColors: fallback }];
-            return [prod];
+            const lineList = [];
+            if (hasA) lineList.push('도장-A');
+            if (hasB) lineList.push('도장-B');
+            if (!lineList.length) return [prod];
+            const baseSplit = _normText(product.color || '').split(/\s*\+\s*/).filter(Boolean);
+            return lineList.flatMap(line => {
+                const letter = line === '도장-A' ? 'A' : 'B';
+                const times = procs.filter(x => x === line).length;
+                if (times < 2) {
+                    return [{ ...prod, paintProcess: line, color: letter === 'A' ? colorA : colorB, fallbackColors: fallback }];
+                }
+                // 같은 도장 라인을 여러 번 거치는 제품: 차수별(1차·2차) 컬러로 행을 나눈다.
+                const rows = [];
+                for (let stage = 1; stage <= times; stage++) {
+                    const c = _normText(product['paintColor' + letter + stage] || '') || baseSplit[stage - 1] || '';
+                    rows.push({
+                        ...prod, paintProcess: line, stage: stage,
+                        color: c || (letter === 'A' ? colorA : colorB),
+                        strictColor: !!c,
+                        stageColor: c,
+                        fallbackColors: c ? [] : fallback
+                    });
+                }
+                return rows;
+            });
         }
 
         const _prodStatus = p => {
-            return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] }));
+            return _specStatus(_productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [], strictColor: !!p.strictColor }));
         };
         const expandedAll = allProducts.flatMap(_expandDualProcess)
             .filter(p => !filterLine || (p.paintProcess || '') === filterLine);
@@ -21449,7 +21467,7 @@ var ProdQualityModule = (function() {
                 const bodyRows = prods
                     .sort((a,b) => a.partName.localeCompare(b.partName,'ko') || a.color.localeCompare(b.color,'ko') || (a.paintProcess||'').localeCompare(b.paintProcess||''))
                     .map(p => {
-                        const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [] });
+                        const specItems = _productSpecItems(p.carModel, p.partName, p.color, { fallbackToMaster: false, paintProcess: p.paintProcess || '', fallbackColors: p.fallbackColors || [], strictColor: !!p.strictColor });
                         const status = _specStatus(specItems);
                         const activeItems = specItems.filter(i => i.notApplicable !== true);
                         const filledCount = activeItems.filter(_hasSpecValue).length;
@@ -21497,7 +21515,7 @@ var ProdQualityModule = (function() {
                                     : status !== 'complete' ? 'background:rgba(37,99,235,0.03);' : '';
 
                         const procBadge = p.paintProcess
-                            ? `<span style="font-size:0.68rem;font-weight:700;background:rgba(124,58,237,0.1);color:#7c3aed;border:1px solid rgba(124,58,237,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">${_esc(p.paintProcess)}</span>`
+                            ? `<span style="font-size:0.68rem;font-weight:700;background:rgba(124,58,237,0.1);color:#7c3aed;border:1px solid rgba(124,58,237,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">${_esc(p.paintProcess)}${p.stage ? ' ' + p.stage + '차' : ''}</span>`
                             : '';
 
                         // 이 품목의 관리항목 구성이 어떤 프리셋과 일치하는지 표시.
@@ -21541,7 +21559,7 @@ var ProdQualityModule = (function() {
                                         ${activeItems.length ? `${filledCount} / ${activeItems.length}` : (specItems.length ? '해당없음' : '-')}
                                     </span>
                                     <button class="btn btn-sm btn-outline" style="font-size:0.75rem;padding:3px 14px;"
-                                        onclick="ProdQualityModule.openSpecPage('${_js(p.id)}','view','${_js(p.paintProcess||'')}')">보기</button>
+                                        onclick="ProdQualityModule.openSpecPage('${_js(p.id)}','view','${_js(p.paintProcess||'')}','${_js(p.strictColor ? p.color : '')}')">보기</button>
                                 </div>
                             </td>
                         </tr>`;
@@ -21832,7 +21850,7 @@ var ProdQualityModule = (function() {
     }
 
     // ── 품목 기준값 보기/수정 페이지 (전체 페이지) ─────────────────────────────
-    function openSpecPage(productId, mode = 'view', paintProcess = '') {
+    function openSpecPage(productId, mode = 'view', paintProcess = '', stageColor = '') {
         _captureStdFilterState();
         const container = _rootContainer || document.getElementById('contentArea');
         if (!container) return;
@@ -21849,18 +21867,20 @@ var ProdQualityModule = (function() {
         const carModel = _normText(product.carModel);
         const partName = _normText(product.partName||'');
         const proc     = _normText(paintProcess || '');
-        const color    = _resolveProductColor(product, proc);
+        const stage    = _normText(stageColor || '');
+        const color    = stage || _resolveProductColor(product, proc);
 
         // 동일 컬러의 다른 품목 (차종 무관) — 공정별 컬러 기준으로 비교
-        const sameColorProducts = allProducts.filter(p => {
+        // 차수(1차·2차)별 기준은 이 품목·컬러에만 저장하므로 동일 컬러 일괄 적용 대상을 두지 않는다.
+        const sameColorProducts = stage ? [] : allProducts.filter(p => {
             const pc = _resolveProductColor(p, proc);
             return p.id !== productId
                 && pc === color;
         });
-        const sameColorTemplateCandidates = _getSameColorTemplateCandidates(productId, color, proc);
+        const sameColorTemplateCandidates = stage ? [] : _getSameColorTemplateCandidates(productId, color, proc);
 
         // '해당 없음' 처리된 항목은 관리항목이 아니므로 보기/편집 화면에 표시하지 않는다(저장 시 별도로 유지됨).
-        const items = _keepItemOrder(_productSpecItems(carModel, partName, color, { paintProcess: proc })
+        const items = _keepItemOrder(_productSpecItems(carModel, partName, color, { paintProcess: proc, strictColor: !!stage })
             .filter(item => item.notApplicable !== true)
             .map(item => _normalizeItemForEdit({ ...item })));
 
@@ -21985,15 +22005,15 @@ var ProdQualityModule = (function() {
                             <span class="material-symbols-outlined">arrow_back</span> 품목별 항목 기준
                         </button>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
-                            <button class="btn btn-outline" onclick="ProdQualityModule.previewSpecPrint('${_js(productId)}','${_js(proc)}')" title="현재 기준값으로 초중종물 C/S 인쇄물을 미리봅니다">
+                            <button class="btn btn-outline" onclick="ProdQualityModule.previewSpecPrint('${_js(productId)}','${_js(proc)}','${_js(stage)}')" title="현재 기준값으로 초중종물 C/S 인쇄물을 미리봅니다">
                                 <span class="material-symbols-outlined">print</span> 인쇄물 미리보기
                             </button>
                             ${viewOnly ? `
-                                <button class="btn btn-primary" onclick="${canEdit ? `ProdQualityModule.openSpecPage('${_js(productId)}','edit','${_js(proc)}')` : 'return false;'}" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
+                                <button class="btn btn-primary" onclick="${canEdit ? `ProdQualityModule.openSpecPage('${_js(productId)}','edit','${_js(proc)}','${_js(stage)}')` : 'return false;'}" ${canEdit ? '' : 'disabled'} style="${canEdit ? '' : 'opacity:.45;cursor:not-allowed;'}">
                                     <span class="material-symbols-outlined">edit</span> 편집
                                 </button>
                             ` : `
-                                <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view','${_js(proc)}')">취소</button>
+                                <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view','${_js(proc)}','${_js(stage)}')">취소</button>
                                 <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
                                     <span class="material-symbols-outlined">save</span> 저장
                                 </button>
@@ -22016,6 +22036,7 @@ var ProdQualityModule = (function() {
                         </div>
                         <input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
                         <input type="hidden" id="pqSpecPaintProcess" value="${_esc(proc)}">
+                        <input type="hidden" id="pqSpecStageColor" value="${_esc(stage)}">
                         <input type="hidden" id="pqSpecMode" value="${viewOnly ? 'view' : 'edit'}">
                     </div>
                 </div>
@@ -22062,7 +22083,7 @@ var ProdQualityModule = (function() {
 
                 ${viewOnly ? '' : `
                     <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px;">
-                        <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view','${_js(proc)}')">취소</button>
+                        <button class="btn btn-secondary" onclick="ProdQualityModule.openSpecPage('${_js(productId)}','view','${_js(proc)}','${_js(stage)}')">취소</button>
                         <button class="btn btn-primary" onclick="ProdQualityModule.saveSpecPage()">
                             <span class="material-symbols-outlined">save</span> 저장
                         </button>
@@ -23101,6 +23122,46 @@ var ProdQualityModule = (function() {
             else if (_isRangeSpecItem(obj)) { _applyDeviationTarget(obj, row, 'pqs'); obj.spec = _composeRangeSpec(obj); }
             return obj;
         }).filter(i => i.key);
+
+        // 차수(1차·2차)별 기준: 이 품목·차수 컬러에만 저장한다(동일 컬러 일괄 적용·타 컬러 기준 대체 없음).
+        const stageColorVal = _normText(document.getElementById('pqSpecStageColor')?.value || '');
+        if (stageColorVal) {
+            try {
+                const cm = _normText(product.carModel);
+                const pn = _normText(product.partName || '');
+                const existingStage = _templates().find(t =>
+                    _normText(t.carModel) === cm && _normText(t.partName || '') === pn &&
+                    _normText(t.color || '') === stageColorVal && _normText(t.paintProcess || '') === paintProcess);
+                const stagePreset = _matchedPresetNameForKeys(items.map(i => i.key));
+                const presetDoc = stagePreset
+                    ? (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === stagePreset)
+                    : null;
+                const stagePayload = {
+                    _docKind: TEMPLATE_KIND,
+                    carModel: cm,
+                    partName: pn,
+                    color: stageColorVal,
+                    productId: product.id,
+                    items: [
+                        ...items,
+                        ...((existingStage?.items || []).filter(item => item?.notApplicable === true && !items.some(c => String(c.key || '') === String(item.key || ''))).map(item => ({ ...item })))
+                    ],
+                    presetId: presetDoc ? presetDoc.id : '',
+                    presetName: presetDoc ? presetDoc.name : '',
+                    updatedAt: UIUtils.now()
+                };
+                if (paintProcess) stagePayload.paintProcess = paintProcess;
+                if (existingStage) await Storage.update(STORE, existingStage.id, stagePayload);
+                else await Storage.add(STORE, stagePayload);
+            } catch (err) {
+                console.error('[saveSpecPage] 차수별 저장 실패:', err);
+                UIUtils.toast(`저장 실패: ${err && err.message ? err.message : String(err)}`, 'error');
+                return;
+            }
+            UIUtils.toast('차수별 기준값이 저장되었습니다.', 'success');
+            openSpecPage(productId, 'view', paintProcess, stageColorVal);
+            return;
+        }
 
         // 체크된 동일 컬러 품목 ID 목록
         const checkedIds = [...document.querySelectorAll('.pq-same-color-chk:checked')].map(el => el.value);
@@ -25368,6 +25429,39 @@ var ProdQualityModule = (function() {
         return base || colorA || colorB;
     }
 
+    // 같은 도장 라인을 2회 이상 거치는 제품(예: P702 Lens 도장-B 1차 BK / 2차 CLEAR)의 차수별 컬러 목록.
+    function _stageColorsFor(product, paintProcess = '') {
+        if (!product) return [];
+        const proc = _normText(paintProcess);
+        const letter = proc === '도장-A' ? 'A' : (proc === '도장-B' ? 'B' : '');
+        if (!letter) return [];
+        const times = [1, 2, 3, 4].map(i => _normText(product['process' + i] || '')).filter(x => x === proc).length;
+        if (times < 2) return [];
+        const split = _normText(product.color || '').split(/\s*\+\s*/).filter(Boolean);
+        const out = [];
+        for (let stage = 1; stage <= times; stage += 1) {
+            const c = _normText(product['paintColor' + letter + stage] || '') || split[stage - 1] || '';
+            if (c) out.push(c);
+        }
+        return out;
+    }
+
+    // 작업(발행 문서)의 실제 컬러가 차수 컬러와 같으면 그 차수 컬러를 돌려준다. 없으면 ''.
+    function _stageColorFor(product, paintProcess = '', color = '') {
+        const want = _sameColorCompareKey(color || '');
+        if (!want) return '';
+        return _stageColorsFor(product, paintProcess).find(c => _sameColorCompareKey(c) === want) || '';
+    }
+
+    // 발행 문서(작업)의 기준 컬러: 차수 제품은 작업 컬러(BK/CLEAR)를 우선, 그 외는 라인별 제품 컬러.
+    function _issueColorFor(product, line, color, carModel, partName) {
+        const stage = product && line ? _stageColorFor(product, line, color) : '';
+        if (stage) return stage;
+        return product && line
+            ? (_resolveProductColor(product, line) || _resolveIssueColor(carModel || '', partName || '', color || ''))
+            : _resolveIssueColor(carModel || '', partName || '', color || '');
+    }
+
     function _templateFor(carModel, color = '') {
         const car = _normText(carModel);
         const clr = _normText(color);
@@ -25428,8 +25522,18 @@ var ProdQualityModule = (function() {
         return _normText(product?.color || product?.paintColor || product?.paint || product?.drawingColor || '');
     }
 
-    function _productSpecItems(carModel, partName, color, { fallbackToMaster = true, paintProcess = '', fallbackColors = [] } = {}) {
+    function _productSpecItems(carModel, partName, color, { fallbackToMaster = true, paintProcess = '', fallbackColors = [], strictColor = false } = {}) {
         let tmpl = _templateForProduct(carModel, partName, color, paintProcess);
+        if (strictColor) {
+            // 차수(1차·2차)별 행: 다른 컬러의 기준을 대신 가져오지 않고 해당 컬러에 저장된 기준만 쓴다.
+            tmpl = (_templates() || []).find(t =>
+                _normText(t.carModel) === _normText(carModel) &&
+                _normText(t.partName || '') === _normText(partName) &&
+                _normText(t.color || '') === _normText(color) &&
+                _normText(t.paintProcess || '') === _normText(paintProcess)
+            ) || null;
+            fallbackColors = [];
+        }
         if (!tmpl && fallbackColors.length) {
             for (const fc of fallbackColors) {
                 if (!fc || fc === color) continue;
@@ -25438,7 +25542,7 @@ var ProdQualityModule = (function() {
             }
         }
         // 공정별 컬러(paintColorA/B)와 product.color가 달랐던 구버전 저장분 복구
-        if (!tmpl && paintProcess) {
+        if (!tmpl && paintProcess && !strictColor) {
             const car = _normText(carModel);
             const part = _normText(partName);
             const proc = _normText(paintProcess);
@@ -25709,8 +25813,7 @@ var ProdQualityModule = (function() {
     function fillForm(d = {}) {
         const resolvedColor = (() => {
             const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
-            if (product && d.line) return _resolveProductColor(product, d.line) || _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
-            return _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+            return _issueColorFor(product, d.line, d.color, d.carModel, d.partName);
         })();
         const timeParts = _issueTimeParts(d);
         const duration = d.workHours || _durationHours(timeParts.startTime, timeParts.endTime);
@@ -25912,12 +26015,15 @@ var ProdQualityModule = (function() {
         const product = _findProductForQuality(carModel, partName, color);
         // 라인(도장-A/B)이 있으면 공정별 컬러로 품목별 기준을 조회한다.
         // (품목별 항목 기준은 paintProcess+paintColorA/B로 저장되므로 라인 없이 조회하면 기본 마스터 항목이 나옴)
-        const resolvedColor = product && proc
+        // 차수 제품(예: P702 Lens)은 작업 컬러(BK/CLEAR)와 같은 차수 컬러의 기준을 그대로 쓴다.
+        const stageColor = product && proc ? _stageColorFor(product, proc, color) : '';
+        const resolvedColor = stageColor || (product && proc
             ? (_resolveProductColor(product, proc) || _resolveIssueColor(carModel, partName, color))
-            : _resolveIssueColor(carModel, partName, color);
+            : _resolveIssueColor(carModel, partName, color));
         const presetItems = _productSpecItems(carModel, partName, resolvedColor, {
             fallbackToMaster: false,
-            paintProcess: proc
+            paintProcess: proc,
+            strictColor: !!stageColor
         });
         const baseItems = presetItems.length
             ? presetItems
@@ -27529,9 +27635,7 @@ var ProdQualityModule = (function() {
         // 발행 당시 저장된 items가 기본 마스터(색차·광택 등)여도,
         // 인쇄/재인쇄는 현재 품목별 항목 기준(프리셋)을 우선 적용한다.
         const product = _findProductForQuality(d.carModel || '', d.partName || '', d.color || '');
-        const resolvedColor = product && d.line
-            ? (_resolveProductColor(product, d.line) || _resolveIssueColor(d.carModel || '', d.partName || '', d.color || ''))
-            : _resolveIssueColor(d.carModel || '', d.partName || '', d.color || '');
+        const resolvedColor = _issueColorFor(product, d.line, d.color, d.carModel, d.partName);
         const templateItems = (d.carModel && d.partName)
             ? _issueItemsForProduct(d.carModel || '', d.partName || '', resolvedColor, [], d.line || '')
                 .filter(item => item.selected !== false)
@@ -27778,11 +27882,12 @@ var ProdQualityModule = (function() {
     }
 
     // 품목 기준값 화면에서 초중종물 C/S 인쇄물을 저장 없이 미리보기로 연다.
-    function previewSpecPrint(productId, paintProcess) {
+    function previewSpecPrint(productId, paintProcess, stageColor = '') {
         const product = (Storage.getAll(DB.STORES.PRODUCTS) || []).find(p => p.id === productId);
         if (!product) { UIUtils.toast('제품 정보를 찾을 수 없습니다.', 'error'); return; }
         const proc = _normText(paintProcess || '');
-        const color = _resolveProductColor(product, proc);
+        // 차수(1차 BK / 2차 CLEAR) 기준 화면에서 연 미리보기는 그 차수 컬러로 인쇄한다.
+        const color = _normText(stageColor || '') || _resolveProductColor(product, proc);
         const draft = {
             _docKind: ISSUE_KIND,
             id: '',
@@ -29392,6 +29497,9 @@ var ProdEquipmentModule = (function() {
         const allEquips    = (Storage.getAll(ST_EQUIP) || []).filter(e => e.line === _line);
         const loggedIn     = _isLoggedIn();
         const admin        = _isAdmin();
+        const representativeIds = new Set((Storage.getAll(ST_PROFILE) || [])
+            .map(profile => profile && profile.sourceEquipmentId)
+            .filter(Boolean));
         const _hiddenSet   = new Set(_loadHiddenProcs()[_line] || []);
         const _allStations = _getProcStations(_line);
         const _orderedStations = _orderProcStations(_allStations, _line);
@@ -29432,6 +29540,7 @@ var ProdEquipmentModule = (function() {
         const renderEquipChip = (e, isChild, childCount, displayCode) => {
             const sel  = e.id === _equipId;
             const shownCode = e.positionNo || displayCode || '';
+            const isRepresentative = representativeIds.has(e.id);
             const sCol = e.status==='정상' ? '#16a34a' : e.status==='점검중' ? '#d97706' : e.status==='수리중' ? '#dc2626' : '#64748b';
             const sBg  = e.status==='정상' ? '#f0fdf4' : e.status==='점검중' ? '#fefce8' : e.status==='수리중' ? '#fef2f2' : '#f8fafc';
             const canDrag = admin;
@@ -29456,11 +29565,11 @@ var ProdEquipmentModule = (function() {
                              color:${sel?'var(--accent-blue)':(isChild?'var(--text-secondary)':'var(--text-primary)')};
                              overflow:hidden;">
                     ${isChild ? `<span style="flex-shrink:0;color:var(--text-muted);font-size:0.62rem;">ㄴ</span>` : ''}
-                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}</span>
+                    <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(e.name)}${isRepresentative ? ' <span style="color:#7c3aed;font-size:.62rem;font-weight:800;">(대표)</span>' : ''}</span>
                     ${childCount ? `<span style="flex-shrink:0;font-size:0.62rem;color:var(--text-muted);
                         background:var(--bg-tertiary,#f1f5f9);border-radius:8px;padding:0 5px;margin-left:2px;">하위${childCount}</span>` : ''}
                 </div>
-                ${shownCode ? `<div style="margin:${isChild?'2px 0 0 13px':'2px 0 0 0'};font-size:0.58rem;font-weight:800;color:#2563eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${e.positionNo ? '사용자 지정 위치 번호' : '자동 계산 위치 번호'}">설비 위치 ${_esc(shownCode)}</div>` : ''}
+                ${shownCode ? `<div style="margin:${isChild?'2px 0 0 13px':'2px 0 0 0'};font-size:0.58rem;font-weight:800;color:#2563eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${e.positionNo ? '사용자 지정 위치 번호' : '자동 계산 위치 번호'}">${_esc(shownCode)}</div>` : ''}
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:3px;">
                     <span style="font-size:${isChild?'0.58rem':'0.66rem'};font-weight:600;color:${sCol};
                                  background:${sBg};border:1px solid ${sCol}44;
@@ -29567,6 +29676,10 @@ var ProdEquipmentModule = (function() {
                     : '';
                 return `<div style="min-width:0;">${renderEquipChip(e, depth > 0, kids.length, displayPositions.get(e.id) || '')}${kidsHtml}</div>`;
             };
+            const wideGridColumns = isWide
+                ? Math.max(2, ...topLevel.map(e => parseGridPosition(e).col))
+                : 1;
+            const colWidth = isWide ? wideGridColumns * 176 : 176;
             const topLevelHtml = topLevel.map(e => {
                 const block = renderTreeNode(e, 0, new Set());
                 const gridPos = parseGridPosition(e);
@@ -29577,7 +29690,7 @@ var ProdEquipmentModule = (function() {
                     : block;
             }).join('');
             const equipTreeHtml = isWide
-                ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;align-items:start;">${topLevelHtml}</div>`
+                ? `<div style="display:grid;grid-template-columns:repeat(${wideGridColumns},minmax(0,1fr));gap:6px;align-items:start;">${topLevelHtml}</div>`
                 : topLevelHtml;
             const dragAttrs = admin ? `draggable="true"
                     data-proc-tile="${_esc(proc.name)}"
@@ -29588,7 +29701,7 @@ var ProdEquipmentModule = (function() {
                     ondragend="ProdEquipmentModule._procTileDragEnd(event)"
                     title="공정 타일을 드래그해 위치 변경"` : '';
             return `
-            <div ${dragAttrs} style="flex:0 0 ${isWide?352:176}px;width:${isWide?352:176}px;border-right:1px solid var(--border-color);
+            <div ${dragAttrs} style="flex:0 0 ${colWidth}px;width:${colWidth}px;border-right:1px solid var(--border-color);
                         display:flex;flex-direction:column;">
                 <div style="padding:8px 10px;background:${tint}1c;
                            border-bottom:3px solid ${tint};user-select:none;">
@@ -29639,20 +29752,21 @@ var ProdEquipmentModule = (function() {
         let cols = '';
         // 기본 행 경계는 하도 스프레이 앞(없으면 6개 공정 뒤)으로 둔다.
         // 관리자는 가운데 드롭 라인에 타일을 놓아 행을 이동시킬 수 있다.
-        const defaultRowBreak = (() => {
+        const fallbackRowBreak = (() => {
             const sprayIndex = visibleProcs.findIndex(p => WIDE_PROCS.has(p.name));
             return sprayIndex > 0 ? sprayIndex : Math.min(6, visibleProcs.length);
         })();
+        const rowBreakIndex = _getProcRowBreak(_line, visibleProcs.length, fallbackRowBreak);
         visibleProcs.forEach((proc, index) => {
             const equips = allEquips
                 .filter(e => e.process === proc.name)
                 .sort(_equipOrderCompare);
             cols += renderCol(proc, equips, proc.common, false);
-            if (admin && index + 1 === defaultRowBreak && index + 1 < visibleProcs.length) {
+            if (admin && index + 1 === rowBreakIndex && index + 1 < visibleProcs.length) {
                 cols += `<div data-proc-row-drop="true"
                     ondragover="ProdEquipmentModule._procRowDragOver(event)"
                     ondragleave="ProdEquipmentModule._procRowDragLeave(event)"
-                    ondrop="ProdEquipmentModule._procRowDrop(${defaultRowBreak},event)"
+                    ondrop="ProdEquipmentModule._procRowDrop(${rowBreakIndex},event)"
                     title="여기에 공정 타일을 놓으면 다음 행으로 이동"
                     style="flex:0 0 100%;width:100%;height:24px;box-sizing:border-box;
                            border-top:2px dashed #94a3b8;border-bottom:1px solid #e2e8f0;
@@ -29763,6 +29877,9 @@ var ProdEquipmentModule = (function() {
     }
 
     async function _equipChipDrop(targetId, event) {
+        // 공정 타일을 설비 카드 위에 놓을 때는 하위 설비 드롭이 가로채지 않도록
+        // 실제 설비 드래그 중인 경우에만 이벤트를 소비한다.
+        if (!_equipDragSrc) return;
         if (event) { event.preventDefault(); event.stopPropagation(); }
         const dropMode = event?.currentTarget?.dataset.dropMode || 'child';
         if (event && event.currentTarget) {
@@ -29832,6 +29949,7 @@ var ProdEquipmentModule = (function() {
 
     // ── 공정 타일 순서 관리 (localStorage) ────────────────────────
     const _PROC_ORDER_KEY = 'equipProcessOrder';
+    const _PROC_ROW_BREAK_KEY = 'equipProcessRowBreak';
     function _loadProcOrder() {
         try { return JSON.parse(localStorage.getItem(_PROC_ORDER_KEY) || '{}'); } catch (e) { return {}; }
     }
@@ -29848,6 +29966,16 @@ var ProdEquipmentModule = (function() {
             .sort((a, b) => (rank.has(a.station.name) ? rank.get(a.station.name) : saved.length + a.index)
                 - (rank.has(b.station.name) ? rank.get(b.station.name) : saved.length + b.index))
             .map(item => item.station);
+    }
+    function _loadProcRowBreaks() {
+        try { return JSON.parse(localStorage.getItem(_PROC_ROW_BREAK_KEY) || '{}'); } catch (e) { return {}; }
+    }
+    function _saveProcRowBreaks(obj) {
+        localStorage.setItem(_PROC_ROW_BREAK_KEY, JSON.stringify(obj));
+    }
+    function _getProcRowBreak(line, count, fallback) {
+        const saved = Number(_loadProcRowBreaks()[line || _line]);
+        return Number.isFinite(saved) && saved > 0 && saved < count ? saved : fallback;
     }
 
     let _procTileDragSrc = null;
@@ -29926,6 +30054,10 @@ var ProdEquipmentModule = (function() {
         const from = names.indexOf(_procTileDragSrc);
         const to = names.indexOf(targetName);
         if (from < 0 || to < 0) { _procTileDragEnd(); return; }
+        const fallbackBreak = Math.min(6, names.length);
+        const oldBreak = _getProcRowBreak(_line, names.length, fallbackBreak);
+        const sourceWasUpper = from < oldBreak;
+        const targetWasUpper = to < oldBreak;
         names.splice(from, 1);
         const targetIndex = names.indexOf(targetName);
         const rect = event.currentTarget ? event.currentTarget.getBoundingClientRect() : null;
@@ -29937,6 +30069,17 @@ var ProdEquipmentModule = (function() {
             ? (nearBottom || (!nearTop && event.clientX > rect.left + rect.width / 2))
             : true;
         names.splice(targetIndex + (insertAfter ? 1 : 0), 0, _procTileDragSrc);
+        // 다른 행의 타일을 현재 행으로 옮기면 기존 타일들이 밀려 내려가지 않도록
+        // 행 경계도 함께 한 칸 이동한다.
+        let newBreak = oldBreak;
+        if (sourceWasUpper !== targetWasUpper) {
+            newBreak += sourceWasUpper ? -1 : 1;
+        }
+        if (newBreak > 0 && newBreak < names.length) {
+            const breaks = _loadProcRowBreaks();
+            breaks[_line] = newBreak;
+            _saveProcRowBreaks(breaks);
+        }
         const obj = _loadProcOrder();
         obj[_line] = names;
         _saveProcOrder(obj);
@@ -30732,8 +30875,11 @@ var ProdEquipmentModule = (function() {
         const equips = (Storage.getAll(ST_EQUIP) || [])
             .filter(e => !e.parentId)
             .slice().sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko'));
+        const representativeIds = new Set((Storage.getAll(ST_PROFILE) || [])
+            .map(profile => profile && profile.sourceEquipmentId)
+            .filter(Boolean));
         return '<option value="">-- 기존 대표 설비에서 불러오기 --</option>' + equips.map(e =>
-            `<option value="${_esc(e.id)}" ${selectedId===e.id?'selected':''}>${_esc(e.name)}${e.line ? ' · ' + _esc(e.line) : ''}${e.model ? ' · ' + _esc(e.model) : ''}</option>`
+            `<option value="${_esc(e.id)}" ${selectedId===e.id?'selected':''}>${_esc(e.name)}${representativeIds.has(e.id) ? ' (대표)' : ''}${e.line ? ' · ' + _esc(e.line) : ''}${e.model ? ' · ' + _esc(e.model) : ''}</option>`
         ).join('');
     }
     function _equipmentSpecSummary(specs) {
