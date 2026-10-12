@@ -18147,9 +18147,6 @@ var ProdEquipmentModule = (function() {
                     <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">${monthLabel} 이상 발생 현황</div>
                 </div>
 
-                ${tile('pause_circle','#f59e0b','비가동 이력', dtMin ,'분 · ' + (dtMin/60).toFixed(1) + 'h',
-                    monthLabel + ' 비가동 ' + thisDts.length + '건',
-                    'general')}
             </div>
 
             <!-- 세부 관리 타일 -->

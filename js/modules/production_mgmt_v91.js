@@ -109,8 +109,8 @@ var ProdStandardsModule = (function() {
                 '배합':       60,
                 '하도 공급':  60,
                 '상도 공급':  60,
-                '하도 스프레이': 70,
-                '상도 스프레이': 70,
+                '하도 스프레이': '70-1',
+                '상도 스프레이': '70-2',
                 '건조':      100,
                 '언로딩':    110,
                 '포장':      110,
@@ -205,8 +205,8 @@ var ProdStandardsModule = (function() {
                 '배합':       60,
                 '하도 공급':  60,
                 '상도 공급':  60,
-                '하도 스프레이': 70,
-                '상도 스프레이': 70,
+                '하도 스프레이': '70-1',
+                '상도 스프레이': '70-2',
                 '건조':      100,
                 '언로딩':    110,
                 '포장':      110,
@@ -8867,6 +8867,16 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         return loose ? parseInt(loose[0], 10) : null;
     }
 
+    function _normalizeProcNoCode(procNo) {
+        const s = String(procNo || '').trim();
+        if (!s) return '';
+        const m = s.match(/^(\d+)\s*(?:([._\-\/])\s*(\d+))?$/);
+        if (!m) return s.replace(/\s+/g, '');
+        const base = String(parseInt(m[1], 10));
+        if (!m[3] || (m[2] === '.' && Number(m[3]) === 0)) return base;
+        return `${base}-${parseInt(m[3], 10)}`;
+    }
+
     function _stationTextMatchesName(text, stationName) {
         if (!text || !stationName) return false;
         const source = String(text).replace(/\s+/g, '').toLowerCase();
@@ -8881,6 +8891,8 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
     // 복수 공정에 같은 번호가 있을 경우를 대비해 sysProcessHint 로 좁힘
     function _lookupByProcNo(procNo, sysProcessHint, line, stationHint) {
         const no = _parseProcNoBase(procNo);
+        const code = _normalizeProcNoCode(procNo);
+        const hasSubNo = code.includes('-');
         if (no == null || isNaN(no)) return null;
 
         const refCfg = _getCarConfig(line || '');
@@ -8892,7 +8904,10 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         for (const procName of candidates) {
             const cfg = refCfg[procName];
             if (!cfg || !cfg.stationNos) continue;
-            const entries = Object.entries(cfg.stationNos).filter(([, v]) => v === no);
+            const entries = Object.entries(cfg.stationNos).filter(([, v]) => {
+                const configuredCode = _normalizeProcNoCode(v);
+                return hasSubNo ? configuredCode === code : _parseProcNoBase(v) === no;
+            });
             if (entries.length === 1) {
                 // 유일한 스테이션 → 확실한 결과
                 return { sysProcess: procName, sysStation: entries[0][0] };
@@ -11379,12 +11394,20 @@ th, td { border:1px solid #555; padding:3px 4px; vertical-align:middle; word-bre
         // ── col.procNo 검증: 실제 공정번호 값(PROCESS_CONFIG stationNos) 포함 여부 ──
         const _knownProcNos = new Set();
         Object.values(PROCESS_CONFIG).forEach(cfg => {
-            if (cfg.stationNos) Object.values(cfg.stationNos).forEach(v => _knownProcNos.add(v));
-            if (cfg.procNo) _knownProcNos.add(cfg.procNo);
+            if (cfg.stationNos) Object.values(cfg.stationNos).forEach(v => {
+                _knownProcNos.add(_normalizeProcNoCode(v));
+                const base = _parseProcNoBase(v);
+                if (base != null) _knownProcNos.add(String(base));
+            });
+            if (cfg.procNo) {
+                _knownProcNos.add(_normalizeProcNoCode(cfg.procNo));
+                const base = _parseProcNoBase(cfg.procNo);
+                if (base != null) _knownProcNos.add(String(base));
+            }
         });
         const _hasProcNoVals = (ci) => rows.some(r => {
-            const n = parseInt(_t(r[ci]));
-            return !isNaN(n) && _knownProcNos.has(n);
+            const code = _normalizeProcNoCode(_t(r[ci]));
+            return !!code && _knownProcNos.has(code);
         });
         if (col.procNo < 0 || !_hasProcNoVals(col.procNo)) {
             col.procNo = -1;
@@ -28415,6 +28438,7 @@ var ProdEquipmentModule = (function() {
 
     let _line     = '도장A라인';
     let _equipId  = null;
+    let _equipDisplayCodes = new Map();
     let _subTab   = 'spare';
     let _rightTab   = 'map';   // 'map' | 'detail'
     let _layoutEditMode = false;
@@ -28430,8 +28454,8 @@ var ProdEquipmentModule = (function() {
         { name:'배합',        icon:'science',               no:60  },
         { name:'하도 공급',   icon:'valve',                 no:60  },
         { name:'상도 공급',   icon:'valve',                 no:60  },
-        { name:'하도 스프레이',icon:'blur_on',              no:70  },
-        { name:'상도 스프레이',icon:'blur_on',              no:70  },
+        { name:'하도 스프레이',icon:'blur_on',              no:'70-1' },
+        { name:'상도 스프레이',icon:'blur_on',              no:'70-2' },
         { name:'건조',        icon:'local_fire_department', no:100 },
         { name:'언로딩',      icon:'download',              no:110 },
         { name:'포장',        icon:'inventory_2',           no:110 },
@@ -28905,9 +28929,6 @@ var ProdEquipmentModule = (function() {
                     <div style="margin-top:6px;font-size:0.76rem;color:var(--text-muted);">${monthLabel} 이상 발생 현황</div>
                 </div>
 
-                ${tile('pause_circle','#f59e0b','비가동 이력', dtMin ,'분 · ' + (dtMin/60).toFixed(1) + 'h',
-                    monthLabel + ' 비가동 ' + thisDts.length + '건',
-                    'general')}
 
                 <div onclick="Router.navigate('equipment-oee')"
                      style="background:var(--bg-card,var(--bg-secondary));border:1px solid var(--border-color);
@@ -29354,16 +29375,28 @@ var ProdEquipmentModule = (function() {
         return _EQUIP_COL_PALETTE[hash % _EQUIP_COL_PALETTE.length];
     }
 
+    // 같은 단계(동일 상위 설비)의 정렬 순서. 미지정(0)은 순서가 있는 설비 뒤에 둔다.
+    function _equipOrderCompare(a, b) {
+        const ao = Number(a && a.sortOrder) || 0;
+        const bo = Number(b && b.sortOrder) || 0;
+        if (ao > 0 && bo <= 0) return -1;
+        if (ao <= 0 && bo > 0) return 1;
+        if (ao > 0 && bo > 0 && ao !== bo) return ao - bo;
+        return (a?.name || '').localeCompare(b?.name || '', 'ko');
+    }
+
     function _renderEquipList() {
         const el = document.getElementById('equipListBody');
         if (!el) return;
+        _equipDisplayCodes = new Map();
         const allEquips    = (Storage.getAll(ST_EQUIP) || []).filter(e => e.line === _line);
         const loggedIn     = _isLoggedIn();
         const admin        = _isAdmin();
         const _hiddenSet   = new Set(_loadHiddenProcs()[_line] || []);
         const _allStations = _getProcStations(_line);
+        const _orderedStations = _orderProcStations(_allStations, _line);
         const _hiddenCount = _allStations.filter(p => _hiddenSet.has(p.name)).length;
-        const visibleProcs = _allStations.filter(p => !_hiddenSet.has(p.name));
+        const visibleProcs = _orderedStations.filter(p => !_hiddenSet.has(p.name));
 
         let html = '';
 
@@ -29396,8 +29429,9 @@ var ProdEquipmentModule = (function() {
         // 컬럼 안에서 설비가 위에서 아래로 쌓인다 — 세로 아코디언이던 이전 배치는
         // 공정이 12개를 넘어가면서 화면을 계속 스크롤해야 전체가 보였다.
         // childCount: 이 설비 밑에 하위 설비가 몇 대 있는지(뱃지 표시용). isChild면 "ㄴ" 표식 + 살짝 축소.
-        const renderEquipChip = (e, isChild, childCount) => {
+        const renderEquipChip = (e, isChild, childCount, displayCode) => {
             const sel  = e.id === _equipId;
+            const shownCode = e.positionNo || displayCode || '';
             const sCol = e.status==='정상' ? '#16a34a' : e.status==='점검중' ? '#d97706' : e.status==='수리중' ? '#dc2626' : '#64748b';
             const sBg  = e.status==='정상' ? '#f0fdf4' : e.status==='점검중' ? '#fefce8' : e.status==='수리중' ? '#fef2f2' : '#f8fafc';
             const canDrag = admin;
@@ -29408,6 +29442,7 @@ var ProdEquipmentModule = (function() {
                     ondragleave="ProdEquipmentModule._equipChipDragLeave(event)"
                     ondrop="ProdEquipmentModule._equipChipDrop('${e.id}',event)"
                     ondragend="ProdEquipmentModule._equipChipDragEnd(event)"` : ''}
+                title="${canDrag ? '카드 중앙: 하위 설비로 이동 · 위/아래 가장자리: 같은 단계 사이에 삽입' : ''}"
                 onclick="ProdEquipmentModule.selectEquip('${e.id}')"
                 style="padding:${isChild?'5px 7px':'6px 8px'};margin:${isChild?'0 0 5px':'0 6px 6px'};border-radius:6px;
                        cursor:${canDrag?'grab':'pointer'};
@@ -29425,6 +29460,7 @@ var ProdEquipmentModule = (function() {
                     ${childCount ? `<span style="flex-shrink:0;font-size:0.62rem;color:var(--text-muted);
                         background:var(--bg-tertiary,#f1f5f9);border-radius:8px;padding:0 5px;margin-left:2px;">하위${childCount}</span>` : ''}
                 </div>
+                ${shownCode ? `<div style="margin:${isChild?'2px 0 0 13px':'2px 0 0 0'};font-size:0.58rem;font-weight:800;color:#2563eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${e.positionNo ? '사용자 지정 위치 번호' : '자동 계산 위치 번호'}">설비 위치 ${_esc(shownCode)}</div>` : ''}
                 <div style="display:flex;align-items:center;justify-content:space-between;gap:4px;margin-top:3px;">
                     <span style="font-size:${isChild?'0.58rem':'0.66rem'};font-weight:600;color:${sCol};
                                  background:${sBg};border:1px solid ${sCol}44;
@@ -29456,23 +29492,103 @@ var ProdEquipmentModule = (function() {
             // 하위 설비 트리 구성 — parentId가 이 컬럼 안의 다른 설비를 가리킬 때만 자식으로 취급한다.
             // 부모가 삭제·이동돼 링크가 끊긴 고아 항목은 최상위로 자연스럽게 떨어진다(조용히 안 보이는 사고 방지).
             const byId = new Map(equips.map(e => [e.id, e]));
-            const topLevel = equips.filter(e => !e.parentId || !byId.has(e.parentId));
+            const topLevel = equips.filter(e => !e.parentId || !byId.has(e.parentId)).sort(_equipOrderCompare);
             const childrenOf = (parentId) => equips
                 .filter(e => e.parentId === parentId && byId.has(e.parentId))
-                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
-            const equipTreeHtml = topLevel.map(e => {
-                const kids = childrenOf(e.id);
+                .sort(_equipOrderCompare);
+
+            // 공정코드와 설비 위치를 분리해 "70-1 · C1-R2" 형식으로 자동 계산한다.
+            const displayPositions = new Map();
+            const processNo = proc.no !== undefined && proc.no !== null ? String(proc.no) : 'X';
+            const setPosition = (equip, col, row) => {
+                const code = `${processNo} · C${col}-R${row}`;
+                displayPositions.set(equip.id, code);
+                _equipDisplayCodes.set(equip.id, code);
+            };
+            const parseGridPosition = (equip) => {
+                const code = equip.positionNo || displayPositions.get(equip.id) || '';
+                const match = String(code).match(/C\s*(\d+)\s*[-·/]\s*R\s*(\d+)/i);
+                return match ? { col: Math.max(Number(match[1]) || 1, 1), row: Math.max(Number(match[2]) || 1, 1) } : { col: 1, row: 1 };
+            };
+            const assignVerticalBranch = (equip, col, row, ancestors) => {
+                const path = new Set(ancestors || []);
+                if (path.has(equip.id)) return row;
+                path.add(equip.id);
+                setPosition(equip, col, row);
+                let nextRow = row + 1;
+                childrenOf(equip.id).filter(child => !path.has(child.id)).forEach(child => {
+                    const endRow = assignVerticalBranch(child, col, nextRow, path);
+                    nextRow = endRow + 1;
+                });
+                return Math.max(row, nextRow - 1);
+            };
+            if (isWide) {
+                let nextTopRow = 1;
+                let pendingSingle = false;
+                topLevel.forEach(root => {
+                    const rootKids = childrenOf(root.id);
+                    if (!rootKids.length) {
+                        const col = pendingSingle ? 2 : 1;
+                        setPosition(root, col, nextTopRow);
+                        if (pendingSingle) { nextTopRow += 1; pendingSingle = false; }
+                        else pendingSingle = true;
+                        return;
+                    }
+                    if (pendingSingle) { nextTopRow += 1; pendingSingle = false; }
+                    setPosition(root, 1, nextTopRow);
+                    let childRow = nextTopRow + 1;
+                    for (let i = 0; i < rootKids.length; i += 2) {
+                        const leftEnd = assignVerticalBranch(rootKids[i], 1, childRow, new Set([root.id]));
+                        const rightEnd = rootKids[i + 1]
+                            ? assignVerticalBranch(rootKids[i + 1], 2, childRow, new Set([root.id]))
+                            : childRow;
+                        childRow = Math.max(leftEnd, rightEnd) + 1;
+                    }
+                    nextTopRow = childRow;
+                });
+            } else {
+                let row = 1;
+                topLevel.forEach(root => { row = assignVerticalBranch(root, 1, row, new Set()) + 1; });
+            }
+            const renderTreeNode = (e, depth, ancestors) => {
+                const path = new Set(ancestors || []);
+                if (path.has(e.id)) return '';
+                path.add(e.id);
+                const kids = childrenOf(e.id).filter(child => !path.has(child.id));
+                // 하위 설비가 여러 개일 때만 2열로 나눠 표시한다.
+                // 1개뿐인 경우에도 2열을 강제하면 상도 스프레이처럼 폭이 제한된
+                // 공정에서 카드가 절반으로 줄어 설비명이 세로로 잘린다.
+                const siblingRow = isWide && depth === 0 && kids.length > 1;
                 const kidsHtml = kids.length
-                    ? `<div style="margin:0 6px 6px 18px;padding-left:8px;border-left:2px solid ${tint}55;">
-                        ${kids.map(c => renderEquipChip(c, true, 0)).join('')}
+                    ? `<div style="margin:0 6px 6px ${depth === 0 ? 18 : 10}px;padding-left:8px;border-left:2px solid ${tint}55;
+                            ${siblingRow ? 'display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;align-items:start;' : ''}">
+                        ${kids.map(child => renderTreeNode(child, depth + 1, path)).join('')}
                        </div>`
                     : '';
-                const block = renderEquipChip(e, false, kids.length) + kidsHtml;
-                // 2열 모드에서는 부모+하위를 한 덩어리로 묶어 열이 나뉠 때 쪼개지지 않게 한다.
-                return isWide ? `<div style="break-inside:avoid;">${block}</div>` : block;
+                return `<div style="min-width:0;">${renderEquipChip(e, depth > 0, kids.length, displayPositions.get(e.id) || '')}${kidsHtml}</div>`;
+            };
+            const topLevelHtml = topLevel.map(e => {
+                const block = renderTreeNode(e, 0, new Set());
+                const gridPos = parseGridPosition(e);
+                const hasMultipleChildren = childrenOf(e.id).length > 1;
+                // 여러 로봇을 가진 대표 설비는 두 열을 사용하고, 단일 설비는 지정된 C/R 위치에 놓는다.
+                return isWide
+                    ? `<div style="min-width:0;grid-column:${hasMultipleChildren ? '1 / -1' : gridPos.col};grid-row:${gridPos.row};">${block}</div>`
+                    : block;
             }).join('');
+            const equipTreeHtml = isWide
+                ? `<div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;align-items:start;">${topLevelHtml}</div>`
+                : topLevelHtml;
+            const dragAttrs = admin ? `draggable="true"
+                    data-proc-tile="${_esc(proc.name)}"
+                    ondragstart="ProdEquipmentModule._procTileDragStart('${_js(proc.name)}',event)"
+                    ondragover="ProdEquipmentModule._procTileDragOver(event)"
+                    ondragleave="ProdEquipmentModule._procTileDragLeave(event)"
+                    ondrop="ProdEquipmentModule._procTileDrop('${_js(proc.name)}',event)"
+                    ondragend="ProdEquipmentModule._procTileDragEnd(event)"
+                    title="공정 타일을 드래그해 위치 변경"` : '';
             return `
-            <div style="flex:0 0 ${isWide?352:176}px;width:${isWide?352:176}px;border-right:1px solid var(--border-color);
+            <div ${dragAttrs} style="flex:0 0 ${isWide?352:176}px;width:${isWide?352:176}px;border-right:1px solid var(--border-color);
                         display:flex;flex-direction:column;">
                 <div style="padding:8px 10px;background:${tint}1c;
                            border-bottom:3px solid ${tint};user-select:none;">
@@ -29513,8 +29629,7 @@ var ProdEquipmentModule = (function() {
                         </button>` : ''}
                     </div>` : ''}
                 </div>
-                <div style="flex:1;padding-top:6px;overflow-y:auto;max-height:520px;
-                            ${isWide ? 'column-count:2;column-gap:8px;' : ''}">
+                <div style="flex:1;padding-top:6px;overflow-y:auto;max-height:520px;">
                     ${equips.length > 0 ? equipTreeHtml :
                         `<div style="padding:8px 10px;font-size:0.76rem;color:var(--text-muted);">설비 없음</div>`}
                 </div>
@@ -29522,11 +29637,30 @@ var ProdEquipmentModule = (function() {
         };
 
         let cols = '';
-        visibleProcs.forEach(proc => {
+        // 기본 행 경계는 하도 스프레이 앞(없으면 6개 공정 뒤)으로 둔다.
+        // 관리자는 가운데 드롭 라인에 타일을 놓아 행을 이동시킬 수 있다.
+        const defaultRowBreak = (() => {
+            const sprayIndex = visibleProcs.findIndex(p => WIDE_PROCS.has(p.name));
+            return sprayIndex > 0 ? sprayIndex : Math.min(6, visibleProcs.length);
+        })();
+        visibleProcs.forEach((proc, index) => {
             const equips = allEquips
                 .filter(e => e.process === proc.name)
-                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+                .sort(_equipOrderCompare);
             cols += renderCol(proc, equips, proc.common, false);
+            if (admin && index + 1 === defaultRowBreak && index + 1 < visibleProcs.length) {
+                cols += `<div data-proc-row-drop="true"
+                    ondragover="ProdEquipmentModule._procRowDragOver(event)"
+                    ondragleave="ProdEquipmentModule._procRowDragLeave(event)"
+                    ondrop="ProdEquipmentModule._procRowDrop(${defaultRowBreak},event)"
+                    title="여기에 공정 타일을 놓으면 다음 행으로 이동"
+                    style="flex:0 0 100%;width:100%;height:24px;box-sizing:border-box;
+                           border-top:2px dashed #94a3b8;border-bottom:1px solid #e2e8f0;
+                           display:flex;align-items:center;justify-content:center;
+                           color:#64748b;font-size:.72rem;cursor:copy;background:#f8fafc;">
+                    <span>▲ 위쪽에 놓기: 1행으로 이동　|　▼ 아래쪽에 놓기: 2행으로 이동</span>
+                </div>`;
+            }
         });
 
         // 미분류 — 맨 끝 컬럼 (실제 공정이 아니므로 설비 추가는 지원하지 않는다)
@@ -29535,7 +29669,7 @@ var ProdEquipmentModule = (function() {
             cols += renderCol({ name:'미분류', icon:'inbox', no:null }, uncat, false, true);
         }
 
-        html += `<div id="equipColRow" style="display:flex;align-items:flex-start;overflow-x:auto;">${cols}</div>`;
+        html += `<div id="equipColRow" style="display:flex;flex-wrap:wrap;align-items:flex-start;overflow-x:auto;">${cols}</div>`;
 
         el.innerHTML = html;
 
@@ -29575,8 +29709,8 @@ var ProdEquipmentModule = (function() {
     }
 
     // ════════════════════════════════════════════════════════════
-    // 설비 카드 드래그 순서 변경 (관리자 전용) — 같은 라인·공정·상위설비(형제 그룹) 안에서만
-    // 순서를 바꾼다. 다른 컬럼/다른 상위설비로 드롭하면 무시한다(구조 변경은 수정 폼에서만).
+    // 설비 카드 드래그 배치 (관리자 전용)
+    // 카드 중앙 드롭은 하위 설비로 이동, 위/아래 가장자리 드롭은 같은 단계 앞/뒤에 삽입한다.
     // ════════════════════════════════════════════════════════════
     let _equipDragSrc = null;
 
@@ -29594,21 +29728,50 @@ var ProdEquipmentModule = (function() {
         if (!_isAdmin() || !_equipDragSrc) return;
         if (event) { event.preventDefault(); event.stopPropagation(); }
         if (event && event.dataTransfer) event.dataTransfer.dropEffect = 'move';
-        if (event && event.currentTarget) event.currentTarget.style.borderTop = '2px solid var(--accent-blue)';
+        if (event && event.currentTarget) {
+            const el = event.currentTarget;
+            const rect = el.getBoundingClientRect();
+            const ratio = rect.height ? (event.clientY - rect.top) / rect.height : 0.5;
+            const mode = ratio < 0.28 ? 'before' : ratio > 0.72 ? 'after' : 'child';
+            el.dataset.dropMode = mode;
+            el.style.borderTop = mode === 'before' ? '3px solid var(--accent-blue)' : '';
+            el.style.borderBottom = mode === 'after' ? '3px solid var(--accent-blue)' : '';
+            el.style.outline = mode === 'child' ? '2px solid var(--accent-blue)' : '';
+            el.style.outlineOffset = mode === 'child' ? '-2px' : '';
+        }
     }
 
     function _equipChipDragLeave(event) {
-        if (event && event.currentTarget) event.currentTarget.style.borderTop = '';
+        if (event && event.currentTarget) {
+            event.currentTarget.style.borderTop = '';
+            event.currentTarget.style.borderBottom = '';
+            event.currentTarget.style.outline = '';
+            event.currentTarget.style.outlineOffset = '';
+            delete event.currentTarget.dataset.dropMode;
+        }
     }
 
     function _equipChipDragEnd() {
         _equipDragSrc = null;
-        document.querySelectorAll('#equipColRow [draggable]').forEach(el => { el.style.borderTop = ''; });
+        document.querySelectorAll('#equipColRow [draggable]').forEach(el => {
+            el.style.borderTop = '';
+            el.style.borderBottom = '';
+            el.style.outline = '';
+            el.style.outlineOffset = '';
+            delete el.dataset.dropMode;
+        });
     }
 
     async function _equipChipDrop(targetId, event) {
         if (event) { event.preventDefault(); event.stopPropagation(); }
-        if (event && event.currentTarget) event.currentTarget.style.borderTop = '';
+        const dropMode = event?.currentTarget?.dataset.dropMode || 'child';
+        if (event && event.currentTarget) {
+            event.currentTarget.style.borderTop = '';
+            event.currentTarget.style.borderBottom = '';
+            event.currentTarget.style.outline = '';
+            event.currentTarget.style.outlineOffset = '';
+            delete event.currentTarget.dataset.dropMode;
+        }
         if (!_isAdmin()) return;
         const srcId = _equipDragSrc;
         _equipDragSrc = null;
@@ -29617,20 +29780,37 @@ var ProdEquipmentModule = (function() {
         const src    = Storage.getById(ST_EQUIP, srcId);
         const target = Storage.getById(ST_EQUIP, targetId);
         if (!src || !target) return;
-        if (src.line !== target.line || src.process !== target.process) return;
-        if ((src.parentId || '') !== (target.parentId || '')) return; // 같은 형제 그룹일 때만 순서 변경 허용
+        if (src.line !== target.line) { UIUtils.toast('같은 공정 라인 안에서만 설비를 이동할 수 있습니다.', 'warning'); return; }
+        const srcTree = _equipTreeRows(src.id);
+        if (srcTree.some(row => row.equip.id === targetId)) {
+            UIUtils.toast('현재 설비의 하위 설비 안으로 이동할 수 없습니다.', 'warning');
+            return;
+        }
+
+        const newParentId = dropMode === 'child' ? target.id : (target.parentId || '');
+        const newProcess = target.process || src.process;
+        await Storage.update(ST_EQUIP, src.id, { parentId: newParentId, process: newProcess, positionNo: '' });
+        for (const row of srcTree.slice(1)) {
+            const childPatch = {};
+            if (row.equip.process !== newProcess) childPatch.process = newProcess;
+            if (row.equip.positionNo) childPatch.positionNo = '';
+            if (Object.keys(childPatch).length) await Storage.update(ST_EQUIP, row.equip.id, childPatch);
+        }
 
         const siblings = (Storage.getAll(ST_EQUIP) || [])
-            .filter(e => e.line === src.line && e.process === src.process && (e.parentId || '') === (src.parentId || ''))
-            .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
-        const fromIdx = siblings.findIndex(e => e.id === srcId);
-        if (fromIdx < 0) return;
-        const [moving] = siblings.splice(fromIdx, 1);
-        const toIdx = siblings.findIndex(e => e.id === targetId);
-        siblings.splice(toIdx < 0 ? siblings.length : toIdx, 0, moving);
+            .filter(e => e.id !== src.id && e.line === src.line && e.process === newProcess && (e.parentId || '') === newParentId)
+            .sort(_equipOrderCompare);
+        const moving = Storage.getById(ST_EQUIP, src.id);
+        if (dropMode === 'child') {
+            siblings.push(moving);
+        } else {
+            const targetIdx = siblings.findIndex(e => e.id === targetId);
+            const insertAt = targetIdx < 0 ? siblings.length : targetIdx + (dropMode === 'after' ? 1 : 0);
+            siblings.splice(insertAt, 0, moving);
+        }
 
         for (let i = 0; i < siblings.length; i++) {
-            const newOrder = (i + 1) * 10;
+            const newOrder = i + 1;
             if ((siblings[i].sortOrder || 0) !== newOrder) {
                 await Storage.update(ST_EQUIP, siblings[i].id, { sortOrder: newOrder });
             }
@@ -29649,6 +29829,120 @@ var ProdEquipmentModule = (function() {
             ? AuthModule.getCurrentUser() : null;
         return !!u;
     };
+
+    // ── 공정 타일 순서 관리 (localStorage) ────────────────────────
+    const _PROC_ORDER_KEY = 'equipProcessOrder';
+    function _loadProcOrder() {
+        try { return JSON.parse(localStorage.getItem(_PROC_ORDER_KEY) || '{}'); } catch (e) { return {}; }
+    }
+    function _saveProcOrder(obj) {
+        localStorage.setItem(_PROC_ORDER_KEY, JSON.stringify(obj));
+    }
+    function _orderProcStations(stations, line) {
+        const list = Array.isArray(stations) ? stations.slice() : [];
+        const saved = _loadProcOrder()[line || _line];
+        if (!Array.isArray(saved) || !saved.length) return list;
+        const rank = new Map(saved.map((name, index) => [String(name), index]));
+        return list
+            .map((station, index) => ({ station, index }))
+            .sort((a, b) => (rank.has(a.station.name) ? rank.get(a.station.name) : saved.length + a.index)
+                - (rank.has(b.station.name) ? rank.get(b.station.name) : saved.length + b.index))
+            .map(item => item.station);
+    }
+
+    let _procTileDragSrc = null;
+    function _procTileDragStart(procName, event) {
+        if (!_isAdmin()) { if (event) event.preventDefault(); return; }
+        _procTileDragSrc = procName;
+        if (event && event.dataTransfer) {
+            event.dataTransfer.effectAllowed = 'move';
+            event.dataTransfer.setData('text/plain', procName);
+        }
+        if (event) event.stopPropagation();
+    }
+    function _procTileDragOver(event) {
+        if (!_isAdmin() || !_procTileDragSrc) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.currentTarget) {
+            event.currentTarget.style.outline = '3px solid var(--accent-blue)';
+            event.currentTarget.style.outlineOffset = '-3px';
+        }
+    }
+    function _procTileDragLeave(event) {
+        if (event && event.currentTarget) {
+            event.currentTarget.style.outline = '';
+            event.currentTarget.style.outlineOffset = '';
+        }
+    }
+    function _procTileDragEnd() {
+        _procTileDragSrc = null;
+        document.querySelectorAll('#equipColRow [data-proc-tile]').forEach(el => {
+            el.style.outline = '';
+            el.style.outlineOffset = '';
+        });
+    }
+    function _procRowDragOver(event) {
+        if (!_isAdmin() || !_procTileDragSrc) return;
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (event && event.currentTarget) {
+            event.currentTarget.style.background = '#dbeafe';
+            event.currentTarget.style.borderColor = 'var(--accent-blue)';
+            event.currentTarget.style.color = 'var(--accent-blue)';
+        }
+    }
+    function _procRowDragLeave(event) {
+        if (event && event.currentTarget) {
+            event.currentTarget.style.background = '#f8fafc';
+            event.currentTarget.style.borderColor = '#94a3b8';
+            event.currentTarget.style.color = '#64748b';
+        }
+    }
+    function _procRowDrop(rowIndex, event) {
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (!_isAdmin() || !_procTileDragSrc) { _procTileDragEnd(); return; }
+        const names = _orderProcStations(_getProcStations(_line), _line).map(p => p.name);
+        const from = names.indexOf(_procTileDragSrc);
+        if (from < 0) { _procTileDragEnd(); return; }
+        names.splice(from, 1);
+        const rect = event.currentTarget ? event.currentTarget.getBoundingClientRect() : null;
+        const toUpperRow = rect && event.clientY < rect.top + rect.height / 2;
+        const boundary = Number(rowIndex) || 0;
+        const insertAt = toUpperRow ? boundary - 1 : boundary;
+        names.splice(Math.max(0, Math.min(insertAt, names.length)), 0, _procTileDragSrc);
+        const obj = _loadProcOrder();
+        obj[_line] = names;
+        _saveProcOrder(obj);
+        _procTileDragEnd();
+        _renderEquipList();
+    }
+    function _procTileDrop(targetName, event) {
+        if (event) { event.preventDefault(); event.stopPropagation(); }
+        if (!_isAdmin() || !_procTileDragSrc || _procTileDragSrc === targetName) {
+            _procTileDragEnd();
+            return;
+        }
+        const stations = _getProcStations(_line);
+        const names = _orderProcStations(stations, _line).map(p => p.name);
+        const from = names.indexOf(_procTileDragSrc);
+        const to = names.indexOf(targetName);
+        if (from < 0 || to < 0) { _procTileDragEnd(); return; }
+        names.splice(from, 1);
+        const targetIndex = names.indexOf(targetName);
+        const rect = event.currentTarget ? event.currentTarget.getBoundingClientRect() : null;
+        // 카드의 어느 쪽에 놓았는지로 앞/뒤를 판단해 행 안에서도 자유롭게 삽입한다.
+        // 위·아래 가장자리는 세로 이동, 가운데 영역은 좌·우 이동으로 처리한다.
+        const nearTop = rect && event.clientY < rect.top + rect.height * 0.35;
+        const nearBottom = rect && event.clientY > rect.top + rect.height * 0.65;
+        const insertAfter = rect
+            ? (nearBottom || (!nearTop && event.clientX > rect.left + rect.width / 2))
+            : true;
+        names.splice(targetIndex + (insertAfter ? 1 : 0), 0, _procTileDragSrc);
+        const obj = _loadProcOrder();
+        obj[_line] = names;
+        _saveProcOrder(obj);
+        _procTileDragEnd();
+        _renderEquipList();
+    }
 
     // ── 공정 분류 숨김 관리 (localStorage) ───────────────────────
     const _HIDDEN_KEY = 'equipHiddenProcs';
@@ -30452,17 +30746,25 @@ var ProdEquipmentModule = (function() {
     function _profileEquipmentSnapshot(rootId) {
         return rootId ? _equipTreeRows(rootId).map(row => {
             const e = row.equip;
-            return { sourceId: e.id || '', depth: row.depth, name: e.name || '', model: e.model || '', line: e.line || '', process: e.process || '', parentId: e.parentId || '', profileId: e.profileId || '', specs: e.specs || {}, note: e.note || '', sortOrder: e.sortOrder || 0 };
+            return { sourceId: e.id || '', depth: row.depth, name: e.name || '', model: e.model || '', line: e.line || '', process: e.process || '', parentId: e.parentId || '', profileId: e.profileId || '', specs: e.specs || {}, photos: Array.isArray(e.photos) ? e.photos.slice() : [], note: e.note || '', sortOrder: e.sortOrder || 0 };
         }) : [];
     }
     function _profileEquipmentPreview(rootId, fallbackRows) {
         const rows = rootId ? _equipTreeRows(rootId) : (fallbackRows || []).map(row => ({ equip: row, depth: row.depth || 0 }));
         if (!rows.length) return '<span style="color:var(--text-muted);">기존 대표 설비를 선택하면 하위 설비까지 표시됩니다.</span>';
-        return rows.map(row => `<div style="padding:4px 0 4px ${(row.depth || 0) * 18}px;font-size:.8rem;">
-            ${(row.depth || 0) ? 'ㄴ ' : ''}<b>${_esc(row.equip.name || '')}</b>
-            ${row.equip.model ? `<span style="color:var(--text-muted);margin-left:6px;">${_esc(row.equip.model)}</span>` : ''}
-            ${row.equip.process ? `<span style="color:var(--text-muted);margin-left:6px;">· ${_esc(row.equip.process)}</span>` : ''}
-        </div>`).join('');
+        return rows.map(row => {
+            const photos = Array.isArray(row.equip.photos) ? row.equip.photos : [];
+            return `<div style="padding:4px 0 4px ${(row.depth || 0) * 18}px;font-size:.8rem;">
+                <div>${(row.depth || 0) ? 'ㄴ ' : ''}<b>${_esc(row.equip.name || '')}</b>
+                    ${row.equip.model ? `<span style="color:var(--text-muted);margin-left:6px;">${_esc(row.equip.model)}</span>` : ''}
+                    ${row.equip.process ? `<span style="color:var(--text-muted);margin-left:6px;">· ${_esc(row.equip.process)}</span>` : ''}
+                    ${photos.length ? `<span style="color:var(--accent-blue);margin-left:6px;">사진 ${photos.length}장</span>` : ''}
+                </div>
+                ${photos.length ? `<div style="display:flex;gap:4px;margin:5px 0 2px 14px;overflow-x:auto;">
+                    ${photos.slice(0, 4).map(photo => `<img src="${_esc(ApiClient.photoUrl(photo))}" alt="${_esc(row.equip.name || '설비')} 사진" style="width:54px;height:42px;object-fit:cover;border-radius:5px;border:1px solid var(--border-color);">`).join('')}
+                </div>` : ''}
+            </div>`;
+        }).join('');
     }
     function _loadEquipmentToProfile() {
         const sourceId = document.getElementById('epSourceEquip')?.value || '';
@@ -30497,6 +30799,8 @@ var ProdEquipmentModule = (function() {
             if (profileId) profileId.value = '';
             if (templateEl) templateEl.value = '[]';
             if (childrenEl) childrenEl.innerHTML = '<span style="color:var(--text-muted);">대표 사양을 선택하면 함께 등록될 하위 설비가 표시됩니다.</span>';
+            const appliedEl = document.getElementById('efProfileApplied');
+            if (appliedEl) appliedEl.value = '0';
             return;
         }
         const model = document.getElementById('efModel');
@@ -30506,9 +30810,11 @@ var ProdEquipmentModule = (function() {
         if (profileId) profileId.value = p.id;
         let rows = [];
         try { rows = Array.isArray(p.equipmentTemplate) ? p.equipmentTemplate : JSON.parse(p.equipmentTemplate || '[]'); } catch (e) { rows = []; }
-        if (!rows.length && p.sourceEquipmentId) rows = _profileEquipmentSnapshot(p.sourceEquipmentId);
+        if (p.sourceEquipmentId && Storage.getById(ST_EQUIP, p.sourceEquipmentId)) rows = _profileEquipmentSnapshot(p.sourceEquipmentId);
         if (templateEl) templateEl.value = JSON.stringify(rows);
         if (childrenEl) childrenEl.innerHTML = _profileEquipmentPreview('', rows);
+        const appliedEl = document.getElementById('efProfileApplied');
+        if (appliedEl) appliedEl.value = '1';
         UIUtils.toast(`대표 사양 '${p.name}'을 불러왔습니다. 설비명·설치일·상태는 현재 설비에 맞게 입력하세요.`, 'success');
     }
     function _profileForm(p) {
@@ -30582,14 +30888,41 @@ var ProdEquipmentModule = (function() {
                 `<option value="${_esc(p.name)}" ${selProc===p.name?'selected':''}>${p.name}</option>`
             ).join('');
     }
-    /** 상위 설비 후보 — 같은 라인 안에서 자기 자신과 기존 하위 설비를 제외한다.
-     *  공정이 달라도 BOOTH/설비 그룹 아래에 여러 공정의 설비를 둘 수 있다. */
+    /** 상위 설비 후보 — 같은 라인의 모든 단계를 표시한다.
+     *  자기 자신과 자신의 모든 하위 설비만 제외하여 순환 구조를 방지한다. */
     function _equipParentOptions(line, process, excludeId, selParentId) {
-        const candidates = (Storage.getAll(ST_EQUIP) || [])
-            .filter(x => x.line === line && x.id !== excludeId && !x.parentId)
-            .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
+        const all = (Storage.getAll(ST_EQUIP) || []).filter(x => x.line === line);
+        const byId = new Map(all.map(x => [x.id, x]));
+        const blocked = new Set(excludeId ? [excludeId] : []);
+        if (excludeId) {
+            let changed = true;
+            while (changed) {
+                changed = false;
+                all.forEach(x => {
+                    if (x.parentId && blocked.has(x.parentId) && !blocked.has(x.id)) {
+                        blocked.add(x.id);
+                        changed = true;
+                    }
+                });
+            }
+        }
+        const pathInfo = (equip) => {
+            const names = [equip.name || ''];
+            let parent = equip.parentId ? byId.get(equip.parentId) : null;
+            const seen = new Set([equip.id]);
+            while (parent && !seen.has(parent.id)) {
+                seen.add(parent.id);
+                names.unshift(parent.name || '');
+                parent = parent.parentId ? byId.get(parent.parentId) : null;
+            }
+            return { depth: names.length - 1, label: names.join(' > ') };
+        };
+        const candidates = all
+            .filter(x => !blocked.has(x.id))
+            .map(equip => ({ equip, path: pathInfo(equip) }))
+            .sort((a, b) => a.path.label.localeCompare(b.path.label, 'ko') || _equipOrderCompare(a.equip, b.equip));
         return '<option value="">-- 없음 (최상위 설비) --</option>' +
-            candidates.map(c => `<option value="${c.id}" ${selParentId===c.id?'selected':''}>${_esc(c.name)}${c.process ? ' · ' + _esc(c.process) : ''}</option>`).join('');
+            candidates.map(({ equip, path }) => `<option value="${equip.id}" ${selParentId===equip.id?'selected':''}>${path.depth ? '　'.repeat(path.depth) + 'ㄴ ' : ''}${_esc(path.label)}${equip.process ? ' · ' + _esc(equip.process) : ''}</option>`).join('');
     }
     let _equipFormEditId = '';
     function _onEquipLineChange() {
@@ -30622,10 +30955,12 @@ var ProdEquipmentModule = (function() {
         const selLine = e.line || _line;
         const selProc = e.process || defaultProcess || '';
         const hasChildren = e.id ? (Storage.getAll(ST_EQUIP) || []).some(x => x.parentId === e.id) : false;
+        const autoPositionNo = e.id ? (_equipDisplayCodes.get(e.id) || '') : '';
+        const currentPositionNo = e.positionNo || autoPositionNo;
         const selectedProfile = e.profileId ? Storage.getById(ST_PROFILE, e.profileId) : null;
         let profileRows = [];
         try { profileRows = selectedProfile && Array.isArray(selectedProfile.equipmentTemplate) ? selectedProfile.equipmentTemplate : JSON.parse(selectedProfile?.equipmentTemplate || '[]'); } catch (err) { profileRows = []; }
-        if (!profileRows.length && selectedProfile?.sourceEquipmentId) profileRows = _profileEquipmentSnapshot(selectedProfile.sourceEquipmentId);
+        if (selectedProfile?.sourceEquipmentId && Storage.getById(ST_EQUIP, selectedProfile.sourceEquipmentId)) profileRows = _profileEquipmentSnapshot(selectedProfile.sourceEquipmentId);
         return `
         <div class="form-row">
             <div class="form-group">
@@ -30653,6 +30988,16 @@ var ProdEquipmentModule = (function() {
             </div>
             <div class="form-group"></div>
         </div>
+        <input type="hidden" id="efOrder" value="${Number(e.sortOrder) || 0}">
+        <div class="form-group">
+            <label class="form-label">설비 위치 번호 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(현재 번호 · 직접 수정 가능)</span></label>
+            <input type="text" class="form-input" id="efPositionNo" value="${_esc(currentPositionNo)}" placeholder="예: 70-2 · C1-R3">
+            <input type="hidden" id="efAutoPositionNo" value="${_esc(autoPositionNo)}">
+            <div style="margin-top:4px;font-size:0.74rem;color:var(--text-muted);">
+                값을 수정하면 고정 번호로 저장됩니다. 입력값을 비우면 화면 배치에 따라 자동 계산됩니다.
+                ${autoPositionNo ? `<span style="color:var(--accent-blue);margin-left:6px;">자동 번호: ${_esc(autoPositionNo)}</span>` : ''}
+            </div>
+        </div>
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label">설비명 <span style="color:var(--accent-red)">*</span></label>
@@ -30669,6 +31014,7 @@ var ProdEquipmentModule = (function() {
                 ${_profileOptions(e.profileId || '')}
             </select>
             <input type="hidden" id="efProfileId" value="${_esc(e.profileId||'')}">
+            <input type="hidden" id="efProfileApplied" value="0">
             <textarea id="efProfileTemplate" style="display:none;">${_esc(JSON.stringify(profileRows))}</textarea>
             <div id="efProfileChildren" style="margin-top:8px;padding:8px 10px;background:var(--bg-secondary);border-radius:8px;max-height:120px;overflow:auto;">
                 ${profileRows.length ? _profileEquipmentPreview('', profileRows) : '<span style="color:var(--text-muted);">대표 사양을 선택하면 함께 등록될 하위 설비가 표시됩니다.</span>'}
@@ -30687,13 +31033,6 @@ var ProdEquipmentModule = (function() {
                 </select>
             </div>
         </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label class="form-label">표시 순서</label>
-                <input type="number" class="form-input" id="efOrder" value="${e.sortOrder||0}" min="0">
-            </div>
-            <div class="form-group"></div>
-        </div>
         <div class="form-group">
             <label class="form-label">비고</label>
             <textarea class="form-textarea" id="efNote" rows="2">${_esc(e.note||'')}</textarea>
@@ -30701,7 +31040,9 @@ var ProdEquipmentModule = (function() {
     }
     function _collectEquip() {
         const parentEl = document.getElementById('efParent');
-        return { line:document.getElementById('efLine').value,
+        const positionInput = document.getElementById('efPositionNo')?.value.trim() || '';
+        const autoPositionNo = document.getElementById('efAutoPositionNo')?.value || '';
+        const data = { line:document.getElementById('efLine').value,
             process:document.getElementById('efProcess').value,
             parentId:(parentEl && !parentEl.disabled) ? (parentEl.value || '') : '',
             name:document.getElementById('efName').value.trim(),
@@ -30710,7 +31051,15 @@ var ProdEquipmentModule = (function() {
             installDate:document.getElementById('efInstall').value,
             status:document.getElementById('efStatus').value,
             sortOrder:Number(document.getElementById('efOrder').value)||0,
+            positionNo:positionInput && positionInput !== autoPositionNo ? positionInput : '',
             note:document.getElementById('efNote').value.trim() };
+        if (document.getElementById('efProfileApplied')?.value === '1') {
+            try {
+                const rows = JSON.parse(document.getElementById('efProfileTemplate')?.value || '[]');
+                data.photos = Array.isArray(rows[0]?.photos) ? rows[0].photos.slice() : [];
+            } catch (e) { data.photos = []; }
+        }
+        return data;
     }
     function openEquipAddModal(defaultProcess) {
         if (!_isLoggedIn()) { UIUtils.toast('설비 추가는 로그인 후 가능합니다.', 'warning'); return; }
@@ -30730,6 +31079,20 @@ var ProdEquipmentModule = (function() {
         if (!data.process) { UIUtils.toast('공정을 선택하세요.', 'warning'); return; }
         if (!data.name) { UIUtils.toast('설비명을 입력하세요.', 'warning'); return; }
         if (data.parentId === id) data.parentId = ''; // 자기 자신을 상위로 지정하는 경우 방지(방어적)
+        if (id && data.parentId && _equipTreeRows(id).some(row => row.equip.id === data.parentId)) {
+            UIUtils.toast('현재 설비의 하위 설비를 상위 설비로 지정할 수 없습니다.', 'warning');
+            return;
+        }
+        if (data.positionNo) {
+            const duplicatedPosition = (Storage.getAll(ST_EQUIP) || []).find(e =>
+                e.id !== id && e.line === data.line &&
+                String(e.positionNo || _equipDisplayCodes.get(e.id) || '').trim() === data.positionNo
+            );
+            if (duplicatedPosition) {
+                UIUtils.toast(`설비 위치 번호 '${data.positionNo}'는 '${duplicatedPosition.name}' 설비가 사용 중입니다.`, 'warning');
+                return;
+            }
+        }
         let saved;
         if (id) { await Storage.update(ST_EQUIP, id, data); saved = { id }; }
         else    { saved = await Storage.add(ST_EQUIP, data); _equipId = saved.id; }
@@ -30743,37 +31106,68 @@ var ProdEquipmentModule = (function() {
         let rows = [];
         try { rows = JSON.parse(templateEl?.value || '[]'); } catch (e) { rows = []; }
         if (!rootId || rows.length < 2) return;
-        const existingChildren = (Storage.getAll(ST_EQUIP) || []).some(e => e.parentId === rootId);
-        if (existingChildren) return;
         const parentByDepth = { 0: rootId };
+        let createdCount = 0;
+        let photoSyncCount = 0;
         for (const row of rows.slice(1)) {
             const depth = Math.max(Number(row.depth) || 1, 1);
             const parentId = parentByDepth[depth - 1] || rootId;
-            const child = await Storage.add(ST_EQUIP, {
-                line: rootData.line,
-                process: rootData.process,
-                parentId,
-                name: row.name || '',
-                model: row.model || '',
-                profileId: row.profileId || '',
-                specs: row.specs || {},
-                specsEnabled: true,
-                installDate: '',
-                status: '정상',
-                sortOrder: Number(row.sortOrder) || 0,
-                note: row.note || ''
-            });
+            const siblings = (Storage.getAll(ST_EQUIP) || []).filter(e => e.parentId === parentId);
+            let child = siblings.find(e =>
+                (e.name || '').trim() === (row.name || '').trim() &&
+                (!row.model || !e.model || (e.model || '').trim() === (row.model || '').trim())
+            ) || siblings.find(e => (e.name || '').trim() === (row.name || '').trim());
+            if (child) {
+                const patch = {};
+                const sourcePhotos = Array.isArray(row.photos) ? row.photos.filter(Boolean) : [];
+                const currentPhotos = Array.isArray(child.photos) ? child.photos.filter(Boolean) : [];
+                const mergedPhotos = currentPhotos.concat(sourcePhotos.filter(photo => !currentPhotos.includes(photo)));
+                if (mergedPhotos.length !== currentPhotos.length) {
+                    patch.photos = mergedPhotos;
+                    photoSyncCount += mergedPhotos.length - currentPhotos.length;
+                }
+                if (!child.model && row.model) patch.model = row.model;
+                if (!child.note && row.note) patch.note = row.note;
+                if ((!child.specs || !Object.keys(child.specs).length) && row.specs && Object.keys(row.specs).length) {
+                    patch.specs = JSON.parse(JSON.stringify(row.specs));
+                    patch.specsEnabled = true;
+                }
+                if (Object.keys(patch).length) child = await Storage.update(ST_EQUIP, child.id, patch);
+            } else {
+                child = await Storage.add(ST_EQUIP, {
+                    line: rootData.line,
+                    process: rootData.process,
+                    parentId,
+                    name: row.name || '',
+                    model: row.model || '',
+                    profileId: row.profileId || '',
+                    specs: row.specs || {},
+                    photos: Array.isArray(row.photos) ? row.photos.slice() : [],
+                    specsEnabled: true,
+                    installDate: '',
+                    status: '정상',
+                    sortOrder: Number(row.sortOrder) || 0,
+                    note: row.note || ''
+                });
+                createdCount += 1;
+                photoSyncCount += Array.isArray(row.photos) ? row.photos.filter(Boolean).length : 0;
+            }
             parentByDepth[depth] = child.id;
             Object.keys(parentByDepth).forEach(key => { if (Number(key) > depth) delete parentByDepth[key]; });
         }
-        UIUtils.toast(`하위 설비 ${rows.length - 1}대를 함께 등록했습니다.`, 'success');
+        if (createdCount || photoSyncCount) {
+            const messages = [];
+            if (createdCount) messages.push(`하위 설비 ${createdCount}대 등록`);
+            if (photoSyncCount) messages.push(`사진 ${photoSyncCount}장 동기화`);
+            UIUtils.toast(messages.join(' · '), 'success');
+        }
     }
     function _equipTreeRows(rootId) {
         const all = Storage.getAll(ST_EQUIP) || [];
         const rows = [];
         function walk(parentId, depth) {
             all.filter(x => x.parentId === parentId)
-                .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'', 'ko'))
+                .sort(_equipOrderCompare)
                 .forEach(x => { rows.push({ equip:x, depth }); walk(x.id, depth + 1); });
         }
         const root = Storage.getById(ST_EQUIP, rootId);
@@ -34270,6 +34664,14 @@ var ProdEquipmentModule = (function() {
         _equipChipDragLeave,
         _equipChipDragEnd,
         _equipChipDrop,
+        _procTileDragStart,
+        _procTileDragOver,
+        _procTileDragLeave,
+        _procTileDragEnd,
+        _procTileDrop,
+        _procRowDragOver,
+        _procRowDragLeave,
+        _procRowDrop,
         _onEquipProcessChange,
         // 레이아웃 타일 편집
         toggleLayoutEdit,
