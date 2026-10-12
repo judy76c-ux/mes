@@ -1027,7 +1027,7 @@ const ProductionPlanModule = (function() {
             if (emptyNotice) emptyNoticeShown = true;
             const mergedPlanCells = mergedRowIsCovered ? '' : `
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="font-weight:800;color:#7c3aed;">TEST</span>' : (UIUtils.carModelLabel(item.carModel) || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${UIUtils.carModelLabel(activeItem?.carModel) || ''}</span>`)))}</td>
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="color:#7c3aed;">전달사항 등록</span>' : (item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : ''))}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '' : (item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : ''))}</td>
                     <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="color:#7c3aed;">-</span>' : (item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : ''))}</td>
                     <td class="editable-cell text-right" ${trClick} ${rowSpanAttr}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
                     <td class="editable-cell plan-note-cell" ${trClick} ${rowSpanAttr} title="${_escapeHtml((hasData ? item.workNote : '') || '')}">${hasData && item.workNote ? _escapeHtml(item.workNote) : ''}</td>
