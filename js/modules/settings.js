@@ -1252,6 +1252,29 @@ const SettingsModule = (function() {
         // 도장-A / 도장-B 컬러 행 초기 표시 여부 (둘 다 있을 때만)
         const _procVals = [v('process1'), v('process2'), v('process3'), v('process4')];
         const _showPaintColorRow = _procVals.includes('도장-A') && _procVals.includes('도장-B');
+        const _paintCounts = _procVals.reduce((counts, proc) => {
+            if (proc === '도장-A' || proc === '도장-B') counts[proc] = (counts[proc] || 0) + 1;
+            return counts;
+        }, {});
+        const _splitBasicColors = String(v('color') || '').split(/\s*\+\s*/).map(x => x.trim()).filter(Boolean);
+        const _repeatedPaintLines = Object.keys(_paintCounts).filter(line => _paintCounts[line] > 1);
+        const _stageColorValue = (line, stage) => {
+            const key = line === '도장-B' ? `paintColorB${stage}` : `paintColorA${stage}`;
+            return v(key) || _splitBasicColors[stage - 1] || '';
+        };
+        const _repeatedPaintColorHtml = _repeatedPaintLines.length ? `
+            <div id="${idPrefix}RepeatedPaintColorRow" class="form-row" style="margin-top:0;">
+                ${_repeatedPaintLines.map(line => {
+                    const letter = line === '도장-B' ? 'B' : 'A';
+                    return [1, 2].map(stage => `
+                        <div class="form-group" style="flex:1;">
+                            <label class="form-label">${line} ${stage}차 컬러</label>
+                            <input type="text" class="form-input" id="${idPrefix}PaintColor${letter}${stage}"
+                                placeholder="예: ${stage === 1 ? 'BK' : 'CLEAR'}" value="${_stageColorValue(line, stage)}">
+                        </div>
+                    `).join('');
+                }).join('')}
+            </div>` : '';
         const _filledProcs = _procVals.filter(Boolean);
         const _stageTotal = _filledProcs.length + 1; // +1 = 외관검사
         const _stageBg = _stageTotal >= 4 ? '#7c3aed' : _stageTotal === 3 ? 'var(--accent-blue)' : 'var(--accent-green)';
@@ -1432,6 +1455,7 @@ const SettingsModule = (function() {
                         list="${_colorListId}" autocomplete="off">
                 </div>
             </div>
+            ${_repeatedPaintColorHtml}
             <div id="${idPrefix}PaintColorRow" class="form-row" style="margin-top:0;display:${_showPaintColorRow ? '' : 'none'};">
                 <div class="form-group" style="flex:1;">
                     <label class="form-label" style="display:flex;align-items:center;gap:5px;">
@@ -2672,6 +2696,10 @@ const SettingsModule = (function() {
         const procs = [1,2,3,4].map(i => g(`${prefix}Process${i}`)).filter(Boolean);
         const hasA = procs.includes('도장-A');
         const hasB = procs.includes('도장-B');
+        const paintCounts = procs.reduce((counts, proc) => {
+            if (proc === '도장-A' || proc === '도장-B') counts[proc] = (counts[proc] || 0) + 1;
+            return counts;
+        }, {});
         // 작업 인원 자동 기입 (빈 칸만)
         [1,2,3,4].forEach(n => {
             const proc = g(`${prefix}Process${n}`);
@@ -2682,6 +2710,11 @@ const SettingsModule = (function() {
         });
         const row = document.getElementById(`${prefix}PaintColorRow`);
         if (row) row.style.display = (hasA && hasB) ? '' : 'none';
+        const repeatedRow = document.getElementById(`${prefix}RepeatedPaintColorRow`);
+        if (repeatedRow) {
+            const repeated = Object.keys(paintCounts).some(line => paintCounts[line] > 1);
+            repeatedRow.style.display = repeated ? '' : 'none';
+        }
         if (document.getElementById(`${prefix}PaintList`)) {
             _renderPaintList(prefix, _getCurrentPaintRows(prefix));
         }
@@ -2795,6 +2828,10 @@ const SettingsModule = (function() {
             color: g(`${prefix}Color`).trim(),
             paintColorA: g(`${prefix}PaintColorA`).trim(),
             paintColorB: g(`${prefix}PaintColorB`).trim(),
+            paintColorA1: g(`${prefix}PaintColorA1`).trim(),
+            paintColorA2: g(`${prefix}PaintColorA2`).trim(),
+            paintColorB1: g(`${prefix}PaintColorB1`).trim(),
+            paintColorB2: g(`${prefix}PaintColorB2`).trim(),
             itemType: g(`${prefix}ItemType`).trim(),
             packUnit: g(`${prefix}PackUnit`).trim(),
             customer: g(`${prefix}Customer`).trim(),

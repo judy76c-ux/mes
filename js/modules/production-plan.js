@@ -1174,9 +1174,9 @@ const ProductionPlanModule = (function() {
             partSel.innerHTML = '<option value="">도장 컬러를 먼저 선택하세요</option>' +
                 (isColorFirst ? '' : validParts.map(p => `<option value="${p}">${p}</option>`).join(''));
             partSel.value = '';
-            const validColors = [...new Set(modelProducts
-                .map(p => _getPlanColorForLine(p, line || (document.getElementById('sLine') || {}).value || ''))
-                .filter(Boolean))];
+            const validColors = [...new Set(modelProducts.flatMap(p =>
+                _getPlanColorOptions(p, line || (document.getElementById('sLine') || {}).value || '')
+            ))];
             colorSel.innerHTML = '<option value="">선택</option>' +
                 (isColorFirst ? validColors.map(c => `<option value="${c}">${_paintColorLabel(c)}</option>`).join('') : '');
             colorSel.value = '';
@@ -1188,7 +1188,7 @@ const ProductionPlanModule = (function() {
             const validParts = [...new Set(
                 lineProducts
                     .filter(p => p.carModel === selectedModel &&
-                        (!selectedColor || _getPlanColorForLine(p, _curLine) === selectedColor))
+                        _matchesPlanColor(p, _curLine, selectedColor))
                     .map(p => p.partName).filter(Boolean)
             )];
             partSel.innerHTML = '<option value="">선택</option>' +
@@ -1198,13 +1198,12 @@ const ProductionPlanModule = (function() {
         } else if (target === 'part') {
             const selectedModel = modelSel.value;
             const selectedPart = partSel.value;
-            // 라인별 컬러 우선: paintColorA/B 있으면 그 값, 없으면 product.color
+            // 제품 컬러와 도장 배합 컬러를 모두 후보로 표시
             const _curLine = line || (document.getElementById('sLine') || {}).value || '';
             const validColors = [...new Set(
                 lineProducts
                     .filter(p => p.carModel === selectedModel && p.partName === selectedPart)
-                    .map(p => _getPlanColorForLine(p, _curLine))
-                    .filter(Boolean)
+                    .flatMap(p => _getPlanColorOptions(p, _curLine))
             )];
             if (!isColorFirst) {
             colorSel.innerHTML = '<option value="">선택</option>' + validColors.map(c => `<option value="${c}">${_paintColorLabel(c)}</option>`).join('');
@@ -1257,16 +1256,32 @@ const ProductionPlanModule = (function() {
         ) || products.find(p => p.partName === partName && p.carModel === carModel);
     }
 
-    /* 라인별 컬러 결정 헬퍼
-     * - 도장-A: product.paintColorA 있으면 사용, 없으면 product.color
-     * - 도장-B: product.paintColorB 있으면 사용, 없으면 product.color
-     * - 그 외:  product.color
+    /* 생산계획에서 선택하는 컬러는 제품 마스터의 제품 컬러를 사용한다.
+     * paintColorA/B는 도료 배합용 명칭(예: CLEAR, 0)이므로 제품 컬러(BK)를
+     * 대신 표시하면 품목·재고·기존 계획의 컬러 매칭이 어긋날 수 있다.
      */
     function _getPlanColorForLine(product, line) {
         if (!product) return '';
-        if (line === '도장-A' && product.paintColorA) return product.paintColorA;
-        if (line === '도장-B' && product.paintColorB) return product.paintColorB;
-        return product.color || '';
+        return _getPlanColorOptions(product, line)[0] || '';
+    }
+
+    function _getPlanColorOptions(product, line) {
+        if (!product) return [];
+        const colors = String(product.color || '').split(/\s*\+\s*/);
+        const normalizedLine = _normalizePaintLine(line);
+        if (normalizedLine === '도장-A') {
+            colors.push(...String(product.paintColorA || '').split(/\s*\+\s*/));
+            colors.push(product.paintColorA1, product.paintColorA2);
+        }
+        if (normalizedLine === '도장-B') {
+            colors.push(...String(product.paintColorB || '').split(/\s*\+\s*/));
+            colors.push(product.paintColorB1, product.paintColorB2);
+        }
+        return [...new Set(colors.map(color => String(color || '').trim()).filter(Boolean))];
+    }
+
+    function _matchesPlanColor(product, line, color) {
+        return !color || _getPlanColorOptions(product, line).includes(String(color).trim());
     }
 
     function _paintColorLabel(color) {
@@ -1276,11 +1291,28 @@ const ProductionPlanModule = (function() {
         return color || '';
     }
 
-    function _usesLaserWipForLine(product, line) {
-        if (!product || !_isPaintProcess(product.process3)) return false;
-        const process3 = _normalizeProcessName(product.process3);
-        const lineName = _normalizeProcessName(line);
-        return process3 === '도장' || process3 === lineName;
+    function _usesLaserWipForLine(product, line, color) {
+        if (!product || _normalizePaintLine(line) !== '도장-B') return false;
+        const processes = [product.process1, product.process2, product.process3, product.process4]
+            .map(value => _normalizePaintLine(value))
+            .filter(Boolean);
+        const bIndexes = processes.reduce((indexes, process, index) => {
+            if (process === '도장-B') indexes.push(index);
+            return indexes;
+        }, []);
+        if (bIndexes.length < 2) return false;
+        const laserBeforeSecondB = processes.slice(0, bIndexes[1])
+            .some(process => process === '레이저' || process === '레이져');
+        if (!laserBeforeSecondB) return false;
+
+        const explicitColors = [product.paintColorB1, product.paintColorB2]
+            .map(value => String(value || '').trim())
+            .filter(Boolean);
+        const stageColors = explicitColors.length
+            ? explicitColors
+            : String(product.color || '').split(/\s*\+\s*/).map(value => value.trim()).filter(Boolean);
+        if (stageColors.length >= 2 && color) return stageColors[1] === String(color).trim();
+        return !color;
     }
 
     // ── 도료 재고 조회 헬퍼 ──────────────────────────────────────────
@@ -1628,10 +1660,7 @@ const ProductionPlanModule = (function() {
             ? allProducts.find(pr => pr.id === p.productId)
             : allProducts.find(pr => pr.partName === p.partName && (!p.carModel || pr.carModel === p.carModel));
         if (!prod) return false;
-        const procs = [prod.process1, prod.process2, prod.process3, prod.process4].filter(Boolean);
-        const bIdx = procs.indexOf('도장-B');
-        if (bIdx <= 0) return false;
-        return procs.slice(0, bIdx).some(v => v === '레이저' || v === '레이져');
+        return _usesLaserWipForLine(prod, p.line, p.color);
     }
 
     // 창고 '생산출고'가 이미 나간 만큼 예약을 차감한다.
@@ -2126,7 +2155,7 @@ const ProductionPlanModule = (function() {
         ) || _products.find(p => p.partName === partName && p.carModel === carModel);
         const productId = _matchProd ? _matchProd.id : '';
 
-        if (_usesLaserWipForLine(_matchProd, lineName)) {
+        if (_usesLaserWipForLine(_matchProd, lineName, colorVal)) {
             panel.style.display = 'none';
             if (totalEl) totalEl.textContent = '-';
             if (lotsEl)  lotsEl.innerHTML = '';
@@ -2330,7 +2359,7 @@ const ProductionPlanModule = (function() {
         }
 
         const product = _findProductForPlan(carModel, partName, colorVal);
-        if (!_usesLaserWipForLine(product, lineName)) {
+        if (!_usesLaserWipForLine(product, lineName, colorVal)) {
             panel.style.display = 'none';
             return;
         }
@@ -2608,7 +2637,7 @@ const ProductionPlanModule = (function() {
         if (modelValue && (!isColorFirst || colorValue)) {
             parts = [...new Set(lineProducts
                 .filter(p => p.carModel === modelValue &&
-                    (!isColorFirst || _getPlanColorForLine(p, line) === colorValue))
+                    (!isColorFirst || _matchesPlanColor(p, line, colorValue)))
                 .map(p => p.partName).filter(Boolean))];
         }
         if (modelValue && (partValue || isColorFirst)) {
@@ -2616,8 +2645,7 @@ const ProductionPlanModule = (function() {
                 lineProducts
                     .filter(p => p.carModel === modelValue &&
                         (!partValue || p.partName === partValue))
-                    .map(p => _getPlanColorForLine(p, line))   // ← 라인별 컬러 우선
-                    .filter(Boolean)
+                    .flatMap(p => _getPlanColorOptions(p, line))
             )];
         }
 
@@ -2630,8 +2658,7 @@ const ProductionPlanModule = (function() {
             colors = [...new Set(
                 products
                     .filter(p => p.carModel === modelValue && p.partName === partValue)
-                    .map(p => _getPlanColorForLine(p, line))
-                    .filter(Boolean)
+                    .flatMap(p => _getPlanColorOptions(p, line))
             )];
             if (colorValue && !colors.includes(colorValue)) colors.push(colorValue);
         }
@@ -2689,7 +2716,7 @@ const ProductionPlanModule = (function() {
 
         // 레이져 후 재공 재고 사전 계산 (제조공정-3이 도장인 품목만)
         let _laserWipDisplay = 'none', _laserWipTotal = '-', _laserWipHtml = '';
-        if (partValue && _usesLaserWipForLine(_matchedProd, line)) {
+        if (partValue && _usesLaserWipForLine(_matchedProd, line, colorValue)) {
             try {
                 const _lwip = (typeof LaserWipModule !== 'undefined')
                     ? LaserWipModule.getWipStock(modelValue || '', partValue, colorValue || '')
@@ -3038,7 +3065,7 @@ const ProductionPlanModule = (function() {
         if (partName && planQty > 0 && !isTemporary) {
             const currentPlanId = existingId || formPlanId || '';
 
-            if (_usesLaserWipForLine(_prodMatch, line)) {
+            if (_usesLaserWipForLine(_prodMatch, line, color)) {
                 // 레이져→도장 공정 품목: 사출 창고가 아닌 레이져 후 재공품 재고 검사
                 const wipStock = (typeof LaserWipModule !== 'undefined')
                     ? LaserWipModule.getWipStock(carModel, partName, color)

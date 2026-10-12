@@ -3951,6 +3951,17 @@ function lwStFilterRows(q){
             return remaining;
         }
 
+        // 키로 지정된 LOT 재고가 모자랄 때 부족분 처리: 다른 LOT(FIFO) → 미지정 풀 순으로 차감, 그래도 남으면 미차감
+        function deductShortfall(amount, sourceEvent) {
+            let rem = fifoDeductFromLots(amount, sourceEvent || { skipFifoTrace: true }, false);
+            if (rem > 0 && manualAdj > 0) {
+                const fromPool = Math.min(manualAdj, rem);
+                manualAdj -= fromPool;
+                rem -= fromPool;
+            }
+            if (rem > 0) unmatched += rem;
+        }
+
         function currentResidualTotal() {
             return Object.values(lotMap).reduce(function(s, l) {
                 return s + Math.max(0, Number(l.qty) || 0);
@@ -4019,6 +4030,7 @@ function lwStFilterRows(q){
             (function() {
             if (e.type === 'stocktake_set') {
                 applyStocktakeSet(e.qty, e);
+                unmatched = 0;
                 return;
             }
             if (e.type === 'unassigned') {
@@ -4029,8 +4041,7 @@ function lwStFilterRows(q){
                     const fromPool = Math.min(manualAdj, remainingOut);
                     manualAdj -= fromPool;
                     remainingOut -= fromPool;
-                    if (remainingOut > 0 && !e.poolOnly) fifoDeductFromLots(remainingOut, e, true);
-                    else if (remainingOut > 0) unmatched += remainingOut;
+                    if (remainingOut > 0) fifoDeductFromLots(remainingOut, e, true);
                 }
                 return;
             }
@@ -4059,8 +4070,9 @@ function lwStFilterRows(q){
             } else {
                 row.qty += Number(e.qty) || 0;
                 if (row.qty < 0) {
-                    unmatched += Math.abs(row.qty);
+                    const _short = Math.abs(row.qty);
                     row.qty = 0;
+                    deductShortfall(_short, e);
                 }
             }
             })();
