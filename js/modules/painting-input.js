@@ -2464,6 +2464,122 @@ var PaintingInputModule = (function () {
         });
     }
 
+    // ── 현장 재고 실사 ───────────────────────────────────────────────────
+    // 소진·반납 기록 누락으로 현장 입고 잔량이 부풀려진 품목을, 실사 수량(기본 0)으로 한 번에 맞춘다.
+    // 장부 − 실사 = 차이를 사출 LOT 오래된 순(FIFO)으로 '현장 재고 실사' 출고 기록 1건으로 남긴다.
+    function openSiteStocktake(line) {
+        if (!_canAdminCorrectInbound()) {
+            UIUtils.toast('관리자만 현장 재고 실사를 할 수 있습니다.', 'warning');
+            return;
+        }
+        const want = _normLine(line);
+        const groups = _groupStock(want).filter(function (g) { return (Number(g.stock) || 0) > 0; });
+        if (!groups.length) { UIUtils.toast(want + ' 현장 재고가 없습니다.', 'info'); return; }
+        const total = groups.reduce(function (s, g) { return s + (Number(g.stock) || 0); }, 0);
+        const rows = groups.map(function (g, i) {
+            const cur = Math.round(Number(g.stock) || 0);
+            const lots = (g.lots || []).map(function (l) { return _esc(l.lotNo) + '(' + _fmt(l.qty) + ')'; }).join(', ');
+            return '<tr data-i="' + i + '" data-cur="' + cur + '">' +
+                '<td style="text-align:center;"><input type="checkbox" id="stkChk' + i + '" checked></td>' +
+                '<td style="white-space:nowrap;">' + _esc(g.carModel || '-') + '</td>' +
+                '<td>' + _esc(g.partName || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(g.color || '-') + '</td>' +
+                '<td style="font-family:monospace;font-size:0.76rem;">' + (lots || '-') + '</td>' +
+                '<td style="text-align:right;font-weight:700;color:var(--accent-orange,#f59e0b);">' + _fmt(cur) + '</td>' +
+                '<td style="text-align:right;"><input type="number" class="form-input" id="stkQty' + i + '" value="0" min="0" max="' + cur + '" style="width:90px;text-align:right;"></td>' +
+                '</tr>';
+        }).join('');
+        window.__siteStocktakeCtx = { line: want, groups: groups };
+        UIUtils.showModal(want + ' 현장 재고 실사',
+            '<div style="background:rgba(37,99,235,0.06);border:1px solid rgba(37,99,235,0.18);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:0.82rem;line-height:1.5;">' +
+                '품목별 <strong>실사 수량</strong>(실제 현장 수량)을 입력하세요. 기본값은 <strong>0</strong>입니다.<br>' +
+                '장부와의 차이는 사출 LOT <strong>오래된 순</strong>으로 <strong>현장 재고 실사 출고</strong>로 기록됩니다. 장부보다 큰 값은 건너뜁니다.' +
+            '</div>' +
+            '<div style="max-height:50vh;overflow:auto;border:1px solid var(--border-color);border-radius:8px;">' +
+                '<table class="data-table" style="margin:0;font-size:0.82rem;"><thead><tr>' +
+                    '<th style="width:36px;"></th><th>차종</th><th>사출명</th><th>컬러</th><th>LOT(수량)</th>' +
+                    '<th style="text-align:right;">장부</th><th style="text-align:right;">실사 수량</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>' +
+            '</div>' +
+            '<div style="margin-top:8px;font-size:0.8rem;color:var(--text-muted);">대상 ' + groups.length + '개 품목 · 장부 합계 <strong>' + _fmt(total) + '</strong> EA</div>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>' +
+            '<button class="btn btn-primary" onclick="PaintingInputModule.saveSiteStocktake()">현장 재고 실사 반영</button>',
+            'lg');
+    }
+
+    async function saveSiteStocktake() {
+        if (!_canAdminCorrectInbound()) return;
+        const ctx = window.__siteStocktakeCtx;
+        if (!ctx || !ctx.groups) return;
+        const targets = [];
+        let skipped = 0;
+        ctx.groups.forEach(function (g, i) {
+            const chk = document.getElementById('stkChk' + i);
+            if (!chk || !chk.checked) return;
+            const cur = Math.round(Number(g.stock) || 0);
+            const raw = (document.getElementById('stkQty' + i) || {}).value;
+            const tgt = Math.round(Number(raw === '' || raw == null ? 0 : raw));
+            if (!isFinite(tgt) || tgt < 0 || tgt > cur) { skipped++; return; }
+            if (tgt === cur) return;
+            targets.push({ g: g, cur: cur, target: tgt });
+        });
+        if (!targets.length) {
+            UIUtils.toast(skipped ? '반영할 품목이 없습니다. (장부보다 큰 값은 건너뜁니다)' : '변경된 값이 없습니다.', 'info');
+            return;
+        }
+        const cutTotal = targets.reduce(function (s, t) { return s + (t.cur - t.target); }, 0);
+        UIUtils.confirm(
+            targets.length + '개 품목의 현장 재고 실사를 반영합니다. 합계 ' + _fmt(cutTotal) + ' EA 감소. 반영할까요?',
+            async function () {
+                const now = UIUtils.now ? UIUtils.now() : new Date().toISOString().slice(0, 16).replace('T', ' ');
+                const actor = _currentActorLabel();
+                let done = 0;
+                try {
+                    for (let k = 0; k < targets.length; k++) {
+                        const t = targets[k];
+                        let remain = t.cur - t.target;
+                        const lots = [];
+                        (t.g.lots || []).slice().sort(function (a, b) {
+                            return String(a.lotNo).localeCompare(String(b.lotNo));
+                        }).forEach(function (l) {
+                            if (remain <= 0) return;
+                            const q = Math.min(Math.max(0, Math.round(Number(l.qty) || 0)), remain);
+                            if (q > 0) { lots.push({ lotNo: l.lotNo, qty: q }); remain -= q; }
+                        });
+                        const out = lots.reduce(function (s, l) { return s + l.qty; }, 0);
+                        if (out <= 0) continue;
+                        await Storage.add(STORE, {
+                            date: now,
+                            type: '출고',
+                            line: ctx.line,
+                            paintLine: ctx.line,
+                            carModel: t.g.carModel || '',
+                            partName: t.g.partName || '',
+                            color: t.g.color || '',
+                            lots: lots,
+                            lotNo: lots[0].lotNo,
+                            quantity: out,
+                            unit: 'EA',
+                            source: '현장 재고 실사',
+                            isStocktake: true,
+                            stocktakeBookQty: t.cur,
+                            stocktakeCountedQty: t.target,
+                            note: '현장 재고 실사 조정 (장부 ' + t.cur + ' → 실사 ' + t.target + ')',
+                            receivedBy: actor
+                        });
+                        done++;
+                    }
+                } catch (e) {
+                    console.error('[PaintingInput] 현장 재고 실사 실패:', e);
+                    UIUtils.toast('현장 재고 실사 중 오류 — ' + done + '건까지 반영됨', 'error');
+                    return;
+                }
+                UIUtils.toast('현장 재고 실사 ' + done + '개 품목 반영 완료 — 합계 ' + _fmt(cutTotal) + ' EA 감소', 'success');
+                try { if (typeof PaintingProcessModule !== 'undefined' && PaintingProcessModule.refreshShipments) PaintingProcessModule.refreshShipments(); } catch (e2) { /* ignore */ }
+            }
+        );
+    }
+
     function _lineAccent(line) {
         return _normLine(line) === '도장-B' ? '#ea580c' : '#2563eb';
     }
@@ -4124,6 +4240,8 @@ var PaintingInputModule = (function () {
         colorLooseMatch: _colorLooseMatch,
         deductForWork: deductForWork,
         writeOffExpiredSiteLots: writeOffExpiredSiteLots,
+        openSiteStocktake: openSiteStocktake,
+        saveSiteStocktake: saveSiteStocktake,
         createSiteReturn: createSiteReturn,
         resolveReturnColor: _resolveReturnColor,
         resolveReturnDestination: resolveReturnDestination,

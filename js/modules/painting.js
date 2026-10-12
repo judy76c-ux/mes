@@ -353,6 +353,10 @@ var PaintingProcessModule = (function () {
                         '<span style="margin-left:8px;padding:2px 8px;border-radius:999px;font-size:0.72rem;font-weight:700;color:#fff;background:' + accent + ';">' + _esc(line) + '</span>' +
                         '<span id="ppShipSummary' + suffix + '" style="font-size:0.72rem;color:var(--text-muted);font-weight:500;margin-left:6px;">' + _esc(summary) + '</span>' +
                     '</h4>' +
+                    '<button type="button" class="btn btn-sm btn-outline" style="font-size:0.74rem;white-space:nowrap;" ' +
+                        'onclick="PaintingInputModule.openSiteStocktake(&quot;' + line + '&quot;)">' +
+                        '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:-3px;">fact_check</span> 현장 재고 실사' +
+                    '</button>' +
                 '</div>' +
                 '<div class="card-body" style="padding:10px;">' +
                     '<div class="data-table-wrapper" style="border:1px solid var(--border);border-radius:4px;overflow-x:auto;">' +

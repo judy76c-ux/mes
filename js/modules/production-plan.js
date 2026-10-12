@@ -322,6 +322,10 @@ const ProductionPlanModule = (function() {
         return String((item && (item.startTime || item.slot)) || '').trim();
     }
 
+    function _isPlanData(item) {
+        return !!(item && (item.isTest || item.planType === 'TEST' || item.carModel || item.partName || Number(item.planQty) > 0));
+    }
+
     function _isNewerPlan(a, b) {
         const ta = String((a && (a.updatedAt || a.createdAt)) || '');
         const tb = String((b && (b.updatedAt || b.createdAt)) || '');
@@ -483,7 +487,7 @@ const ProductionPlanModule = (function() {
                     const bySlot = {};
                     const noSlot = [];
                     plans.forEach(p => {
-                        if (!(p.carModel || p.partName || Number(p.planQty))) return;
+                        if (!_isPlanData(p)) return;
                         const key = _planSlotKey(p);
                         if (!key) { noSlot.push(p); return; }
                         if (!bySlot[key] || _isNewerPlan(p, bySlot[key])) bySlot[key] = p;
@@ -492,7 +496,7 @@ const ProductionPlanModule = (function() {
                         .sort((a, b) => (a.startTime || a.slot || '').localeCompare(b.startTime || b.slot || ''));
                     const itemLabel = p => {
                         const statusLabel = planActualStatus(p);
-                        return `${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
+                        return `${p.isTest ? 'TEST' : (p.partName || p.carModel || '-')} : ${p.isTest ? '' : UIUtils.formatNumber(Number(p.planQty) || 0)} (${statusLabel})`;
                     };
                     const text = items.map(itemLabel).join(', ');
                     const rows = items.slice(0, 4).map(p => {
@@ -503,7 +507,7 @@ const ProductionPlanModule = (function() {
                         const badgeBg = inspected ? 'rgba(16,185,129,0.15)' : (worked ? 'rgba(20,184,166,0.15)' : 'rgba(100,116,139,0.12)');
                         const badgeColor = inspected ? '#065f46' : (worked ? '#0f766e' : '#475569');
                         return `<div style="display:flex;align-items:center;gap:3px;white-space:nowrap;overflow:hidden;">
-                            <span style="font-size:0.68rem;font-weight:700;color:${rowColor};overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}</span>
+                            <span style="font-size:0.68rem;font-weight:700;color:${rowColor};overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0;">${p.isTest ? 'TEST' : `${p.partName || p.carModel || '-'} : ${UIUtils.formatNumber(Number(p.planQty) || 0)}`}</span>
                             <span style="font-size:0.58rem;font-weight:800;color:${badgeColor};background:${badgeBg};border-radius:4px;padding:1px 4px;flex-shrink:0;">${actualStatus}</span>
                         </div>`;
                     }).join('');
@@ -740,7 +744,7 @@ const ProductionPlanModule = (function() {
         const _otSuffix = lineName === '도장-B' ? 'B' : 'A';
         const hasOvertimePlan = Object.keys(slotData).some(s => {
             const item = slotData[s];
-            if (!item || !(item.carModel || item.partName || Number(item.planQty) > 0)) return false;
+            if (!_isPlanData(item)) return false;
             return s >= '18:00' || (item.endTime && item.endTime > '18:00');
         });
         if (hasOvertimePlan) {
@@ -779,7 +783,7 @@ const ProductionPlanModule = (function() {
         const continuationCoveredSlots = new Set();
         const planStartSlots = allSlots.filter(s => {
             const p = slotData[s];
-            return p && (p.carModel || p.partName || Number(p.planQty) > 0);
+            return _isPlanData(p);
         });
         planStartSlots.forEach((start, index) => {
             const item = slotData[start] || {};
@@ -877,7 +881,7 @@ const ProductionPlanModule = (function() {
             const isLunch = (slot === '12:30' || slot === '13:00');
             const isDinner = (slot === '17:30');
             const isMealTime = isLunch || isDinner;
-            const hasData = item.carModel || item.partName || q > 0;
+            const hasData = _isPlanData(item);
 
             if (hasData) {
                 activeItem = item;
@@ -919,7 +923,7 @@ const ProductionPlanModule = (function() {
 
             const trCursor = clickable ? 'pointer' : 'not-allowed';
             const trClick = clickable
-                ? `onclick="ProductionPlanModule.editSlot('${slot}', '${lineName}')"`
+                ? `onclick="ProductionPlanModule.${item.isTest ? 'openTestPlan' : 'editSlot'}('${slot}', '${lineName}')"`
                 : (isLunch ? '' : `onclick="event.stopPropagation(); UIUtils.toast('해당 시간은 이미 다른 작업이 진행 중입니다.', 'warning');"`);
             const isOvertimeStart = (slot === '18:00');
 
@@ -1022,9 +1026,9 @@ const ProductionPlanModule = (function() {
                 : '';
             if (emptyNotice) emptyNoticeShown = true;
             const mergedPlanCells = mergedRowIsCovered ? '' : `
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${UIUtils.carModelLabel(item.carModel) || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${UIUtils.carModelLabel(activeItem?.carModel) || ''}</span>`))}</td>
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : '')}</td>
-                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : '')}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="font-weight:800;color:#7c3aed;">TEST</span>' : (UIUtils.carModelLabel(item.carModel) || emptyNotice || (!hasData && !activeItem ? '' : (clickable ? '<span style="color:#ccc;">(클릭하여 입력)</span>' : `<span style="color:#aaa;">${UIUtils.carModelLabel(activeItem?.carModel) || ''}</span>`)))}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="color:#7c3aed;">전달사항 등록</span>' : (item.partName || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.partName || ''}</span>` : ''))}</td>
+                    <td class="editable-cell" ${trClick} ${rowSpanAttr}>${item.isTest ? '<span style="color:#7c3aed;">-</span>' : (item.color || (!hasData && activeItem ? `<span style="color:#aaa;">${activeItem.color || ''}</span>` : ''))}</td>
                     <td class="editable-cell text-right" ${trClick} ${rowSpanAttr}>${q > 0 ? UIUtils.formatNumber(q) : ''}</td>
                     <td class="editable-cell plan-note-cell" ${trClick} ${rowSpanAttr} title="${_escapeHtml((hasData ? item.workNote : '') || '')}">${hasData && item.workNote ? _escapeHtml(item.workNote) : ''}</td>
                     <td class="editable-cell text-center" ${trClick} ${rowSpanAttr}>${item.isTemporary ? `<span class="badge" style="background:var(--accent-red,#ef4444);color:#fff;margin-right:4px;font-size:0.68rem;" title="사출·도료 재고 검증 없이 등록된 임시 계획">임시</span>` : ''}${item.status ? UIUtils.badge(item.status, item.status === '완료' ? 'success' : (item.status === '진행' ? 'info' : 'warning')) : ''}</td>
@@ -1169,6 +1173,23 @@ const ProductionPlanModule = (function() {
 
         if (target === 'model') {
             const selectedModel = modelSel.value;
+            if (selectedModel === '__TEST__') {
+                colorSel.innerHTML = '<option value="">TEST는 컬러 없음</option>';
+                colorSel.value = '';
+                colorSel.disabled = true;
+                partSel.innerHTML = '<option value="">TEST는 품명 없음</option>';
+                partSel.value = '';
+                partSel.disabled = true;
+                const qtyEl = document.getElementById('sQty');
+                if (qtyEl) { qtyEl.value = '0'; qtyEl.disabled = true; }
+                document.getElementById('injStockPanel')?.style.setProperty('display', 'none');
+                document.getElementById('laserWipPanel')?.style.setProperty('display', 'none');
+                document.getElementById('paintStockPanel')?.style.setProperty('display', 'none');
+                return;
+            }
+            colorSel.disabled = false;
+            const qtyEl = document.getElementById('sQty');
+            if (qtyEl) qtyEl.disabled = false;
             const modelProducts = lineProducts.filter(p => p.carModel === selectedModel);
             const validParts = [...new Set(modelProducts.map(p => p.partName).filter(Boolean))];
             partSel.innerHTML = '<option value="">도장 컬러를 먼저 선택하세요</option>' +
@@ -1981,7 +2002,7 @@ const ProductionPlanModule = (function() {
      *  matchedMats: getInjPartNamesForPlan 결과
      *  — 미입고는 도장 자재 목록과 동일하게 "해당일 창고→라인 출고"만 집계 (과거 미연결 출고 과다합산 방지)
      */
-    function _getSiteInjStockForPlan(line, matchedMats, carModel) {
+    function _getSiteInjStockForPlan(line, matchedMats, carModel, color) {
         const empty = { total: 0, received: 0, pending: 0, rows: [], line: '' };
         const want = (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.normLine)
             ? PaintingInputModule.normLine(line)
@@ -1994,9 +2015,21 @@ const ProductionPlanModule = (function() {
         const names = Object.keys(nameSet);
         if (!names.length) return Object.assign({}, empty, { line: want });
 
+        const _sameCar = function (a, b) {
+            return (typeof UIUtils !== 'undefined' && UIUtils.sameCarModel)
+                ? UIUtils.sameCarModel(a, b) : String(a || '') === String(b || '');
+        };
+        const wantColor = String(color || '').trim();
+        const _siteColorOk = function (c) {
+            if (!wantColor || !String(c || '').trim()) return true;
+            return (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.colorLooseMatch)
+                ? PaintingInputModule.colorLooseMatch(c, wantColor)
+                : String(c).trim() === wantColor;
+        };
+
         const byPart = {};
         names.forEach(function (n) {
-            byPart[n] = { partName: n, received: 0, pending: 0 };
+            byPart[n] = { partName: n, received: 0, pending: 0, rework: 0 };
         });
 
         // ① 현장 입고 잔량 (painting_input_inventory — 실잔량)
@@ -2004,13 +2037,16 @@ const ProductionPlanModule = (function() {
             let qty = 0;
             if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.getLotsByInjPart) {
                 (PaintingInputModule.getLotsByInjPart(want, injName, null) || []).forEach(function (l) {
-                    if (carModel && l.carModel && l.carModel !== carModel) return;
+                    if (carModel && l.carModel && !_sameCar(l.carModel, carModel)) return;
+                    // 같은 사출명이라도 다른 컬러 LOT은 이 계획의 자재가 아니다 — 컬러 구분 없이 합산하면 현장 재고가 부풀려진다.
+                    if (!_siteColorOk(l.color)) return;
                     qty += Number(l.balance) || 0;
                 });
             } else if (typeof PaintingInputModule !== 'undefined' && PaintingInputModule.groupStock) {
                 (PaintingInputModule.groupStock(want) || []).forEach(function (g) {
                     if (String(g.partName || '') !== injName) return;
-                    if (carModel && g.carModel && g.carModel !== carModel) return;
+                    if (carModel && g.carModel && !_sameCar(g.carModel, carModel)) return;
+                    if (!_siteColorOk(g.color)) return;
                     qty += Number(g.stock) || 0;
                 });
             }
@@ -2054,30 +2090,44 @@ const ProductionPlanModule = (function() {
             if (r.received) return; // 입고완료 건은 ① 잔량에 포함
             const pName = String(r.partName || '').trim();
             if (!nameSet[pName]) return;
-            if (carModel && r.carModel && r.carModel !== carModel) return;
+            if (carModel && r.carModel && !_sameCar(r.carModel, carModel)) return;
+            if (!_siteColorOk(r.color)) return;
             if (!byPart[pName]) byPart[pName] = { partName: pName, received: 0, pending: 0 };
             byPart[pName].pending += Number(r.quantity) || 0;
         });
 
-        let received = 0, pending = 0;
+        // ③ 잔여 재공품(도장 외관검사 리워크 적립분 — 도장 가능한 소재).
+        //    현장으로 출고(dispatch)되면 ① 입고 잔량으로 옮겨가므로 미출고분만 여기서 더한다.
+        if (typeof ReworkWipModule !== 'undefined' && ReworkWipModule.getStockQty) {
+            names.forEach(function (injName) {
+                let q = 0;
+                try { q = Number(ReworkWipModule.getStockQty(carModel || '', injName, wantColor)) || 0; } catch (e) { q = 0; }
+                if (q > 0) byPart[injName].rework += q;
+            });
+        }
+
+        // 현장 재고로 보여주고 가용에 반영하는 것은 잔여 재공품(도장 가능한 소재)뿐이다.
+        // 현장 입고 잔량(①)·미입고(②)는 소진·반납 기록 누락으로 부풀려질 수 있어 집계에서 제외한다.
+        let rework = 0;
         const rows = Object.values(byPart).filter(function (row) {
-            return (row.received + row.pending) > 0;
+            return row.rework > 0;
         }).map(function (row) {
-            received += row.received;
-            pending += row.pending;
+            rework += row.rework;
             return {
                 partName: row.partName,
-                received: row.received,
-                pending: row.pending,
-                total: row.received + row.pending
+                received: 0,
+                pending: 0,
+                rework: row.rework,
+                total: row.rework
             };
         });
 
         return {
             line: want,
-            received: received,
-            pending: pending,
-            total: received + pending,
+            received: 0,
+            pending: 0,
+            rework: rework,
+            total: rework,
             rows: rows
         };
     }
@@ -2121,7 +2171,7 @@ const ProductionPlanModule = (function() {
             });
         }
 
-        const site = _getSiteInjStockForPlan(line || '', matched, carModel);
+        const site = _getSiteInjStockForPlan(line || '', matched, carModel, color);
         const total = warehouse + site.total;
         const available = total - reservedSum;
         return {
@@ -2177,7 +2227,7 @@ const ProductionPlanModule = (function() {
 
         const lots  = getInjStockLots(matched, colorVal);
         const warehouseTotal = lots.reduce((s, l) => s + l.balance, 0);
-        const site = _getSiteInjStockForPlan(lineName, matched, carModel);
+        const site = _getSiteInjStockForPlan(lineName, matched, carModel, colorVal);
         const combinedTotal = warehouseTotal + site.total;
 
         panel.style.display = 'block';
@@ -2264,6 +2314,7 @@ const ProductionPlanModule = (function() {
             const detail = [];
             if (row.received > 0) detail.push('입고 ' + UIUtils.formatNumber(row.received));
             if (row.pending > 0) detail.push('미입고 ' + UIUtils.formatNumber(row.pending));
+            if (row.rework > 0) detail.push('잔여 재공품 ' + UIUtils.formatNumber(row.rework));
             return `<div style="display:flex;justify-content:space-between;align-items:center;padding:4px 6px;
                         border-bottom:1px solid var(--border-color);font-size:0.78rem;">
                 <span><strong>${row.partName}</strong>
@@ -2286,6 +2337,7 @@ const ProductionPlanModule = (function() {
                 <span style="padding:3px 8px;border-radius:6px;background:rgba(15,118,110,0.10);color:#0f766e;font-weight:700;">
                     현장(${siteLineLabel}) ${UIUtils.formatNumber(site.total)} EA
                     ${site.pending > 0 ? `<span style="font-weight:600;font-size:0.7rem;opacity:0.85;"> · 미입고 ${UIUtils.formatNumber(site.pending)}</span>` : ''}
+                    ${site.rework > 0 ? `<span style="font-weight:600;font-size:0.7rem;opacity:0.85;"> · 잔여 재공품 ${UIUtils.formatNumber(site.rework)}</span>` : ''}
                 </span>
             </div>`
             + `<div style="font-size:0.72rem;font-weight:700;color:var(--text-muted);margin:2px 0 4px;">창고 현재고</div>`
@@ -2754,6 +2806,7 @@ const ProductionPlanModule = (function() {
                     <select class="form-select" id="sModel" onchange="ProductionPlanModule.updateDropdowns('model', '${line}')" autofocus>
                         <option value="">선택</option>
                         ${models.map(m => `<option value="${m}" ${m === modelValue ? 'selected' : ''}>${m}${_isAsCarModel(m, lineProducts) ? ' (A/S)' : ''}</option>`).join('')}
+                        <option value="__TEST__" ${modelValue === '__TEST__' ? 'selected' : ''}>TEST</option>
                     </select>
                 </div>
                 <div class="form-group">
@@ -2979,6 +3032,82 @@ const ProductionPlanModule = (function() {
         return subsequent.length;
     }
 
+    function _addPlanMinutes(time, minutes) {
+        const base = _parseMin(time);
+        if (base < 0) return '';
+        const total = base + minutes;
+        return `${String(Math.floor(total / 60) % 24).padStart(2, '0')}:${String(total % 60).padStart(2, '0')}`;
+    }
+
+    function openTestPlan(slot, line) {
+        const date = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
+        const existing = (Storage.getAll(STORE) || []).find(item =>
+            item.date === date && item.line === line && item.isTest && _planSlotKey(item) === slot
+        );
+        const note = existing ? (existing.workNote || '') : '';
+        const startTime = existing?.startTime || slot;
+        const testId = existing?.id || '';
+
+        UIUtils.showModal(`[${line}] TEST 계획 등록`, `
+            <div style="padding:14px 16px;background:rgba(124,58,237,.07);border:1px solid rgba(124,58,237,.25);border-radius:8px;margin-bottom:12px;">
+                <div style="font-weight:800;color:#7c3aed;margin-bottom:4px;">TEST 항목</div>
+                <div style="font-size:.8rem;color:var(--text-secondary);">차종·컬러·품명·수량은 입력하지 않고 전달사항만 등록합니다.</div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">시작 시간</label>
+                    <input type="time" class="form-input" value="${startTime}" disabled>
+                </div>
+                <div class="form-group" style="flex:1;">
+                    <label class="form-label">구분</label>
+                    <input type="text" class="form-input" value="TEST" disabled>
+                </div>
+            </div>
+            <div class="form-group">
+                <label class="form-label">전달 사항 <span style="color:var(--accent-red)">*</span></label>
+                <textarea class="form-input" id="testWorkNote" rows="5" maxlength="500" placeholder="TEST 작업 내용을 입력하세요">${_escapeHtml(note)}</textarea>
+            </div>
+        `, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
+            <button class="btn btn-primary" onclick="ProductionPlanModule.saveTestPlan('${slot}', '${line}', '${testId}')">저장</button>
+        `);
+    }
+
+    async function saveTestPlan(slot, line, testId, noteOverride) {
+        const date = (document.getElementById('planDateFilter') || {}).value || UIUtils.today();
+        const workNote = String(noteOverride != null
+            ? noteOverride
+            : ((document.getElementById('testWorkNote') || {}).value || '')).trim();
+        if (!workNote) {
+            UIUtils.toast('TEST 전달 사항을 입력해주세요.', 'warning');
+            document.getElementById('testWorkNote')?.focus();
+            return;
+        }
+
+        const existing = testId ? Storage.getById(STORE, testId) : null;
+        const collision = (Storage.getAll(STORE) || []).find(item =>
+            item.date === date && item.line === line && item.id !== testId && _planSlotKey(item) === slot
+        );
+        if (collision) {
+            UIUtils.toast('해당 시간에 이미 생산계획이 있습니다. 빈 시간에 TEST를 등록해주세요.', 'warning');
+            return;
+        }
+
+        const data = {
+            date, line, slot,
+            carModel: '', partName: '', color: '', planQty: 0,
+            workNote, startTime: slot, endTime: _addPlanMinutes(slot, 30),
+            status: '대기', isTemporary: false, isTest: true, planType: 'TEST'
+        };
+        if (existing) await Storage.update(STORE, existing.id, Object.assign({}, existing, data));
+        else await Storage.add(STORE, data);
+
+        UIUtils.toast('TEST 계획이 등록되었습니다.', 'success');
+        UIUtils.closeModal();
+        search();
+        if (_activePlanDateModal) setTimeout(() => openDayPlan(date, _activePlanLineModal), 0);
+    }
+
     async function saveSlot(originalSlot, line) {
         const date = document.getElementById('planDateFilter').value;
         const startTime = document.getElementById('sStartTime').value;
@@ -2997,6 +3126,16 @@ const ProductionPlanModule = (function() {
         const workNote      = ((document.getElementById('sWorkNote') || {}).value || '').trim();
         const mealTimeWork  = !!(document.getElementById('sMealTimeWork')?.checked);
         const isTemporary   = !!(document.getElementById('sTemporary')?.checked);
+
+        if (carModel === '__TEST__') {
+            if (!workNote) {
+                UIUtils.toast('TEST 전달 사항을 입력해주세요.', 'warning');
+                document.getElementById('sWorkNote')?.focus();
+                return;
+            }
+            await saveTestPlan(newSlot, line, '', workNote);
+            return;
+        }
 
         if (!color) {
             UIUtils.toast('도장 컬러를 선택하세요.', 'warning');
@@ -4013,7 +4152,9 @@ const ProductionPlanModule = (function() {
         nextMonth,
         goToday,
         editSlot,
+        openTestPlan,
         saveSlot,
+        saveTestPlan,
         removeSlot,
         onPlanDragStart,
         onPlanDragEnd,
