@@ -20043,8 +20043,8 @@ var ProdSubMaterialsModule = (function() {
                 'width:42px;height:42px;border-radius:10px;flex-shrink:0;background:var(--accent-blue);">' +
                 '<span class="material-symbols-outlined" style="font-size:24px;color:#fff;">inventory</span></span>' +
                 '<span style="display:flex;flex-direction:column;gap:2px;">' +
-                '<span style="font-size:0.92rem;font-weight:700;">부자재 현황</span>' +
-                '<span style="font-size:0.73rem;color:var(--text-muted);">입고 현황 조회</span>' +
+                '<span style="font-size:0.92rem;font-weight:700;">입출고 이력</span>' +
+                '<span style="font-size:0.73rem;color:var(--text-muted);">입고·출고 기록 조회</span>' +
                 '</span></button>' +
                 '<button type="button" onclick="ProdSubMaterialsModule.openTypeModal()"' +
                 ' style="display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:14px;' +
@@ -20075,9 +20075,11 @@ var ProdSubMaterialsModule = (function() {
     }
 
     function _typeRows() {
+        const categoryOrder = { '설비부품': 0, '기타': 1, '소모자재': 2 };
         return (Storage.getAll(STORE) || [])
             .filter(r => r._docKind === TYPE_KIND)
             .sort((a, b) =>
+                (categoryOrder[a.category || '기타'] ?? 1) - (categoryOrder[b.category || '기타'] ?? 1) ||
                 String(a.mainProcess || '').localeCompare(String(b.mainProcess || '')) ||
                 String(a.subProcess || '').localeCompare(String(b.subProcess || '')) ||
                 String(a.materialName || '').localeCompare(String(b.materialName || ''))
@@ -20143,7 +20145,8 @@ var ProdSubMaterialsModule = (function() {
                                     <th>소공정</th>
                                     <th>부자재명</th>
                                     <th>분류</th>
-                                    <th>안전재고</th>
+                                    <th>현재고/안전재고</th>
+                                    <th>구매처</th>
                                     <th>규격/용도</th>
                                     <th style="width:80px;">단위</th>
                                     <th>비고</th>
@@ -20189,6 +20192,41 @@ var ProdSubMaterialsModule = (function() {
         renderTypeTable(data);
     }
 
+    function openHistory(itemName, category) {
+        const name = String(itemName || '').trim();
+        const cat = category || '기타';
+        const managed = cat === '설비부품';
+        const master = _typeRows().find(r => String(r.materialName || '').trim() === name && (r.category || '기타') === cat) ||
+            _typeRows().find(r => String(r.materialName || '').trim() === name);
+        let balance = master ? Number(master.initialStock) || 0 : 0;
+        const safety = master ? Number(master.safetyStock) || 0 : 0;
+        const rows = _rows()
+            .filter(r => String(r.itemName || '').trim() === name && (r.category || '기타') === cat)
+            .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')) || String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+        const body = rows.length ? rows.map((r, i) => {
+            const qty = Number(r.quantity) || 0;
+            if (managed) balance += (r.movementType || '입고') === '출고' ? -qty : qty;
+            return `<tr>
+                <td>${i + 1}</td><td>${_esc(r.date || '-')}</td>
+                <td><span class="badge ${(r.movementType || '입고') === '출고' ? 'badge-warning' : 'badge-success'}">${_esc(r.movementType || '입고')}</span></td>
+                <td style="text-align:right;">${UIUtils.formatNumber(qty)} ${_esc(r.unit || (master && master.unit) || '')}</td>
+                <td>${_esc(r.lotNo || '-')}</td><td>${_esc(r.supplier || '-')}</td>
+                <td style="text-align:right;font-weight:700;color:${managed && balance < safety ? '#dc2626' : '#15803d'};">${managed ? UIUtils.formatNumber(balance) : '재고 미관리'}</td>
+                <td>${_esc(r.note || '-')}</td>
+            </tr>`;
+        }).join('') : `<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted);">등록된 입출고 이력이 없습니다.</td></tr>`;
+        UIUtils.showModal(`입출고 이력 — ${_esc(name)}`, `
+            <div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;font-size:.82rem;">
+                <span class="badge badge-info">분류: ${_esc(cat)}</span>
+                ${managed ? `<span style="font-weight:700;">초기재고 ${UIUtils.formatNumber(master ? master.initialStock : 0)}</span><span style="font-weight:700;">안전재고 ${UIUtils.formatNumber(safety)}</span>` : '<span style="font-weight:700;color:var(--text-muted);">재고 미관리</span>'}
+            </div>
+            <div class="data-table-wrapper"><table class="data-table" style="font-size:.8rem;min-width:780px;">
+                <thead><tr><th>No</th><th>입출고일</th><th>구분</th><th>수량</th><th>LOT/관리번호</th><th>거래처</th><th>${managed ? '등록 후 재고' : '재고 관리'}</th><th>비고</th></tr></thead>
+                <tbody>${body}</tbody>
+            </table></div>`, `
+            <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`, 'lg');
+    }
+
     function renderTypeTable(data) {
         const tbody = document.getElementById('psmTypeTableBody');
         if (!tbody) return;
@@ -20200,7 +20238,8 @@ var ProdSubMaterialsModule = (function() {
                     <td>${_esc(d.subProcess || '-')}</td>
                     <td style="font-weight:700;color:var(--text-primary);">${_esc(d.materialName || '-')}</td>
                     <td><span class="badge badge-info">${_esc(d.category || '기타')}</span></td>
-                    <td style="text-align:right;">${UIUtils.formatNumber(Number(d.safetyStock) || 0)} ${_esc(d.unit || '')}</td>
+                    ${(() => { const s = _materialStockInfo(d.materialName, d.category); return s.managed === false ? '<td style="text-align:center;color:var(--text-muted);">재고 미관리</td>' : `<td style="text-align:right;font-weight:700;color:${s.low ? '#dc2626' : '#15803d'};">${UIUtils.formatNumber(s.stock)} / ${UIUtils.formatNumber(s.safetyStock)} ${_esc(d.unit || '')}${s.low ? ' <span style="font-size:.7rem;">(부족)</span>' : ''}</td>`; })()}
+                    <td>${_esc(d.supplier || '-')}</td>
                     <td>${_esc(d.spec || '-')}</td>
                     <td>${_esc(d.unit || '-')}</td>
                     <td style="max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${_esc(d.note || '-')}</td>
@@ -20214,15 +20253,17 @@ var ProdSubMaterialsModule = (function() {
                             : `<span style="color:var(--text-muted);font-size:.78rem;">-</span>`}
                     </td>
                     <td>
+                        <button class="btn btn-sm btn-outline" onclick="ProdSubMaterialsModule.openHistory('${_js(d.materialName || '')}','${_js(d.category || '기타')}')">이력</button>
                         <button class="btn btn-sm btn-outline" onclick="ProdSubMaterialsModule.editType('${_js(d.id)}')">수정</button>
                         <button class="btn btn-sm btn-danger" onclick="ProdSubMaterialsModule.removeType('${_js(d.id)}')">삭제</button>
                     </td>
                 </tr>
             `).join('')
-            : `<tr><td colspan="11" style="text-align:center;padding:26px;color:var(--text-muted);">등록된 부자재가 없습니다.</td></tr>`;
+            : `<tr><td colspan="12" style="text-align:center;padding:26px;color:var(--text-muted);">등록된 부자재가 없습니다.</td></tr>`;
     }
 
     function _typeFormHtml(d = {}) {
+        const category = CATEGORIES.includes(d.category) ? d.category : '기타';
         return `
             <div style="display:flex;flex-direction:column;gap:12px;">
                 <div class="form-row">
@@ -20256,14 +20297,23 @@ var ProdSubMaterialsModule = (function() {
                 <div class="form-row">
                     <div class="form-group">
                         <label class="form-label">분류 <span style="color:var(--accent-red)">*</span></label>
-                        <select class="form-select" id="psmTypeCategory">
-                            ${CATEGORIES.map(c => `<option value="${_esc(c)}" ${(d.category || '기타') === c ? 'selected' : ''}>${_esc(c)}</option>`).join('')}
+                        <select class="form-select" id="psmTypeCategory" onchange="ProdSubMaterialsModule.onTypeCategoryChange()">
+                            ${CATEGORIES.map(c => `<option value="${_esc(c)}" ${category === c ? 'selected' : ''}>${_esc(c)}</option>`).join('')}
                         </select>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="psmTypeSafetyStockGroup">
                         <label class="form-label">안전재고</label>
                         <input type="number" min="0" step="0.001" class="form-input" id="psmTypeSafetyStock" value="${d.safetyStock ?? 0}" placeholder="부족 기준 수량">
                     </div>
+                </div>
+                <div class="form-group" id="psmTypeInitialStockGroup">
+                    <label class="form-label">현재고(초기재고)</label>
+                    <input type="number" min="0" step="0.001" class="form-input" id="psmTypeInitialStock" value="${d.initialStock ?? 0}" placeholder="등록 시점의 보유 수량">
+                    <div style="font-size:.72rem;color:var(--text-muted);margin-top:4px;">등록 후 입고는 더하고 출고는 차감하여 현재고를 계산합니다.</div>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">구매처</label>
+                    <input type="text" class="form-input" id="psmTypeSupplier" value="${_esc(d.supplier || '')}" placeholder="구매처/공급업체">
                 </div>
                 <div class="form-group">
                     <label class="form-label">규격/용도</label>
@@ -20288,9 +20338,23 @@ var ProdSubMaterialsModule = (function() {
             unit: document.getElementById('psmTypeUnit')?.value || 'EA',
             category: document.getElementById('psmTypeCategory')?.value || '기타',
             safetyStock: Math.max(0, Number(document.getElementById('psmTypeSafetyStock')?.value) || 0),
+            initialStock: Math.max(0, Number(document.getElementById('psmTypeInitialStock')?.value) || 0),
+            supplier: document.getElementById('psmTypeSupplier')?.value.trim() || '',
             spec: document.getElementById('psmTypeSpec')?.value.trim() || '',
             note: document.getElementById('psmTypeNote')?.value.trim() || ''
         };
+    }
+
+    function onTypeCategoryChange() {
+        const unmanaged = document.getElementById('psmTypeCategory')?.value !== '설비부품';
+        ['psmTypeSafetyStockGroup', 'psmTypeInitialStockGroup'].forEach(id => {
+            const group = document.getElementById(id);
+            if (group) group.style.display = unmanaged ? 'none' : '';
+        });
+        ['psmTypeSafetyStock', 'psmTypeInitialStock'].forEach(id => {
+            const input = document.getElementById(id);
+            if (input) input.disabled = unmanaged;
+        });
     }
 
     function _validateType(data) {
@@ -20307,6 +20371,7 @@ var ProdSubMaterialsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeNew()">등록</button>
         `, 'lg');
+        setTimeout(onTypeCategoryChange, 0);
     }
 
     async function saveTypeNew() {
@@ -20328,6 +20393,7 @@ var ProdSubMaterialsModule = (function() {
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveTypeEdit('${_js(id)}')">저장</button>
         `, 'lg');
+        setTimeout(onTypeCategoryChange, 0);
     }
 
     async function saveTypeEdit(id) {
@@ -20342,13 +20408,15 @@ var ProdSubMaterialsModule = (function() {
 
     function _materialStockInfo(itemName, category) {
         const name = String(itemName || '').trim();
+        if (category !== '설비부품') return { stock: null, safetyStock: null, low: false, managed: false };
         const movements = _rows().filter(r => String(r.itemName || '').trim() === name && (!category || (r.category || '기타') === category));
         const received = movements.filter(r => (r.movementType || '입고') === '입고').reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
         const issued = movements.filter(r => (r.movementType || '입고') === '출고').reduce((sum, r) => sum + (Number(r.quantity) || 0), 0);
         const master = _typeRows().find(r => String(r.materialName || '').trim() === name && (!category || (r.category || '기타') === category)) ||
             _typeRows().find(r => String(r.materialName || '').trim() === name);
         const safetyStock = master ? Number(master.safetyStock) || 0 : 0;
-        const stock = received - issued;
+        const initialStock = master ? Number(master.initialStock) || 0 : 0;
+        const stock = initialStock + received - issued;
         return { stock, safetyStock, low: stock < safetyStock };
     }
 
@@ -20381,7 +20449,7 @@ var ProdSubMaterialsModule = (function() {
         const tbody = document.getElementById('psmTableBody');
         if (!tbody) return;
         tbody.innerHTML = data.length === 0
-            ? `<tr><td colspan="11" style="text-align:center;padding:30px;color:var(--text-muted);">부자재 입고 기록이 없습니다.</td></tr>`
+            ? `<tr><td colspan="13" style="text-align:center;padding:30px;color:var(--text-muted);">부자재 입출고 기록이 없습니다.</td></tr>`
             : data.map((d, i) => `
                 <tr>
                     <td>${data.length - i}</td>
@@ -20391,7 +20459,7 @@ var ProdSubMaterialsModule = (function() {
                     <td style="font-weight:700;">${_esc(d.itemName)}</td>
                     <td style="font-family:monospace;font-size:.82rem;">${_esc(d.lotNo || '-')}</td>
                     <td style="text-align:right;font-weight:700;">${UIUtils.formatNumber(Number(d.quantity) || 0)} ${_esc(d.unit || '')}</td>
-                    ${(() => { const s = _materialStockInfo(d.itemName, d.category); return `<td style="text-align:right;font-weight:700;color:${s.low ? '#dc2626' : '#15803d'};">${UIUtils.formatNumber(s.stock)} / ${UIUtils.formatNumber(s.safetyStock)} ${_esc(d.unit || '')}${s.low ? ' <span style="font-size:.7rem;">(부족)</span>' : ''}</td>`; })()}
+                    ${(() => { const s = _materialStockInfo(d.itemName, d.category); return s.managed === false ? '<td style="text-align:center;color:var(--text-muted);">재고 미관리</td>' : `<td style="text-align:right;font-weight:700;color:${s.low ? '#dc2626' : '#15803d'};">${UIUtils.formatNumber(s.stock)} / ${UIUtils.formatNumber(s.safetyStock)} ${_esc(d.unit || '')}${s.low ? ' <span style="font-size:.7rem;">(부족)</span>' : ''}</td>`; })()}
                     <td>${_esc(d.supplier || '-')}</td>
                     <td>${_esc(d.partName || '-')}</td>
                     <td>${_esc(d.inspector || '-')}</td>
@@ -20405,6 +20473,7 @@ var ProdSubMaterialsModule = (function() {
     }
 
     function _formHtml(d = {}) {
+        const category = CATEGORIES.includes(d.category) ? d.category : '기타';
         return `
             <div style="display:flex;flex-direction:column;gap:12px;">
                 <div style="padding:12px;border:1px solid var(--border-color);border-radius:8px;background:var(--bg-secondary);font-size:.82rem;color:var(--text-secondary);line-height:1.55;">
@@ -20422,6 +20491,15 @@ var ProdSubMaterialsModule = (function() {
                             ${['입고', '출고'].map(c => `<option value="${c}" ${(d.movementType || '입고') === c ? 'selected' : ''}>${c}</option>`).join('')}
                         </select>
                     </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">분류 <span style="color:var(--accent-red)">*</span></label>
+                        <select class="form-select" id="psmCategory">
+                            ${CATEGORIES.map(c => `<option value="${_esc(c)}" ${category === c ? 'selected' : ''}>${_esc(c)}</option>`).join('')}
+                        </select>
+                    </div>
+                    <div class="form-group"></div>
                 </div>
                 <div class="form-row">
                     <div class="form-group">
@@ -20491,15 +20569,15 @@ var ProdSubMaterialsModule = (function() {
     }
 
     function _validate(data) {
-        if (!data.date) return '입고일자를 입력하세요.';
+        if (!data.date) return '입출고일자를 입력하세요.';
         if (!data.itemName) return '부자재명을 입력하세요.';
-        if (!data.quantity || data.quantity <= 0) return '입고수량을 0보다 크게 입력하세요.';
+        if (!data.quantity || data.quantity <= 0) return '수량을 0보다 크게 입력하세요.';
         if (!data.unit) return '단위를 선택하세요.';
         return '';
     }
 
     function openAddModal() {
-        UIUtils.showModal('부자재 입고 등록', _formHtml(), `
+        UIUtils.showModal('부자재 입출고 등록', _formHtml(), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveNew()">등록</button>
         `, 'lg');
@@ -20511,14 +20589,14 @@ var ProdSubMaterialsModule = (function() {
         if (err) { UIUtils.toast(err, 'warning'); return; }
         await Storage.add(STORE, data);
         UIUtils.closeModal();
-        UIUtils.toast('부자재 입고 기록이 등록되었습니다.', 'success');
+        UIUtils.toast('부자재 입출고 기록이 등록되었습니다.', 'success');
         search();
     }
 
     function edit(id) {
         const data = Storage.getById(STORE, id);
         if (!data) return;
-        UIUtils.showModal('부자재 입고 수정', _formHtml(data), `
+        UIUtils.showModal('부자재 입출고 수정', _formHtml(data), `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">취소</button>
             <button class="btn btn-primary" onclick="ProdSubMaterialsModule.saveEdit('${_js(id)}')">저장</button>
         `, 'lg');
@@ -20530,12 +20608,12 @@ var ProdSubMaterialsModule = (function() {
         if (err) { UIUtils.toast(err, 'warning'); return; }
         await Storage.update(STORE, id, data);
         UIUtils.closeModal();
-        UIUtils.toast('부자재 입고 기록이 수정되었습니다.', 'success');
+        UIUtils.toast('부자재 입출고 기록이 수정되었습니다.', 'success');
         search();
     }
 
     function remove(id) {
-        UIUtils.confirm('부자재 입고 기록을 삭제하시겠습니까?', async () => {
+        UIUtils.confirm('부자재 입출고 기록을 삭제하시겠습니까?', async () => {
             await Storage.remove(STORE, id);
             UIUtils.toast('삭제되었습니다.', 'success');
             search();
@@ -20545,12 +20623,12 @@ var ProdSubMaterialsModule = (function() {
     function exportData() {
         const data = _rows().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
         const rows = data.map(d => [
-            d.date || '', d.category || '', d.itemName || '', d.lotNo || '',
+            d.date || '', d.movementType || '입고', d.category || '기타', d.itemName || '', d.lotNo || '',
             d.quantity || 0, d.unit || '', d.supplier || '', d.partName || '',
             d.inspector || '', d.evidenceNo || '', d.note || ''
         ]);
         Storage.exportToCSV(
-            ['입고일자','구분','부자재명','LOT/관리번호','입고수량','단위','거래처','대상 품명','확인자','입고 근거','비고'],
+            ['입출고일자','입출고 구분','분류','부자재명','LOT/관리번호','수량','단위','거래처','대상 품명','확인자','입고 근거','비고'],
             rows,
             '부자재입고관리'
         );
@@ -20567,6 +20645,7 @@ var ProdSubMaterialsModule = (function() {
         render,
         search,
         onTypeMainFilterChange,
+        onTypeCategoryChange,
         searchTypeList,
         openTypeModal,
         saveTypeNew,
@@ -20578,6 +20657,7 @@ var ProdSubMaterialsModule = (function() {
         deleteTypePhoto,
         openTypePhotoViewer,
         viewTypePhotos,
+        openHistory,
         openAddModal,
         saveNew,
         edit,
