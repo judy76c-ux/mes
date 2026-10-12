@@ -29790,8 +29790,7 @@ var ProdEquipmentModule = (function() {
                 ${[{k:'ledger',icon:'article',label:'관리대장'},
                    {k:'spare',icon:'inventory',label:'스페어 관리'},
                    {k:'check',icon:'checklist',label:'점검 항목'},
-                   {k:'issue',icon:'warning',label:'이상 발생'},
-                   {k:'downtime',icon:'pause_circle',label:'비가동 이력'}].map(t => `
+                   {k:'issue',icon:'warning',label:'이상 발생'}].map(t => `
                     <button id="subTab_${t.k}" onclick="ProdEquipmentModule.switchSubTab('${t.k}')"
                             style="flex:1;padding:9px 4px;border:none;cursor:pointer;font-size:0.8rem;
                                    display:flex;align-items:center;justify-content:center;gap:4px;transition:all .15s;
@@ -29808,8 +29807,9 @@ var ProdEquipmentModule = (function() {
     }
 
     function switchSubTab(tab) {
+        if (tab === 'downtime') tab = 'ledger';   // 설비 상세에서 비가동 이력 탭 제거
         _subTab = tab;
-        ['ledger','spare','check','issue','downtime'].forEach(k => {
+        ['ledger','spare','check','issue'].forEach(k => {
             const el = document.getElementById('subTab_' + k);
             if (!el) return;
             const active = k === tab;
@@ -30434,12 +30434,69 @@ var ProdEquipmentModule = (function() {
             `<option value="${p.id}" ${selectedId===p.id?'selected':''}>${_esc(p.name)}${p.model ? ' · ' + _esc(p.model) : ''}</option>`
         ).join('');
     }
+    function _profileEquipmentOptions(selectedId) {
+        const equips = (Storage.getAll(ST_EQUIP) || [])
+            .filter(e => !e.parentId)
+            .slice().sort((a,b) => (a.name||'').localeCompare(b.name||'', 'ko'));
+        return '<option value="">-- 기존 대표 설비에서 불러오기 --</option>' + equips.map(e =>
+            `<option value="${_esc(e.id)}" ${selectedId===e.id?'selected':''}>${_esc(e.name)}${e.line ? ' · ' + _esc(e.line) : ''}${e.model ? ' · ' + _esc(e.model) : ''}</option>`
+        ).join('');
+    }
+    function _equipmentSpecSummary(specs) {
+        const labels = { manufacturer:'제조사', mfgYear:'제조연도', serialNo:'시리얼번호', capacity:'용량', power:'전력', dimensions:'규격', weight:'중량', supplier:'구매처', supplierContact:'구매처 연락처', purchasePrice:'구매가', special:'특이사항' };
+        return Object.entries(specs || {})
+            .filter(([, value]) => value !== undefined && value !== null && String(value).trim() !== '')
+            .map(([key, value]) => `${labels[key] || key}: ${value}`)
+            .join('\n');
+    }
+    function _profileEquipmentSnapshot(rootId) {
+        return rootId ? _equipTreeRows(rootId).map(row => {
+            const e = row.equip;
+            return { sourceId: e.id || '', depth: row.depth, name: e.name || '', model: e.model || '', line: e.line || '', process: e.process || '', parentId: e.parentId || '', profileId: e.profileId || '', specs: e.specs || {}, note: e.note || '', sortOrder: e.sortOrder || 0 };
+        }) : [];
+    }
+    function _profileEquipmentPreview(rootId, fallbackRows) {
+        const rows = rootId ? _equipTreeRows(rootId) : (fallbackRows || []).map(row => ({ equip: row, depth: row.depth || 0 }));
+        if (!rows.length) return '<span style="color:var(--text-muted);">기존 대표 설비를 선택하면 하위 설비까지 표시됩니다.</span>';
+        return rows.map(row => `<div style="padding:4px 0 4px ${(row.depth || 0) * 18}px;font-size:.8rem;">
+            ${(row.depth || 0) ? 'ㄴ ' : ''}<b>${_esc(row.equip.name || '')}</b>
+            ${row.equip.model ? `<span style="color:var(--text-muted);margin-left:6px;">${_esc(row.equip.model)}</span>` : ''}
+            ${row.equip.process ? `<span style="color:var(--text-muted);margin-left:6px;">· ${_esc(row.equip.process)}</span>` : ''}
+        </div>`).join('');
+    }
+    function _loadEquipmentToProfile() {
+        const sourceId = document.getElementById('epSourceEquip')?.value || '';
+        const source = sourceId ? Storage.getById(ST_EQUIP, sourceId) : null;
+        const hidden = document.getElementById('epSourceEquipmentId');
+        const template = document.getElementById('epEquipmentTemplate');
+        const preview = document.getElementById('epSourceChildren');
+        if (hidden) hidden.value = source ? source.id : '';
+        if (!source) {
+            if (template) template.value = '[]';
+            if (preview) preview.innerHTML = _profileEquipmentPreview('', []);
+            return;
+        }
+        const setValue = (id, value) => { const el = document.getElementById(id); if (el) el.value = value || ''; };
+        setValue('epName', source.name);
+        setValue('epType', source.process || source.line);
+        setValue('epModel', source.model);
+        setValue('epSpec', _equipmentSpecSummary(source.specs));
+        setValue('epNote', source.note);
+        const rows = _profileEquipmentSnapshot(source.id);
+        if (template) template.value = JSON.stringify(rows);
+        if (preview) preview.innerHTML = _profileEquipmentPreview(source.id, rows);
+        UIUtils.toast(`대표 설비 '${source.name}'과 하위 설비 ${Math.max(rows.length - 1, 0)}대를 불러왔습니다.`, 'success');
+    }
     function _applyEquipProfile() {
         const id = document.getElementById('efProfile')?.value || '';
         const p = id ? Storage.getById(ST_PROFILE, id) : null;
         const profileId = document.getElementById('efProfileId');
+        const templateEl = document.getElementById('efProfileTemplate');
+        const childrenEl = document.getElementById('efProfileChildren');
         if (!p) {
             if (profileId) profileId.value = '';
+            if (templateEl) templateEl.value = '[]';
+            if (childrenEl) childrenEl.innerHTML = '<span style="color:var(--text-muted);">대표 사양을 선택하면 함께 등록될 하위 설비가 표시됩니다.</span>';
             return;
         }
         const model = document.getElementById('efModel');
@@ -30447,13 +30504,29 @@ var ProdEquipmentModule = (function() {
         if (model) model.value = p.model || '';
         if (note && p.note) note.value = p.note;
         if (profileId) profileId.value = p.id;
+        let rows = [];
+        try { rows = Array.isArray(p.equipmentTemplate) ? p.equipmentTemplate : JSON.parse(p.equipmentTemplate || '[]'); } catch (e) { rows = []; }
+        if (!rows.length && p.sourceEquipmentId) rows = _profileEquipmentSnapshot(p.sourceEquipmentId);
+        if (templateEl) templateEl.value = JSON.stringify(rows);
+        if (childrenEl) childrenEl.innerHTML = _profileEquipmentPreview('', rows);
         UIUtils.toast(`대표 사양 '${p.name}'을 불러왔습니다. 설비명·설치일·상태는 현재 설비에 맞게 입력하세요.`, 'success');
     }
     function _profileForm(p) {
         p = p || {};
+        const sourceId = p.sourceEquipmentId || '';
+        let savedRows = [];
+        try { savedRows = Array.isArray(p.equipmentTemplate) ? p.equipmentTemplate : JSON.parse(p.equipmentTemplate || '[]'); } catch (e) { savedRows = []; }
         return `<div class="form-group">
                     <label class="form-label">대표 사양명 <span style="color:var(--accent-red)">*</span></label>
                     <input class="form-input" id="epName" value="${_esc(p.name||'')}" placeholder="예: 도장 로봇 표준형">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">기존 대표 설비에서 불러오기</label>
+                    <select class="form-select" id="epSourceEquip" onchange="ProdEquipmentModule._loadEquipmentToProfile()">${_profileEquipmentOptions(sourceId)}</select>
+                    <input type="hidden" id="epSourceEquipmentId" value="${_esc(sourceId)}">
+                    <textarea id="epEquipmentTemplate" style="display:none;">${_esc(JSON.stringify(savedRows))}</textarea>
+                    <div id="epSourceChildren" style="margin-top:8px;padding:8px 10px;background:var(--bg-secondary);border-radius:8px;max-height:145px;overflow:auto;">${_profileEquipmentPreview(sourceId, savedRows)}</div>
+                    <div style="font-size:.72rem;color:var(--text-muted);margin-top:5px;">기존 대표 설비의 기본 정보와 연결된 하위 설비를 함께 불러옵니다.</div>
                 </div>
                 <div class="form-row">
                     <div class="form-group"><label class="form-label">설비 종류</label>
@@ -30467,9 +30540,13 @@ var ProdEquipmentModule = (function() {
                     <textarea class="form-textarea" id="epNote" rows="2">${_esc(p.note||'')}</textarea></div>`;
     }
     function _collectProfile() {
+        const sourceId = document.getElementById('epSourceEquipmentId')?.value || document.getElementById('epSourceEquip')?.value || '';
+        let equipmentTemplate = [];
+        try { equipmentTemplate = JSON.parse(document.getElementById('epEquipmentTemplate')?.value || '[]'); } catch (e) { equipmentTemplate = []; }
+        if (sourceId) equipmentTemplate = _profileEquipmentSnapshot(sourceId);
         return { name:document.getElementById('epName').value.trim(), type:document.getElementById('epType').value.trim(),
             model:document.getElementById('epModel').value.trim(), specSummary:document.getElementById('epSpec').value.trim(),
-            note:document.getElementById('epNote').value.trim() };
+            note:document.getElementById('epNote').value.trim(), sourceEquipmentId: sourceId, equipmentTemplate };
     }
     function openEquipProfileModal(editId) {
         if (!_isLoggedIn()) { UIUtils.toast('대표 사양 관리는 로그인 후 가능합니다.', 'warning'); return; }
@@ -30505,14 +30582,14 @@ var ProdEquipmentModule = (function() {
                 `<option value="${_esc(p.name)}" ${selProc===p.name?'selected':''}>${p.name}</option>`
             ).join('');
     }
-    /** 상위 설비 후보 — 같은 라인·공정 안에서 자기 자신 제외, 이미 상위설비가 지정된 설비는 뺀다
-     *  (2단계까지만 지원: 하위 설비가 또 하위를 가질 수 없다). */
+    /** 상위 설비 후보 — 같은 라인 안에서 자기 자신과 기존 하위 설비를 제외한다.
+     *  공정이 달라도 BOOTH/설비 그룹 아래에 여러 공정의 설비를 둘 수 있다. */
     function _equipParentOptions(line, process, excludeId, selParentId) {
         const candidates = (Storage.getAll(ST_EQUIP) || [])
-            .filter(x => x.line === line && x.process === process && x.id !== excludeId && !x.parentId)
+            .filter(x => x.line === line && x.id !== excludeId && !x.parentId)
             .sort((a,b) => (a.sortOrder||0)-(b.sortOrder||0) || (a.name||'').localeCompare(b.name||'','ko'));
         return '<option value="">-- 없음 (최상위 설비) --</option>' +
-            candidates.map(c => `<option value="${c.id}" ${selParentId===c.id?'selected':''}>${_esc(c.name)}</option>`).join('');
+            candidates.map(c => `<option value="${c.id}" ${selParentId===c.id?'selected':''}>${_esc(c.name)}${c.process ? ' · ' + _esc(c.process) : ''}</option>`).join('');
     }
     let _equipFormEditId = '';
     function _onEquipLineChange() {
@@ -30545,6 +30622,10 @@ var ProdEquipmentModule = (function() {
         const selLine = e.line || _line;
         const selProc = e.process || defaultProcess || '';
         const hasChildren = e.id ? (Storage.getAll(ST_EQUIP) || []).some(x => x.parentId === e.id) : false;
+        const selectedProfile = e.profileId ? Storage.getById(ST_PROFILE, e.profileId) : null;
+        let profileRows = [];
+        try { profileRows = selectedProfile && Array.isArray(selectedProfile.equipmentTemplate) ? selectedProfile.equipmentTemplate : JSON.parse(selectedProfile?.equipmentTemplate || '[]'); } catch (err) { profileRows = []; }
+        if (!profileRows.length && selectedProfile?.sourceEquipmentId) profileRows = _profileEquipmentSnapshot(selectedProfile.sourceEquipmentId);
         return `
         <div class="form-row">
             <div class="form-group">
@@ -30564,13 +30645,11 @@ var ProdEquipmentModule = (function() {
         <div class="form-row">
             <div class="form-group">
                 <label class="form-label">상위 설비 <span style="font-size:0.75rem;color:var(--text-muted);font-weight:400;">(선택 — 하위 설비로 등록)</span></label>
-                <select class="form-select" id="efParent" ${hasChildren ? 'disabled' : ''}>
-                    ${hasChildren
-                        ? `<option value="">-- 없음 (최상위 설비) --</option>`
-                        : _equipParentOptions(selLine, selProc, e.id || '', e.parentId || '')}
+                <select class="form-select" id="efParent">
+                    ${_equipParentOptions(selLine, selProc, e.id || '', e.parentId || '')}
                 </select>
                 ${hasChildren ? `<div style="margin-top:4px;font-size:0.74rem;color:var(--text-muted);">
-                    이 설비는 이미 하위 설비를 가지고 있어 다른 설비의 하위로 지정할 수 없습니다.</div>` : ''}
+                    기존 하위 설비를 유지하면서 상위 설비를 지정할 수 있습니다.</div>` : ''}
             </div>
             <div class="form-group"></div>
         </div>
@@ -30590,6 +30669,10 @@ var ProdEquipmentModule = (function() {
                 ${_profileOptions(e.profileId || '')}
             </select>
             <input type="hidden" id="efProfileId" value="${_esc(e.profileId||'')}">
+            <textarea id="efProfileTemplate" style="display:none;">${_esc(JSON.stringify(profileRows))}</textarea>
+            <div id="efProfileChildren" style="margin-top:8px;padding:8px 10px;background:var(--bg-secondary);border-radius:8px;max-height:120px;overflow:auto;">
+                ${profileRows.length ? _profileEquipmentPreview('', profileRows) : '<span style="color:var(--text-muted);">대표 사양을 선택하면 함께 등록될 하위 설비가 표시됩니다.</span>'}
+            </div>
             <div style="font-size:.7rem;color:var(--text-muted);margin-top:4px;">대표 사양은 한 번만 등록하고 도장 A/B, 하도·상도 스프레이 등 여러 설비에서 선택해 사용할 수 있습니다.</div>
         </div>
         <div class="form-row">
@@ -30650,9 +30733,40 @@ var ProdEquipmentModule = (function() {
         let saved;
         if (id) { await Storage.update(ST_EQUIP, id, data); saved = { id }; }
         else    { saved = await Storage.add(ST_EQUIP, data); _equipId = saved.id; }
+        await _createProfileChildren(saved.id, data);
         UIUtils.closeModal();
         _renderEquipList();
         if (_equipId) _renderDetail();
+    }
+    async function _createProfileChildren(rootId, rootData) {
+        const templateEl = document.getElementById('efProfileTemplate');
+        let rows = [];
+        try { rows = JSON.parse(templateEl?.value || '[]'); } catch (e) { rows = []; }
+        if (!rootId || rows.length < 2) return;
+        const existingChildren = (Storage.getAll(ST_EQUIP) || []).some(e => e.parentId === rootId);
+        if (existingChildren) return;
+        const parentByDepth = { 0: rootId };
+        for (const row of rows.slice(1)) {
+            const depth = Math.max(Number(row.depth) || 1, 1);
+            const parentId = parentByDepth[depth - 1] || rootId;
+            const child = await Storage.add(ST_EQUIP, {
+                line: rootData.line,
+                process: rootData.process,
+                parentId,
+                name: row.name || '',
+                model: row.model || '',
+                profileId: row.profileId || '',
+                specs: row.specs || {},
+                specsEnabled: true,
+                installDate: '',
+                status: '정상',
+                sortOrder: Number(row.sortOrder) || 0,
+                note: row.note || ''
+            });
+            parentByDepth[depth] = child.id;
+            Object.keys(parentByDepth).forEach(key => { if (Number(key) > depth) delete parentByDepth[key]; });
+        }
+        UIUtils.toast(`하위 설비 ${rows.length - 1}대를 함께 등록했습니다.`, 'success');
     }
     function _equipTreeRows(rootId) {
         const all = Storage.getAll(ST_EQUIP) || [];
@@ -34197,6 +34311,7 @@ var ProdEquipmentModule = (function() {
         _onEquipLineChange,
         _onCloneLineChange,
         _applyEquipProfile,
+        _loadEquipmentToProfile,
         // 관리대장
         openSpecModal,
         toggleSpecsEnabled,

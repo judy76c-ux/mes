@@ -18743,8 +18743,7 @@ var ProdEquipmentModule = (function() {
                 ${[{k:'ledger',icon:'article',label:'관리대장'},
                    {k:'spare',icon:'inventory',label:'스페어 관리'},
                    {k:'check',icon:'checklist',label:'점검 항목'},
-                   {k:'issue',icon:'warning',label:'이상 발생'},
-                   {k:'downtime',icon:'pause_circle',label:'비가동 이력'}].map(t => `
+                   {k:'issue',icon:'warning',label:'이상 발생'}].map(t => `
                     <button id="subTab_${t.k}" onclick="ProdEquipmentModule.switchSubTab('${t.k}')"
                             style="flex:1;padding:9px 4px;border:none;cursor:pointer;font-size:0.8rem;
                                    display:flex;align-items:center;justify-content:center;gap:4px;transition:all .15s;
@@ -18761,8 +18760,9 @@ var ProdEquipmentModule = (function() {
     }
 
     function switchSubTab(tab) {
+        if (tab === 'downtime') tab = 'ledger';   // 설비 상세에서 비가동 이력 탭 제거
         _subTab = tab;
-        ['ledger','spare','check','issue','downtime'].forEach(k => {
+        ['ledger','spare','check','issue'].forEach(k => {
             const el = document.getElementById('subTab_' + k);
             if (!el) return;
             const active = k === tab;
