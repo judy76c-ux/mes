@@ -289,6 +289,10 @@ var WarehouseOverviewModule = (function () {
                 ? r.lots.map(l => ({ lot: l.lotNo || '__nolot__', qty: Number(l.qty) || 0 }))
                 : [{ lot: r.lotNo || '__nolot__', qty: Number(r.quantity) || 0 }];
 
+            // 현재고 확정(기준재고)·미차감 처리 기록은 입출고 이력이 아니므로 LOT 이력 집계에서 제외
+            // (잔량은 아래에서 InvCalc 원장 재생 결과로 덮어쓴다)
+            if (InvCalc.isStockBaseline(r) || r.unmatchedAction === 'clear' || r.unmatchedAction === 'absorb') return;
+
             entries.forEach(({ lot, qty }) => {
                 if (!itemMap[key][lot]) {
                     itemMap[key][lot] = { qty: 0, firstDate: '', hadIncoming: false,
@@ -312,6 +316,29 @@ var WarehouseOverviewModule = (function () {
                     if (d && (!e.firstOutDate || d < e.firstOutDate)) e.firstOutDate = d;
                     if (d && (!e.lastOutDate || d > e.lastOutDate)) e.lastOutDate = d;
                 }
+            });
+        });
+
+        // LOT 잔량은 사출 창고 상세("현재 보관 LOT")와 같은 원장 엔진(InvCalc)으로 덮어쓴다.
+        // 단순 입고−출고 합산은 LOT 번호가 맞지 않는 출고(미매칭 → 오래된 LOT부터 FIFO 차감)를
+        // 반영하지 못해, 이미 소진된 구 LOT이 남아 있는 것으로 보여 FIFO 위반이 허위로 잡혔다.
+        const recsByKey = {};
+        all.forEach(r => {
+            const key = (r.carModel || '') + '||' + (r.partName || '') + '||' + (r.color || '');
+            (recsByKey[key] = recsByKey[key] || []).push(r);
+        });
+        Object.keys(itemMap).forEach(key => {
+            const bal = InvCalc.lotBalances(_recordsAfterBaseline(recsByKey[key] || []));
+            const byLot = {};
+            bal.lots.forEach(l => { byLot[l.lotNo === '무표기' ? '__nolot__' : l.lotNo] = l; });
+            Object.keys(itemMap[key]).forEach(lot => {
+                itemMap[key][lot].qty = byLot[lot] ? byLot[lot].qty : 0;
+                itemMap[key][lot].balDate = byLot[lot] ? String(byLot[lot].date || '') : '';
+            });
+            Object.keys(byLot).forEach(lot => {
+                if (itemMap[key][lot]) return;
+                itemMap[key][lot] = { qty: byLot[lot].qty, balDate: String(byLot[lot].date || ''), firstDate: '', hadIncoming: false,
+                                      inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '', outs: [], supplier: '' };
             });
         });
 
@@ -355,49 +382,109 @@ var WarehouseOverviewModule = (function () {
                 }
             }
 
-            // FIFO 위반 (사출 LOT 일자 기준 — 입고 순서가 아니라 LOT 번호 YYMMDD = 사출 생산일)
-            // 사출일이 빠른 LOT의 재고가 남아 있는데, 그보다 사출일이 늦은 LOT이 먼저 모두 출고된 경우.
-            // - YYMMDD 형식 LOT만 비교 (__nolot__, DEV-LOT 등 제외)
-            // - 입고 기록이 있는 LOT만 대상: 구 LOT이 창고에 있던 시점(입고일 이후)에 신 LOT이 출고됐을 때만 위반
-            //   (구 LOT이 신 LOT 소진 뒤에 늦게 입고된 경우는 당시 꺼낼 수 없었으므로 위반 아님)
-            const fifoActiveLots = activeLots
-                .filter(([lot, v]) => _isYymmddLot(lot) && v.firstDate)
-                .sort(([a], [b]) => a.localeCompare(b));
-            const consumedLots = Object.entries(lots)
-                .filter(([lot, v]) => _isYymmddLot(lot) && v.qty <= 0 && v.hadIncoming && v.firstDate && v.lastOutDate);
-            if (fifoActiveLots.length > 0 && consumedLots.length > 0) {
-                const [oldestLot, oldestV] = fifoActiveLots[0];
-                const newerConsumedLots = consumedLots
-                    .filter(([lot, v]) => lot > oldestLot && v.lastOutDate >= oldestV.firstDate)
-                    .sort(([a], [b]) => a.localeCompare(b));
-                if (newerConsumedLots.length) {
-                    const maxConsumedLot = newerConsumedLots[newerConsumedLots.length - 1][0];
-                    fifoCount++;
-                    fifoItems.push({
-                        carModel,
-                        partName,
-                        color,
-                        qty: netQty,
-                        oldestDate: oldestV.firstDate,
-                        // 위반 기준 구 LOT: 소진된 신 LOT보다 사출일이 빠른데 아직 남아 있는 LOT
-                        oldLots: fifoActiveLots
-                            .filter(([lot]) => lot < maxConsumedLot)
-                            .map(([lot, v]) => ({ lot, qty: v.qty, firstDate: v.firstDate, inQty: v.inQty,
-                                                  outQty: v.outQty, lastOutDate: v.lastOutDate })),
-                        consumedLots: newerConsumedLots.map(([lot, v]) => Object.assign({ lot, firstDate: v.firstDate, inQty: v.inQty,
-                                                  outQty: v.outQty, firstOutDate: v.firstOutDate, lastOutDate: v.lastOutDate,
-                                                  supplier: v.supplier },
-                                                  _fifoBlameFor(oldestV.firstDate, v))),
-                        oldSupplier: oldestV.supplier || ''
-                    });
-                    fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
-                }
+            // FIFO 위반 (사출 LOT 일자 기준 — LOT 번호 YYMMDD = 사출 생산일)
+            // 원장을 시간순으로 재생해, "생산 출고 시점에 그보다 사출일이 빠른 LOT이 창고에 남아 있었는지"로 판정한다.
+            // - 재고 수정 보정/재고실사 보정 출고는 사용 실적이 아니므로 제외
+            // - 반납·재입고로 구 LOT이 다시 들어온 경우, 들어오기 전 출고는 위반이 아님 (시점 기준)
+            // - 최신 현재고 확정(실사) 이후 기록만 대상 — 실사로 정리된 과거 위반은 제외
+            // - 지금도 창고에 남아 있는 구 LOT이 있는 위반만 표시 (이미 소진됐으면 해소된 것)
+            const viol = _injFifoViolations(recsByKey[key] || []);
+            const activeSet = {};
+            activeLots.forEach(([lot]) => { activeSet[lot] = true; });
+            const violNew = Object.keys(viol.found).filter(bLot => Object.keys(viol.found[bLot].olds).some(aLot => activeSet[aLot]));
+            if (violNew.length) {
+                const oldSet = {};
+                violNew.forEach(bLot => Object.keys(viol.found[bLot].olds).forEach(aLot => { if (activeSet[aLot]) oldSet[aLot] = true; }));
+                const oldList = Object.keys(oldSet).sort();
+                const oldestV = lots[oldList[0]];
+                fifoCount++;
+                fifoItems.push({
+                    carModel,
+                    partName,
+                    color,
+                    qty: netQty,
+                    oldestDate: oldestV.firstDate || oldestV.balDate || '',
+                    oldLots: oldList.map(lot => {
+                        const v = lots[lot];
+                        return { lot, qty: v.qty, firstDate: v.firstDate || v.balDate || '', inQty: v.inQty,
+                                 outQty: v.outQty, lastOutDate: v.lastOutDate };
+                    }),
+                    consumedLots: violNew.filter(bLot => !oldSet[bLot]).sort().map(bLot => {
+                        const v = lots[bLot] || {};
+                        const f = viol.found[bLot];
+                        const blame = _fifoBlameFor(oldestV.firstDate || oldestV.balDate || '', Object.assign({}, v, { outs: [] }));
+                        return Object.assign({ lot: bLot, firstDate: v.firstDate || v.balDate || '', inQty: v.inQty || 0,
+                                               outQty: v.outQty || 0, firstOutDate: v.firstOutDate || '', lastOutDate: v.lastOutDate || '',
+                                               supplier: v.supplier || '' },
+                                             blame, { afterQty: f.afterQty, beforeQty: f.beforeQty || 0 });
+                    }),
+                    oldSupplier: oldestV.supplier || ''
+                });
+                fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
             }
         });
 
         const fifo = _splitFifoAcks('inj', fifoItems);
         return { itemCount, totalStock, zeroStock, longStock, fifoCount: fifo.pending.length, multiLot,
                  zeroItems, longItems, fifoItems: fifo.pending, fifoAcked: fifo.acked, fifoHistory: fifo.history, multiLotItems };
+    }
+
+    /** 재고 수정 보정·재고실사 보정 출고 — 사용 실적이 아니라 수량 정정이므로 FIFO 판정에서 제외 */
+    function _isAdjustmentOut(r) {
+        return !!(r && (r.isStockCountAdjustment || /보정|실사/.test(String(r.source || ''))));
+    }
+
+    /**
+     * 사출 FIFO 위반 판정 (원장 시간순 재생)
+     * 생산 출고로 LOT B가 차감된 시점에, B보다 사출일(LOT YYMMDD)이 빠른 LOT A가 아직 남아 있으면 위반.
+     * 반환: { found: { B: { afterQty, beforeQty, olds: {A: true} } } }
+     */
+    function _injFifoViolations(records) {
+        const recs = _recordsAfterBaseline(records);
+        const steps = InvCalc.replaySteps(recs);
+        const found = {}, clean = {};
+        steps.forEach((st, i) => {
+            const r = st.rec;
+            if (!r || r.type !== '출고' || !st.deductions || InvCalc.isStockBaseline(r) || r.unmatchedAction || _isAdjustmentOut(r)) return;
+            const drained = st.deductions.filter(x => x.lotNo !== InvCalc.UNMATCHED && _isYymmddLot(x.lotNo) && x.qty > 0);
+            if (!drained.length) return;
+            const after = InvCalc.lotBalances(steps.slice(0, i + 1).map(x => x.rec)).lots;
+            drained.forEach(dx => {
+                const olds = after.filter(l => l.qty > 0 && _isYymmddLot(l.lotNo) && l.lotNo < dx.lotNo);
+                if (!olds.length) { clean[dx.lotNo] = (clean[dx.lotNo] || 0) + dx.qty; return; }
+                const f = found[dx.lotNo] = found[dx.lotNo] || { afterQty: 0, beforeQty: 0, olds: {} };
+                f.afterQty += dx.qty;
+                olds.forEach(o => { f.olds[o.lotNo] = true; });
+            });
+        });
+        Object.keys(found).forEach(k => { found[k].beforeQty = clean[k] || 0; });
+        return { found: found };
+    }
+
+    /** 최신 현재고 확정(기준재고) 이후 기록만 — 사출 창고 상세(_recordsForStockCalc)와 같은 기준 */
+    function _recordsAfterBaseline(records) {
+        const all = records || [];
+        let baseline = null;
+        all.forEach(r => {
+            if (!InvCalc.isStockBaseline(r)) return;
+            if (!baseline) { baseline = r; return; }
+            const a = InvCalc.recordStamp(r), b = InvCalc.recordStamp(baseline);
+            if (a > b || (a === b && String(r.createdAt || '') >= String(baseline.createdAt || ''))) baseline = r;
+        });
+        if (!baseline) return all.slice();
+        const cut = InvCalc.recordStamp(baseline);
+        const cutCreated = String(baseline.createdAt || '');
+        const cutId = String(baseline.id || '');
+        const after = all.filter(r => {
+            if (!r || r === baseline || InvCalc.isStockBaseline(r)) return false;
+            const st = InvCalc.recordStamp(r);
+            if (st > cut) return true;
+            if (st < cut) return false;
+            const c = String(r.createdAt || '');
+            if (cutCreated && c) { if (c > cutCreated) return true; if (c < cutCreated) return false; }
+            return !!(cutId && r.id && String(r.id) > cutId);
+        });
+        return [baseline].concat(after);
     }
 
     /* ==============================================================
