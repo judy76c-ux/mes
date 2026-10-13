@@ -2738,7 +2738,7 @@ var LaserWorkModule = (function() {
         const pageId = line === '도장-B' ? 'painting-work-b' : 'painting-work-a';
         try {
             if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function' && !AuthModule.canAccessPage(pageId)) {
-                UIUtils.toast('도장 작업일보에 접근 권한이 없습니다.', 'warning');
+                UIUtils.toast('도장 작업일보에 접근 권한이 없습니다.' + ' (페이지: ' + pageId + ', 역할: ' + (function () { try { var u = AuthModule.getCurrentUser() || {}; return [].concat(u.roles || [], u.role || []).join('/') || '-'; } catch (e) { return '-'; } })() + ')', 'warning');
                 return;
             }
         } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
@@ -2781,7 +2781,7 @@ var LaserWorkModule = (function() {
         if (!id) return;
         try {
             if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function' && !AuthModule.canAccessPage('laser-work')) {
-                UIUtils.toast('레이져 작업일지에 접근 권한이 없습니다.', 'warning');
+                UIUtils.toast('레이져 작업일지에 접근 권한이 없습니다.' + ' (페이지: ' + 'laser-work' + ', 역할: ' + (function () { try { var u = AuthModule.getCurrentUser() || {}; return [].concat(u.roles || [], u.role || []).join('/') || '-'; } catch (e) { return '-'; } })() + ')', 'warning');
                 return;
             }
         } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
@@ -2792,6 +2792,13 @@ var LaserWorkModule = (function() {
         if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals(); else UIUtils.closeModal();
         Router.navigate('laser-work');
         setTimeout(function () { view(id); }, 300);
+    }
+
+    function hasPaintingWork(workId, idx) {
+        const d = Storage.getById(STORE, workId);
+        if (!d) return false;
+        const pair = _workLotPairs(d)[Number(idx)];
+        return !!(pair && _paintingWorksFor(d, pair).length);
     }
 
     function openPaintingWorkById(id) {
@@ -3040,6 +3047,7 @@ var LaserWorkModule = (function() {
         view,
         goPaintingWork,
         goLaserWork,
+        hasPaintingWork,
         openPaintingWorkById,
         goInjectionInspection,
         edit,
@@ -3173,6 +3181,12 @@ var LaserInspectionModule = (function() {
         return ref ? ref.date : '';
     }
 
+    // 날짜 스택(_dateStack) 안의 본문 글자색을 링크 색상으로 바꾼다
+    function _linkTone(html) {
+        return String(html).replace(/color:var\(--text-primary\)/g, 'color:var(--accent-blue)')
+            .replace(/color:var\(--text-secondary\)/g, 'color:var(--accent-blue)');
+    }
+
     // 레이져 작업일 — 연결된 작업일지가 있으면 클릭해 레이져 작업일지(작업 상세)로 이동
     function _laserDateLinkHtml(lotInfo) {
         if (!lotInfo || !lotInfo.laserDate) return '<span style="color:var(--text-muted);">-</span>';
@@ -3181,7 +3195,7 @@ var LaserInspectionModule = (function() {
         if (!wid) return stack;
         return '<a href="javascript:void(0)" title="레이져 작업일지로 이동" ' +
             'onclick="event.stopPropagation();LaserWorkModule.goLaserWork(\'' + wid + '\')" ' +
-            'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' + stack + '</a>';
+            'style="text-decoration:underline;color:var(--accent-blue);cursor:pointer;display:inline-block;">' + _linkTone(stack) + '</a>';
     }
 
     // 도장 LOT(도장일) 목록 — 연결된 작업일지가 있으면 클릭해 도장 작업 실적(도장 작업일보)으로 이동
@@ -3190,11 +3204,13 @@ var LaserInspectionModule = (function() {
         if (!links.length) return '<span style="color:var(--text-muted);">-</span>';
         const wid = String((lotInfo && lotInfo.workId) || '').replace(/[^A-Za-z0-9_-]/g, '');
         return '<div style="display:flex;flex-direction:column;gap:5px;">' + links.map(l => {
-            if (!wid || l.idx < 0) return _dateStack(l.date, '');
+            const reachable = wid && l.idx >= 0 && typeof LaserWorkModule !== 'undefined'
+                && typeof LaserWorkModule.hasPaintingWork === 'function' && LaserWorkModule.hasPaintingWork(wid, l.idx);
+            if (!reachable) return _dateStack(l.date, '');
             return '<a href="javascript:void(0)" title="도장 작업 실적으로 이동" ' +
                 'onclick="event.stopPropagation();LaserWorkModule.goPaintingWork(\'' + wid + '\',' + Number(l.idx) + ')" ' +
-                'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
-                _dateStack(l.date, '') + '</a>';
+                'style="text-decoration:underline;color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
+                _linkTone(_dateStack(l.date, '')) + '</a>';
         }).join('') + '</div>';
     }
 
@@ -3206,8 +3222,8 @@ var LaserInspectionModule = (function() {
             if (!r.id) return _dateStack(r.date, '');
             return '<a href="javascript:void(0)" title="사출 수입검사 일지로 이동" ' +
                 'onclick="event.stopPropagation();LaserInspectionModule.goIncomingInspection(\'' + String(r.id).replace(/[^A-Za-z0-9_-]/g, '') + '\')" ' +
-                'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
-                _dateStack(r.date, '') + '</a>';
+                'style="text-decoration:underline;color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
+                _linkTone(_dateStack(r.date, '')) + '</a>';
         }).join('') + '</div>';
     }
 
@@ -3218,7 +3234,7 @@ var LaserInspectionModule = (function() {
         try {
             if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function'
                 && !AuthModule.canAccessPage('injection-incoming')) {
-                UIUtils.toast('사출 수입검사 일지에 접근 권한이 없습니다.', 'warning');
+                UIUtils.toast('사출 수입검사 일지에 접근 권한이 없습니다.' + ' (페이지: ' + 'injection-incoming' + ', 역할: ' + (function () { try { var u = AuthModule.getCurrentUser() || {}; return [].concat(u.roles || [], u.role || []).join('/') || '-'; } catch (e) { return '-'; } })() + ')', 'warning');
                 return;
             }
         } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }

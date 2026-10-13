@@ -1374,8 +1374,9 @@ const ProductionPlanModule = (function() {
         return rows.filter(r => !r.processTag || r.processTag === line);
     }
 
-    // 계획에 필요한 도료(주제/경화제/희석제) 중 재고가 바닥난(<=0) 항목의 표시명 목록 반환
-    // ※ 개당(EA) 소요량 데이터가 없어 정확한 필요량 비교는 불가 — 재고 유무만 검사
+    // 생산계획 등록 시 도료 재고 부족 항목을 반환한다.
+    // 경화제·희석제는 배합실에서 별도 재고를 관리하지 않으므로 계획 등록 제한에서 제외한다.
+    // 주제만 도료창고 재고와 배합실 잔량을 합산해 확인한다.
     // 배합실 도료재고(주제 도료, kg) — PaintMixModule(제조 관리 번들, lazy)에서 가져온다.
     // 번들이 아직 안 올라왔으면 백그라운드로 로드한 뒤 패널을 다시 그린다.
     let _mixResidualLoadStarted = false;
@@ -1412,13 +1413,17 @@ const ProductionPlanModule = (function() {
                         <span style="margin-right:3px;">${label}</span>사용불필요
                     </td>`;
             const name = _paintMatName(matId);
-            let mixHtml = '';
-            if (label === '주제') {
-                const kg = _mixRoomResidualKg(matId);
-                if (kg === null) mixHtml = '';
-                else if (kg > 0.0005) mixHtml = `<span style="margin-left:6px;padding:0 5px;border-radius:4px;background:rgba(124,58,237,0.1);color:#7c3aed;font-weight:700;" title="배합실에 남아 있는 도료 잔량">배합실 ${(Math.round(kg * 10) / 10).toLocaleString('ko-KR')} kg</span>`;
-                else mixHtml = `<span style="margin-left:6px;color:var(--text-muted);" title="배합실 잔량 없음">배합실 0</span>`;
+            if (label !== '주제') {
+                return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;color:var(--text-muted);">
+                        <span style="margin-right:3px;">${label}</span><span style="font-weight:600;color:var(--text-secondary);">${name}</span>
+                        <span style="margin-left:4px;font-size:0.7rem;color:var(--accent-green);">재고 제한 없음</span>
+                    </td>`;
             }
+            let mixHtml = '';
+            const kg = _mixRoomResidualKg(matId);
+            if (kg === null) mixHtml = '';
+            else if (kg > 0.0005) mixHtml = `<span style="margin-left:6px;padding:0 5px;border-radius:4px;background:rgba(124,58,237,0.1);color:#7c3aed;font-weight:700;" title="배합실에 남아 있는 도료 잔량">배합실 ${(Math.round(kg * 10) / 10).toLocaleString('ko-KR')} kg</span>`;
+            else mixHtml = `<span style="margin-left:6px;color:var(--text-muted);" title="배합실 잔량 없음">배합실 0</span>`;
             if (isAs) {
                 return `<td style="padding:2px 8px;font-size:0.76rem;white-space:nowrap;">
                         <span style="color:var(--text-muted);margin-right:3px;">${label}</span><span style="font-weight:600;">${name}</span>${mixHtml}
@@ -1465,11 +1470,15 @@ const ProductionPlanModule = (function() {
         const shortages = [];
         const seen = {};
         validRows.forEach(r => {
-            [['주제', r.mainId], ['경화제', r.hardId], ['희석제', r.thinnerId]].forEach(function(pair) {
+            // 경화제·희석제는 배합실에서 별도 잔량을 관리하지 않으므로 재고 검사를 하지 않는다.
+            [['주제', r.mainId]].forEach(function(pair) {
                 const label = pair[0], matId = pair[1];
                 if (!matId || matId === '사용불필요' || seen[matId]) return;
                 seen[matId] = true;
-                if (_paintMatBalance(matId) <= 0) {
+                const mixKg = _mixRoomResidualKg(matId);
+                const warehouseQty = _paintMatBalance(matId);
+                const availableQty = warehouseQty + (typeof mixKg === 'number' ? mixKg : 0);
+                if (availableQty <= 0) {
                     shortages.push(label + ' ' + _paintMatName(matId));
                 }
             });
@@ -3235,7 +3244,7 @@ const ProductionPlanModule = (function() {
                 }
             }
 
-            // 도료 재고 검사 — 필요한 주제/경화제/희석제 중 하나라도 재고가 없으면 등록 차단
+            // 도료 재고 검사 — 주제만 도료창고 재고와 배합실 잔량을 기준으로 등록 차단
             const paintShortages = _isAsPlanProduct(carModel, partName) ? [] : _getPaintShortagesForPlan(carModel, partName, color, line);
             if (paintShortages.length > 0) {
                 UIUtils.toast(
