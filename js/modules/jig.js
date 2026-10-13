@@ -268,6 +268,11 @@ var JigModule = (function () {
             return null;
         }
     };
+    // 현재 로그인 사용자의 표시 이름 (작업자 자동 입력용)
+    const _currentUserName = () => {
+        const u = _currentUser();
+        return u ? String(u.name || u.displayName || u.username || '').trim() : '';
+    };
     const _canUploadLifeStandard = () => {
         const user = _currentUser();
         return !!(user && STANDARD_UPLOAD_ROLES.includes(String(user.role || '')));
@@ -4483,7 +4488,7 @@ var JigModule = (function () {
                 <div class="form-group"><label class="form-label">일자</label><input type="date" class="form-input" id="jigHistoryDate" value="${_today()}"></div>
                 <div class="form-group"><label class="form-label">대상 지그</label><select class="form-select" id="jigHistoryJigId"><option value="">선택</option>${jigs.map(j => `<option value="${_esc(j.id)}">[${_esc(j.carModel || '-')}] ${_esc(j.partName || '-')}${j.line ? ' (' + _esc(j.line) + ')' : ''}</option>`).join('')}</select></div>
                 <div class="form-group"><label class="form-label">구분</label><input type="text" class="form-input" id="jigHistoryCategory" value="${_esc(meta.action)}"></div>
-                <div class="form-group"><label class="form-label">담당자</label><input type="text" class="form-input" id="jigHistoryWorker"></div>
+                <div class="form-group"><label class="form-label">담당자</label><input type="text" class="form-input" id="jigHistoryWorker" value="${_esc(_currentUserName())}"></div>
                 <div class="form-group"><label class="form-label">상태</label><select class="form-select" id="jigHistoryStatus"><option>완료</option><option>진행중</option><option>보류</option></select></div>
             </div>
             <div class="form-group"><label class="form-label">내용/사유</label><textarea class="form-textarea" id="jigHistoryNote" rows="3"></textarea></div>`,
@@ -4581,7 +4586,7 @@ var JigModule = (function () {
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
                 <div class="form-group"><label class="form-label">${action}일 <span style="color:var(--accent-red)">*</span></label><input type="date" class="form-input" id="jigResetDate" value="${_today()}"></div>
-                <div class="form-group"><label class="form-label">${action} 작업자 <span style="color:var(--accent-red)">*</span></label><input type="text" class="form-input" id="jigResetWorker" placeholder="작업자명 입력"></div>
+                <div class="form-group"><label class="form-label">${action} 작업자 <span style="color:var(--accent-red)">*</span></label><input type="text" class="form-input" id="jigResetWorker" placeholder="작업자명 입력" value="${_esc(_currentUserName())}" ${_currentUserName() ? 'readonly title="현재 로그인 사용자로 자동 입력됩니다"' : ''}></div>
             </div>
             <div class="form-group">
                 <label class="form-label">지그박스 ${action}일 작성 사진 <span style="color:var(--accent-red)">*</span></label>
@@ -4629,7 +4634,7 @@ var JigModule = (function () {
         if (!jig) return;
         const action = _resetActionForJig(jig);
         const date = document.getElementById('jigResetDate')?.value || '';
-        const worker = document.getElementById('jigResetWorker')?.value.trim() || '';
+        const worker = _currentUserName() || document.getElementById('jigResetWorker')?.value.trim() || '';
         if (!date) { UIUtils.toast(`${action}일을 입력하세요.`, 'warning'); return; }
         if (!worker) { UIUtils.toast(`${action} 작업자를 입력하세요.`, 'warning'); return; }
         if (!_resetPhotoUrl) { UIUtils.toast('지그박스 교체일 작성 사진을 첨부하세요.', 'warning'); return; }

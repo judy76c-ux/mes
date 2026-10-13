@@ -21079,7 +21079,6 @@ var ProdQualityModule = (function() {
         { key: 'colorGloss', label: '색차/광택 이력', icon: 'monitoring',    subtitle: '측정값 조회',       accent: '#7c3aed', onClick: "ProdQualityModule.openMeasureHistory('colorGloss')" },
         { key: 'film',       label: '도막 이력',      icon: 'layers',        subtitle: '도막 막 측정',      accent: '#059669', onClick: "ProdQualityModule.openMeasureHistory('film')" },
         { key: 'items',      label: '품목별 기준',    icon: 'rule',          subtitle: '항목 기준 설정',    accent: '#f59e0b', onClick: "ProdQualityModule.openStandardsPage()" },
-        { key: 'preset',     label: '프레셋',         icon: 'bookmarks',     subtitle: '측정 프레셋',       accent: '#64748b', onClick: "ProdQualityModule.openPresetMgmtModal()" },
         { key: 'itemList',   label: '관리 항목',      icon: 'list_alt',      subtitle: '초중종 항목 목록',  accent: '#475569', onClick: "ProdQualityModule.openItemListModal()" }
     ];
     const STD_FILTER_KEY = 'prod_quality_standard_filters_v1';
@@ -21658,9 +21657,6 @@ var ProdQualityModule = (function() {
                             ? `<span style="font-size:0.68rem;font-weight:700;background:rgba(124,58,237,0.1);color:#7c3aed;border:1px solid rgba(124,58,237,0.3);border-radius:4px;padding:1px 5px;margin-left:4px;">${_esc(p.paintProcess)}${p.stage ? ' ' + p.stage + '차' : ''}</span>`
                             : '';
 
-                        // 이 품목의 관리항목 구성이 어떤 프리셋과 일치하는지 표시.
-                        // 1) 템플릿에 저장된 presetId/presetName 우선
-                        // 2) 없으면 관리항목 key 집합을 프리셋과 비교
                         let tmplForPreset = _templateForProduct(p.carModel, p.partName, p.color, p.paintProcess || '');
                         if (!tmplForPreset && p.paintProcess) {
                             tmplForPreset = (_templates() || []).find(t =>
@@ -21672,23 +21668,9 @@ var ProdQualityModule = (function() {
                         // 개정일자 = 이 품목 기준(템플릿)을 마지막으로 저장한 날짜
                         const revisedRaw = status === 'none' || !tmplForPreset ? '' : String(tmplForPreset.updatedAt || tmplForPreset.createdAt || '').slice(0, 10);
                         const revisedText = revisedRaw ? _esc(revisedRaw) : '<span style="color:var(--text-muted);">-</span>';
-                        const matchedPresetName = status === 'none'
-                            ? null
-                            : _presetNameForTemplate(tmplForPreset, specItems);
-                        const presetCellHtml = status === 'none'
-                            ? `<span style="color:var(--text-muted);font-size:0.78rem;">-</span>`
-                            : (matchedPresetName
-                                ? `<span style="font-size:0.72rem;font-weight:600;color:#2563eb;background:rgba(37,99,235,0.08);border:1px solid rgba(37,99,235,0.25);border-radius:4px;padding:1px 6px;white-space:nowrap;">
-                                        <span class="material-symbols-outlined" style="font-size:0.8rem;vertical-align:-1px;">bookmark</span> ${_esc(matchedPresetName)}
-                                   </span>`
-                                : `<span title="저장된 어떤 프리셋과도 관리항목 구성이 일치하지 않습니다." style="font-size:0.72rem;font-weight:700;color:#b45309;background:rgba(251,146,60,0.1);border:1px solid rgba(251,146,60,0.35);border-radius:4px;padding:1px 6px;white-space:nowrap;cursor:help;">
-                                        ⚠ 프리셋 미적용
-                                   </span>`);
-
                         return `<tr style="${rowBg}">
                             <td style="font-size:0.83rem;font-weight:600;">${_esc(p.partName)}${procBadge}</td>
                             <td style="font-size:0.82rem;">${_esc(p.color)||'<span style="color:var(--text-muted);">-</span>'}</td>
-                            <td>${presetCellHtml}</td>
                             <td style="font-size:0.78rem;font-family:monospace;white-space:nowrap;text-align:center;">${revisedText}</td>
                             ${specCells}
                             <td style="text-align:center;padding:6px;">
@@ -21730,7 +21712,6 @@ var ProdQualityModule = (function() {
                                 <tr>
                                     <th style="min-width:110px;">품명</th>
                                     <th style="min-width:80px;">컬러</th>
-                                    <th style="min-width:110px;">적용 프리셋</th>
                                     <th style="min-width:90px;">개정일자</th>
                                     ${headerCols}
                                     <th style="text-align:center;min-width:80px;">작업</th>
