@@ -175,6 +175,8 @@ const DashboardModule = (function() {
     let _blockObserver = null;
     let _winResizeBound = false;
     let _layoutTimer = null;
+    let _isAutoArranging = false;
+    let _autoArrangeUnlockTimer = null;
 
     function _readLayout() {
         try {
@@ -243,52 +245,62 @@ const DashboardModule = (function() {
     // 카드의 폭을 유지하면서 위쪽 빈 공간부터 채워 배치한다.
     function autoArrangeLayout(silent = false) {
         const grid = document.getElementById('dashLayoutGrid');
-        if (!grid) return;
-        const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
-        blocks.forEach(function(block) {
-            // 이전 화면 크기에서 저장된 고정 높이는 해제하고 현재 콘텐츠 높이를 사용한다.
-            block.dataset.h = 0;
-            _applyBlockStyle(block);
-        });
-        if (window.innerWidth <= FREE_MIN_WIDTH) {
-            _enterFreeMode(grid);
-            if (!silent) UIUtils.toast('화면 폭에 맞춰 대시보드 블럭을 세로로 자동 배치했습니다.', 'success');
-            return;
-        }
-
-        _enterFreeMode(grid);
-        if (!blocks.length) return;
-        const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
-        const placed = [];
-
-        blocks.forEach(function(block) {
-            const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
-            block.style.width = (span * colW + (span - 1) * LAYOUT_GAP) + 'px';
-        });
-        blocks.forEach(function(block) {
-            const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
-            const width = span * colW + (span - 1) * LAYOUT_GAP;
-            let best = null;
-            for (let col = 0; col <= LAYOUT_COLS - span; col += 1) {
-                const left = col * (colW + LAYOUT_GAP);
-                const top = placed.reduce(function(y, other) {
-                    const overlapsX = left < other.right && left + width > other.left;
-                    return overlapsX ? Math.max(y, other.bottom + LAYOUT_GAP) : y;
-                }, 0);
-                if (!best || top < best.top || (top === best.top && left < best.left)) {
-                    best = { left: left, top: top };
-                }
+        if (!grid || _isAutoArranging) return;
+        _isAutoArranging = true;
+        try {
+            const blocks = Array.from(grid.querySelectorAll(':scope > .dash-block'));
+            blocks.forEach(function(block) {
+                // 이전 화면 크기에서 저장된 고정 높이는 해제하고 현재 콘텐츠 높이를 사용한다.
+                block.dataset.h = 0;
+                _applyBlockStyle(block);
+            });
+            if (window.innerWidth <= FREE_MIN_WIDTH) {
+                _enterFreeMode(grid);
+                if (!silent) UIUtils.toast('화면 폭에 맞춰 대시보드 블럭을 세로로 자동 배치했습니다.', 'success');
+                return;
             }
-            const height = block.offsetHeight;
-            block.dataset.x = best.left / (grid.clientWidth || 1);
-            block.dataset.y = best.top;
-            block.style.left = best.left + 'px';
-            block.style.top = best.top + 'px';
-            placed.push({ left: best.left, top: best.top, right: best.left + width, bottom: best.top + height });
-        });
-        _updateGridHeight(grid);
-        _saveLayout();
-        if (!silent) UIUtils.toast('대시보드 카드를 빈 공간 없이 자동 정렬했습니다.', 'success');
+
+            _enterFreeMode(grid);
+            if (!blocks.length) return;
+            const colW = (grid.clientWidth - (LAYOUT_COLS - 1) * LAYOUT_GAP) / LAYOUT_COLS;
+            const placed = [];
+
+            blocks.forEach(function(block) {
+                const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
+                block.style.width = (span * colW + (span - 1) * LAYOUT_GAP) + 'px';
+            });
+            blocks.forEach(function(block) {
+                const span = Math.min(LAYOUT_COLS, Math.max(MIN_SPAN, Number(block.dataset.w) || 6));
+                const width = span * colW + (span - 1) * LAYOUT_GAP;
+                let best = null;
+                for (let col = 0; col <= LAYOUT_COLS - span; col += 1) {
+                    const left = col * (colW + LAYOUT_GAP);
+                    const top = placed.reduce(function(y, other) {
+                        const overlapsX = left < other.right && left + width > other.left;
+                        return overlapsX ? Math.max(y, other.bottom + LAYOUT_GAP) : y;
+                    }, 0);
+                    if (!best || top < best.top || (top === best.top && left < best.left)) {
+                        best = { left: left, top: top };
+                    }
+                }
+                const height = block.offsetHeight;
+                block.dataset.x = best.left / (grid.clientWidth || 1);
+                block.dataset.y = best.top;
+                block.style.left = best.left + 'px';
+                block.style.top = best.top + 'px';
+                placed.push({ left: best.left, top: best.top, right: best.left + width, bottom: best.top + height });
+            });
+            _updateGridHeight(grid);
+            _saveLayout();
+            if (!silent) UIUtils.toast('대시보드 카드를 빈 공간 없이 자동 정렬했습니다.', 'success');
+        } finally {
+            // ResizeObserver는 스타일 변경 직후(현재 함수가 끝난 뒤)에 콜백을 전달할 수 있으므로
+            // 다음 이벤트 루프까지 잠금을 유지해 자동 정렬의 자기 재호출을 차단한다.
+            clearTimeout(_autoArrangeUnlockTimer);
+            _autoArrangeUnlockTimer = setTimeout(function() {
+                _isAutoArranging = false;
+            }, 0);
+        }
     }
 
     // 넓은 화면 = 자유 배치(절대 위치), 좁은 화면 = 기존 흐름 배치
@@ -571,6 +583,7 @@ const DashboardModule = (function() {
         if (window.ResizeObserver) {
             _blockObserver = new ResizeObserver(function() {
                 _updateGridHeight(grid);
+                if (_isAutoArranging) return;
                 if (_isFree(grid) && !_moveCtx && !_resizeCtx) {
                     clearTimeout(_layoutTimer);
                     _layoutTimer = setTimeout(function() { autoArrangeLayout(true); }, 100);

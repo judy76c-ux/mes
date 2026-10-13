@@ -27,8 +27,18 @@ var WarehouseOverviewModule = (function () {
 
     const LONG_STOCK_DAYS = 90; // 장기재고 기준일
 
+    // FIFO 위반 "확인 처리" — 확인된 건은 이슈/대시보드에서 빠지고, 품질·생산 관리자에게 쪽지로 통보된다.
+    const FIFO_ACK_DOC = 'fifo_violation_ack';
+    const FIFO_NOTIFY_ROLES = ['quality_manager', 'prod_manager'];
+    const FIFO_ACK_REASONS = {
+        inj: ['실물 확인 완료 — 구 LOT부터 사용 조치', '실물 없음 — 재고 실사로 정리', '사출처 납품 순서 역전 — 사출처 시정 요청', '긴급 생산 등 불가피한 사유', '기타'],
+        paint: ['실물 확인 완료 — 구 LOT부터 사용 조치', '실물 없음 — 재고 실사로 정리', '도료사 납품 순서 역전 — 도료사 시정 요청', '긴급 생산 등 불가피한 사유', '기타']
+    };
+
     let _inj   = null; // 사출 창고 계산 결과
     let _paint = null; // 도료 창고 계산 결과
+    let _container = null; // 마지막 렌더 컨테이너 (확인 처리 후 재렌더용)
+    let _ackDraft = null;  // 확인 처리 중인 위반 { kind, key }
     const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
     /** FIFO 판정용 — LOT는 YYMMDD(6자리 유효 날짜)만 인정. __nolot__, DEV-LOT 등은 제외 */
@@ -137,6 +147,7 @@ var WarehouseOverviewModule = (function () {
     }
 
     function render(container) {
+        _container = container;
         _inj   = _calcInjStats();
         _paint = _calcPaintStats();
 
@@ -218,7 +229,7 @@ var WarehouseOverviewModule = (function () {
                                     _statRow('총 재고량',  UIUtils.formatNumber(_inj.totalStock) + ' EA','blue',   false) +
                                     _statRow('재고 없음',  _inj.zeroStock + '종',  _inj.zeroStock  > 0 ? 'orange':'ok', _inj.zeroStock  > 0, 'WarehouseOverviewModule.showInjZero()') +
                                     _statRow('장기재고',   _inj.longStock + '종',  _inj.longStock  > 0 ? 'red'   :'ok', _inj.longStock  > 0, 'WarehouseOverviewModule.showInjLong()') +
-                                    _statRow('FIFO 위반',  _inj.fifoCount + '건',  _inj.fifoCount  > 0 ? 'red'   :'ok', _inj.fifoCount  > 0, 'WarehouseOverviewModule.showInjFifo()') +
+                                    _statRow('FIFO 위반' + _fifoAckedLabel(_inj),  _inj.fifoCount + '건',  _inj.fifoCount  > 0 ? 'red'   :'ok', _inj.fifoCount > 0 || _inj.fifoHistory.length > 0, 'WarehouseOverviewModule.showInjFifo()') +
                                     _statRow('다층 LOT',   _inj.multiLot + '품목', _inj.multiLot   > 0 ? 'orange':'ok', _inj.multiLot   > 0, 'WarehouseOverviewModule.showInjMultiLot()') +
                                 '</tbody></table>' +
                             '</div>' +
@@ -239,7 +250,7 @@ var WarehouseOverviewModule = (function () {
                                     _statRow('유효기간 만료', _paint.expiredCount  + '건', _paint.expiredCount  > 0 ? 'red'   :'ok', _paint.expiredCount  > 0, 'WarehouseOverviewModule.showPaintExpired()') +
                                     _statRow('유효기간 임박', _paint.expiringCount + '건', _paint.expiringCount > 0 ? 'orange':'ok', _paint.expiringCount > 0, 'WarehouseOverviewModule.showPaintExpiring()') +
                                     _statRow('장기재고',      _paint.longStock + '건',     _paint.longStock     > 0 ? 'red'   :'ok', _paint.longStock     > 0, 'WarehouseOverviewModule.showPaintLong()') +
-                                    _statRow('FIFO 위반',     _paint.fifoCount + '품목',   _paint.fifoCount     > 0 ? 'red'   :'ok', _paint.fifoCount     > 0, 'WarehouseOverviewModule.showPaintFifo()') +
+                                    _statRow('FIFO 위반' + _fifoAckedLabel(_paint),     _paint.fifoCount + '품목',   _paint.fifoCount     > 0 ? 'red'   :'ok', _paint.fifoCount > 0 || _paint.fifoHistory.length > 0, 'WarehouseOverviewModule.showPaintFifo()') +
                                 '</tbody></table>' +
                             '</div>' +
                         '</div>' +
@@ -384,8 +395,51 @@ var WarehouseOverviewModule = (function () {
             }
         });
 
-        return { itemCount, totalStock, zeroStock, longStock, fifoCount, multiLot,
-                 zeroItems, longItems, fifoItems, multiLotItems };
+        const fifo = _splitFifoAcks('inj', fifoItems);
+        return { itemCount, totalStock, zeroStock, longStock, fifoCount: fifo.pending.length, multiLot,
+                 zeroItems, longItems, fifoItems: fifo.pending, fifoAcked: fifo.acked, fifoHistory: fifo.history, multiLotItems };
+    }
+
+    /* ==============================================================
+       FIFO 위반 확인 처리 — 저장소: PROD_CONDITIONS (_docKind = fifo_violation_ack)
+       위반 식별키 = 구분 + 품목 + 남은 구 LOT 목록 + 먼저 소진된 신 LOT 목록.
+       확인 후 새 LOT이 추가로 소진되면 키가 달라져 다시 위반으로 표시된다.
+    ============================================================== */
+    function _fifoKey(kind, d) {
+        const id = kind === 'inj'
+            ? [d.carModel, d.partName, d.color].join('||')
+            : (d.materialId || d.matName || '');
+        const olds = (d.oldLots || []).map(o => o.lot).sort().join(',');
+        const news = (d.consumedLots || []).map(c => c.lot).sort().join(',');
+        return kind + '::' + id + '::' + olds + '::' + news;
+    }
+
+    /** 확인 이력 전체(취소된 건 포함). activeOnly=true 면 유효한 확인만 */
+    function _fifoAckRecords(activeOnly) {
+        return (Storage.getAll(DB.STORES.PROD_CONDITIONS) || [])
+            .filter(d => d && d._docKind === FIFO_ACK_DOC && (!activeOnly || !d.revokedAt));
+    }
+
+    function _splitFifoAcks(kind, items) {
+        const byKey = {};
+        _fifoAckRecords(true).forEach(a => {
+            if (!byKey[a.key] || String(a.ackAt || '') > String(byKey[a.key].ackAt || '')) byKey[a.key] = a;
+        });
+        const pending = [], acked = [];
+        items.forEach(d => {
+            d.fifoKind = kind;
+            d.fifoKey = _fifoKey(kind, d);
+            const a = byKey[d.fifoKey];
+            if (a) { d.ack = a; acked.push(d); } else { pending.push(d); }
+        });
+        const history = _fifoAckRecords().filter(a => a.kind === kind)
+            .sort((a, b) => String(b.ackAt || '').localeCompare(String(a.ackAt || '')));
+        return { pending: pending, acked: acked, history: history };
+    }
+
+    function _fifoAckedLabel(stats) {
+        const n = (stats && stats.fifoHistory || []).length;
+        return n ? ' <span style="font-size:0.68rem;color:#15803d;font-weight:700;">(확인 이력 ' + n + ')</span>' : '';
     }
 
     /* ==============================================================
@@ -537,6 +591,7 @@ var WarehouseOverviewModule = (function () {
                     const label = (lot, v) => v.prodLot || v.lotNo || lot;
                     fifoCount++;
                     fifoItems.push({
+                        materialId: mid,
                         matName,
                         supplier,
                         qty: netQty,
@@ -558,8 +613,9 @@ var WarehouseOverviewModule = (function () {
             }
         });
 
-        return { itemCount, totalStock, expiredCount, expiringCount, longStock, fifoCount,
-                 expiredItems, expiringItems, longItems, fifoItems };
+        const fifo = _splitFifoAcks('paint', fifoItems);
+        return { itemCount, totalStock, expiredCount, expiringCount, longStock, fifoCount: fifo.pending.length,
+                 expiredItems, expiringItems, longItems, fifoItems: fifo.pending, fifoAcked: fifo.acked, fifoHistory: fifo.history };
     }
 
     /* ==============================================================
@@ -766,51 +822,7 @@ var WarehouseOverviewModule = (function () {
             '<span style="color:var(--text-muted);">→ ' + dl + '이 빠른 LOT부터 출고하거나, 실물이 없으면 재고 실사로 정리가 필요합니다.</span>';
     }
 
-    function showInjFifo() {
-        if (!_inj || !_inj.fifoItems.length) return;
-        const cards = _inj.fifoItems.map(function(d, idx) {
-            return `
-                <div style="border:1px solid rgba(234,88,12,0.3);border-radius:10px;margin-bottom:12px;overflow:hidden;">
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:rgba(234,88,12,0.06);">
-                        <span style="font-weight:800;color:#ea580c;">${idx + 1}</span>
-                        <strong>${_esc(d.carModel || '-')}</strong>
-                        <span style="font-weight:700;">${_esc(d.partName || '-')}</span>
-                        <span style="color:var(--text-muted);">${_esc(d.color || '-')}</span>
-                        <span style="display:inline-flex;gap:4px;flex-wrap:wrap;">${_fifoBlameBadges(d, '사출처')}</span>
-                        <span style="margin-left:auto;font-size:0.8rem;">현재 재고 <strong>${UIUtils.formatNumber(d.qty)}</strong> EA</span>
-                    </div>
-                    <div style="padding:8px 12px;font-size:0.82rem;line-height:1.55;border-bottom:1px dashed var(--border-color);">
-                        <span style="font-weight:800;color:#dc2626;">위반 내용</span> ${_fifoViolationText(d)}
-                        <div style="margin-top:6px;"><span style="font-weight:800;color:#7c3aed;">원인 규명</span>${_fifoCauseText(d, '사출일', ' EA', '사출처')}</div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 12px;">
-                        <div>
-                            <div style="font-size:0.78rem;font-weight:800;color:#2563eb;margin-bottom:4px;">남아 있는 구 LOT (사출일 빠름)</div>
-                            ${_fifoLotTable(d.oldLots, 'old')}
-                        </div>
-                        <div>
-                            <div style="font-size:0.78rem;font-weight:800;color:#ea580c;margin-bottom:4px;">먼저 소진된 신 LOT (사출일 늦음)</div>
-                            ${_fifoLotTable(d.consumedLots, 'consumed', '사출일', false, { unit: ' EA', party: '사출처' })}
-                        </div>
-                    </div>
-                </div>`;
-        }).join('');
-        UIUtils.showModal('사출 자재 창고 — FIFO 위반 목록', `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-                <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.5;">
-                    선입선출(FIFO) 위반: <strong>사출일이 빠른 LOT의 재고가 남아 있는데, 사출일이 늦은 LOT이 먼저 모두 출고</strong>된 품목입니다.<br>
-                    판정 기준은 <strong>사출 LOT 일자(YYMMDD = 사출일)</strong>이며, 구 LOT이 창고에 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>
-                    귀책: <strong style="color:#7c3aed;">사출처</strong> = 사출일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고
-                </p>
-                <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
-                    ${_inj.fifoItems.length}건
-                </span>
-            </div>
-            <div style="overflow:auto;max-height:min(72vh, 760px);">${cards}</div>`,
-            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
-            'xxxl'
-        );
-    }
+    function showInjFifo() { _showFifoList('inj'); }
 
     /* 사출 — 다층 LOT */
     function showInjMultiLot() {
@@ -897,55 +909,247 @@ var WarehouseOverviewModule = (function () {
     }
 
     /* 도료 — FIFO 위반 */
-    function showPaintFifo() {
-        if (!_paint || !_paint.fifoItems.length) return;
-        const cards = _paint.fifoItems.map(function(d, idx) {
-            return `
-                <div style="border:1px solid rgba(234,88,12,0.3);border-radius:10px;margin-bottom:12px;overflow:hidden;">
-                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:rgba(234,88,12,0.06);">
-                        <span style="font-weight:800;color:#ea580c;">${idx + 1}</span>
-                        <strong>${_esc(d.matName || '-')}</strong>
-                        <span style="color:var(--text-muted);">${_esc(d.supplier || '-')}</span>
-                        <span style="display:inline-flex;gap:4px;flex-wrap:wrap;">${_fifoBlameBadges(d, '도료사')}</span>
-                        <span style="margin-left:auto;font-size:0.8rem;">현재 재고 <strong>${UIUtils.formatNumber(d.qty)}</strong> 개</span>
-                    </div>
-                    <div style="padding:8px 12px;font-size:0.82rem;line-height:1.55;border-bottom:1px dashed var(--border-color);">
-                        <span style="font-weight:800;color:#dc2626;">위반 내용</span> ${_fifoViolationText(d, '제조일', '개')}
-                        <div style="margin-top:6px;"><span style="font-weight:800;color:#7c3aed;">원인 규명</span>${_fifoCauseText(d, '제조일', '개', '도료사')}</div>
-                    </div>
-                    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 12px;">
-                        <div>
-                            <div style="font-size:0.78rem;font-weight:800;color:#2563eb;margin-bottom:4px;">남아 있는 구 LOT (제조일 빠름)</div>
-                            ${_fifoLotTable(d.oldLots, 'old', '제조일', true)}
-                        </div>
-                        <div>
-                            <div style="font-size:0.78rem;font-weight:800;color:#ea580c;margin-bottom:4px;">먼저 소진된 신 LOT (제조일 늦음)</div>
-                            ${_fifoLotTable(d.consumedLots, 'consumed', '제조일', true, { unit: '개', party: '도료사' })}
-                        </div>
-                    </div>
-                </div>`;
+    function showPaintFifo() { _showFifoList('paint'); }
+
+    /* ==============================================================
+       FIFO 위반 목록 + 확인 처리 (사출/도료 공통)
+    ============================================================== */
+    function _fifoPlainText(d, dateLabel, unit) {
+        const old = (d.oldLots || [])[0], cons = d.consumedLots || [];
+        if (!old || !cons.length) return '';
+        return dateLabel + ' ' + (old.prodDate || _lotProdDate(old.lot)) + '인 ' + _formatLotDisplay(old.lot) +
+            ' LOT이 ' + UIUtils.formatNumber(old.qty) + unit + ' 남아 있는데, ' + dateLabel + '이 더 늦은 ' +
+            cons.map(c => _formatLotDisplay(c.lot)).join(', ') + ' LOT이 먼저 출고됨';
+    }
+
+    function _fifoCardHtml(kind, d, idx, acked) {
+        const isInj = kind === 'inj';
+        const dl = isInj ? '사출일' : '제조일';
+        const party = isInj ? '사출처' : '도료사';
+        const head = isInj
+            ? '<strong>' + _esc(d.carModel || '-') + '</strong><span style="font-weight:700;">' + _esc(d.partName || '-') + '</span><span style="color:var(--text-muted);">' + _esc(d.color || '-') + '</span>'
+            : '<strong>' + _esc(d.matName || '-') + '</strong><span style="color:var(--text-muted);">' + _esc(d.supplier || '-') + '</span>';
+        const a = d.ack;
+        const ackBox = acked && a
+            ? '<div style="padding:8px 12px;font-size:0.8rem;background:rgba(21,128,61,0.07);border-bottom:1px dashed var(--border-color);">' +
+                  '<span style="font-weight:800;color:#15803d;">확인 완료</span> ' + _esc(a.ackAt || '') + ' · ' + _esc(a.ackBy || '-') +
+                  '<div style="margin-top:2px;">사유: <strong>' + _esc(a.reason || '-') + '</strong>' + (a.note ? ' — ' + _esc(a.note) : '') + '</div>' +
+                  '<div style="color:var(--text-muted);">통보: 품질 관리자 · 생산관리자</div>' +
+              '</div>'
+            : '';
+        const actionBtn = acked
+            ? (_isAdmin() ? '<button class="btn btn-sm btn-outline" onclick="WarehouseOverviewModule.revokeFifoAck(\'' + kind + '\',' + idx + ')">확인 취소</button>' : '')
+            : '<button class="btn btn-sm btn-primary" onclick="WarehouseOverviewModule.openFifoAck(\'' + kind + '\',' + idx + ')"><span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">task_alt</span> 확인 처리</button>';
+        const border = acked ? 'rgba(21,128,61,0.35)' : 'rgba(234,88,12,0.3)';
+        const headBg = acked ? 'rgba(21,128,61,0.06)' : 'rgba(234,88,12,0.06)';
+        return '<div style="border:1px solid ' + border + ';border-radius:10px;margin-bottom:12px;overflow:hidden;' + (acked ? 'opacity:0.85;' : '') + '">' +
+            '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:8px 12px;background:' + headBg + ';">' +
+                '<span style="font-weight:800;color:' + (acked ? '#15803d' : '#ea580c') + ';">' + (idx + 1) + '</span>' + head +
+                '<span style="display:inline-flex;gap:4px;flex-wrap:wrap;">' + _fifoBlameBadges(d, party) + '</span>' +
+                '<span style="margin-left:auto;font-size:0.8rem;">현재 재고 <strong>' + UIUtils.formatNumber(d.qty) + '</strong>' + (isInj ? ' EA' : ' 개') + '</span>' +
+                actionBtn +
+            '</div>' + ackBox +
+            '<div style="padding:8px 12px;font-size:0.82rem;line-height:1.55;border-bottom:1px dashed var(--border-color);">' +
+                '<span style="font-weight:800;color:#dc2626;">위반 내용</span> ' + (isInj ? _fifoViolationText(d) : _fifoViolationText(d, '제조일', '개')) +
+                '<div style="margin-top:6px;"><span style="font-weight:800;color:#7c3aed;">원인 규명</span>' + _fifoCauseText(d, dl, isInj ? ' EA' : '개', party) + '</div>' +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;padding:10px 12px;">' +
+                '<div><div style="font-size:0.78rem;font-weight:800;color:#2563eb;margin-bottom:4px;">남아 있는 구 LOT (' + dl + ' 빠름)</div>' +
+                    (isInj ? _fifoLotTable(d.oldLots, 'old') : _fifoLotTable(d.oldLots, 'old', '제조일', true)) + '</div>' +
+                '<div><div style="font-size:0.78rem;font-weight:800;color:#ea580c;margin-bottom:4px;">먼저 소진된 신 LOT (' + dl + ' 늦음)</div>' +
+                    (isInj ? _fifoLotTable(d.consumedLots, 'consumed', '사출일', false, { unit: ' EA', party: '사출처' })
+                           : _fifoLotTable(d.consumedLots, 'consumed', '제조일', true, { unit: '개', party: '도료사' })) + '</div>' +
+            '</div></div>';
+    }
+
+    /** 확인 이력표 — 취소된 건도 삭제하지 않고 상태만 표시 */
+    function _fifoHistoryHtml(history) {
+        if (!history || !history.length) return '';
+        const rows = history.map(a => {
+            const revoked = !!a.revokedAt;
+            const status = revoked
+                ? '<span style="color:#64748b;font-weight:700;">취소 (' + _esc(a.revokedAt) + ' · ' + _esc(a.revokedBy || '-') + ')</span>'
+                : '<span style="color:#15803d;font-weight:700;">확인</span>';
+            return '<tr' + (revoked ? ' style="opacity:0.6;"' : '') + '>' +
+                '<td style="white-space:nowrap;">' + _esc(a.ackAt || '-') + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(a.ackBy || '-') + '</td>' +
+                '<td style="font-weight:700;">' + _esc(a.itemLabel || '-') + '</td>' +
+                '<td style="font-family:monospace;">' + _esc((a.oldLots || []).map(_formatLotDisplay).join(', ')) + '</td>' +
+                '<td style="font-family:monospace;">' + _esc((a.consumedLots || []).map(_formatLotDisplay).join(', ')) + '</td>' +
+                '<td style="white-space:nowrap;">' + _esc(a.blame || '-') + '</td>' +
+                '<td>' + _esc(a.reason || '-') + '</td>' +
+                '<td>' + _esc(a.note || '-') + '</td>' +
+                '<td>' + status + '</td></tr>';
         }).join('');
-        UIUtils.showModal('도료 자재 창고 — FIFO 위반 목록', `
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-                <p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.5;">
-                    선입선출(FIFO) 위반: <strong>제조일이 빠른 LOT의 재고가 남아 있는데, 제조일이 늦은 LOT이 먼저 모두 출고</strong>된 도료입니다.<br>
-                    판정 기준은 <strong>도료 제조일</strong>(입고 기록의 제조일, 없으면 제조 LOT YYMMDD)이며, 구 LOT이 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>
-                    귀책: <strong style="color:#7c3aed;">도료사</strong> = 제조일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고
-                </p>
-                <span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">
-                    ${_paint.fifoItems.length}건
-                </span>
-            </div>
-            <div style="overflow:auto;max-height:min(72vh, 760px);">${cards}</div>`,
+        return '<div style="font-size:0.85rem;font-weight:800;color:#0369a1;margin:16px 0 6px;">확인 이력 ' + history.length + '건 <span style="font-weight:500;color:var(--text-muted);">(삭제되지 않고 보존됩니다)</span></div>' +
+            '<table class="data-table compact" style="width:100%;font-size:0.78rem;border-collapse:collapse;"><thead><tr>' +
+            '<th>확인일시</th><th>확인자</th><th>품목</th><th>남은 구 LOT</th><th>소진된 신 LOT</th><th>귀책</th><th>확인 사유</th><th>조치 내용</th><th>상태</th>' +
+            '</tr></thead><tbody>' + rows + '</tbody></table>';
+    }
+
+    function _showFifoList(kind) {
+        const st = kind === 'inj' ? _inj : _paint;
+        if (!st || (!st.fifoItems.length && !st.fifoHistory.length)) return;
+        const isInj = kind === 'inj';
+        const dl = isInj ? '사출일' : '제조일';
+        const pending = st.fifoItems.map((d, i) => _fifoCardHtml(kind, d, i, false)).join('');
+        const done = st.fifoAcked.map((d, i) => _fifoCardHtml(kind, d, i, true)).join('');
+        const desc = isInj
+            ? '선입선출(FIFO) 위반: <strong>사출일이 빠른 LOT의 재고가 남아 있는데, 사출일이 늦은 LOT이 먼저 모두 출고</strong>된 품목입니다.<br>' +
+              '판정 기준은 <strong>사출 LOT 일자(YYMMDD = 사출일)</strong>이며, 구 LOT이 창고에 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>' +
+              '귀책: <strong style="color:#7c3aed;">사출처</strong> = 사출일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고'
+            : '선입선출(FIFO) 위반: <strong>제조일이 빠른 LOT의 재고가 남아 있는데, 제조일이 늦은 LOT이 먼저 모두 출고</strong>된 도료입니다.<br>' +
+              '판정 기준은 <strong>도료 제조일</strong>(입고 기록의 제조일, 없으면 제조 LOT YYMMDD)이며, 구 LOT이 입고된 뒤에 신 LOT이 출고된 경우만 위반으로 봅니다.<br>' +
+              '귀책: <strong style="color:#7c3aed;">도료사</strong> = 제조일이 늦은 LOT을 먼저 납품 · <strong style="color:#dc2626;">당사</strong> = 구 LOT이 창고에 있는데 신 LOT 출고 · <strong style="color:#64748b;">불가피</strong> = 구 LOT 입고 전 출고';
+        const note = '<div style="font-size:0.78rem;color:var(--text-muted);margin:0 0 10px;">※ 위반 건은 <strong>확인 처리</strong>로 이슈 목록에서 제거합니다. 확인 시 <strong>품질 관리자 · 생산관리자</strong>에게 쪽지로 통보되며 확인 이력은 계속 남습니다. 이후 같은 품목에서 ' + dl + '이 늦은 LOT이 추가로 소진되면 다시 위반으로 표시됩니다.</div>';
+        UIUtils.showModal((isInj ? '사출' : '도료') + ' 자재 창고 — FIFO 위반 목록',
+            '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:12px;">' +
+                '<p style="font-size:0.83rem;color:var(--text-muted);margin:0;line-height:1.5;">' + desc + '</p>' +
+                '<span style="font-size:0.78rem;font-weight:700;color:#ea580c;background:rgba(234,88,12,0.1);border:1px solid rgba(234,88,12,0.3);border-radius:999px;padding:3px 10px;white-space:nowrap;">' +
+                    '미확인 ' + st.fifoItems.length + '건' + (st.fifoAcked.length ? ' · 확인 ' + st.fifoAcked.length + '건' : '') + '</span>' +
+            '</div>' + note +
+            '<div style="overflow:auto;max-height:min(72vh, 760px);">' +
+                (pending || '<div style="padding:18px;text-align:center;color:#15803d;font-weight:700;">미확인 FIFO 위반이 없습니다.</div>') +
+                (done ? '<div style="font-size:0.85rem;font-weight:800;color:#15803d;margin:14px 0 8px;">확인 완료 ' + st.fifoAcked.length + '건 (현재도 위반 상태, 이슈에서 제외)</div>' + done : '') +
+                _fifoHistoryHtml(st.fifoHistory) +
+            '</div>',
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>',
             'xxxl'
         );
+    }
+
+    function _isAdmin() {
+        return typeof AuthModule !== 'undefined' && AuthModule.isAdminUser && AuthModule.isAdminUser();
+    }
+
+    function openFifoAck(kind, idx) {
+        const st = kind === 'inj' ? _inj : _paint;
+        const d = st && st.fifoItems[idx];
+        if (!d) return;
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+        if (!user) { UIUtils.toast('로그인 후 확인 처리할 수 있습니다.', 'warning'); return; }
+        _ackDraft = { kind: kind, key: d.fifoKey };
+        const title = kind === 'inj'
+            ? [d.carModel, d.partName, d.color].filter(Boolean).join(' · ')
+            : [d.matName, d.supplier].filter(Boolean).join(' · ');
+        const opts = FIFO_ACK_REASONS[kind].map(r => '<option value="' + _esc(r) + '">' + _esc(r) + '</option>').join('');
+        UIUtils.showModal('FIFO 위반 확인 처리',
+            '<div style="display:flex;flex-direction:column;gap:12px;">' +
+                '<div style="font-size:0.86rem;"><strong>' + _esc(title) + '</strong><div style="color:var(--text-muted);margin-top:4px;line-height:1.5;">' +
+                    _esc(_fifoPlainText(d, kind === 'inj' ? '사출일' : '제조일', kind === 'inj' ? 'EA' : '개')) + '</div></div>' +
+                '<div><label style="display:block;font-size:0.8rem;font-weight:700;margin-bottom:4px;">확인 사유 <span style="color:#dc2626;">*</span></label>' +
+                    '<select id="fifoAckReason" class="form-control" style="width:100%;">' + opts + '</select></div>' +
+                '<div><label style="display:block;font-size:0.8rem;font-weight:700;margin-bottom:4px;">조치 내용 <span style="color:#dc2626;">*</span></label>' +
+                    '<textarea id="fifoAckNote" class="form-control" rows="3" style="width:100%;" placeholder="실물 확인 결과 및 조치 내용을 입력하세요."></textarea></div>' +
+                '<div style="font-size:0.78rem;color:#b45309;background:rgba(245,158,11,0.1);border-radius:8px;padding:8px 10px;">' +
+                    '<span class="material-symbols-outlined" style="font-size:15px;vertical-align:middle;">notifications</span> ' +
+                    '확인 처리하면 이슈 목록에서 제거되고, <strong>품질 관리자 · 생산관리자</strong>에게 쪽지로 통보됩니다. 확인 이력은 삭제되지 않고 보존됩니다.</div>' +
+            '</div>',
+            '<button class="btn btn-outline" onclick="UIUtils.closeModal()">취소</button>' +
+            '<button class="btn btn-primary" onclick="UIUtils.guardClick(\'fifo-ack\', () => WarehouseOverviewModule.saveFifoAck(), this)">확인 처리</button>',
+            'sm');
+    }
+
+    async function saveFifoAck() {
+        const draft = _ackDraft;
+        if (!draft) return;
+        const reason = String((document.getElementById('fifoAckReason') || {}).value || '').trim();
+        const note = String((document.getElementById('fifoAckNote') || {}).value || '').trim();
+        if (!reason) { UIUtils.toast('확인 사유를 선택하세요.', 'warning'); return; }
+        if (note.length < 2) { UIUtils.toast('조치 내용을 입력하세요.', 'warning'); return; }
+        const kind = draft.kind;
+        const st = kind === 'inj' ? _inj : _paint;
+        const d = st && st.fifoItems.find(x => x.fifoKey === draft.key);
+        if (!d) { UIUtils.toast('이미 처리되었거나 위반 내용이 변경되었습니다.', 'warning'); UIUtils.closeAllModals(); return; }
+        const user = (typeof AuthModule !== 'undefined' && AuthModule.getCurrentUser) ? AuthModule.getCurrentUser() : null;
+        const ackBy = user ? (user.name || user.displayName || user.username || '') : '';
+        const ackAt = UIUtils.now();
+        const isInj = kind === 'inj';
+        const itemLabel = isInj
+            ? [d.carModel, d.partName, d.color].filter(Boolean).join(' · ')
+            : [d.matName, d.supplier].filter(Boolean).join(' · ');
+        const blame = d.blame || {};
+        const blameText = [blame.ours ? '당사 귀책' : '', blame.supplier ? (isInj ? '사출처 귀책' : '도료사 귀책') : '']
+            .filter(Boolean).join(' · ') || '불가피 (구 LOT 미입고)';
+        await Storage.add(DB.STORES.PROD_CONDITIONS, {
+            _docKind: FIFO_ACK_DOC,
+            kind: kind,
+            key: d.fifoKey,
+            itemLabel: itemLabel,
+            oldLots: (d.oldLots || []).map(o => o.lot),
+            consumedLots: (d.consumedLots || []).map(c => c.lot),
+            blame: blameText,
+            reason: reason,
+            note: note,
+            ackBy: ackBy,
+            ackById: user ? (user.id || '') : '',
+            ackAt: ackAt,
+            date: UIUtils.today()
+        });
+        _notifyFifoAck({
+            title: 'FIFO 위반 확인 처리 — ' + (isInj ? '사출' : '도료') + ' ' + itemLabel,
+            body: '[' + (isInj ? '사출 자재 창고' : '도료 자재 창고') + ' FIFO 위반 확인]\n' +
+                itemLabel + '\n' +
+                '위반: ' + _fifoPlainText(d, isInj ? '사출일' : '제조일', isInj ? 'EA' : '개') + '\n' +
+                '귀책: ' + blameText + '\n' +
+                '확인 사유: ' + reason + '\n' +
+                '조치 내용: ' + note + '\n' +
+                '확인자: ' + (ackBy || '-') + ' · ' + ackAt,
+            category: 'fifo_ack',
+            priority: 'high'
+        });
+        UIUtils.toast('확인 처리되었습니다. 품질·생산 관리자에게 통보했습니다.', 'success');
+        _ackDraft = null;
+        UIUtils.closeAllModals();
+        _refreshAfterFifoAck(kind);
+    }
+
+    function _notifyFifoAck(msg) {
+        try {
+            if (typeof AuthModule === 'undefined' || typeof AuthModule.sendSystemMessage !== 'function') return;
+            FIFO_NOTIFY_ROLES.forEach(role =>
+                AuthModule.sendSystemMessage(Object.assign({}, msg, { targetType: 'role', targetId: role })));
+        } catch (e) {
+            console.warn('[WarehouseOverview] FIFO 확인 통보 실패:', e);
+        }
+    }
+
+    function _refreshAfterFifoAck(kind) {
+        _inj = _calcInjStats();
+        _paint = _calcPaintStats();
+        if (_container && document.body.contains(_container)) render(_container);
+        const st = kind === 'inj' ? _inj : _paint;
+        if (st && (st.fifoItems.length || st.fifoHistory.length)) _showFifoList(kind);
+    }
+
+    /** 확인 취소 — 레코드는 삭제하지 않고 취소 일시·취소자만 기록해 이력을 보존한다 */
+    async function revokeFifoAck(kind, idx) {
+        if (!_isAdmin()) { UIUtils.toast('관리자만 확인을 취소할 수 있습니다.', 'warning'); return; }
+        const st = kind === 'inj' ? _inj : _paint;
+        const d = st && st.fifoAcked[idx];
+        if (!d || !d.ack) return;
+        if (!confirm('이 FIFO 위반의 확인 처리를 취소하고 다시 이슈로 되돌릴까요? (확인 이력은 보존됩니다)')) return;
+        const user = AuthModule.getCurrentUser() || {};
+        const by = user.name || user.displayName || user.username || '';
+        const at = UIUtils.now();
+        const recs = _fifoAckRecords(true).filter(a => a.key === d.fifoKey);
+        for (const a of recs) {
+            await Storage.update(DB.STORES.PROD_CONDITIONS, a.id, { revokedAt: at, revokedBy: by });
+        }
+        _notifyFifoAck({
+            title: 'FIFO 위반 확인 취소 — ' + (d.ack.itemLabel || ''),
+            body: (d.ack.itemLabel || '') + '\n확인 처리가 취소되어 FIFO 위반 이슈로 복원되었습니다.\n취소자: ' + (by || '-') + ' · ' + at,
+            category: 'fifo_ack', priority: 'normal'
+        });
+        UIUtils.closeAllModals();
+        _refreshAfterFifoAck(kind);
     }
 
     return {
         init, render,
         showInjZero, showInjLong, showInjFifo, showInjMultiLot,
         showPaintExpired, showPaintExpiring, showPaintLong, showPaintFifo,
+        openFifoAck, saveFifoAck, revokeFifoAck,
         // 대시보드/현황 모니터 표시용 — 창고 FIFO(선입선출) 위반
         getFifoViolations: function() {
             let inj = [], paint = [];
