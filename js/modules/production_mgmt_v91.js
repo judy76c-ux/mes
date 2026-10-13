@@ -21244,7 +21244,7 @@ var ProdQualityModule = (function() {
 
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;padding:10px 14px;background:rgba(59,130,246,0.06);border-radius:10px;border:1px solid rgba(59,130,246,0.18);font-size:0.83rem;color:var(--text-secondary);">
                     <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);">info</span>
-                    <span>프레셋으로 관리항목을 선택하고, 아래 품목별로 <strong>기준값(±공차, 상/하한)</strong>을 입력하세요.</span>
+                    <span>품목별로 관리항목과 <strong>기준값(±공차, 상/하한)</strong>을 직접 입력하세요.</span>
                 </div>
 
                 <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap;">
@@ -21896,21 +21896,9 @@ var ProdQualityModule = (function() {
 
         const items = _productSpecItems(carModel, partName, color).map(item => _normalizeItemForEdit({ ...item }));
 
-        const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
-        const presetRow = userPresets.length ? `
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
-                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
-                <select class="form-select" id="pqSpecPresetSel" style="flex:1;">
-                    <option value="">프레셋으로 관리항목 적용 (기존 기준값 유지)</option>
-                    ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
-                </select>
-                <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
-            </div>` : '';
-
         UIUtils.showModal(
             `기준값 설정 — <span style="color:var(--accent-blue);">${_esc(carModel)}</span> / ${_esc(partName)} / ${_esc(color)||'공통'}`,
             `<input type="hidden" id="pqSpecProductId" value="${_esc(productId)}">
-            ${presetRow}
             <div style="overflow:auto;max-height:58vh;">
                 <table class="data-table">
                     <thead><tr>
@@ -22011,65 +21999,9 @@ var ProdQualityModule = (function() {
         const countColor = status==='complete' ? '#16a34a' : status==='none' ? '#9ca3af' : '#d97706';
         const statusLabel = { complete: '기준값 설정완료', partial: '기준값 미완성', 'items-only': '항목만 설정됨', none: '기준값 없음' }[status] || '';
 
-        const userPresets = (Storage.getAll(STORE)||[]).filter(d => d._docKind === PRESET_KIND);
-        const presetRow = !viewOnly && userPresets.length ? `
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding:8px 12px;background:var(--bg-secondary);border-radius:8px;border:1px solid var(--border-color);">
-                <span class="material-symbols-outlined" style="font-size:1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
-                <select class="form-select" id="pqSpecPresetSel" style="flex:1;">
-                    <option value="">프레셋으로 관리항목 적용</option>
-                    ${userPresets.map(p=>`<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
-                </select>
-                <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyPresetToSpec()">적용</button>
-            </div>` : '';
-
-        // 컬러/차종 상관없이 전체 품목에서 기준값을 불러올 수 있는 후보 목록
-        const anyItemCandidates = _allTemplateCandidatesForSpec(productId);
-        const anyItemCarModels = [...new Set(anyItemCandidates.map(c => c.carModel).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'ko'));
-        const anyItemLoadPanel = !viewOnly && anyItemCandidates.length ? `
-            <div class="card" style="margin-bottom:14px;border-left:3px solid #2563eb;">
-                <div class="card-body" style="padding:12px 16px;">
-                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;flex-wrap:wrap;">
-                        <span class="material-symbols-outlined" style="font-size:1rem;color:#2563eb;">content_copy</span>
-                        <span style="font-weight:700;font-size:0.88rem;">다른 품목에서 기준값 불러오기</span>
-                        <span style="font-size:0.74rem;font-weight:400;color:var(--text-muted);">차종·컬러 상관없이 전체 품목에서 불러올 수 있습니다</span>
-                    </div>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <select class="form-select" id="pqSpecLoadAnyCarModel" style="width:160px;" onchange="ProdQualityModule.onSpecLoadAnyCarModelChange('${_js(productId)}')">
-                            <option value="">-- 차종 선택 --</option>
-                            ${anyItemCarModels.map(cm => `<option value="${_esc(cm)}">${_esc(cm)}</option>`).join('')}
-                        </select>
-                        <select class="form-select" id="pqSpecLoadAnyItem" style="flex:1;min-width:260px;">
-                            <option value="">-- 차종 먼저 선택 --</option>
-                        </select>
-                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applyAnyTemplateToSpec()">불러와 적용</button>
-                    </div>
-                </div>
-            </div>` : '';
-
-        const sameColorLoadPanel = !viewOnly && color && sameColorTemplateCandidates.length ? `
-            <div class="card" style="margin-bottom:14px;border-left:3px solid #16a34a;">
-                <div class="card-body" style="padding:12px 16px;">
-                    <div style="display:flex;align-items:center;gap:7px;margin-bottom:10px;">
-                        <span class="material-symbols-outlined" style="font-size:1rem;color:#16a34a;">upload_file</span>
-                        <span style="font-weight:700;font-size:0.88rem;">기준값 불러와서 적용</span>
-                    </div>
-                    <div style="font-size:0.78rem;color:var(--text-muted);margin-bottom:10px;">
-                        다른 차종이어도 <strong>동일 색상(${_esc(color)})</strong>이면 등록된 기준값을 현재 품목으로 불러와 적용할 수 있습니다.
-                    </div>
-                    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
-                        <select class="form-select" id="pqSpecLoadSource" style="flex:1;min-width:280px;">
-                            <option value="">기준값을 불러올 동일 색상 품목 선택</option>
-                            ${sameColorTemplateCandidates.map(c => `
-                                <option value="${_esc(c.id)}">${_esc(c.carModel)} / ${_esc(c.partName)}${c.paintProcess ? ` / ${_esc(c.paintProcess)}` : ''} (${c.filledCount}/${c.totalCount})</option>
-                            `).join('')}
-                        </select>
-                        <button type="button" class="btn btn-outline btn-sm" onclick="ProdQualityModule.applySameColorTemplateToSpec()">불러와 적용</button>
-                    </div>
-                </div>
-            </div>` : '';
-
-        // 동일 컬러 품목 체크 패널
-        const sameColorPanel = !viewOnly && sameColorProducts.length ? `
+        // 품목별 고유 기준값을 사용한다. 다른 품목의 기준을 복사하거나 일괄 적용하지 않는다.
+        const sameColorPanel = '';
+        /* const sameColorPanel = !viewOnly && sameColorProducts.length ? `
             <div class="card" style="margin-bottom:14px;border-left:3px solid var(--accent-blue);">
                 <div class="card-body" style="padding:12px 16px;">
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
@@ -22116,7 +22048,7 @@ var ProdQualityModule = (function() {
                         }).join('')}
                     </div>
                 </div>
-            </div>` : '';
+            </div>` : ''; */
 
         container.innerHTML = `
             <div class="fade-in-up">
@@ -22170,11 +22102,6 @@ var ProdQualityModule = (function() {
                 ` : ''}
 
                 ${sameColorPanel}
-                ${sameColorLoadPanel}
-                ${anyItemLoadPanel}
-                ${presetRow}
-
-                ${!viewOnly ? `<div id="pqPresetDetectionPanel" style="margin-bottom:10px;"></div>` : ''}
 
                 <div class="card">
                     <div class="card-header" style="padding:10px 16px;display:flex;align-items:center;justify-content:space-between;">
@@ -23253,10 +23180,6 @@ var ProdQualityModule = (function() {
                 const existingStage = _templates().find(t =>
                     _normText(t.carModel) === cm && _normText(t.partName || '') === pn &&
                     _normText(t.color || '') === stageColorVal && _normText(t.paintProcess || '') === paintProcess);
-                const stagePreset = _matchedPresetNameForKeys(items.map(i => i.key));
-                const presetDoc = stagePreset
-                    ? (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === stagePreset)
-                    : null;
                 const stagePayload = {
                     _docKind: TEMPLATE_KIND,
                     carModel: cm,
@@ -23267,8 +23190,6 @@ var ProdQualityModule = (function() {
                         ...items,
                         ...((existingStage?.items || []).filter(item => item?.notApplicable === true && !items.some(c => String(c.key || '') === String(item.key || ''))).map(item => ({ ...item })))
                     ],
-                    presetId: presetDoc ? presetDoc.id : '',
-                    presetName: presetDoc ? presetDoc.name : '',
                     updatedAt: UIUtils.now()
                 };
                 if (paintProcess) stagePayload.paintProcess = paintProcess;
@@ -23284,75 +23205,10 @@ var ProdQualityModule = (function() {
             return;
         }
 
-        // 체크된 동일 컬러 품목 ID 목록
-        const checkedIds = [...document.querySelectorAll('.pq-same-color-chk:checked')].map(el => el.value);
-
-        // 저장할 제품 목록 (기본: 현재 제품 + 체크된 품목)
-        const saveTargets = [product, ...checkedIds.map(id => allProducts.find(p=>p.id===id)).filter(Boolean)];
-
-        const appliedPresetId = document.getElementById('pqSpecPresetSel')?.value || '';
-        const appliedPreset = appliedPresetId
-            ? (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.id === appliedPresetId)
-            : null;
-        // 드롭다운 미선택이어도 현재 항목 key 집합이 프리셋과 일치하면 그 이름을 기록
-        const matchedPresetName = (appliedPreset && appliedPreset.name)
-            || _matchedPresetNameForKeys(items.map(i => i.key));
-        const matchedPreset = matchedPresetName
-            ? (appliedPreset || (Storage.getAll(STORE) || []).find(d => d._docKind === PRESET_KIND && d.name === matchedPresetName))
-            : null;
-
-        // 저장 전, 같은 컬러의 기존 품목과 색차/도막 기준을 비교한다.
-        // 현재 품목과 동일 컬러 동시 적용 대상은 이번 저장값으로 함께 바뀌므로 비교에서 제외한다.
-        const saveTargetIds = new Set(saveTargets.map(p => p.id).filter(Boolean));
-        const targetTemplateIds = _templates().filter(t => {
-            if (saveTargetIds.has(t.productId)) return true;
-            return saveTargets.some(p => {
-                const cm = _normText(p.carModel);
-                const pn = _normText(p.partName || '');
-                const proc = _normText(paintProcess || '');
-                const colors = [
-                    _resolveProductColor(p, proc),
-                    _normText(p.color || p.paintColor || p.paint || p.drawingColor || ''),
-                    _normText(p.paintColorA || ''),
-                    _normText(p.paintColorB || '')
-                ].filter(Boolean);
-                return _normText(t.carModel) === cm
-                    && _normText(t.partName || '') === pn
-                    && (!_normText(t.paintProcess || '') || _normText(t.paintProcess || '') === proc)
-                    && (!colors.length || colors.some(c => _sameColorCompareKey(c) === _sameColorCompareKey(t.color || '')));
-            });
-        }).map(t => t.id);
-        const colorsToCheck = [...new Set(saveTargets.map(p => _resolveProductColor(p, paintProcess)).filter(Boolean))];
-        // 같은 차종 안의 불일치만 저장을 막는다. 타 차종은 컬러 명칭만 같을 수 있어 저장 시 검사하지 않는다.
-        const saveCars = new Set(saveTargets.map(p => _normText(p.carModel)));
-        const sameColorConflicts = colorsToCheck.flatMap(color => {
-            const conflicts = _findSameColorStandardConflicts(color, items, targetTemplateIds, { cars: saveCars, same: true });
-            return conflicts.length ? [{ color, conflicts }] : [];
-        });
-        if (sameColorConflicts.length) {
-            _pendingSameColorFix = { groups: sameColorConflicts, items };
-            const conflictHtml = sameColorConflicts.map((group, gi) =>
-                `<div style="margin-bottom:14px;padding:10px 12px;background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;">
-                    <div style="font-weight:800;color:#9a3412;margin-bottom:8px;">컬러 ${_esc(group.color)}</div>
-                    ${_sameColorConflictHtml(group.color, group.conflicts, '현재 입력값과 같은 차종의 동일 컬러 품목 기준이 달라 저장을 중단했습니다.', gi)}
-                </div>`
-            ).join('');
-            UIUtils.showModal('동일 컬러 기준 불일치', `
-                <div style="font-size:.84rem;color:#991b1b;margin-bottom:10px;">색차(△L/△a/△b)와 도막두께(하도/상도)는 동일 컬러에서 같은 기준을 사용해야 합니다. 기존 품목 기준을 확인하거나 동일 컬러 품목에 함께 적용한 뒤 다시 저장하세요.</div>
-                <div style="max-height:58vh;overflow:auto;">${conflictHtml}</div>`,
-                `<button class="btn btn-primary" onclick="ProdQualityModule.applySameColorConflictsToAll()">전체 현재 입력값으로 수정 후 저장</button>
-                 <button class="btn btn-secondary" onclick="UIUtils.closeModal()">확인</button>`, 'xl');
-            return;
-        }
+        // 현재 품목만 저장한다. 컬러가 같거나 관리항목 구성이 비슷해도 다른 품목에 전파하지 않는다.
+        const saveTargets = [product];
 
         try {
-            // 동일 컬러 일괄 적용 시 덮어쓰이는 기존 기준을 먼저 스냅샷(되돌리기용)
-            if (saveTargets.length > 1) {
-                const touched = _templates().filter(t => saveTargets.some(p => t.productId === p.id
-                    || (_normText(t.carModel) === _normText(p.carModel) && _normText(t.partName || '') === _normText(p.partName || '')
-                        && (!paintProcess || _normText(t.paintProcess || '') === paintProcess))));
-                await _sccSnapshot(`동일 컬러 일괄 적용 ${saveTargets.length}개 품목`, touched);
-            }
             for (const p of saveTargets) {
                 const cm  = _normText(p.carModel);
                 const pn  = _normText(p.partName||'');
@@ -23382,29 +23238,10 @@ var ProdQualityModule = (function() {
                         _normText(t.paintProcess || '') === paintProcess
                     ) || null;
                 }
-                // 현재 품목이 아닌 '동일 컬러 일괄 적용' 대상은 색차·도막 기준만 덮어쓴다.
-                // 나머지 항목(광택·부착력·사진·점검방법 등)은 기존 값을 유지한다. 해당 없음이었던 색차·도막은 입력값으로 되살린다.
-                const isExtraTarget = p.id !== product.id && !!existing && Array.isArray(existing.items) && existing.items.length > 0;
-                let mergedItems;
-                if (isExtraTarget) {
-                    mergedItems = existing.items.map(item => ({ ...item }));
-                    SAME_COLOR_STANDARD_KEYS.forEach(key => {
-                        const src = items.find(i => String(i.key || '') === key);
-                        if (!src || !_hasSpecValue(src)) return; // 입력값이 없으면 기존 값을 지우지 않는다
-                        const idx = mergedItems.findIndex(i => String(i.key || '') === key);
-                        // 사용자가 체크해서 적용하는 것이므로 '해당 없음'이었던 항목도 입력값으로 되살린다.
-                        if (idx >= 0) {
-                            const { naBackup, ...base } = mergedItems[idx];
-                            mergedItems[idx] = { ...base, ...src, notApplicable: false, selected: true, photo: base.photo || src.photo || '', method: base.method || src.method };
-                        }
-                        else mergedItems.push({ ...src });
-                    });
-                } else {
-                    mergedItems = [
-                        ...items,
-                        ...((existing?.items || []).filter(item => item?.notApplicable === true && !items.some(current => String(current.key || '') === String(item.key || ''))).map(item => ({ ...item })))
-                    ];
-                }
+                const mergedItems = [
+                    ...items,
+                    ...((existing?.items || []).filter(item => item?.notApplicable === true && !items.some(current => String(current.key || '') === String(item.key || ''))).map(item => ({ ...item })))
+                ];
                 const payload = {
                     _docKind: TEMPLATE_KIND,
                     carModel: cm,
@@ -23415,15 +23252,6 @@ var ProdQualityModule = (function() {
                     updatedAt: UIUtils.now()
                 };
                 if (paintProcess) payload.paintProcess = paintProcess;
-                if (isExtraTarget) {
-                    // 프리셋 정보도 기존 값 유지
-                } else if (matchedPreset) {
-                    payload.presetId = matchedPreset.id;
-                    payload.presetName = matchedPreset.name;
-                } else {
-                    payload.presetId = '';
-                    payload.presetName = '';
-                }
                 if (existing) await Storage.update(STORE, existing.id, payload);
                 else await Storage.add(STORE, payload);
             }
@@ -23433,11 +23261,7 @@ var ProdQualityModule = (function() {
             return;
         }
 
-        const extraCount = saveTargets.length - 1;
-        const msg = extraCount > 0
-            ? `기준값이 저장되었습니다. (${extraCount}개 품목에 동일 적용)`
-            : '기준값이 저장되었습니다.';
-        UIUtils.toast(msg, 'success');
+        UIUtils.toast('현재 품목의 고유 기준값이 저장되었습니다.', 'success');
         openSpecPage(productId, 'view', paintProcess);
     }
 
@@ -26779,52 +26603,8 @@ var ProdQualityModule = (function() {
         `, 'xl');
     }
 
-    // 현재 관리항목 구성이 일치하는 프리셋 이름(matchedName)에 따른 안내 라벨 HTML
-    function _currentPresetLabelHtml(matchedName) {
-        if (matchedName) {
-            return `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-green);">check_circle</span>
-                &nbsp;현재 관리항목이 프리셋 <strong style="color:var(--text-primary);">"${_esc(matchedName)}"</strong>과 일치합니다.`;
-        }
-        return `<span class="material-symbols-outlined" style="font-size:0.85rem;vertical-align:middle;color:var(--accent-orange,#f59e0b);">warning</span>
-            &nbsp;<strong style="color:#b45309;">⚠ 프리셋 미적용</strong> — 저장된 프리셋과 관리항목 구성이 일치하지 않습니다.`;
-    }
-
-    // 차종/컬러별 기준설정 모달의 현재 관리항목 rows로부터 프리셋 라벨을 다시 계산해 반영
-    function _refreshTemplatePresetLabel() {
-        const labelEl = document.getElementById('pqCurrentPresetLabel');
-        if (!labelEl) return;
-        const keys = [...document.querySelectorAll('.pq-template-item-row .pq-tpl-key')].map(el => el.value);
-        labelEl.innerHTML = _currentPresetLabelHtml(_matchedPresetNameForKeys(keys));
-    }
-
     // hasTemplate: 현재 차종에 저장된 기준이 있는지 여부
     function _templateFormHtml(carModel, color, items, hasTemplate) {
-        const userPresets = (Storage.getAll(STORE) || []).filter(d => d._docKind === PRESET_KIND);
-
-        // ── 프레셋 선택 드롭다운 ──
-        const presetRow = userPresets.length ? `
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;
-                        background:var(--bg-secondary);border-radius:8px;padding:10px 12px;border:1px solid var(--border-color);">
-                <span class="material-symbols-outlined" style="font-size:1.1rem;color:var(--accent-blue);flex-shrink:0;">bookmarks</span>
-                <select class="form-select" id="pqPresetSelector" style="flex:1;">
-                    <option value="">프레셋 선택 — 선택 시 아래 관리항목이 자동으로 채워집니다</option>
-                    ${userPresets.map(p => `<option value="${_esc(p.id)}">${_esc(p.name)} (${(p.items||[]).length}항목)</option>`).join('')}
-                </select>
-                <button type="button" class="btn btn-primary btn-sm" onclick="ProdQualityModule.applyPresetFromSelect()" style="white-space:nowrap;flex-shrink:0;">
-                    적용
-                </button>
-            </div>` : `
-            <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;margin-bottom:12px;
-                        background:rgba(251,146,60,0.07);border-radius:8px;border:1px solid rgba(251,146,60,0.3);font-size:0.82rem;color:#92400e;">
-                <span class="material-symbols-outlined" style="font-size:1rem;">info</span>
-                저장된 프레셋이 없습니다. 먼저
-                <button type="button" class="btn btn-outline btn-sm"
-                    onclick="UIUtils.closeModal();ProdQualityModule.openPresetMgmtModal()"
-                    style="font-size:0.78rem;border-color:#c2660a;color:#92400e;">
-                    프레셋 관리
-                </button>에서 프레셋을 만드세요.
-            </div>`;
-
         return `
             <div class="form-row">
                 <div class="form-group">
@@ -26841,15 +26621,11 @@ var ProdQualityModule = (function() {
                 </div>
             </div>
 
-            ${presetRow}
-
-            <div id="pqCurrentPresetLabel" style="font-size:0.8rem;margin-bottom:10px;">${_currentPresetLabelHtml(_matchedPresetNameForKeys((items || []).map(i => i.key)))}</div>
-
             <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;flex-wrap:wrap;gap:6px;">
                 <span style="font-size:0.8rem;color:var(--text-muted);">
                     ${hasTemplate
                         ? `<span style="color:var(--accent-green);font-weight:600;">✓ 저장된 기준이 있습니다.</span> 항목을 수정하고 저장하세요.`
-                        : `기준이 없습니다. 프레셋을 적용하거나 직접 입력하세요.`}
+                        : `기준이 없습니다. 관리항목과 기준값을 직접 입력하세요.`}
                     <span style="margin-left:4px;color:var(--text-muted);font-size:0.75rem;">컬러가 비어 있으면 해당 차종 공통 기준으로 사용됩니다.</span>
                 </span>
                 <div style="display:flex;gap:6px;">
@@ -26905,7 +26681,6 @@ var ProdQualityModule = (function() {
         body.insertAdjacentHTML('beforeend', _templateItemRowHtml({ selected: true }));
         const last = body.querySelector('tr:last-child .pq-tpl-label');
         if (last) last.focus();
-        _refreshTemplatePresetLabel();
     }
 
     function deleteCheckedTemplateItems() {
@@ -26921,7 +26696,6 @@ var ProdQualityModule = (function() {
         }
         targets.forEach(row => row.remove());
         UIUtils.toast(`${targets.length}개 관리항목을 삭제했습니다. 저장을 눌러 반영하세요.`, 'success');
-        _refreshTemplatePresetLabel();
     }
 
     function moveTemplateItemRow(button, direction) {

@@ -2916,23 +2916,70 @@ var LaserInspectionModule = (function() {
             </div>`;
     }
 
-    // 사출 LOT → 수입검사일 매핑 (검사 이력 표시용)
-    function _injIncomingDateMap() {
-        const map = {};
-        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(rec => {
-            if (!rec) return;
-            const date = rec.date || '';
-            if (!date) return;
-            const lots = (rec.lots && rec.lots.length > 0)
-                ? rec.lots
-                : (rec.lotNo ? [{ lotNo: rec.lotNo }] : []);
-            lots.forEach(l => {
-                const lotNo = String((l && l.lotNo) || '').trim();
-                if (!lotNo) return;
-                if (!map[lotNo] || date < map[lotNo]) map[lotNo] = date;
+    // 사출 LOT → 수입검사일 (검사 이력 표시용)
+    // 사출 LOT(YYMMDD)은 여러 품목이 같은 번호를 공유하므로 LOT 번호만으로 찾으면 다른 품목 날짜가 걸린다.
+    //  1) 도장 작업일지 trace(trace.injLots[].inspDate) — 도장 작업 시점에 해당 품목 검사로 확정해 저장된 값 (우선)
+    //  2) 사출 수입검사 기록 중 같은 차종·LOT 이고 품목(품명+컬러)이 하나로 특정되는 것
+    //  3) 그래도 없으면 비움('-') — 다른 품목 날짜로 대체하지 않는다
+    let _incomingIdxCache = { ver: null, idx: null };
+    function _incomingIndex() {
+        const ver = (typeof Storage.getMutationVersion === 'function') ? Storage.getMutationVersion() : null;
+        if (ver !== null && _incomingIdxCache.idx && _incomingIdxCache.ver === ver) return _incomingIdxCache.idx;
+        const paint = {};   // 도장일|차종|LOT → [{ part, inspDate }]
+        (Storage.getAll(DB.STORES.PAINTING_WORK) || []).forEach(w => {
+            if (!w || !w.date) return;
+            const trace = w.trace || {};
+            const injLots = trace.injLots ? Object.values(trace.injLots) : (trace.inj ? [trace.inj] : []);
+            injLots.forEach(x => {
+                const lot = String((x && x.lot) || '').trim();
+                const d = String((x && x.inspDate) || '').trim();
+                if (!lot || !d) return;
+                const k = [String(w.date).slice(0, 10), w.carModel || '', lot].join('|');
+                (paint[k] = paint[k] || []).push({ part: w.partName || '', inspDate: d });
             });
         });
-        return map;
+        const insp = {};    // 차종|LOT → [{ item, date }]
+        (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).forEach(rec => {
+            if (!rec || !rec.date) return;
+            const lots = (rec.lots && rec.lots.length > 0) ? rec.lots : (rec.lotNo ? [{ lotNo: rec.lotNo }] : []);
+            const item = String(rec.partName || '') + '|' + String(rec.color || '');
+            lots.forEach(l => {
+                const lot = String((l && l.lotNo) || '').trim();
+                if (!lot) return;
+                const k = (rec.carModel || '') + '|' + lot;
+                (insp[k] = insp[k] || []).push({ item, date: String(rec.date) });
+            });
+        });
+        const idx = { paint, insp };
+        _incomingIdxCache = { ver, idx };
+        return idx;
+    }
+
+    function _incomingDateFor(carModel, lotNo, paintDate, partNames) {
+        const lot = String(lotNo || '').trim();
+        if (!lot) return '';
+        const idx = _incomingIndex();
+        const pd = String(paintDate || '').slice(0, 10);
+        const earliest = list => list.map(x => x.inspDate || x.date).sort()[0] || '';
+
+        // 1) 도장 작업일지 trace
+        if (pd) {
+            const cands = idx.paint[[pd, carModel || '', lot].join('|')] || [];
+            if (cands.length) {
+                const names = (partNames || []).filter(Boolean);
+                const mine = cands.filter(c => names.indexOf(c.part) >= 0);
+                const pool = mine.length ? mine : cands;
+                const dates = [...new Set(pool.map(c => c.inspDate))];
+                if (dates.length === 1) return dates[0];
+                if (mine.length) return earliest(mine);
+            }
+        }
+        // 2) 사출 수입검사 — 같은 차종·LOT, 품목이 하나로 특정될 때만
+        const rows = idx.insp[(carModel || '') + '|' + lot] || [];
+        const usable = pd ? rows.filter(r => String(r.date).slice(0, 10) <= pd) : rows;
+        const items = [...new Set(usable.map(r => r.item))];
+        if (items.length === 1) return earliest(usable);
+        return '';
     }
 
     function _lotInfo(row) {
@@ -2945,9 +2992,16 @@ var LaserInspectionModule = (function() {
         const injectionLots = paintLots.length > 0
             ? [...new Set(paintLots.map(lot => lot && lot.lotNo).filter(Boolean))]
             : [source.paintLot || source.lotNo || row?.paintLot].filter(Boolean);
-        const injDateMap = _injIncomingDateMap();
+        const carModel = source.carModel || row?.carModel || '';
+        const partNames = [source.standbySourcePartName, source.partName || row?.partName].filter(Boolean);
+        const lotPairs = paintLots.length > 0
+            ? paintLots.map(l => ({ lotNo: l && l.lotNo, paintDate: l && l.paintDate }))
+            : [{ lotNo: source.paintLot || source.lotNo || row?.paintLot, paintDate: source.paintDate || row?.paintDate }];
         const incomingDates = [...new Set(
-            injectionLots.map(lot => injDateMap[String(lot || '').trim()]).filter(Boolean)
+            lotPairs
+                .filter(x => x.lotNo)
+                .map(x => _incomingDateFor(carModel, x.lotNo, x.paintDate, partNames))
+                .filter(Boolean)
         )].sort();
         return {
             work,
