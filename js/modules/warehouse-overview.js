@@ -431,7 +431,8 @@ var WarehouseOverviewModule = (function () {
 
     /** 재고 수정 보정·재고실사 보정 출고 — 사용 실적이 아니라 수량 정정이므로 FIFO 판정에서 제외 */
     function _isAdjustmentOut(r) {
-        return !!(r && (r.isStockCountAdjustment || /보정|실사/.test(String(r.source || ''))));
+        return !!(r && (r.adjust === true || r.isStockCountAdjustment
+            || /보정|실사/.test(String(r.source || '')) || /[재고수정]|보정|실사/.test(String(r.memo || ''))));
     }
 
     /**
@@ -440,17 +441,22 @@ var WarehouseOverviewModule = (function () {
      * 반환: { found: { B: { afterQty, beforeQty, olds: {A: true} } } }
      */
     function _injFifoViolations(records) {
+        return _fifoReplayViolations(records, (a, b) => a < b, _isYymmddLot);
+    }
+
+    /** 공용 재생 판정 — isOlder(A, B): A가 B보다 먼저 만들어졌는가, isValidLot: 비교 가능한 LOT인가 */
+    function _fifoReplayViolations(records, isOlder, isValidLot) {
         const recs = _recordsAfterBaseline(records);
         const steps = InvCalc.replaySteps(recs);
         const found = {}, clean = {};
         steps.forEach((st, i) => {
             const r = st.rec;
             if (!r || r.type !== '출고' || !st.deductions || InvCalc.isStockBaseline(r) || r.unmatchedAction || _isAdjustmentOut(r)) return;
-            const drained = st.deductions.filter(x => x.lotNo !== InvCalc.UNMATCHED && _isYymmddLot(x.lotNo) && x.qty > 0);
+            const drained = st.deductions.filter(x => x.lotNo !== InvCalc.UNMATCHED && isValidLot(x.lotNo) && x.qty > 0);
             if (!drained.length) return;
             const after = InvCalc.lotBalances(steps.slice(0, i + 1).map(x => x.rec)).lots;
             drained.forEach(dx => {
-                const olds = after.filter(l => l.qty > 0 && _isYymmddLot(l.lotNo) && l.lotNo < dx.lotNo);
+                const olds = after.filter(l => l.qty > 0 && isValidLot(l.lotNo) && isOlder(l.lotNo, dx.lotNo));
                 if (!olds.length) { clean[dx.lotNo] = (clean[dx.lotNo] || 0) + dx.qty; return; }
                 const f = found[dx.lotNo] = found[dx.lotNo] || { afterQty: 0, beforeQty: 0, olds: {} };
                 f.afterQty += dx.qty;
@@ -612,6 +618,9 @@ var WarehouseOverviewModule = (function () {
             return byLot[v.prodLot || lot] || byLot[lot] || byLot[v.lotNo] || { first: '', last: '' };
         };
 
+        const recsByMat = {};
+        all.forEach(r => { if (r && r.materialId) (recsByMat[r.materialId] = recsByMat[r.materialId] || []).push(r); });
+
         let itemCount = 0, totalStock = 0, expiredCount = 0, expiringCount = 0, longStock = 0, fifoCount = 0;
         const expiredItems = [], expiringItems = [], longItems = [], fifoItems = [];
 
@@ -656,47 +665,59 @@ var WarehouseOverviewModule = (function () {
                 }
             });
 
-            // FIFO 위반 (도료 제조일 기준 — 입고 순서가 아니라 제조일)
-            // 제조일이 빠른 LOT의 재고가 남아 있는데, 제조일이 늦은 LOT이 먼저 모두 출고된 경우.
-            // - 제조일: 입고 기록의 제조일, 없으면 제조 LOT(YYMMDD)에서 계산. 제조일을 모르는 LOT은 비교 제외
-            // - 구 LOT이 창고에 입고된 뒤에 신 LOT이 출고됐을 때만 위반 (그 전엔 꺼낼 수 없었음)
+            // FIFO 위반 (도료 제조일 기준) — 원장 시간순 재생
+            // 생산 출고로 LOT B가 차감된 시점에, B보다 제조일이 빠른 LOT A가 창고에 남아 있으면 위반.
+            // - 제조일: 입고 기록의 제조일, 없으면 제조 LOT(YYMMDD). 제조일을 모르는 LOT은 비교 제외
+            // - [재고수정]·실사보정 출고는 사용 실적이 아니므로 제외, 반납·재입고는 들어온 시점부터 기준
+            // - 지금도 창고에 남은 구 LOT이 있는 위반만 표시
             const _mfgOf = (lot, v) => String(v.mfgDate || '').slice(0, 10) || _lotProdDate(v.prodLot || lot);
-            const fifoActiveLots = activeLots
-                .map(([lot, v]) => [lot, v, _mfgOf(lot, v)])
-                .filter(([, v, mfg]) => mfg && v.firstInDate)
-                .sort((a, b) => a[2].localeCompare(b[2]));
-            const consumedLots = Object.entries(lots)
-                .map(([lot, v]) => [lot, v, _mfgOf(lot, v)])
-                .filter(([, v, mfg]) => mfg && v.qty <= 0 && v.hadIncoming && v.firstInDate && v.lastOutDate);
-            if (fifoActiveLots.length > 0 && consumedLots.length > 0) {
-                const [, oldestV, oldestMfg] = fifoActiveLots[0];
-                const newerConsumedLots = consumedLots
-                    .filter(([, v, mfg]) => mfg > oldestMfg && v.lastOutDate >= oldestV.firstInDate)
-                    .sort((a, b) => a[2].localeCompare(b[2]));
-                if (newerConsumedLots.length && !fifoItems.find(f => f.matName === matName)) {
-                    const maxMfg = newerConsumedLots[newerConsumedLots.length - 1][2];
-                    const label = (lot, v) => v.prodLot || v.lotNo || lot;
-                    fifoCount++;
-                    fifoItems.push({
-                        materialId: mid,
-                        matName,
-                        supplier,
-                        qty: netQty,
-                        oldestDate: oldestV.firstInDate,
-                        // 위반 기준 구 LOT: 소진된 신 LOT보다 제조일이 빠른데 아직 남아 있는 LOT
-                        oldLots: fifoActiveLots
-                            .filter(([, , mfg]) => mfg < maxMfg)
-                            .map(([lot, v, mfg]) => ({ lot: label(lot, v), prodDate: mfg, qty: v.qty, firstDate: v.firstInDate,
-                                                       inQty: v.inQty, outQty: v.outQty, lastOutDate: v.lastOutDate,
-                                                       useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last })),
-                        consumedLots: newerConsumedLots.map(([lot, v, mfg]) => Object.assign({ lot: label(lot, v), prodDate: mfg, firstDate: v.firstInDate,
-                                                       inQty: v.inQty, outQty: v.outQty, firstOutDate: v.firstOutDate, lastOutDate: v.lastOutDate,
-                                                       useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last, supplier: supplier },
-                                                       _fifoBlameFor(oldestV.firstInDate, v))),
-                        oldSupplier: supplier
-                    });
-                    fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
-                }
+            const _mfgByKey = {};
+            Object.keys(lots).forEach(k => { _mfgByKey[k === '__nolot__' ? '무표기' : k] = _mfgOf(k, lots[k]); });
+            const matRecs = (recsByMat[mid] || []).map(r => {
+                const k = _paintLotKey(r);
+                return Object.assign({}, r, { lotNo: k === '__nolot__' ? '무표기' : k });
+            });
+            const viol = _fifoReplayViolations(matRecs,
+                (x, y) => !!(_mfgByKey[x] && _mfgByKey[y] && _mfgByKey[x] < _mfgByKey[y]),
+                lot => !!_mfgByKey[lot]);
+            const activeSet = {};
+            activeLots.forEach(([lot]) => { activeSet[lot] = true; });
+            const violNew = Object.keys(viol.found).filter(bLot => Object.keys(viol.found[bLot].olds).some(aLot => activeSet[aLot]));
+            if (violNew.length && !fifoItems.find(f => f.materialId === mid)) {
+                const oldSet = {};
+                violNew.forEach(bLot => Object.keys(viol.found[bLot].olds).forEach(aLot => { if (activeSet[aLot]) oldSet[aLot] = true; }));
+                const oldList = Object.keys(oldSet).sort((x, y) => (_mfgByKey[x] || '').localeCompare(_mfgByKey[y] || ''));
+                const oldestV = lots[oldList[0]];
+                const label = (lot, v) => v.prodLot || v.lotNo || lot;
+                const oldInDate = oldestV.firstInDate || oldestV.firstDate || '';
+                fifoCount++;
+                fifoItems.push({
+                    materialId: mid,
+                    matName,
+                    supplier,
+                    qty: netQty,
+                    oldestDate: oldInDate,
+                    oldLots: oldList.map(lot => {
+                        const v = lots[lot];
+                        return { lot: label(lot, v), prodDate: _mfgByKey[lot], qty: v.qty, firstDate: v.firstInDate || v.firstDate,
+                                 inQty: v.inQty, outQty: v.outQty, lastOutDate: v.lastOutDate,
+                                 useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last };
+                    }),
+                    consumedLots: violNew.filter(bLot => !oldSet[bLot])
+                        .sort((x, y) => (_mfgByKey[x] || '').localeCompare(_mfgByKey[y] || ''))
+                        .map(bLot => {
+                            const v = lots[bLot] || {};
+                            const f = viol.found[bLot];
+                            const blame = _fifoBlameFor(oldInDate, Object.assign({}, v, { outs: [] }));
+                            return Object.assign({ lot: label(bLot, v), prodDate: _mfgByKey[bLot], firstDate: v.firstInDate || v.firstDate,
+                                                   inQty: v.inQty || 0, outQty: v.outQty || 0, firstOutDate: v.firstOutDate || '',
+                                                   lastOutDate: v.lastOutDate || '',
+                                                   useFirst: _useOf(mid, bLot, v).first, useLast: _useOf(mid, bLot, v).last, supplier: supplier },
+                                                 blame, { afterQty: f.afterQty, beforeQty: f.beforeQty || 0 });
+                        }),
+                    oldSupplier: supplier
+                });
+                fifoItems[fifoItems.length - 1].blame = _fifoBlameSummary(fifoItems[fifoItems.length - 1]);
             }
         });
 

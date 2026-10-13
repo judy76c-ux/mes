@@ -13545,6 +13545,8 @@ var ProdQualityModule = (function() {
     const PRESET_KIND     = 'quality_preset'; // 사용자 저장 프레셋
     const MEASURE_RECORD_KIND = 'quality_measure_record';
     const QUALITY_STANDARD_IMAGE_KEY = 'prod_quality_standard_image_v1';
+    const EDIT_HISTORY_KEY = 'prod_quality_edit_history_v1';
+    const EDIT_HISTORY_LIMIT = 300;
     const QUALITY_STANDARD_UPLOAD_ROLES = ['admin', 'prod_manager', 'quality_manager', 'paint_line_op'];
     const QUALITY_PRESET_EDIT_ROLES = QUALITY_STANDARD_UPLOAD_ROLES;
 
@@ -13754,6 +13756,76 @@ var ProdQualityModule = (function() {
         return String(user?.role || '') === 'admin';
     }
 
+    function _qualityHistorySnapshot(doc) {
+        if (!doc) return null;
+        const keepItem = item => {
+            if (!item) return item;
+            return {
+                key: item.key || '', label: item.label || '', unit: item.unit || '',
+                method: item.method || '', spec: item.spec || '',
+                upperSpec: item.upperSpec || '', lowerSpec: item.lowerSpec || '',
+                values: item.values || item.vals || {}, note: item.note || ''
+            };
+        };
+        return {
+            id: doc.id || '', _docKind: doc._docKind || '',
+            date: doc.date || '', recordDate: doc.recordDate || '', recordTime: doc.recordTime || '',
+            carModel: doc.carModel || '', partName: doc.partName || '', color: doc.color || '',
+            line: doc.line || '', lotNo: doc.lotNo || '', name: doc.name || '',
+            productionQty: doc.productionQty ?? '', types: doc.types || [],
+            status: doc.status || '', inspector: doc.inspector || '', writer: doc.writer || '',
+            note: doc.note || '', items: Array.isArray(doc.items) ? doc.items.map(keepItem) : []
+        };
+    }
+
+    function _qualityHistoryValue(value) {
+        if (value === undefined || value === null || value === '') return '';
+        if (typeof value === 'object') {
+            try { return JSON.stringify(value); } catch (e) { return String(value); }
+        }
+        return String(value);
+    }
+
+    function _qualityHistoryChanges(before, after) {
+        const left = before || {};
+        const right = after || {};
+        const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
+        const changes = {};
+        keys.forEach(key => {
+            const a = _qualityHistoryValue(left[key]);
+            const b = _qualityHistoryValue(right[key]);
+            if (a !== b) changes[key] = { before: left[key] ?? '', after: right[key] ?? '' };
+        });
+        return changes;
+    }
+
+    async function _recordQualityEditHistory(action, target, before, after) {
+        try {
+            const beforeSnap = _qualityHistorySnapshot(before);
+            const afterSnap = _qualityHistorySnapshot(after);
+            const changes = _qualityHistoryChanges(beforeSnap, afterSnap);
+            if (action === '수정' && !Object.keys(changes).length) return;
+            const user = _currentUser() || {};
+            const history = await Storage.getConfigValue(EDIT_HISTORY_KEY) || [];
+            history.unshift({
+                id: Storage.generateId(),
+                at: UIUtils.now(),
+                action,
+                targetId: target?.id || after?.id || before?.id || '',
+                targetLabel: target?.label || `${after?.carModel || before?.carModel || ''} / ${after?.partName || before?.partName || ''}`,
+                user: user.name || user.username || user.id || '미로그인',
+                role: user.role || '',
+                changes,
+                before: beforeSnap,
+                after: afterSnap
+            });
+            if (history.length > EDIT_HISTORY_LIMIT) history.splice(EDIT_HISTORY_LIMIT);
+            await Storage.setConfigValue(EDIT_HISTORY_KEY, history);
+        } catch (e) {
+            console.warn('[ProdQualityModule] edit history save failed:', e);
+        }
+    }
+
     async function _loadQualityStandardImage() {
         try {
             return await Storage.getConfigValue(QUALITY_STANDARD_IMAGE_KEY) || null;
@@ -13784,6 +13856,9 @@ var ProdQualityModule = (function() {
                             </button>
                             <button class="btn btn-outline" onclick="ProdQualityModule.openMeasureHistory('film')">
                                 <span class="material-symbols-outlined">layers</span> 도막 이력
+                            </button>
+                            <button class="btn btn-outline" onclick="ProdQualityModule.openEditHistory()">
+                                <span class="material-symbols-outlined">manage_history</span> 수정 이력
                             </button>
                         </div>
                         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;justify-content:flex-end;">
@@ -13869,6 +13944,40 @@ var ProdQualityModule = (function() {
             sessionStorage.removeItem('mixStd_qualityFilter_part');
         }
         search();
+    }
+
+    async function openEditHistory() {
+        const container = _rootContainer || document.getElementById('contentArea');
+        if (!container) return;
+        _rootContainer = container;
+        const history = await Storage.getConfigValue(EDIT_HISTORY_KEY) || [];
+        const rows = history.map(row => {
+            const changed = Object.keys(row.changes || {}).map(key => {
+                const change = row.changes[key] || {};
+                return `<div><strong>${_esc(key)}</strong>: <span style="color:#b91c1c;">${_esc(_qualityHistoryValue(change.before) || '없음')}</span> → <span style="color:#15803d;">${_esc(_qualityHistoryValue(change.after) || '없음')}</span></div>`;
+            }).join('');
+            return `<tr>
+                <td style="white-space:nowrap;">${_esc(_formatPrintDateTime(row.at))}</td>
+                <td style="white-space:nowrap;">${_esc(row.action || '-')}</td>
+                <td style="white-space:nowrap;">${_esc(row.user || '-')}</td>
+                <td style="white-space:nowrap;">${_esc(row.targetLabel || row.targetId || '-')}</td>
+                <td style="min-width:280px;line-height:1.5;">${changed || '<span style="color:var(--text-muted);">변경 내용 없음</span>'}</td>
+            </tr>`;
+        }).join('');
+        container.innerHTML = `<div class="fade-in-up">
+            <div class="page-header"><div class="page-actions" style="width:100%;justify-content:space-between;gap:8px;">
+                <button class="btn btn-outline" onclick="ProdQualityModule.backToMain()"><span class="material-symbols-outlined">arrow_back</span> 초중종물 관리</button>
+                <span style="font-size:.8rem;color:var(--text-muted);">최근 ${history.length}건 · 최대 ${EDIT_HISTORY_LIMIT}건 보관</span>
+            </div></div>
+            <div class="card"><div class="card-header"><h4><span class="material-symbols-outlined">manage_history</span> 초중종물 수정 이력</h4></div>
+                <div class="card-body" style="padding:0;"><div class="data-table-wrapper" style="overflow:auto;">
+                    <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;">
+                        <thead><tr><th style="white-space:nowrap;">일시</th><th style="white-space:nowrap;">구분</th><th style="white-space:nowrap;">작업자</th><th style="white-space:nowrap;">대상</th><th style="min-width:280px;">변경 내용</th></tr></thead>
+                        <tbody>${rows || '<tr><td colspan="5" style="padding:30px;text-align:center;color:var(--text-muted);">수정 이력이 없습니다.</td></tr>'}</tbody>
+                    </table>
+                </div></div>
+            </div>
+        </div>`;
     }
 
     function openStandardsPage() {
@@ -14395,6 +14504,9 @@ var ProdQualityModule = (function() {
         const payload = { _docKind: TEMPLATE_KIND, carModel, partName, color, productId, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
+        await _recordQualityEditHistory(existing ? '수정' : '등록', {
+            id: existing?.id || '', label: `${carModel} / ${partName} / ${color || '공통'}`
+        }, existing, { ...payload, id: existing?.id || '' });
 
         UIUtils.closeModal();
         UIUtils.toast('기준값이 저장되었습니다.', 'success');
@@ -14707,6 +14819,9 @@ var ProdQualityModule = (function() {
             const payload = { _docKind: TEMPLATE_KIND, carModel: cm, partName: pn, color: col, productId: p.id, items, updatedAt: UIUtils.now() };
             if (existing) await Storage.update(STORE, existing.id, payload);
             else await Storage.add(STORE, payload);
+            await _recordQualityEditHistory(existing ? '수정' : '등록', {
+                id: existing?.id || '', label: `${cm} / ${pn} / ${col || '공통'}`
+            }, existing, { ...payload, id: existing?.id || '' });
         }
 
         const extraCount = saveTargets.length - 1;
@@ -15224,6 +15339,10 @@ var ProdQualityModule = (function() {
             const saved = await Storage.add(STORE, { ...payload, createdAt: now });
             savedId = saved?.id || '';
         }
+        await _recordQualityEditHistory(recordId ? '수정' : '등록', {
+            id: savedId,
+            label: `${issue.carModel || ''} / ${issue.partName || ''} / ${issue.lotNo || ''}`
+        }, existing, { ...payload, id: savedId });
         const latestIssue = Storage.getById(STORE, issueId) || issue;
         await Storage.update(STORE, issueId, {
             ...latestIssue,
@@ -15975,6 +16094,9 @@ var ProdQualityModule = (function() {
             if (!data.date || !data.carModel || !data.partName || !data.line) { UIUtils.toast('발행일자, 차종, 품명, 라인을 입력하세요.', 'warning'); return; }
             if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const saved = await Storage.add(STORE, data);
+        await _recordQualityEditHistory('등록', {
+            id: saved?.id || '', label: `${data.carModel} / ${data.partName} / ${data.lotNo || ''}`
+        }, null, { ...data, id: saved?.id || '' });
         UIUtils.closeModal();
         UIUtils.toast('초중종물 기준 양식이 발행되었습니다. 인쇄 완료 후 발행 이력이 남습니다.', 'success');
         search();
@@ -16010,6 +16132,9 @@ var ProdQualityModule = (function() {
         if (!data.items.length) { UIUtils.toast('관리항목을 1개 이상 입력하세요.', 'warning'); return; }
         const existing = Storage.getById(STORE, id) || {};
         await Storage.update(STORE, id, { ...existing, ...data, status: existing.status || data.status });
+        await _recordQualityEditHistory('수정', {
+            id, label: `${data.carModel || existing.carModel || ''} / ${data.partName || existing.partName || ''} / ${data.lotNo || existing.lotNo || ''}`
+        }, existing, { ...existing, ...data, id, status: existing.status || data.status });
         UIUtils.closeModal();
         UIUtils.toast('저장되었습니다.', 'success');
         search();
@@ -16021,7 +16146,11 @@ var ProdQualityModule = (function() {
             return;
         }
         UIUtils.confirm('삭제하시겠습니까?', async () => {
+            const existing = Storage.getById(STORE, id);
             await Storage.remove(STORE, id);
+            await _recordQualityEditHistory('삭제', {
+                id, label: `${existing?.carModel || ''} / ${existing?.partName || ''} / ${existing?.lotNo || ''}`
+            }, existing, null);
             search();
         });
     }
@@ -16079,9 +16208,16 @@ var ProdQualityModule = (function() {
         let saved;
         if (issueId) {
             const existing = Storage.getById(STORE, issueId) || {};
-            saved = await Storage.update(STORE, issueId, { ...existing, ...data });
+            const payload = { ...existing, ...data };
+            saved = await Storage.update(STORE, issueId, payload);
+            await _recordQualityEditHistory('수정', {
+                id: issueId, label: `${data.carModel || existing.carModel || ''} / ${data.partName || existing.partName || ''} / ${data.lotNo || existing.lotNo || ''}`
+            }, existing, { ...payload, id: issueId });
         } else {
             saved = await Storage.add(STORE, data);
+            await _recordQualityEditHistory('등록', {
+                id: saved?.id || '', label: `${data.carModel || ''} / ${data.partName || ''} / ${data.lotNo || ''}`
+            }, null, { ...data, id: saved?.id || '' });
         }
         UIUtils.closeModal();
         search();
@@ -16288,6 +16424,9 @@ var ProdQualityModule = (function() {
         const payload = { _docKind: ITEM_MASTER_KIND, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
+        await _recordQualityEditHistory(existing ? '수정' : '등록', {
+            id: existing?.id || '', label: '초중종 관리항목 마스터'
+        }, existing, { ...payload, id: existing?.id || '' });
 
         // 프리셋·품목별 기준값 동기화 (삭제된 항목 제거, 레이블/단위/방법 업데이트)
         await _syncPresetsAndTemplates(items);
@@ -16855,10 +16994,15 @@ var ProdQualityModule = (function() {
 
         const sortedItems = _sortItemsByMaster(items);
         if (presetId) {
-            await Storage.update(STORE, presetId, { _docKind: PRESET_KIND, name, items: sortedItems, updatedAt: UIUtils.now() });
+            const existing = Storage.getById(STORE, presetId) || {};
+            const payload = { _docKind: PRESET_KIND, name, items: sortedItems, updatedAt: UIUtils.now() };
+            await Storage.update(STORE, presetId, payload);
+            await _recordQualityEditHistory('수정', { id: presetId, label: `프리셋: ${name}` }, existing, { ...payload, id: presetId });
             UIUtils.toast(`"${name}" 프레셋이 수정됐습니다.`, 'success');
         } else {
-            await Storage.add(STORE, { _docKind: PRESET_KIND, name, items: sortedItems, createdAt: UIUtils.now() });
+            const payload = { _docKind: PRESET_KIND, name, items: sortedItems, createdAt: UIUtils.now() };
+            const saved = await Storage.add(STORE, payload);
+            await _recordQualityEditHistory('등록', { id: saved?.id || '', label: `프레셋: ${name}` }, null, { ...payload, id: saved?.id || '' });
             UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
         }
         openPresetMgmtModal(); // 목록으로 돌아가기
@@ -16938,6 +17082,9 @@ var ProdQualityModule = (function() {
         } else {
             await Storage.add(STORE, { _docKind: PRESET_KIND, name, items, createdAt: UIUtils.now() });
         }
+        await _recordQualityEditHistory(existing ? '수정' : '등록', {
+            id: existing?.id || '', label: `프리셋: ${name}`
+        }, existing, { _docKind: PRESET_KIND, id: existing?.id || '', name, items });
         _pendingPresetItems = [];
         UIUtils.closeModal();
         UIUtils.toast(`"${name}" 프레셋이 저장됐습니다.`, 'success');
@@ -16952,6 +17099,7 @@ var ProdQualityModule = (function() {
         if (!preset) return;
         if (!confirm(`"${preset.name}" 프레셋을 삭제하시겠습니까?`)) return;
         await Storage.delete(STORE, presetId);
+        await _recordQualityEditHistory('삭제', { id: presetId, label: `프레셋: ${preset.name}` }, preset, null);
         UIUtils.toast('프레셋이 삭제됐습니다.', 'success');
         openPresetMgmtModal(); // 프레셋 관리 모달 갱신
     }
@@ -16974,6 +17122,9 @@ var ProdQualityModule = (function() {
         const payload = { _docKind: TEMPLATE_KIND, carModel, color, items, updatedAt: UIUtils.now() };
         if (existing) await Storage.update(STORE, existing.id, payload);
         else await Storage.add(STORE, payload);
+        await _recordQualityEditHistory(existing ? '수정' : '등록', {
+            id: existing?.id || '', label: `${carModel} / ${color || '공통'}`
+        }, existing, { ...payload, id: existing?.id || '' });
         UIUtils.closeModal();
         UIUtils.toast('차종/컬러별 기준설정이 저장되었습니다.', 'success');
         renderStandardsCard();
@@ -17107,6 +17258,9 @@ var ProdQualityModule = (function() {
             };
             if (existing) await Storage.update(STORE, existing.id, payload);
             else await Storage.add(STORE, payload);
+            await _recordQualityEditHistory(existing ? '수정' : '등록', {
+                id: existing?.id || '', label: `${target.carModel} / ${target.color || '공통'}`
+            }, existing, { ...payload, id: existing?.id || '' });
         }
         UIUtils.closeModal();
         UIUtils.toast(`${targets.length}개 차종/컬러 기준을 일괄 저장했습니다.`, 'success');
@@ -17528,6 +17682,7 @@ window.addEventListener('afterprint', () => {
         ,openDataModal
         ,saveMeasureRecord
         ,openMeasureHistory
+        ,openEditHistory
         ,renderMeasureHistoryTable
         ,applyPreset
         ,applyPresetFromSelect
