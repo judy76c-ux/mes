@@ -36748,7 +36748,7 @@ var ProdSpcModule = (function() {
             <div class="card" style="margin-bottom:16px;">
                 <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                     <h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4>
-                    <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: SU/SL 규격 · 빨강: UCL/LCL 관리한계</span>
+                    <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: 제품 규격 범위 · 빨강: 평소 관리범위</span>
                 </div>
                 <div class="card-body spc-chart-wrap" id="spcXbarWrap"><canvas id="spcXbarCanvas"></canvas></div>
             </div>
@@ -36769,7 +36769,8 @@ var ProdSpcModule = (function() {
                                     <th style="text-align:right;min-width:64px;">종물</th>
                                     <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                     <th style="text-align:right;min-width:72px;">R(범위)</th>
-                                    <th style="text-align:center;min-width:64px;cursor:help;" title="관리이탈: 최근 측정값들의 평균이나 편차가 그동안 정상적으로 유지되던 범위를 벗어났다는 뜻입니다 (설비·재료 이상 등 원인 확인 필요). 규격이탈: 평균값이 아예 정해진 규격(허용 범위) 밖으로 나갔다는 뜻입니다.">판정</th>
+                                    <th style="text-align:center;min-width:130px;">상하한 기준</th>
+                                    <th style="text-align:center;min-width:64px;cursor:help;" title="관리범위 이탈: 같은 품목에서 평소 유지되던 범위를 벗어난 상태입니다. 제품 규격 이탈: 입력한 제품 허용 범위를 벗어난 상태입니다.">판정</th>
                                     ${_filmDeleteHeader()}
                                 </tr>
                             </thead>
@@ -36856,7 +36857,7 @@ var ProdSpcModule = (function() {
     }
 
     function _spcTableColCount() {
-        return 12 + (_canDeleteFilmMeasure() ? 1 : 0);
+        return 13 + (_canDeleteFilmMeasure() ? 1 : 0);
     }
 
     function _filmLayerSuffix(itemKey) {
@@ -36882,7 +36883,7 @@ var ProdSpcModule = (function() {
                 <div class="card" style="margin-bottom:16px;">
                     <div class="card-header" style="flex-wrap:wrap;gap:8px;">
                         <h4><span class="material-symbols-outlined">show_chart</span> X̄ 관리도 (평균)</h4>
-                        <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: SU/SL 규격 · 빨강: UCL/LCL 관리한계</span>
+                        <span style="font-size:0.75rem;color:var(--text-muted);margin-left:auto;">주황: 제품 규격 범위 · 빨강: 평소 관리범위</span>
                     </div>
                     <div class="card-body spc-chart-wrap" id="spcXbarWrap_${suffix}"></div>
                 </div>
@@ -36903,7 +36904,8 @@ var ProdSpcModule = (function() {
                                         <th style="text-align:right;min-width:64px;">종물</th>
                                         <th style="text-align:right;min-width:72px;">X̄(평균)</th>
                                         <th style="text-align:right;min-width:72px;">R(범위)</th>
-                                        <th style="text-align:center;min-width:64px;cursor:help;" title="관리이탈: 최근 측정값들의 평균이나 편차가 그동안 정상적으로 유지되던 범위를 벗어났다는 뜻입니다 (설비·재료 이상 등 원인 확인 필요). 규격이탈: 평균값이 아예 정해진 규격(허용 범위) 밖으로 나갔다는 뜻입니다.">판정</th>
+                                        <th style="text-align:center;min-width:130px;">상하한 기준</th>
+                                        <th style="text-align:center;min-width:64px;cursor:help;" title="관리범위 이탈: 같은 품목에서 평소 유지되던 범위를 벗어난 상태입니다. 제품 규격 이탈: 입력한 제품 허용 범위를 벗어난 상태입니다.">판정</th>
                                         ${_filmDeleteHeader()}
                                     </tr>
                                 </thead>
@@ -37002,6 +37004,25 @@ var ProdSpcModule = (function() {
             LCL_r: cn.D3 * rBar,
             xGrand, rBar
         };
+    }
+
+    // 서로 다른 품명·컬러·라인을 하나의 관리도로 합치면 평균과 범위가 왜곡된다.
+    // 같은 관리 대상끼리만 X-bar/R 관리한계를 계산한다.
+    function _pointGroupKey(point) {
+        return [point?.carModel, point?.partName, point?.color, point?.line]
+            .map(v => String(v || '').trim()).join('|');
+    }
+
+    function _groupLimits(points) {
+        const groups = new Map();
+        (points || []).forEach(point => {
+            const key = _pointGroupKey(point);
+            if (!groups.has(key)) groups.set(key, []);
+            groups.get(key).push(point);
+        });
+        const limits = new Map();
+        groups.forEach((groupPoints, key) => limits.set(key, _calcLimits(groupPoints)));
+        return limits;
     }
 
     function _specKey(spec) {
@@ -37150,27 +37171,31 @@ var ProdSpcModule = (function() {
                 <p>조회 조건에 해당하는 데이터가 없습니다.</p></div>`;
             return;
         }
-        const L = _calcLimits(points);
-        const spec = _resolveSpecLimits(points, meta);
-        const outX = points.filter(p=>p.xbar>L.UCL_x||p.xbar<L.LCL_x).length;
-        const outR = points.filter(p=>p.rv>L.UCL_r).length;
+        const overallL = _calcLimits(points);
+        const groupLimits = _groupLimits(points);
+        const pointLimits = p => groupLimits.get(_pointGroupKey(p)) || overallL;
+        const outX = points.filter(p => { const L = pointLimits(p); return p.xbar > L.UCL_x || p.xbar < L.LCL_x; }).length;
+        const outR = points.filter(p => { const L = pointLimits(p); return p.rv > L.UCL_r; }).length;
         const oot  = outX + outR;
-        const specOut = points.filter(p => _isSpecOut(p.xbar, spec)).length;
+        const specOut = points.filter(p => _isSpecOut(p.xbar, _specFromPoint(p, meta.key))).length;
 
         // 표준편차(σ) 추정 = R̄ / d2  (d2는 subgroup 크기별)
         const d2 = { 2:1.128, 3:1.693, 4:2.059, 5:2.326 };
-        const sigma = d2[Math.min(5,Math.max(2,L.n))] ? L.rBar / d2[Math.min(5,Math.max(2,L.n))] : null;
+        const sigma = d2[Math.min(5,Math.max(2,overallL.n))] ? overallL.rBar / d2[Math.min(5,Math.max(2,overallL.n))] : null;
+        const spec = _resolveSpecLimits(points, meta);
         const specLabel = _hasSpecLimits(spec)
-            ? `SU ${_fmtLimit(spec.usl)} / SL ${_fmtLimit(spec.lsl)}`
+            ? (points.every(p => _specKey(_specFromPoint(p, meta.key)) === _specKey(spec))
+                ? `제품 상한 ${_fmtLimit(spec.usl)} / 제품 하한 ${_fmtLimit(spec.lsl)}`
+                : '품목별 적용')
             : '미등록';
 
         el.innerHTML = `
             <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">data_usage</span></div>
                 <div class="stat-info"><div class="stat-value">${points.length}</div><div class="stat-label">측정 포인트</div></div></div>
             <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">straighten</span></div>
-                <div class="stat-info"><div class="stat-value">${L.xGrand.toFixed(2)}</div><div class="stat-label">전체 평균 X̄̄ (${meta.unit})</div></div></div>
+                <div class="stat-info"><div class="stat-value">${overallL.xGrand.toFixed(2)}</div><div class="stat-label">전체 평균 X̄̄ (${meta.unit})</div></div></div>
             <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">swap_vert</span></div>
-                <div class="stat-info"><div class="stat-value">${L.rBar.toFixed(2)}</div><div class="stat-label">평균 범위 R̄ (${meta.unit})</div></div></div>
+                <div class="stat-info"><div class="stat-value">${overallL.rBar.toFixed(2)}</div><div class="stat-label">평균 범위 R̄ (${meta.unit})</div></div></div>
             ${sigma!==null?`<div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">sigma</span></div>
                 <div class="stat-info"><div class="stat-value">${sigma.toFixed(3)}</div><div class="stat-label">추정 표준편차 σ̂</div></div></div>`:''}
             <div class="stat-card ${oot>0?'stat-card-danger':'stat-card-success'}">
@@ -37180,14 +37205,14 @@ var ProdSpcModule = (function() {
                 <div class="stat-icon"><span class="material-symbols-outlined">rule</span></div>
                 <div class="stat-info">
                     <div class="stat-value" style="font-size:0.82rem;">${specLabel}</div>
-                    <div class="stat-label">${_hasSpecLimits(spec) ? `SU/SL 규격${spec.label ? ' · ' + spec.label : ''} / 규격이탈 ${specOut}` : 'SU/SL 규격 (품목 기준 미등록)'}</div>
+                    <div class="stat-label">${_hasSpecLimits(spec) ? `제품 허용범위${spec.label ? ' · ' + spec.label : ''} / 규격범위 이탈 ${specOut}` : '제품 허용범위 (품목 기준 미등록)'}</div>
                 </div>
             </div>
             <div class="stat-card">
                 <div class="stat-icon"><span class="material-symbols-outlined">tune</span></div>
                 <div class="stat-info">
-                    <div class="stat-value" style="font-size:0.9rem;">UCL: ${L.UCL_x.toFixed(2)}</div>
-                    <div class="stat-label">X̄ 관리 한계 / LCL: ${L.LCL_x.toFixed(2)}</div>
+                    <div class="stat-value" style="font-size:0.9rem;">품목별 계산</div>
+                    <div class="stat-label">품명·컬러·라인별 X̄/R 관리 한계</div>
                 </div>
             </div>`;
     }
@@ -37225,6 +37250,9 @@ var ProdSpcModule = (function() {
         if (!xbarCanvas || !rCanvas) return;
 
         const L      = _calcLimits(points);
+        const groupLimits = _groupLimits(points);
+        const limitFor = point => groupLimits.get(_pointGroupKey(point)) || L;
+        const multiGroup = groupLimits.size > 1;
         const spec   = _resolveSpecLimits(points, meta);
         const labels = points.map((p,i)=>`${i+1}. ${(p.date||'').slice(5)}${p.lot?' ('+p.lot+')':''}`);
         const xbars  = points.map(p=> +p.xbar.toFixed(3));
@@ -37262,41 +37290,47 @@ var ProdSpcModule = (function() {
                 pointRadius: 4,
                 pointBackgroundColor: xbars.map((_,i) => {
                     const x = points[i].xbar;
-                    if (x > L.UCL_x || x < L.LCL_x) return '#ef4444';
-                    if (_isSpecOut(x, spec)) return '#f59e0b';
+                    const point = points[i];
+                    const pointL = limitFor(point);
+                    if (x > pointL.UCL_x || x < pointL.LCL_x) return '#ef4444';
+                    if (_isSpecOut(x, _specFromPoint(point, meta.key))) return '#f59e0b';
                     return '#3b82f6';
                 }),
                 tension: 0.15
             },
-            { label: `UCL (${_fmtLimit(L.UCL_x)})`, data: Array(labels.length).fill(+L.UCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
-            { label: `CL  (${_fmtLimit(L.CL_x)})`,  data: Array(labels.length).fill(+L.CL_x.toFixed(3)),  ...lineOpts('#10b981',[4,4]) },
-            { label: `LCL (${_fmtLimit(L.LCL_x)})`, data: Array(labels.length).fill(+L.LCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) }
+            { label: multiGroup ? '품목별 관리 상한' : `관리 상한 (${_fmtLimit(L.UCL_x)})`, data: points.map(p => +limitFor(p).UCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
+            { label: multiGroup ? '품목별 중심값'  : `중심값 (${_fmtLimit(L.CL_x)})`, data: points.map(p => +limitFor(p).CL_x.toFixed(3)), ...lineOpts('#10b981',[4,4]) },
+            { label: multiGroup ? '품목별 관리 하한' : `관리 하한 (${_fmtLimit(L.LCL_x)})`, data: points.map(p => +limitFor(p).LCL_x.toFixed(3)), ...lineOpts('#ef4444',[6,3]) }
         ];
-        if (spec.usl != null) {
+        if (!multiGroup && spec.usl != null) {
             xbarDatasets.push({
-                label: `SU 규격상한 (${_fmtLimit(spec.usl)})`,
+                label: `제품 허용 상한 (${_fmtLimit(spec.usl)})`,
                 data: Array(labels.length).fill(+Number(spec.usl).toFixed(3)),
                 ...lineOpts('#f59e0b', [10, 4], 2)
             });
         }
-        if (spec.lsl != null) {
+        if (!multiGroup && spec.lsl != null) {
             xbarDatasets.push({
-                label: `SL 규격하한 (${_fmtLimit(spec.lsl)})`,
+                label: `제품 허용 하한 (${_fmtLimit(spec.lsl)})`,
                 data: Array(labels.length).fill(+Number(spec.lsl).toFixed(3)),
                 ...lineOpts('#d97706', [10, 4], 2)
             });
         }
 
         const xbarY = [
-            ...xbars, L.UCL_x, L.CL_x, L.LCL_x,
-            spec.usl, spec.lsl
+            ...xbars,
+            ...points.flatMap(p => {
+                const pointL = limitFor(p);
+                return [pointL.UCL_x, pointL.CL_x, pointL.LCL_x];
+            }),
+            ...(multiGroup ? [] : [spec.usl, spec.lsl])
         ];
-        const xbarLimitLabels = [
-            spec.usl != null ? { value: spec.usl, text: `SU ${_fmtLimit(spec.usl)}`, color: '#f59e0b', bold: true } : null,
-            spec.lsl != null ? { value: spec.lsl, text: `SL ${_fmtLimit(spec.lsl)}`, color: '#d97706', bold: true } : null,
-            { value: L.UCL_x, text: `UCL ${_fmtLimit(L.UCL_x)}`, color: '#ef4444' },
-            { value: L.CL_x,  text: `CL ${_fmtLimit(L.CL_x)}`,  color: '#10b981' },
-            { value: L.LCL_x, text: `LCL ${_fmtLimit(L.LCL_x)}`, color: '#ef4444' }
+        const xbarLimitLabels = multiGroup ? [] : [
+            spec.usl != null ? { value: spec.usl, text: `제품 상한 ${_fmtLimit(spec.usl)}`, color: '#f59e0b', bold: true } : null,
+            spec.lsl != null ? { value: spec.lsl, text: `제품 하한 ${_fmtLimit(spec.lsl)}`, color: '#d97706', bold: true } : null,
+            { value: L.UCL_x, text: `관리 상한 ${_fmtLimit(L.UCL_x)}`, color: '#ef4444' },
+            { value: L.CL_x,  text: `중심값 ${_fmtLimit(L.CL_x)}`,  color: '#10b981' },
+            { value: L.LCL_x, text: `관리 하한 ${_fmtLimit(L.LCL_x)}`, color: '#ef4444' }
         ];
 
         const xbarChart = new Chart(xbarCanvas, {
@@ -37313,20 +37347,20 @@ var ProdSpcModule = (function() {
                 borderColor: '#8b5cf6',
                 backgroundColor: 'rgba(139,92,246,0.07)',
                 pointRadius: 4,
-                pointBackgroundColor: rs.map((v,i) => points[i].rv > L.UCL_r ? '#ef4444' : '#8b5cf6'),
+                pointBackgroundColor: rs.map((v,i) => points[i].rv > limitFor(points[i]).UCL_r ? '#ef4444' : '#8b5cf6'),
                 tension: 0.15
             },
-            { label: `UCL (${L.UCL_r.toFixed(3)})`, data: Array(labels.length).fill(+L.UCL_r.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
-            { label: `CL  (${L.CL_r.toFixed(3)})`,  data: Array(labels.length).fill(+L.CL_r.toFixed(3)),  ...lineOpts('#10b981',[4,4]) }
+            { label: multiGroup ? '품목별 변동 상한' : `변동 상한 (${L.UCL_r.toFixed(3)})`, data: points.map(p => +limitFor(p).UCL_r.toFixed(3)), ...lineOpts('#ef4444',[6,3]) },
+            { label: multiGroup ? '품목별 평균 변동' : `평균 변동 (${L.CL_r.toFixed(3)})`, data: points.map(p => +limitFor(p).CL_r.toFixed(3)), ...lineOpts('#10b981',[4,4]) }
         ];
-        if (L.LCL_r > 0) {
-            rDatasets.push({ label: `LCL (${L.LCL_r.toFixed(3)})`, data: Array(labels.length).fill(+L.LCL_r.toFixed(3)), ...lineOpts('#ef4444',[6,3]) });
+        if (multiGroup || L.LCL_r > 0) {
+            rDatasets.push({ label: multiGroup ? '품목별 변동 하한' : `변동 하한 (${L.LCL_r.toFixed(3)})`, data: points.map(p => +limitFor(p).LCL_r.toFixed(3)), ...lineOpts('#ef4444',[6,3]) });
         }
 
         const rChart = new Chart(rCanvas, {
             type: 'line',
             data: { labels, datasets: rDatasets },
-            options: chartOpts([...rs, L.UCL_r, L.CL_r, L.LCL_r > 0 ? L.LCL_r : null])
+            options: chartOpts([...rs, ...points.flatMap(p => { const pointL = limitFor(p); return [pointL.UCL_r, pointL.CL_r, pointL.LCL_r > 0 ? pointL.LCL_r : null]; })])
         });
 
         if (suffix) {
@@ -37366,25 +37400,28 @@ var ProdSpcModule = (function() {
             </td></tr>`;
             return;
         }
-        const L = _calcLimits(points);
+        const overallL = _calcLimits(points);
+        const groupLimits = _groupLimits(points);
         const spec = _resolveSpecLimits(points, meta);
         const numCell = (v, extra = '') => {
             const text = (v !== null && v !== undefined) ? Number(v).toFixed(2) : '-';
             return `<td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${extra}">${text}</td>`;
         };
         tbody.innerHTML = points.map((p, i) => {
+            const L = groupLimits.get(_pointGroupKey(p)) || overallL;
+            const pointSpec = _specFromPoint(p, meta.key);
             const outX  = p.xbar > L.UCL_x || p.xbar < L.LCL_x;
             const outR  = p.rv   > L.UCL_r;
-            const specOut = _isSpecOut(p.xbar, spec);
+            const specOut = _isSpecOut(p.xbar, pointSpec);
             const out   = outX || outR;
             const rowSt = out ? 'background:rgba(239,68,68,0.05);' : (specOut ? 'background:rgba(245,158,11,0.08);' : '');
             const byType = p.valsByType || {};
             const vCells = MEASURE_TYPES.map(t => numCell(byType[t])).join('');
             const badge = out
-                ? '<span class="badge badge-danger">관리이탈</span>'
-                : (specOut ? '<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;">규격이탈</span>'
+                ? '<span class="badge badge-danger">관리범위 이탈</span>'
+                : (specOut ? '<span class="badge" style="background:#fef3c7;color:#b45309;border:1px solid #fcd34d;">제품 규격 이탈</span>'
                            : '<span class="badge badge-success">정상</span>');
-            const reasonText = (out || specOut) ? _judgmentReason(p, L, spec, outX, outR, specOut) : '';
+            const reasonText = (out || specOut) ? _judgmentReason(p, L, pointSpec, outX, outR, specOut) : '';
             const reasonHtml = reasonText
                 ? `<div style="font-size:0.68rem;color:${out ? '#dc2626' : '#b45309'};margin-top:3px;white-space:nowrap;">${_esc(reasonText)}</div>`
                 : '';
@@ -37398,6 +37435,9 @@ var ProdSpcModule = (function() {
                 ${vCells}
                 <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outX?'color:#ef4444;font-weight:600;':(specOut?'color:#d97706;font-weight:600;':'')}">${p.xbar.toFixed(3)}</td>
                 <td style="text-align:right;font-variant-numeric:tabular-nums;padding:8px 12px;${outR?'color:#ef4444;font-weight:600;':''}">${p.rv.toFixed(3)}</td>
+                <td style="text-align:center;font-variant-numeric:tabular-nums;white-space:nowrap;font-size:0.78rem;color:${pointSpec.usl != null || pointSpec.lsl != null ? 'var(--text-primary)' : 'var(--text-muted)'};">
+                    ${pointSpec.lsl != null ? _fmtLimit(pointSpec.lsl) : '-'} ~ ${pointSpec.usl != null ? _fmtLimit(pointSpec.usl) : '-'}
+                </td>
                 <td style="text-align:center;">${badge}${reasonHtml}</td>
                 ${_filmDeleteCell(p.id)}
             </tr>`;

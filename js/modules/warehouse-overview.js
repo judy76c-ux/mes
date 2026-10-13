@@ -295,7 +295,7 @@ var WarehouseOverviewModule = (function () {
 
             entries.forEach(({ lot, qty }) => {
                 if (!itemMap[key][lot]) {
-                    itemMap[key][lot] = { qty: 0, firstDate: '', hadIncoming: false,
+                    itemMap[key][lot] = { qty: 0, firstDate: '', lastInDate: '', hadIncoming: false,
                                           inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '',
                                           outs: [], supplier: '' };
                 }
@@ -307,6 +307,7 @@ var WarehouseOverviewModule = (function () {
                     e.hadIncoming = true;
                     // 입고 기록에서만 firstDate 추적 (가장 오래된 입고일)
                     if (d && (!e.firstDate || d < e.firstDate)) e.firstDate = d;
+                    if (d && (!e.lastInDate || d > e.lastInDate)) e.lastInDate = d;
                     const sup = String(r.supplier || '').trim();
                     if (sup && sup !== '-' && !e.supplier) e.supplier = sup;
                 } else {
@@ -407,7 +408,7 @@ var WarehouseOverviewModule = (function () {
                     oldLots: oldList.map(lot => {
                         const v = lots[lot];
                         return { lot, qty: v.qty, firstDate: v.firstDate || v.balDate || '', inQty: v.inQty,
-                                 outQty: v.outQty, lastOutDate: v.lastOutDate };
+                                 outQty: v.outQty, lastOutDate: v.lastOutDate, lastInDate: v.lastInDate || v.balDate || '' };
                     }),
                     consumedLots: violNew.filter(bLot => !oldSet[bLot]).sort().map(bLot => {
                         const v = lots[bLot] || {};
@@ -557,7 +558,7 @@ var WarehouseOverviewModule = (function () {
                     mfgDate: r.mfgDate || '',
                     prodLot: r.prodLot || '',
                     lotNo: r.lotNo || '',
-                    firstInDate: '', hadIncoming: false,
+                    firstInDate: '', lastInDate: '', hadIncoming: false,
                     inQty: 0, outQty: 0, firstOutDate: '', lastOutDate: '', outs: []
                 };
             }
@@ -580,6 +581,7 @@ var WarehouseOverviewModule = (function () {
                 if (!entry.firstDate || r.date < entry.firstDate)
                     entry.firstDate = r.date || '';
                 if (d && (!entry.firstInDate || d < entry.firstInDate)) entry.firstInDate = d;
+                if (d && (!entry.lastInDate || d > entry.lastInDate)) entry.lastInDate = d;
                 if (r.expDate && (!entry.expDate || r.expDate < entry.expDate))
                     entry.expDate = r.expDate; // 가장 빠른 만료일 추적
             }
@@ -700,7 +702,7 @@ var WarehouseOverviewModule = (function () {
                     oldLots: oldList.map(lot => {
                         const v = lots[lot];
                         return { lot: label(lot, v), prodDate: _mfgByKey[lot], qty: v.qty, firstDate: v.firstInDate || v.firstDate,
-                                 inQty: v.inQty, outQty: v.outQty, lastOutDate: v.lastOutDate,
+                                 inQty: v.inQty, outQty: v.outQty, lastOutDate: v.lastOutDate, lastInDate: v.lastInDate || '',
                                  useFirst: _useOf(mid, lot, v).first, useLast: _useOf(mid, lot, v).last };
                     }),
                     consumedLots: violNew.filter(bLot => !oldSet[bLot])
@@ -879,13 +881,29 @@ var WarehouseOverviewModule = (function () {
         return a === b ? _esc(a) : (_esc(a) + ' ~ ' + _esc(b));
     }
 
+    /** 현재 창고 재고 표시 — 재고 유무 + 마지막 이동(입고/출고)일로부터 경과일 (장부 기준, 실물 확인 필요) */
+    function _fifoStockStatus(l) {
+        const has = (Number(l.qty) || 0) > 0;
+        const lastMove = [l.lastInDate, l.lastOutDate].filter(Boolean).map(x => String(x).slice(0, 10)).sort().pop() || '';
+        let sub = '';
+        if (lastMove) {
+            const days = Math.floor((Date.now() - new Date(lastMove + 'T00:00:00').getTime()) / 86400000);
+            const stale = days >= 30;
+            sub = '<div style="font-size:0.7rem;color:' + (stale ? '#c2410c' : 'var(--text-muted)') + ';font-weight:' + (stale ? '700' : '400') + ';">마지막 이동 ' +
+                _esc(lastMove) + (isNaN(days) ? '' : ' (' + days + '일 전)') + (stale ? ' · 실물 확인' : '') + '</div>';
+        }
+        return has
+            ? '<span style="color:#15803d;font-weight:800;">● 재고 있음</span>' + sub
+            : '<span style="color:#dc2626;font-weight:800;">● 재고 없음</span>' + sub;
+    }
+
     function _fifoLotTable(lots, type, dateLabel, showUse, causeOpts) {
         const isOld = type === 'old';
         const color = isOld ? '#2563eb' : '#ea580c';
         const dl = dateLabel || '사출일';
         const useHead = showUse ? '<th>사용일(첫~최근)</th>' : '';
         const head = isOld
-            ? '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th style="text-align:right;">출고수량</th><th>최근 출고일</th>' + useHead + '<th style="text-align:right;">잔량</th>'
+            ? '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th style="text-align:right;">출고수량</th><th>최근 출고일</th>' + useHead + '<th style="text-align:right;">잔량</th><th>현재 창고 재고</th>'
             : '<th>LOT</th><th>' + dl + '</th><th>창고 입고일</th><th style="text-align:right;">입고수량</th><th>첫 출고일</th><th>소진일(마지막 출고)</th>' + useHead +
               (causeOpts ? '<th>원인</th>' : '');
         const body = (lots || []).map(function(l) {
@@ -898,7 +916,8 @@ var WarehouseOverviewModule = (function () {
                     '<td style="text-align:right;">' + UIUtils.formatNumber(l.outQty || 0) + '</td>' +
                     '<td>' + _fifoDate(l.lastOutDate) + '</td>' +
                     (showUse ? '<td style="white-space:nowrap;">' + _fifoUseRange(l) + '</td>' : '') +
-                    '<td style="text-align:right;font-weight:700;color:#2563eb;">' + UIUtils.formatNumber(l.qty || 0) + '</td></tr>';
+                    '<td style="text-align:right;font-weight:700;color:#2563eb;">' + UIUtils.formatNumber(l.qty || 0) + '</td>' +
+                    '<td style="white-space:nowrap;">' + _fifoStockStatus(l) + '</td></tr>';
             }
             return '<tr>' + lotCell +
                 '<td>' + _fifoDate(l.firstDate) + '</td>' +
