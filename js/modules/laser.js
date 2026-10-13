@@ -1268,6 +1268,7 @@ var LaserWorkModule = (function() {
                 <td style="font-size:0.8rem;white-space:nowrap;">${[d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-'}</td>
                 <td style="white-space:nowrap;">
                     <div style="display:flex;gap:4px;align-items:center;justify-content:flex-start;white-space:nowrap;">
+                        <button class="btn btn-sm btn-outline" onclick="LaserWorkModule.view('${d.id}')">보기</button>
                         ${canEdit ? `<button class="btn btn-sm btn-outline" onclick="LaserWorkModule.edit('${d.id}')">수정</button>` : ''}
                         ${isAdmin ? `<button class="btn btn-sm btn-danger" onclick="LaserWorkModule.remove('${d.id}')">삭제</button>` : ''}
                     </div>
@@ -2711,6 +2712,154 @@ var LaserWorkModule = (function() {
         search();
     }
 
+    // ── 작업 상세 (보기) ───────────────────────────────────────────────
+    // 도장 LOT → 도장 작업일보(해당 작업 보기), 사출 LOT → 사출 수입검사 일지(해당 검사 상세)로 바로 이동
+    function _workLotPairs(d) {
+        const pls = Array.isArray(d.paintLots) ? d.paintLots.filter(l => l && l.lotNo) : [];
+        if (pls.length) return pls.map(l => ({ paintDate: l.paintDate || d.paintDate || '', lotNo: String(l.lotNo || ''), qty: Number(l.qty) || 0 }));
+        const lot = d.paintLot || d.lotNo || '';
+        return lot ? [{ paintDate: d.paintDate || '', lotNo: String(lot), qty: Number(d.quantity) || 0 }] : [];
+    }
+
+    function _paintingWorksFor(d, pair) {
+        const works = Storage.getAll(DB.STORES.PAINTING_WORK) || [];
+        const day = String(pair.paintDate || '').slice(0, 10);
+        if (!day) return [];
+        const names = [d.standbySourcePartName, d.partName].filter(Boolean);
+        const hit = works.filter(w => w && String(w.date || '').slice(0, 10) === day
+            && (!d.carModel || w.carModel === d.carModel)
+            && ((w.lots || []).some(l => String(l && l.lotNo) === pair.lotNo) || String(w.lotNo || '') === pair.lotNo));
+        const mine = hit.filter(w => names.indexOf(w.partName) >= 0);
+        return (mine.length ? mine : hit).slice().sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
+    }
+
+    function _openPaintingWork(w) {
+        const line = String(w.line || '');
+        const pageId = line === '도장-B' ? 'painting-work-b' : 'painting-work-a';
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function' && !AuthModule.canAccessPage(pageId)) {
+                UIUtils.toast('도장 작업일보에 접근 권한이 없습니다.', 'warning');
+                return;
+            }
+        } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
+        if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals(); else UIUtils.closeModal();
+        Router.navigate(pageId);
+        setTimeout(function () {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openWorkViewPage === 'function') {
+                PaintingWorkModule.openWorkViewPage(w.id);
+            }
+        }, 300);
+    }
+
+    function goPaintingWork(workId, idx) {
+        const d = Storage.getById(STORE, workId);
+        if (!d) return;
+        const pair = _workLotPairs(d)[Number(idx)];
+        if (!pair) return;
+        const list = _paintingWorksFor(d, pair);
+        if (!list.length) {
+            UIUtils.toast('해당 도장 작업일보 기록을 찾을 수 없습니다. (' + (pair.paintDate || '-') + ' / ' + pair.lotNo + ')', 'warning');
+            return;
+        }
+        if (list.length === 1) { _openPaintingWork(list[0]); return; }
+        // 같은 날 같은 LOT의 도장 작업이 여러 건이면 선택
+        const rows = list.map(w => '<tr>' +
+            '<td style="white-space:nowrap;">' + _esc(w.line || '-') + '</td>' +
+            '<td style="white-space:nowrap;">' + _esc(w.startTime || '-') + ' ~ ' + _esc(w.endTime || '-') + '</td>' +
+            '<td>' + _esc(w.partName || '-') + '</td>' +
+            '<td style="text-align:right;">' + UIUtils.formatNumber(Number(w.productionQty) || Number(w.inputQty) || 0) + '</td>' +
+            '<td><button class="btn btn-sm btn-primary" onclick="LaserWorkModule.openPaintingWorkById(\'' + _esc(String(w.id)).replace(/'/g, '') + '\')">보기</button></td></tr>').join('');
+        UIUtils.showModal('도장 작업일보 선택',
+            '<div style="font-size:0.82rem;color:var(--text-muted);margin-bottom:8px;">' + _esc(pair.paintDate) + ' · LOT ' + _esc(pair.lotNo) + ' 도장 작업이 ' + list.length + '건 있습니다.</div>' +
+            '<table class="data-table"><thead><tr><th>라인</th><th>작업시간</th><th>품명</th><th>수량</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>',
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'md');
+    }
+
+    function openPaintingWorkById(id) {
+        const w = Storage.getById(DB.STORES.PAINTING_WORK, id);
+        if (w) _openPaintingWork(w);
+    }
+
+    function goInjectionInspection(workId, idx) {
+        const d = Storage.getById(STORE, workId);
+        if (!d) return;
+        const pair = _workLotPairs(d)[Number(idx)];
+        if (!pair) return;
+        const ref = (typeof LaserInspectionModule !== 'undefined' && LaserInspectionModule.getIncomingRef)
+            ? LaserInspectionModule.getIncomingRef(d.carModel || '', pair.lotNo, pair.paintDate, [d.standbySourcePartName, d.partName].filter(Boolean))
+            : null;
+        if (!ref || !ref.id) {
+            UIUtils.toast('해당 사출 LOT(' + pair.lotNo + ')의 사출 수입검사 기록을 찾을 수 없습니다.', 'warning');
+            return;
+        }
+        LaserInspectionModule.goIncomingInspection(ref.id);
+    }
+
+    function view(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d) { UIUtils.toast('작업일지를 찾을 수 없습니다.', 'error'); return; }
+        const lbl = t => '<div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">' + t + '</div>';
+        const box = (t, v, extra) => '<div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;' + (extra || '') + '">' + lbl(t) + '<div style="font-weight:600;">' + v + '</div></div>';
+        const num = v => UIUtils.formatNumber(Number(v) || 0);
+        const pairs = _workLotPairs(d);
+        const linkStyle = 'color:var(--accent-blue);text-decoration:underline;cursor:pointer;font-weight:700;';
+        const lotRows = pairs.length ? pairs.map((pr, i) => {
+            const ref = (typeof LaserInspectionModule !== 'undefined' && LaserInspectionModule.getIncomingRef)
+                ? LaserInspectionModule.getIncomingRef(d.carModel || '', pr.lotNo, pr.paintDate, [d.standbySourcePartName, d.partName].filter(Boolean))
+                : null;
+            const paintCell = pr.paintDate
+                ? '<a href="javascript:void(0)" style="' + linkStyle + '" title="도장 작업일보로 이동" onclick="LaserWorkModule.goPaintingWork(\'' + _esc(id) + '\',' + i + ')">' + _esc(pr.paintDate) + '</a>'
+                : '<span style="color:var(--text-muted);">-</span>';
+            const lotCell = '<a href="javascript:void(0)" style="font-family:monospace;' + linkStyle + '" title="사출 수입검사 일지로 이동" onclick="LaserWorkModule.goInjectionInspection(\'' + _esc(id) + '\',' + i + ')">' + _esc(pr.lotNo) + '</a>';
+            const inspCell = ref ? _esc(String(ref.date).slice(0, 16)) : '<span style="color:var(--text-muted);">-</span>';
+            return '<tr><td>' + paintCell + '</td><td>' + lotCell + '</td><td style="text-align:right;">' + (pr.qty ? num(pr.qty) : '-') + '</td><td style="white-space:nowrap;">' + inspCell + '</td></tr>';
+        }).join('') : '<tr><td colspan="4" style="text-align:center;color:var(--text-muted);">LOT 정보 없음</td></tr>';
+
+        const qcRow = (label, on, q, pos, photo, url, loss) => {
+            if (!on) return '<tr><td>' + label + '</td><td colspan="5" style="color:var(--text-muted);">미실시</td></tr>';
+            const chk = v => v ? '<span style="color:var(--accent-green);font-weight:700;">OK</span>' : '<span style="color:var(--text-muted);">-</span>';
+            const photoCell = url
+                ? '<a href="javascript:void(0)" style="' + linkStyle + '" onclick="LaserWorkModule.viewQcPhotoUrl(\'' + String(url).replace(/'/g, "\\'") + '\', \'' + label + ' 사진\')">사진 보기</a>'
+                : chk(photo);
+            return '<tr><td>' + label + '</td><td style="text-align:center;">' + chk(q) + '</td><td style="text-align:center;">' + chk(pos) + '</td><td style="text-align:center;">' + photoCell + '</td><td style="text-align:right;">' + num(loss) + '</td></tr>';
+        };
+        const workers = [d.worker1, d.worker2, d.worker3].filter(Boolean).join(', ') || '-';
+        const statusText = d.status === 'in_progress' ? '진행중' : (d.status === 'completed' ? '완료' : (d.status || '-'));
+
+        const body = '' +
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;">' +
+                box('차종', _esc(d.carModel || '-')) + box('품명', _esc(d.partName || '-')) + box('컬러', _esc(d.color || '-')) +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:8px;">' +
+                box('작업일', _esc(d.date || '-')) + box('설비', _esc(d.machine || '-')) +
+                box('작업시간', _esc(d.startTime || '-') + ' ~ ' + _esc(d.endTime || '-') + (d.standardEndTime ? '<div style="font-size:0.7rem;color:var(--text-muted);font-weight:400;">표준 종료 ' + _esc(d.standardEndTime) + '</div>' : '')) +
+                box('상태', _esc(statusText)) +
+            '</div>' +
+            '<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">' +
+                box('작업수량', num(d.quantity), 'background:rgba(59,130,246,0.08);') +
+                box('완료수량', num(d.completedQty), 'background:rgba(52,211,153,0.08);') +
+                box('이전 잔량 사용', num(d.prevResidualQty)) +
+                box('잔량', num(d.laserResidualQty), 'background:rgba(245,158,11,0.10);') +
+            '</div>' +
+            '<div style="font-weight:700;font-size:0.84rem;margin:4px 0 6px;">도장 · 사출 LOT <span style="font-weight:400;color:var(--text-muted);font-size:0.74rem;">도장일을 누르면 도장 작업일보, 사출 LOT을 누르면 사출 수입검사 일지로 이동합니다.</span></div>' +
+            '<table class="data-table" style="margin-bottom:10px;"><thead><tr><th>도장일</th><th>사출 LOT</th><th style="text-align:right;">수량</th><th>수입검사일</th></tr></thead><tbody>' + lotRows + '</tbody></table>' +
+            '<div style="font-weight:700;font-size:0.84rem;margin:4px 0 6px;">품질 확인 (초/중/종품)</div>' +
+            '<table class="data-table" style="margin-bottom:10px;"><thead><tr><th>구분</th><th style="text-align:center;">품질</th><th style="text-align:center;">위치</th><th style="text-align:center;">사진</th><th style="text-align:right;">로스</th></tr></thead><tbody>' +
+                qcRow('초품', d.qcFirst, d.qcFirstQuality, d.qcFirstPosition, d.qcFirstPhoto, d.qcFirstPhotoUrl, d.qcFirstLoss) +
+                qcRow('중품', d.qcMiddle, d.qcMiddleQuality, d.qcMiddlePosition, d.qcMiddlePhoto, d.qcMiddlePhotoUrl, d.qcMiddleLoss) +
+                qcRow('종품', d.qcLast, d.qcLastQuality, d.qcLastPosition, d.qcLastPhoto, d.qcLastPhotoUrl, d.qcLastLoss) +
+            '</tbody></table>' +
+            '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;">' +
+                box('작업자', _esc(workers)) + box('프로그램', _esc(d.programName || '-')) + box('포장 단위', d.packUnit ? num(d.packUnit) : '-') +
+            '</div>' +
+            (d.note ? '<div style="margin-top:8px;font-size:0.8rem;background:var(--bg-secondary);border-radius:8px;padding:8px 10px;"><span style="color:var(--text-muted);">비고</span> ' + _esc(d.note) + '</div>' : '');
+
+        const canEdit = _canAdjustLaserWork();
+        UIUtils.showModal('레이져 작업 상세 — ' + _esc(d.carModel || '') + ' ' + _esc(d.partName || ''), body,
+            (canEdit ? '<button class="btn btn-outline" onclick="LaserWorkModule.edit(\'' + _esc(id) + '\')">수정</button>' : '') +
+            '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
+    }
+
     function edit(id) {
         const d = Storage.getById(STORE, id);
         if (!d) return;
@@ -2869,6 +3018,10 @@ var LaserWorkModule = (function() {
         convertLotRowToManual,
         updateLot,
         saveNew,
+        view,
+        goPaintingWork,
+        openPaintingWorkById,
+        goInjectionInspection,
         edit,
         saveEdit,
         completeWork,
@@ -2935,7 +3088,7 @@ var LaserInspectionModule = (function() {
                 const d = String((x && x.inspDate) || '').trim();
                 if (!lot || !d) return;
                 const k = [String(w.date).slice(0, 10), w.carModel || '', lot].join('|');
-                (paint[k] = paint[k] || []).push({ part: w.partName || '', inspDate: d });
+                (paint[k] = paint[k] || []).push({ part: w.partName || '', inspDate: d, inspId: String((x && x.inspId) || '') });
             });
         });
         const insp = {};    // 차종|LOT → [{ item, date }]
@@ -2947,7 +3100,7 @@ var LaserInspectionModule = (function() {
                 const lot = String((l && l.lotNo) || '').trim();
                 if (!lot) return;
                 const k = (rec.carModel || '') + '|' + lot;
-                (insp[k] = insp[k] || []).push({ item, date: String(rec.date) });
+                (insp[k] = insp[k] || []).push({ item, date: String(rec.date), id: rec.id || '' });
             });
         });
         const idx = { paint, insp };
@@ -2955,12 +3108,21 @@ var LaserInspectionModule = (function() {
         return idx;
     }
 
-    function _incomingDateFor(carModel, lotNo, paintDate, partNames) {
+    // 사출 수입검사 참조 { date, id } — id 는 사출 수입검사 일지 기록 ID (상세로 바로 이동용)
+    function _incomingRefFor(carModel, lotNo, paintDate, partNames) {
         const lot = String(lotNo || '').trim();
-        if (!lot) return '';
+        if (!lot) return null;
         const idx = _incomingIndex();
         const pd = String(paintDate || '').slice(0, 10);
-        const earliest = list => list.map(x => x.inspDate || x.date).sort()[0] || '';
+        const rows = idx.insp[(carModel || '') + '|' + lot] || [];
+        const exists = id => !!(id && Storage.getById(DB.STORES.INJECTION_INSPECTIONS, id));
+        const withId = (date, id) => {
+            if (!date) return null;
+            if (exists(id)) return { date, id };
+            const hit = rows.find(r => r.date === date) || rows.find(r => String(r.date).slice(0, 10) === String(date).slice(0, 10));
+            return { date, id: hit ? hit.id : '' };
+        };
+        const earliestOf = (list, dk, ik) => list.slice().sort((x, y) => String(x[dk]).localeCompare(String(y[dk])))[0] || null;
 
         // 1) 도장 작업일지 trace
         if (pd) {
@@ -2970,16 +3132,62 @@ var LaserInspectionModule = (function() {
                 const mine = cands.filter(c => names.indexOf(c.part) >= 0);
                 const pool = mine.length ? mine : cands;
                 const dates = [...new Set(pool.map(c => c.inspDate))];
-                if (dates.length === 1) return dates[0];
-                if (mine.length) return earliest(mine);
+                if (dates.length === 1 || mine.length) {
+                    const pick = earliestOf(pool, 'inspDate');
+                    if (pick) return withId(pick.inspDate, pick.inspId);
+                }
             }
         }
         // 2) 사출 수입검사 — 같은 차종·LOT, 품목이 하나로 특정될 때만
-        const rows = idx.insp[(carModel || '') + '|' + lot] || [];
         const usable = pd ? rows.filter(r => String(r.date).slice(0, 10) <= pd) : rows;
         const items = [...new Set(usable.map(r => r.item))];
-        if (items.length === 1) return earliest(usable);
-        return '';
+        if (items.length === 1) {
+            const pick = earliestOf(usable, 'date');
+            if (pick) return { date: pick.date, id: pick.id };
+        }
+        return null;
+    }
+
+    function _incomingDateFor(carModel, lotNo, paintDate, partNames) {
+        const ref = _incomingRefFor(carModel, lotNo, paintDate, partNames);
+        return ref ? ref.date : '';
+    }
+
+    // 수입검사일 목록 — 검사 기록이 있으면 클릭해 사출 수입검사 일지 상세로 이동
+    function _incomingLinkListHtml(refs) {
+        const rows = Array.isArray(refs) ? refs : [];
+        if (!rows.length) return '<span style="color:var(--text-muted);">-</span>';
+        return '<div style="display:flex;flex-direction:column;gap:5px;">' + rows.map(r => {
+            if (!r.id) return _dateStack(r.date, '');
+            return '<a href="javascript:void(0)" title="사출 수입검사 일지로 이동" ' +
+                'onclick="LaserInspectionModule.goIncomingInspection(\'' + String(r.id).replace(/[^A-Za-z0-9_-]/g, '') + '\')" ' +
+                'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
+                _dateStack(r.date, '') + '</a>';
+        }).join('') + '</div>';
+    }
+
+    // 사출 수입검사 일지(injection-incoming)로 이동해 해당 검사 기록 상세를 연다
+    function goIncomingInspection(inspId) {
+        const id = String(inspId || '');
+        if (!id) return;
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function'
+                && !AuthModule.canAccessPage('injection-incoming')) {
+                UIUtils.toast('사출 수입검사 일지에 접근 권한이 없습니다.', 'warning');
+                return;
+            }
+        } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
+        if (!Storage.getById(DB.STORES.INJECTION_INSPECTIONS, id)) {
+            UIUtils.toast('사출 수입검사 기록을 찾을 수 없습니다. (삭제되었거나 변경됨)', 'warning');
+            return;
+        }
+        if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals(); else UIUtils.closeModal();
+        Router.navigate('injection-incoming');
+        setTimeout(function () {
+            if (typeof InjectionIncomingModule !== 'undefined' && typeof InjectionIncomingModule.view === 'function') {
+                InjectionIncomingModule.view(id);
+            }
+        }, 250);
     }
 
     function _lotInfo(row) {
@@ -2997,19 +3205,21 @@ var LaserInspectionModule = (function() {
         const lotPairs = paintLots.length > 0
             ? paintLots.map(l => ({ lotNo: l && l.lotNo, paintDate: l && l.paintDate }))
             : [{ lotNo: source.paintLot || source.lotNo || row?.paintLot, paintDate: source.paintDate || row?.paintDate }];
-        const incomingDates = [...new Set(
-            lotPairs
-                .filter(x => x.lotNo)
-                .map(x => _incomingDateFor(carModel, x.lotNo, x.paintDate, partNames))
-                .filter(Boolean)
-        )].sort();
+        const refMap = {};
+        lotPairs.filter(x => x.lotNo).forEach(x => {
+            const ref = _incomingRefFor(carModel, x.lotNo, x.paintDate, partNames);
+            if (ref && ref.date) refMap[ref.date + '|' + ref.id] = ref;
+        });
+        const incomingRefs = Object.keys(refMap).sort().map(k => refMap[k]);
+        const incomingDates = [...new Set(incomingRefs.map(r => r.date))];
         return {
             work,
             laserDate: source.date || row?.date || '',
             laserTime: source.startTime || row?.inspectionStartTime || '',
             paintDates,
             injectionLots,
-            incomingDates
+            incomingDates,
+            incomingRefs
         };
     }
 
@@ -3758,7 +3968,7 @@ var LaserInspectionModule = (function() {
                 </div>
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">수입검사일</div>
-                    <div>${_dateListHtml(lotInfo.incomingDates)}</div>
+                    <div>${_incomingLinkListHtml(lotInfo.incomingRefs)}</div>
                 </div>
             </div>
 
@@ -6056,6 +6266,8 @@ var LaserInspectionModule = (function() {
         _updatePackagingCalc, _autoBoxCount, _toggleResidualUseAll,
         _addInspectorField, _syncInspectorOptions,
         _togglePartialInspection, _saveInspectionDraft, _clearInspectionDraft,
+        goIncomingInspection,
+        getIncomingRef: _incomingRefFor,
     };
 })();
 
