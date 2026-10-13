@@ -2775,6 +2775,25 @@ var LaserWorkModule = (function() {
             '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'md');
     }
 
+    // 레이져 작업일지(laser-work) 페이지로 이동해 해당 작업 상세를 연다 (검사 이력 → 작업일지)
+    function goLaserWork(workId) {
+        const id = String(workId || '');
+        if (!id) return;
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function' && !AuthModule.canAccessPage('laser-work')) {
+                UIUtils.toast('레이져 작업일지에 접근 권한이 없습니다.', 'warning');
+                return;
+            }
+        } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
+        if (!Storage.getById(STORE, id)) {
+            UIUtils.toast('레이져 작업일지 기록을 찾을 수 없습니다. (삭제되었거나 변경됨)', 'warning');
+            return;
+        }
+        if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals(); else UIUtils.closeModal();
+        Router.navigate('laser-work');
+        setTimeout(function () { view(id); }, 300);
+    }
+
     function openPaintingWorkById(id) {
         const w = Storage.getById(DB.STORES.PAINTING_WORK, id);
         if (w) _openPaintingWork(w);
@@ -3020,6 +3039,7 @@ var LaserWorkModule = (function() {
         saveNew,
         view,
         goPaintingWork,
+        goLaserWork,
         openPaintingWorkById,
         goInjectionInspection,
         edit,
@@ -3153,6 +3173,31 @@ var LaserInspectionModule = (function() {
         return ref ? ref.date : '';
     }
 
+    // 레이져 작업일 — 연결된 작업일지가 있으면 클릭해 레이져 작업일지(작업 상세)로 이동
+    function _laserDateLinkHtml(lotInfo) {
+        if (!lotInfo || !lotInfo.laserDate) return '<span style="color:var(--text-muted);">-</span>';
+        const stack = _dateStack(lotInfo.laserDate, lotInfo.laserTime);
+        const wid = String(lotInfo.workId || '').replace(/[^A-Za-z0-9_-]/g, '');
+        if (!wid) return stack;
+        return '<a href="javascript:void(0)" title="레이져 작업일지로 이동" ' +
+            'onclick="event.stopPropagation();LaserWorkModule.goLaserWork(\'' + wid + '\')" ' +
+            'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' + stack + '</a>';
+    }
+
+    // 도장 LOT(도장일) 목록 — 연결된 작업일지가 있으면 클릭해 도장 작업 실적(도장 작업일보)으로 이동
+    function _paintLinkListHtml(lotInfo) {
+        const links = (lotInfo && lotInfo.paintLinks) || [];
+        if (!links.length) return '<span style="color:var(--text-muted);">-</span>';
+        const wid = String((lotInfo && lotInfo.workId) || '').replace(/[^A-Za-z0-9_-]/g, '');
+        return '<div style="display:flex;flex-direction:column;gap:5px;">' + links.map(l => {
+            if (!wid || l.idx < 0) return _dateStack(l.date, '');
+            return '<a href="javascript:void(0)" title="도장 작업 실적으로 이동" ' +
+                'onclick="event.stopPropagation();LaserWorkModule.goPaintingWork(\'' + wid + '\',' + Number(l.idx) + ')" ' +
+                'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
+                _dateStack(l.date, '') + '</a>';
+        }).join('') + '</div>';
+    }
+
     // 수입검사일 목록 — 검사 기록이 있으면 클릭해 사출 수입검사 일지 상세로 이동
     function _incomingLinkListHtml(refs) {
         const rows = Array.isArray(refs) ? refs : [];
@@ -3160,7 +3205,7 @@ var LaserInspectionModule = (function() {
         return '<div style="display:flex;flex-direction:column;gap:5px;">' + rows.map(r => {
             if (!r.id) return _dateStack(r.date, '');
             return '<a href="javascript:void(0)" title="사출 수입검사 일지로 이동" ' +
-                'onclick="LaserInspectionModule.goIncomingInspection(\'' + String(r.id).replace(/[^A-Za-z0-9_-]/g, '') + '\')" ' +
+                'onclick="event.stopPropagation();LaserInspectionModule.goIncomingInspection(\'' + String(r.id).replace(/[^A-Za-z0-9_-]/g, '') + '\')" ' +
                 'style="text-decoration:underline;text-decoration-color:var(--accent-blue);cursor:pointer;display:inline-block;">' +
                 _dateStack(r.date, '') + '</a>';
         }).join('') + '</div>';
@@ -3210,6 +3255,14 @@ var LaserInspectionModule = (function() {
             const ref = _incomingRefFor(carModel, x.lotNo, x.paintDate, partNames);
             if (ref && ref.date) refMap[ref.date + '|' + ref.id] = ref;
         });
+        // 도장일 → 도장 작업 실적 이동용 (LaserWorkModule.goPaintingWork 의 LOT 순번과 같은 기준: LOT 번호가 있는 항목만 센다)
+        const lotsWithNo = paintLots.filter(l => l && l.lotNo);
+        const paintLinks = [];
+        paintDates.forEach(date => {
+            let idx = lotsWithNo.findIndex(l => l.paintDate === date);
+            if (idx < 0 && lotsWithNo.length === 0) idx = 0;
+            paintLinks.push({ date, idx });
+        });
         const incomingRefs = Object.keys(refMap).sort().map(k => refMap[k]);
         const incomingDates = [...new Set(incomingRefs.map(r => r.date))];
         return {
@@ -3219,7 +3272,9 @@ var LaserInspectionModule = (function() {
             paintDates,
             injectionLots,
             incomingDates,
-            incomingRefs
+            incomingRefs,
+            paintLinks,
+            workId: work && work.id ? work.id : ''
         };
     }
 
@@ -3834,12 +3889,12 @@ var LaserInspectionModule = (function() {
             return `
                 <tr style="cursor:pointer;" onclick="LaserInspectionModule._showDetail('${d.id}', event)">
                     <td class="col-date">${_dateStack(d.date, d.inspectionStartTime)}</td>
-                    <td class="col-date">${lotInfo.laserDate ? _dateStack(lotInfo.laserDate, lotInfo.laserTime) : '<span style="color:var(--text-muted);">-</span>'}</td>
+                    <td class="col-date">${_laserDateLinkHtml(lotInfo)}</td>
                     <td class="col-car">${d.carModel || '-'}</td>
                     <td class="col-part" style="font-weight:600;line-height:1.35;">${d.partName || '-'}</td>
-                    <td class="col-lot">${_dateListHtml(lotInfo.paintDates)}</td>
+                    <td class="col-lot">${_paintLinkListHtml(lotInfo)}</td>
                     <td class="col-inj">${_lotListHtml(lotInfo.injectionLots)}</td>
-                    <td class="col-date">${_dateListHtml(lotInfo.incomingDates)}</td>
+                    <td class="col-date">${_incomingLinkListHtml(lotInfo.incomingRefs)}</td>
                     <td class="col-num">${UIUtils.formatNumber(d.inspQty)}</td>
                     <td class="col-num" style="color:var(--accent-green);font-weight:600;">${UIUtils.formatNumber(d.goodQty)}</td>
                     <td class="col-num" style="color:var(--accent-red);font-weight:700;">${UIUtils.formatNumber(d.failQty)}</td>
@@ -3956,11 +4011,11 @@ var LaserInspectionModule = (function() {
             <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:10px;">
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">레이져 작업일</div>
-                    <div>${_dateStack(lotInfo.laserDate, lotInfo.laserTime)}</div>
+                    <div>${_laserDateLinkHtml(lotInfo)}</div>
                 </div>
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">도장 LOT</div>
-                    <div>${_dateListHtml(lotInfo.paintDates)}</div>
+                    <div>${_paintLinkListHtml(lotInfo)}</div>
                 </div>
                 <div style="background:var(--bg-secondary);border-radius:8px;padding:8px 10px;">
                     <div style="font-size:0.68rem;color:var(--text-muted);margin-bottom:2px;">사출 LOT</div>
