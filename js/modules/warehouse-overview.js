@@ -5,7 +5,8 @@ var WarehouseNavUI = (function () {
     const MENUS = [
         { id: 'warehouse-overview',  label: '자재 현황',  icon: 'warehouse',               subtitle: '통합 현황·문제점', accent: '#2563eb' },
         { id: 'injection-warehouse', label: '사출 자재',  icon: 'precision_manufacturing', subtitle: '사출 자재 관리',   accent: '#0891b2' },
-        { id: 'paint-inventory',     label: '도료 자재',  icon: 'palette',                 subtitle: '도료 재고 관리',   accent: '#8b5cf6' }
+        { id: 'paint-inventory',     label: '도료 자재',  icon: 'palette',                 subtitle: '도료 재고 관리',   accent: '#8b5cf6' },
+        { id: 'long-stock',          label: '장기 재고',  icon: 'schedule',               subtitle: '사출·도료 장기재고', accent: '#dc2626' }
     ];
     function renderSection(activePage, actionsHtml) {
         var items = MENUS.map(function (m) {
@@ -75,6 +76,12 @@ var WarehouseOverviewModule = (function () {
     function _normItemType(raw) {
         if (!raw) return '';
         return String(raw).replace(/품$/, '').trim();
+    }
+
+    function _itemTypeLabel(carModel, partName, color) {
+        const product = _findProductForItem(carModel, partName, color);
+        const type = _normItemType(product?.itemType || '');
+        return type === 'A/S' || /^A\/S/i.test(type) ? 'A/S' : '양산';
     }
 
     /** 도금 품 — 재고 없음 집계에서 제외 */
@@ -378,7 +385,7 @@ var WarehouseOverviewModule = (function () {
                     const diffDays = Math.round((today - new Date(oldestDate)) / 86400000);
                     if (diffDays >= LONG_STOCK_DAYS) {
                         longStock++;
-                        longItems.push({ carModel, partName, color, days: diffDays, qty: netQty, firstDate: oldestDate });
+                        longItems.push({ carModel, partName, color, itemType: _itemTypeLabel(carModel, partName, color), days: diffDays, qty: netQty, firstDate: oldestDate });
                     }
                 }
             }
@@ -758,6 +765,7 @@ var WarehouseOverviewModule = (function () {
                 <tr style="background:rgba(220,38,38,0.03);">
                     <td>${d.carModel || '-'}</td>
                     <td>${d.partName || '-'}</td>
+                    <td><span class="badge ${d.itemType === 'A/S' ? 'badge-warning' : 'badge-info'}">${d.itemType || '양산'}</span></td>
                     <td>${d.color || '-'}</td>
                     <td style="text-align:right;">${UIUtils.formatNumber(d.qty)} EA</td>
                     <td>${d.firstDate || '-'}</td>
@@ -765,7 +773,7 @@ var WarehouseOverviewModule = (function () {
                 </tr>`).join('');
         UIUtils.showModal('사출 자재 창고 — 장기재고 목록 (기준: ' + LONG_STOCK_DAYS + '일 이상)', `
             <table class="data-table">
-                <thead><tr><th>차종</th><th>품명</th><th>컬러</th><th>재고</th><th>최초 입고일</th><th>보관 기간</th></tr></thead>
+                <thead><tr><th>차종</th><th>품명</th><th>구분</th><th>컬러</th><th>재고</th><th>최초 입고일</th><th>보관 기간</th></tr></thead>
                 <tbody>${rows}</tbody>
             </table>`, '<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>', 'lg');
     }
@@ -1284,5 +1292,92 @@ var WarehouseOverviewModule = (function () {
             try { paint = (_calcPaintStats() || {}).fifoItems || []; } catch (e) {}
             return { injection: inj, paint: paint, total: inj.length + paint.length };
         },
+        getLongStockData: function() {
+            const inj = _calcInjStats() || {};
+            const paint = _calcPaintStats() || {};
+            return { threshold: LONG_STOCK_DAYS, injection: inj.longItems || [], paint: paint.longItems || [] };
+        },
     };
+})();
+
+/** 자재창고 장기재고 전용 페이지 */
+var WarehouseLongStockModule = (function () {
+    const _esc = s => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+
+    function _injRows(items) {
+        return (items || []).slice().sort((a, b) => b.days - a.days).map(d => `
+            <tr>
+                <td class="nowrap">${_esc(d.carModel || '-')}</td>
+                <td title="${_esc(d.partName || '')}">${_esc(d.partName || '-')}</td>
+                <td class="nowrap"><span class="badge ${d.itemType === 'A/S' ? 'badge-warning' : 'badge-info'}">${_esc(d.itemType || '양산')}</span></td>
+                <td class="nowrap">${_esc(d.color || '-')}</td>
+                <td class="num nowrap">${UIUtils.formatNumber(d.qty)} EA</td>
+                <td class="nowrap">${_esc(d.firstDate || '-')}</td>
+                <td class="num nowrap danger-text">${d.days}일</td>
+            </tr>`).join('');
+    }
+
+    function _paintRows(items) {
+        return (items || []).slice().sort((a, b) => b.days - a.days).map(d => `
+            <tr>
+                <td title="${_esc(d.matName || '')}">${_esc(d.matName || '-')}</td>
+                <td class="nowrap">${_esc(d.supplier || '-')}</td>
+                <td class="nowrap">${_esc(d.lot || '-')}</td>
+                <td class="num nowrap">${UIUtils.formatNumber(d.qty)}</td>
+                <td class="nowrap">${_esc(d.firstDate || '-')}</td>
+                <td class="num nowrap danger-text">${d.days}일</td>
+            </tr>`).join('');
+    }
+
+    function _empty(cols, text) {
+        return `<tr><td colspan="${cols}" style="text-align:center;padding:28px;color:var(--text-muted);">${text}</td></tr>`;
+    }
+
+    function render(container) {
+        const data = WarehouseOverviewModule.getLongStockData();
+        const threshold = data.threshold;
+        container.innerHTML = `
+            <div class="fade-in-up">
+                ${WarehouseNavUI.renderSection('long-stock')}
+                <div class="card" style="margin-bottom:14px;border-left:4px solid #dc2626;">
+                    <div class="card-body" style="display:flex;align-items:flex-start;gap:12px;">
+                        <span class="material-symbols-outlined" style="color:#dc2626;font-size:24px;">schedule</span>
+                        <div>
+                            <h3 style="margin:0 0 6px;font-size:1rem;">장기재고 기준서</h3>
+                            <div style="font-size:.84rem;color:var(--text-secondary);line-height:1.7;">
+                                입고일 또는 LOT 기준으로 <strong>${threshold}일 이상</strong> 보관된 잔량을 장기재고로 분류합니다.<br>
+                                사출은 품목별 활성 LOT 중 가장 오래된 입고일을 기준으로 하며, 도료는 도료 LOT별 잔량을 기준으로 집계합니다.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="stat-cards" style="margin-bottom:14px;">
+                    <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">precision_manufacturing</span></div><div class="stat-info"><div class="stat-value">${data.injection.length}</div><div class="stat-label">사출 장기재고</div></div></div>
+                    <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">palette</span></div><div class="stat-info"><div class="stat-value">${data.paint.length}</div><div class="stat-label">도료 장기재고</div></div></div>
+                    <div class="stat-card"><div class="stat-icon"><span class="material-symbols-outlined">inventory_2</span></div><div class="stat-info"><div class="stat-value">${data.injection.length + data.paint.length}</div><div class="stat-label">전체 장기재고</div></div></div>
+                </div>
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px;align-items:start;">
+                    <div class="card">
+                        <div class="card-header"><h4 style="margin:0;display:flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="color:#2563eb;">precision_manufacturing</span>사출 장기재고 목록</h4></div>
+                        <div class="card-body" style="padding:0;overflow:auto;">
+                            <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;">
+                                <thead><tr><th>차종</th><th style="min-width:150px;">품명</th><th>구분</th><th>컬러</th><th style="text-align:right;">재고</th><th>최초 입고일</th><th style="text-align:right;">보관 기간</th></tr></thead>
+                                <tbody>${_injRows(data.injection) || _empty(7, '사출 장기재고가 없습니다.')}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div class="card-header"><h4 style="margin:0;display:flex;align-items:center;gap:6px;"><span class="material-symbols-outlined" style="color:#8b5cf6;">palette</span>도료 장기재고 목록</h4></div>
+                        <div class="card-body" style="padding:0;overflow:auto;">
+                            <table class="data-table" style="width:max-content;min-width:100%;table-layout:auto;">
+                                <thead><tr><th style="min-width:150px;">도료명</th><th>공급사</th><th>LOT</th><th style="text-align:right;">재고량</th><th>최초 입고일</th><th style="text-align:right;">보관 기간</th></tr></thead>
+                                <tbody>${_paintRows(data.paint) || _empty(6, '도료 장기재고가 없습니다.')}</tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+    }
+
+    return { render };
 })();

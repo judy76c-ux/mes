@@ -2752,6 +2752,10 @@ var InjectionWarehouseModule = (function() {
                             <h4><span class="material-symbols-outlined">grid_view</span> 차종별 재고 현황</h4>
                             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-left:auto;">
                                 <div id="injStockErrorAdminBar"></div>
+                                <label style="display:flex;align-items:center;gap:4px;font-size:0.84rem;white-space:nowrap;cursor:pointer;">
+                                    <input type="checkbox" id="injShowAsTiles" onchange="InjectionWarehouseModule.renderCarTiles()">
+                                    A/S품 표시 <span id="injShowAsCount" style="color:var(--text-muted);"></span>
+                                </label>
                                 <select id="injTileCarFilter" class="form-select" style="width:140px;"
                                     onchange="InjectionWarehouseModule.renderCarTiles()">
                                     <option value="">전체 차종</option>
@@ -3144,6 +3148,11 @@ var InjectionWarehouseModule = (function() {
     }
 
     function _getCarItemTypeLabel(carModel, items, materials, products) {
+        const labels = [..._getCarItemTypeSet(carModel, items, materials, products)];
+        return labels.length ? ` (${labels.join('/')})` : '';
+    }
+
+    function _getCarItemTypeSet(carModel, items, materials, products) {
         const types = new Set();
         const itemParts = new Set((items || []).map(i => (i.partName || '').trim()).filter(Boolean));
         const addType = type => {
@@ -3151,27 +3160,36 @@ var InjectionWarehouseModule = (function() {
             if (short) types.add(short);
         };
 
-        (products || [])
-            .filter(p => UIUtils.sameCarModel(p.carModel, carModel))
-            .forEach(p => {
-                const productName = (p.partName || '').trim();
-                const linkedByMaterial = (materials || []).some(m => {
-                    if (!UIUtils.sameCarModel(m.carModel, carModel)) return false;
-                    const matPart = (m.injPartName || '').trim();
-                    if (!itemParts.has(matPart)) return false;
-                    return (m.productIds || []).includes(p.id)
-                        || (m.mfgProductName || '').trim() === productName
-                        || (m.mfgProductName2 || '').trim() === productName;
-                });
-                if (itemParts.has(productName) || linkedByMaterial) addType(p.itemType);
+        const carProducts = (products || []).filter(p => UIUtils.sameCarModel(p.carModel, carModel));
+
+        // 1순위: 창고 품목(재질)과 실제 연결된 제품의 구분
+        carProducts.forEach(p => {
+            const productName = (p.partName || '').trim();
+            const linkedByMaterial = (materials || []).some(m => {
+                if (!UIUtils.sameCarModel(m.carModel, carModel)) return false;
+                if (!itemParts.has((m.injPartName || '').trim())) return false;
+                return (m.productIds || []).includes(p.id)
+                    || (m.mfgProductName || '').trim() === productName
+                    || (m.mfgProductName2 || '').trim() === productName;
             });
+            if (linkedByMaterial) addType(p.itemType);
+        });
 
-        (materials || [])
-            .filter(m => UIUtils.sameCarModel(m.carModel, carModel) && itemParts.has((m.injPartName || '').trim()))
-            .forEach(m => addType(m.itemType));
+        // 2순위: 자재 마스터의 구분
+        if (!types.size) {
+            (materials || [])
+                .filter(m => UIUtils.sameCarModel(m.carModel, carModel) && itemParts.has((m.injPartName || '').trim()))
+                .forEach(m => addType(m.itemType));
+        }
 
-        const labels = [...types];
-        return labels.length ? ` (${labels.join('/')})` : '';
+        // 3순위: 품명이 동일한 제품
+        if (!types.size) {
+            carProducts.forEach(p => {
+                if (itemParts.has((p.partName || '').trim())) addType(p.itemType);
+            });
+        }
+
+        return types;
     }
 
     // 차종별 타일 렌더링 (Greedy bin-packing 컬럼 배치)
@@ -3230,33 +3248,50 @@ var InjectionWarehouseModule = (function() {
             return;
         }
 
-        // 양산품(주로 사용) 차종 먼저, A/S품 전용 차종은 뒤로 — 같은 그룹 안에서는 품목 수 내림차순
-        entries.sort(([carA, a], [carB, b]) => {
-            const rankA = _carModelSortRank(carA);
-            const rankB = _carModelSortRank(carB);
-            return (rankA - rankB) || (b.length - a.length) || a[0].carModel.localeCompare(b[0].carModel);
-        });
+        // 양산품(구분 미지정 포함) 차종과 A/S품 전용 차종으로 분리 — 같은 그룹 안에서는 품목 수 내림차순
+        const _products = Storage.getAll(DB.STORES.PRODUCTS) || [];
+        const _isAsOnly = (carModel, items) => {
+            const set = _getCarItemTypeSet(carModel, items, materials, _products);
+            return set.size > 0 && [...set].every(t => t === 'A/S');
+        };
+        const _byCount = ([carA, a], [carB, b]) => (b.length - a.length) || carA.localeCompare(carB, 'ko');
+        const mainEntries = entries.filter(([car, items]) => !_isAsOnly(car, items)).sort(_byCount);
+        const asEntries   = entries.filter(([car, items]) => _isAsOnly(car, items)).sort(_byCount);
 
-        // 컬럼 수 결정 (차종 수에 따라 유동)
-        const total = entries.length;
-        const COLS = total <= 2 ? total : total <= 6 ? 3 : 4;
+        const showAs = !!((document.getElementById('injShowAsTiles') || {}).checked);
+        const asCountEl = document.getElementById('injShowAsCount');
+        if (asCountEl) asCountEl.textContent = asEntries.length ? `(${asEntries.length})` : '';
 
         // Greedy bin-packing: 각 카드를 누적 품목 수가 가장 적은 컬럼에 배치
-        const cols   = Array.from({ length: COLS }, () => []);       // 컬럼별 카드 목록
-        const heights = Array(COLS).fill(0);                          // 컬럼별 누적 품목 수
+        const _renderCols = list => {
+            if (!list.length) return '';
+            const total = list.length;
+            const COLS = total <= 2 ? total : total <= 6 ? 3 : 4;
+            const cols = Array.from({ length: COLS }, () => []);
+            const heights = Array(COLS).fill(0);
+            for (const [carModel, items] of list) {
+                const minIdx = heights.indexOf(Math.min(...heights));
+                cols[minIdx].push([carModel, items]);
+                heights[minIdx] += items.length + 1; // +1: 헤더/합계 행 높이 보정
+            }
+            return `<div style="display:flex; gap:12px; align-items:flex-start;">` + cols.map(colCards => `
+                <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
+                    ${colCards.map(([carModel, items]) => _buildCarCard(carModel, items)).join('')}
+                </div>
+            `).join('') + `</div>`;
+        };
 
-        for (const [carModel, items] of entries) {
-            const minIdx = heights.indexOf(Math.min(...heights));
-            cols[minIdx].push([carModel, items]);
-            heights[minIdx] += items.length + 1; // +1: 헤더/합계 행 높이 보정
+        let html = _renderCols(mainEntries);
+        if (!mainEntries.length) {
+            html = `<p style="color:var(--text-muted); padding:20px;">양산품 재고 데이터가 없습니다.</p>`;
         }
-
-        // 컬럼별 HTML 생성
-        tilesEl.innerHTML = cols.map(colCards => `
-            <div style="flex:1; min-width:0; display:flex; flex-direction:column;">
-                ${colCards.map(([carModel, items]) => _buildCarCard(carModel, items)).join('')}
-            </div>
-        `).join('');
+        if (showAs && asEntries.length) {
+            html += `<div style="margin-top:18px;padding-top:12px;border-top:1px dashed var(--border-color);">
+                <div style="font-weight:700;font-size:0.9rem;margin-bottom:10px;color:#b45309;">A/S품 (${asEntries.length}개 차종)</div>
+                ${_renderCols(asEntries)}
+            </div>`;
+        }
+        tilesEl.innerHTML = html;
 
         _renderStockErrorAdminBar(mergedMap);
         _renderSiteInboundShortageList(mergedMap);
@@ -8667,7 +8702,8 @@ var InjectionWarehouseModule = (function() {
 
     function _openAddFromInspectionForm(insp, fillLotNo, fillQty) {
         _pendingInspDate = insp.date || '';
-        openAddModal('입고');
+        // 수입검사 합격수량을 창고로 넘기는 연결 입고는 외주품도 정상 경로다.
+        openAddModal('입고', { allowExternalInbound: true });
         _lockedInspInbound = { inspId: insp.id, lotNo: fillLotNo, qty: fillQty };
         setTimeout(() => {
             const carSel  = document.getElementById('addInvCarModel');
@@ -8731,10 +8767,12 @@ var InjectionWarehouseModule = (function() {
         }
     }
 
-    function openAddModal(type = '입고') {
+    function openAddModal(type = '입고', options) {
+        options = options || {};
         if (type !== '입고') _pendingInspDate = '';
         _lockedInspInbound = null;
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
+        const allowExternalInbound = type === '입고' && options.allowExternalInbound === true;
 
         // 출고 시: 재고 > 0 인 차종만 표시
         let uniqueCarModels;
@@ -8750,7 +8788,10 @@ var InjectionWarehouseModule = (function() {
                 materials
             );
         } else {
-            uniqueCarModels = UIUtils.sortCarModels(materials.map(m => m.carModel), materials);
+            const inboundMaterials = allowExternalInbound
+                ? materials
+                : materials.filter(m => _isInternalSupplier(m.supplier));
+            uniqueCarModels = UIUtils.sortCarModels(inboundMaterials.map(m => m.carModel), inboundMaterials);
         }
 
         const colorClass = type === '출고' ? 'var(--accent-red)' : 'var(--accent-blue)';
@@ -8764,10 +8805,11 @@ var InjectionWarehouseModule = (function() {
                     <span class="material-symbols-outlined" id="addInvInspWarnIcon" style="color:#2563eb;font-size:20px;flex-shrink:0;margin-top:1px;">info</span>
                     <div id="addInvInspWarnBody" style="min-width:0;font-size:0.82rem;color:var(--text-secondary);line-height:1.55;">
                         <strong style="color:var(--text-primary);">사내 생산 입고는 정상 경로입니다.</strong>
-                        외부 주처 사출품만 수입검사 후 창고 입고가 정상입니다. 사출처가 정해지면 안내가 바뀝니다.
+                        외주 사출품은 수입검사 합격 후에만 창고 입고할 수 있습니다. 일반 입고에서는 사내 생산품만 선택할 수 있습니다.
                     </div>
                 </div>
             </div>` : ''}
+            <input type="hidden" id="addInvAllowExternalInbound" value="${allowExternalInbound ? '1' : '0'}">
             <div class="form-row">
                 <div class="form-group">
                     <label class="form-label">${type}일시</label>
@@ -8985,10 +9027,14 @@ var InjectionWarehouseModule = (function() {
 
         const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS) || [];
 
-        // 사출명이 지정된 경우 해당 자재만, 아니면 차종 전체 자재 스캔
+        const allowExternalInbound = document.getElementById('addInvAllowExternalInbound')?.value === '1';
+        const isInbound = (document.getElementById('addInvType')?.value || '') === '입고';
+        const isAllowedInboundMaterial = m => !isInbound || allowExternalInbound || _isInternalSupplier(m.supplier);
+
+        // 일반 입고에서는 사내 생산 자재만 컬러 후보로 사용한다.
         const targets = partName
-            ? materials.filter(m => m.carModel === carModel && m.injPartName === partName)
-            : materials.filter(m => m.carModel === carModel);
+            ? materials.filter(m => m.carModel === carModel && m.injPartName === partName && isAllowedInboundMaterial(m))
+            : materials.filter(m => m.carModel === carModel && isAllowedInboundMaterial(m));
 
         // injColor 파싱: 쉼표/공백 구분자로 여러 색상이 들어올 수 있음
         const colorSet = new Set();
@@ -9118,9 +9164,11 @@ var InjectionWarehouseModule = (function() {
 
         if (!carModel) return;
 
-        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
-        const filtered = materials.filter(m => m.carModel === carModel);
         const type = document.getElementById('addInvType')?.value || '입고';
+        const materials = Storage.getAll(DB.STORES.INJECTION_MATERIALS);
+        const allowExternalInbound = document.getElementById('addInvAllowExternalInbound')?.value === '1';
+        const filtered = materials.filter(m => m.carModel === carModel
+            && (type === '출고' || allowExternalInbound || _isInternalSupplier(m.supplier)));
 
         let partNames;
         if (type === '출고') {
@@ -9836,9 +9884,8 @@ var InjectionWarehouseModule = (function() {
             if (body) {
                 body.innerHTML =
                     '<div style="font-size:0.84rem;font-weight:700;color:#dc2626;margin-bottom:4px;">외부 주처 사출품은 수입검사 후 입고가 정상입니다.</div>' +
-                    '<div style="font-size:0.78rem;color:#991b1b;font-weight:600;">수입검사 없이 창고로 바로 입고하면 정상 절차가 아니며, 품질관리자·물류담당자에게 알림이 갑니다. ' +
-                    '주말 등 검사가 늦어 입고를 먼저 해야 하면 진행할 수 있습니다. 이후 같은 사출명·LOT으로 검사가 등록되면 자동 연결되고, ' +
-                    '안 되면 입고 이력의 「수입검사 연결」로 맞출 수 있습니다.</div>';
+                    '<div style="font-size:0.78rem;color:#991b1b;font-weight:600;">외주 사출품은 수입검사 합격수량으로 연결된 경우에만 입고할 수 있습니다. ' +
+                    '일반 직접 입고는 차단되며, 수입검사 화면에서 합격 처리 후 「창고 입고」로 진행하세요.</div>';
             }
             return;
         }
@@ -11938,6 +11985,13 @@ var InjectionWarehouseModule = (function() {
             paintLine: _paintLine || undefined,
             line: _paintLine || undefined
         };
+
+        // 사출 창고의 일반 직접 입고는 사내 생산품만 허용한다.
+        // 외주품은 수입검사 합격수량으로 연결된 입고(_lockedInspInbound)만 허용한다.
+        if (data.type === '입고' && !_lockedInspInbound && !_isInternalSupplier(data.supplier)) {
+            UIUtils.toast('외주 사출품은 수입검사 합격 후에만 창고 입고할 수 있습니다. 사내 생산품만 직접 입고하세요.', 'error');
+            return;
+        }
 
         if (_lockedInspInbound && data.type === '입고') {
             const lock = _lockedInspInbound;

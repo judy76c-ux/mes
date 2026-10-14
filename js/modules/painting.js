@@ -16133,6 +16133,85 @@ const PaintingInspectionModule = (function() {
         `;
     }
 
+    function _closeDetailPopups() {
+        const p = document.getElementById('completionDetailPopup');
+        if (p) p.remove();
+        if (typeof UIUtils.closeAllModals === 'function') UIUtils.closeAllModals();
+    }
+
+    function _canOpenPage(pageId, label) {
+        try {
+            if (typeof AuthModule !== 'undefined' && typeof AuthModule.canAccessPage === 'function' && !AuthModule.canAccessPage(pageId)) {
+                UIUtils.toast(label + '에 접근 권한이 없습니다.', 'warning');
+                return false;
+            }
+        } catch (e) { /* 권한 확인 실패 시 이동 시도 */ }
+        return true;
+    }
+
+    // 도장 LOT(작업일) → 해당 도장 작업일보(생산 실적) 상세
+    function _goPaintingWorkFromInspection(id) {
+        const d = Storage.getById(STORE, id);
+        if (!d || !d.paintingDate) return;
+        const day = String(d.paintingDate).slice(0, 10);
+        const lots = String(d.lotNo || '').split(/[,\s]+/).filter(Boolean);
+        let hit = (Storage.getAll(DB.STORES.PAINTING_WORK) || []).filter(w => w
+            && String(w.date || '').slice(0, 10) === day
+            && (!d.carModel || w.carModel === d.carModel)
+            && (!d.partName || w.partName === d.partName));
+        if (d.color) {
+            const byColor = hit.filter(w => !w.color || w.color === d.color);
+            if (byColor.length) hit = byColor;
+        }
+        if (lots.length) {
+            const byLot = hit.filter(w => (w.lots || []).some(l => lots.indexOf(String(l && l.lotNo)) >= 0) || lots.indexOf(String(w.lotNo || '')) >= 0);
+            if (byLot.length) hit = byLot;
+        }
+        if (!hit.length) {
+            UIUtils.toast('해당 도장 작업일보 기록을 찾을 수 없습니다. (' + day + ')', 'warning');
+            return;
+        }
+        hit.sort((a, b) => String(a.startTime || '').localeCompare(String(b.startTime || '')));
+        const w = hit[0];
+        const pageId = String(w.line || '') === '도장-B' ? 'painting-work-b' : 'painting-work-a';
+        if (!_canOpenPage(pageId, '도장 작업일보')) return;
+        _closeDetailPopups();
+        Router.navigate(pageId);
+        setTimeout(function () {
+            if (typeof PaintingWorkModule !== 'undefined' && typeof PaintingWorkModule.openWorkViewPage === 'function') {
+                PaintingWorkModule.openWorkViewPage(w.id);
+            }
+        }, 300);
+    }
+
+    // 사출 LOT → 사출 수입검사 일지 상세
+    function _goInjectionIncomingFromInspection(id, lotNo) {
+        const d = Storage.getById(STORE, id);
+        const lot = String(lotNo || '').trim();
+        if (!d || !lot) return;
+        let hit = (Storage.getAll(DB.STORES.INJECTION_INSPECTIONS) || []).filter(r => {
+            if (!r || (d.carModel && r.carModel !== d.carModel)) return false;
+            const lots = (r.lots && r.lots.length) ? r.lots.map(l => String(l && l.lotNo)) : [String(r.lotNo || '')];
+            return lots.indexOf(lot) >= 0;
+        });
+        const bySame = hit.filter(r => r.partName === d.partName && (!d.color || !r.color || r.color === d.color));
+        if (bySame.length) hit = bySame;
+        if (!hit.length) {
+            UIUtils.toast('사출 수입검사 기록을 찾을 수 없습니다. (LOT ' + lot + ')', 'warning');
+            return;
+        }
+        hit.sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+        const rec = hit[0];
+        if (!_canOpenPage('injection-incoming', '사출 수입검사 일지')) return;
+        _closeDetailPopups();
+        Router.navigate('injection-incoming');
+        setTimeout(function () {
+            if (typeof InjectionIncomingModule !== 'undefined' && typeof InjectionIncomingModule.view === 'function') {
+                InjectionIncomingModule.view(rec.id);
+            }
+        }, 250);
+    }
+
     // 검사 완료 실적 상세 조회 팝업
     function _showCompletionDetail(id, event) {
         const d = Storage.getById(STORE, id);
@@ -16220,11 +16299,17 @@ const PaintingInspectionModule = (function() {
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:12px;">
                 <div style="background:var(--bg-secondary); border-radius:8px; padding:10px 12px;">
                     <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">도장 LOT (작업일)</div>
-                    <div style="font-weight:600; font-size:0.82rem; font-family:monospace;">${d.paintingDate || '-'}</div>
+                    <div style="font-weight:600; font-size:0.82rem; font-family:monospace;">${d.paintingDate
+                        ? `<a href="javascript:void(0)" title="도장 생산 실적(작업일보)으로 이동" onclick="PaintingInspectionModule._goPaintingWorkFromInspection('${d.id}')" style="color:var(--accent-blue);text-decoration:underline;cursor:pointer;">${d.paintingDate}</a>`
+                        : '-'}</div>
                 </div>
                 <div style="background:var(--bg-secondary); border-radius:8px; padding:10px 12px;">
                     <div style="font-size:0.72rem; color:var(--text-muted); margin-bottom:3px;">사출 LOT</div>
-                    <div style="font-weight:600; font-size:0.82rem; font-family:monospace;">${d.lotNo || '-'}</div>
+                    <div style="font-weight:600; font-size:0.82rem; font-family:monospace;">${(() => {
+                        const lots = String(d.lotNo || '').split(/[,\s]+/).filter(Boolean);
+                        if (!lots.length) return '-';
+                        return lots.map(l => `<a href="javascript:void(0)" title="사출 수입검사 이력으로 이동" onclick="PaintingInspectionModule._goInjectionIncomingFromInspection('${d.id}','${l.replace(/[^A-Za-z0-9_-]/g, '')}')" style="color:var(--accent-blue);text-decoration:underline;cursor:pointer;">${l}</a>`).join(', ');
+                    })()}</div>
                 </div>
             </div>
 
@@ -17178,6 +17263,8 @@ const PaintingInspectionModule = (function() {
         showResidualWipStatus,
         _filterCompletionResults,
         _showCompletionDetail,
+        _goPaintingWorkFromInspection,
+        _goInjectionIncomingFromInspection,
         _showResidualDetail,
         _updateCompletionPartFilter,
         _updateStatsPartFilter,
