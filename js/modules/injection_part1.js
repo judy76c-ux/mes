@@ -345,8 +345,11 @@ var InjectionIncomingModule = (function() {
             const badLotSet = fifoViolationLots[d.id] || new Set();
             const injLotDisplay = lotList.map(l => {
                 const lotNo = l.lotNo || '-';
-                const lotQty = Number(l.qty) || 0;
-                const qtyText = lotQty > 0 ? ' (' + UIUtils.formatNumber(lotQty) + ')' : '';
+                let lotQty = Number(l.qty);
+                if (!(lotQty > 0) && lotList.length === 1) {
+                    lotQty = Number(d.incomingQty || d.passQty) || 0;
+                }
+                const qtyText = ' (' + UIUtils.formatNumber(lotQty > 0 ? lotQty : 0) + ')';
                 const bad = badLotSet.has(lotNo);
                 const style = bad
                     ? 'display:inline-block;background:#fff7ed;border:1px solid #fb923c;border-radius:4px;padding:1px 6px;font-size:0.8rem;margin:1px;font-family:monospace;font-weight:800;color:#ea580c;white-space:nowrap;'
@@ -1581,6 +1584,110 @@ var InjectionIncomingModule = (function() {
         onEditVerdictChange();
     }
 
+    function _inspLotsSnapshot(d) {
+        if (d && Array.isArray(d.lots) && d.lots.length) {
+            return d.lots.map(function (l) {
+                return { lotNo: String((l && l.lotNo) || '').trim(), qty: Number(l && l.qty) || 0 };
+            }).filter(function (l) { return l.lotNo || l.qty > 0; });
+        }
+        if (d && d.lotNo) {
+            return [{ lotNo: String(d.lotNo).trim(), qty: Number(d.incomingQty || d.passQty) || 0 }];
+        }
+        return [];
+    }
+
+    function _inspQtyOf(d) {
+        const fromLots = _inspLotsSnapshot(d).reduce(function (s, l) { return s + l.qty; }, 0);
+        if (fromLots > 0) return fromLots;
+        return Number(d && (d.passQty || d.incomingQty)) || 0;
+    }
+
+    function _lotsEqual(a, b) {
+        const key = function (d) {
+            return _inspLotsSnapshot(d).map(function (l) { return l.lotNo + ':' + l.qty; }).sort().join('|');
+        };
+        return key(a) === key(b);
+    }
+
+    function _qtyFieldsChanged(prev, next) {
+        if (!_lotsEqual(prev, next)) return true;
+        if (Number(prev.incomingQty || 0) !== Number(next.incomingQty || 0)) return true;
+        if (Number(prev.passQty || 0) !== Number(next.passQty || 0)) return true;
+        if (Number(prev.failQty || 0) !== Number(next.failQty || 0)) return true;
+        if (String(prev.verdict || '') !== String(next.verdict || '')) return true;
+        return false;
+    }
+
+    function _formatLotSummary(lots) {
+        const list = Array.isArray(lots) ? lots : [];
+        if (!list.length) return '-';
+        return list.map(function (l) {
+            return String((l && l.lotNo) || '-') + '(' + UIUtils.formatNumber(Number(l && l.qty) || 0) + ')';
+        }).join(', ');
+    }
+
+    function _escHtml(s) {
+        return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    function _inspectionChangeLogs(inspId) {
+        return (Storage.getAll(DB.STORES.INSPECTION_DELETE_LOGS) || [])
+            .filter(function (l) {
+                return String(l.originalId || '') === String(inspId)
+                    && (l.action === 'edit' || l.type === 'injection_edit');
+            })
+            .sort(function (a, b) {
+                return String(b.deletedAt || b.changedAt || '').localeCompare(String(a.deletedAt || a.changedAt || ''));
+            });
+    }
+
+    function _inspectionChangeLogsHtml(inspId) {
+        const logs = _inspectionChangeLogs(inspId);
+        const whAdj = (typeof InjectionWarehouseModule !== 'undefined'
+            && typeof InjectionWarehouseModule.listInspectionEditAdjustments === 'function')
+            ? InjectionWarehouseModule.listInspectionEditAdjustments(inspId)
+            : [];
+        if (!logs.length && !whAdj.length) {
+            return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg-secondary);font-size:0.82rem;color:var(--text-muted);">
+                수량 변경 이력이 없습니다.
+            </div>`;
+        }
+        const logRows = logs.map(function (l) {
+            const when = String(l.deletedAt || l.changedAt || '').replace('T', ' ').slice(0, 19);
+            const before = l.originalData || {};
+            const after = l.afterData || l.changedData || {};
+            const sync = l.warehouseSync || {};
+            const syncText = sync.applied
+                ? ('창고 ' + (sync.type || '반영') + ' ' + UIUtils.formatNumber(sync.qty || 0) + ' EA')
+                : (sync.requested ? '창고 미반영(검사만 수정)' : '창고 연동 없음');
+            return `<div style="padding:8px 0;border-bottom:1px solid var(--border);">
+                <div style="font-weight:700;color:#c2410c;">${_escHtml(when || '-')} · ${_escHtml(l.deletedBy || '-')}</div>
+                <div style="margin-top:4px;color:var(--text-secondary);">
+                    ${_escHtml(_formatLotSummary(_inspLotsSnapshot(before)))}
+                    → ${_escHtml(_formatLotSummary(_inspLotsSnapshot(after)))}
+                    (${UIUtils.formatNumber(_inspQtyOf(before))} → ${UIUtils.formatNumber(_inspQtyOf(after))} EA)
+                </div>
+                <div style="margin-top:2px;color:var(--text-muted);">사유: ${_escHtml(l.reason || '-')} · ${_escHtml(syncText)}</div>
+            </div>`;
+        }).join('');
+        const whRows = whAdj.map(function (r) {
+            const q = Number(r.quantity) || 0;
+            return `<div style="padding:6px 0;color:var(--text-secondary);">
+                ${_escHtml(String(r.date || '').replace('T', ' ').slice(0, 16))}
+                · ${r.type === '출고' ? '차감' : '입고'} ${UIUtils.formatNumber(q)} EA
+                · ${_escHtml(r.note || r.source || '')}
+            </div>`;
+        }).join('');
+        return `<div style="margin-top:12px;padding:10px 12px;border-radius:8px;border:1px solid rgba(194,65,12,.25);background:rgba(194,65,12,.05);font-size:0.82rem;line-height:1.55;">
+            <strong style="color:#c2410c;">수량 변경 이력</strong>
+            ${logRows || ''}
+            ${whRows ? '<div style="margin-top:8px;font-weight:700;color:#c2410c;">창고 반영</div>' + whRows : ''}
+        </div>`;
+    }
+
+    let _pendingEditCtx = null;
+
     async function saveEdit(id) {
         const dateVal = document.getElementById('editInjDate').value;
         const timeVal = document.getElementById('editInjTime').value;
@@ -1908,6 +2015,7 @@ var InjectionIncomingModule = (function() {
                 ${row('성적서 사진', certPhotoDisplay)}
                 ${row('합격 판정', `<strong style="color:${verdictColor};font-size:1rem;">${verdictText}</strong>`)}
             </div>
+            ${_inspectionChangeLogsHtml(id)}
         `, `
             <button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>
             <button class="btn btn-outline" onclick="UIUtils.closeModal();InjectionIncomingModule.edit('${id}')">

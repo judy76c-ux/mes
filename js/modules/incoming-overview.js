@@ -1222,6 +1222,16 @@ var IncomingDeleteLogModule = (function () {
         }).join('');
     }
 
+    function _lotText(d) {
+        const lots = (d && d.lots && d.lots.length)
+            ? d.lots
+            : (d && d.lotNo ? [{ lotNo: d.lotNo, qty: d.incomingQty || d.passQty }] : []);
+        if (!lots.length) return '-';
+        return lots.map(function (l) {
+            return String(l.lotNo || '-') + '(' + UIUtils.formatNumber(Number(l.qty) || 0) + ')';
+        }).join(', ');
+    }
+
     function viewOriginal(logId) {
         const log = Storage.getById(LOG_STORE, logId);
         if (!log || !isIncomingInspectionLog(log)) return;
@@ -1271,7 +1281,8 @@ var IncomingDeleteLogModule = (function () {
             <div style="font-size:0.8rem;font-weight:700;color:var(--text-muted);margin-bottom:6px;">${isEdit ? '변경 전' : '삭제된 원본'}</div>
             <div style="border:1px solid var(--border);border-radius:8px;overflow:hidden;">
                 ${fields.join('')}
-            </div>`,
+            </div>
+            ${afterBlock}`,
             `<button class="btn btn-secondary" onclick="UIUtils.closeModal()">닫기</button>`,
             '600px'
         );
